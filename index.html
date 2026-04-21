@@ -571,7 +571,10 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     • 📊 영업제안 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">ec27bf5f4cbc4de3b2ed9aafabae4e9c</code>
   </div>
   <div class="fg" style="margin-top:10px">
-    <button class="btn bgo" style="width:100%;font-size:12px" onclick="testNotionConnection()">🧪 연결 테스트</button>
+    <button class="btn bgo" style="width:100%;font-size:12px" onclick="testNotionConnection()">🧪 Notion 연결 테스트</button>
+  </div>
+  <div class="fg" style="margin-top:6px">
+    <button class="btn bgo" style="width:100%;font-size:12px" onclick="testR2Btn()">📁 R2 파일 저장소 테스트</button>
   </div>
   <div id="notionTestResult" style="margin-top:8px;font-size:11.5px;min-height:20px"></div>
   <div class="ma">
@@ -1437,12 +1440,20 @@ function saveProduct(){
     stock:+gv('pd_stock')||0,metal:gv('pd_metal'),platingSpec:gv('pd_platingSpec'),
     weight:+gv('pd_weight')||0,memo:gv('pd_memo'),imgs:[...pdImgBuf]
   };
-  if(id){const i=productDB.findIndex(x=>x.id==id);if(i>=0)productDB[i]={...productDB[i],...obj};}
-  else productDB.push({id:Date.now(),createdAt:new Date().toISOString(),...obj});
-  save();closeM('mProduct');renderTab();
-  showToast('✓ 제품 저장됨','var(--grn)');
-  // 발주서/샘플 품번 검색 드롭다운 갱신
-  if(typeof syncSels==='function') syncSels();
+  const doSaveProduct = async (uploadedImgs) => {
+    const finalObj = {...obj, imgs: uploadedImgs||obj.imgs};
+    if(id){const i=productDB.findIndex(x=>x.id==id);if(i>=0)productDB[i]={...productDB[i],...finalObj};}
+    else productDB.push({id:Date.now(),createdAt:new Date().toISOString(),...finalObj});
+    save();closeM('mProduct');renderTab();
+    showToast('✓ 제품 저장됨','var(--grn)');
+    if(typeof syncSels==='function') syncSels();
+  };
+  if(notionCfg.workerUrl && pdImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
+    showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
+    uploadImagesToR2([...pdImgBuf]).then(uploaded=>doSaveProduct(uploaded));
+  } else {
+    doSaveProduct(obj.imgs);
+  }
 }
 function deleteProduct(){
   const id=gv('pd_id');if(!id)return;
@@ -1613,8 +1624,8 @@ function openNotionSettings(){
 function updateNotionMode(){
   const worker=(document.getElementById('notion_worker')?.value||'').trim();
   const el=document.getElementById('notionModeInfo'); if(!el) return;
-  if(worker) el.innerHTML=`<span style="color:var(--grn)">🟢 Worker 모드</span> — 샘플·발주·공정·영업·고객사·업무·AS 7개 DB 실시간 동기화`;
-  else el.innerHTML=`<span style="color:var(--org)">⚠️ Worker URL 없음</span> — Cloudflare Worker를 설정하면 실시간 동기화가 활성화됩니다.`;
+  if(worker) el.innerHTML=`<span style="color:var(--grn)">🟢 Worker 모드</span> — Notion 7개 DB 실시간 동기화 + R2 파일 저장 활성화`;
+  else el.innerHTML=`<span style="color:var(--org)">⚠️ Worker URL 없음</span> — Cloudflare Worker를 설정하면 실시간 동기화와 파일 저장이 활성화됩니다.`;
 }
 function updateNotionNavLabel(){
   const lbl=document.getElementById('notionSyncLabel'), ico=document.getElementById('notionSyncIcon');
@@ -1631,7 +1642,9 @@ async function notionCall(method, path, body){
   try{
     const headers={'Content-Type':'application/json'};
     if(notionCfg.token) headers['Authorization']='Bearer '+notionCfg.token;
-    const res=await fetch(notionCfg.workerUrl+path,{method,headers,body:body?JSON.stringify(body):undefined});
+    // 새 Worker: /notion/* 라우팅 (구 Worker와 호환: path가 /pages면 /notion/pages)
+    const route=notionCfg.workerUrl+(path.startsWith('/notion')?path:'/notion'+path);
+    const res=await fetch(route,{method,headers,body:body?JSON.stringify(body):undefined});
     if(!res.ok){ console.warn('Notion API error:',res.status); return null; }
     return await res.json();
   }catch(e){ console.warn('Notion sync failed:',e.message); return null; }
@@ -1643,19 +1656,99 @@ async function nDelete(pageId){
   return notionCall('PATCH','/pages/'+pageId,{archived:true});
 }
 
+// ════════════════════════════════
+// R2 파일 스토리지 모듈
+// ════════════════════════════════
+// R2 업로드: base64 dataURL → Worker → R2 버킷 → 퍼블릭 URL 반환
+async function r2Upload(dataUrl, fileName, fileType){
+  if(!notionCfg.workerUrl) return null;
+  try{
+    const res = await fetch(notionCfg.workerUrl+'/r2/upload',{
+      method:'POST',
+      headers:{
+        'Content-Type':'text/plain',
+        'X-File-Name': encodeURIComponent(fileName||'file'),
+        'X-File-Type': fileType||'image/jpeg',
+        'X-Encoding':  'base64',
+      },
+      body: dataUrl  // data:image/xxx;base64,xxx 그대로 전송
+    });
+    if(!res.ok) return null;
+    const d=await res.json();
+    if(!d.success) return null;
+    // Worker 경유 URL로 변환: workerUrl + /r2/file/key
+    return {key:d.key, url: notionCfg.workerUrl+'/r2/file/'+encodeURIComponent(d.key), name:d.name, type:d.type, size:d.size};
+  }catch(e){ console.warn('R2 upload failed:',e.message); return null; }
+}
+
+// R2 파일 삭제
+async function r2Delete(key){
+  if(!notionCfg.workerUrl||!key) return;
+  try{ await fetch(notionCfg.workerUrl+'/r2/file/'+encodeURIComponent(key),{method:'DELETE'}); }catch(e){}
+}
+
+// 이미지 버퍼를 R2에 업로드하고 URL로 교체
+// [{name, url(base64), type}] → [{name, url(r2), key, type}]
+async function uploadImagesToR2(imgBuf){
+  if(!notionCfg.workerUrl||!imgBuf||!imgBuf.length) return imgBuf;
+  const results = await Promise.all(imgBuf.map(async img=>{
+    if(!img.url||img.url.startsWith('http')||img.url.startsWith('/r2')) return img; // 이미 업로드된 것
+    const r=await r2Upload(img.url, img.name||'image.jpg', img.type||'image/jpeg');
+    if(r) return {...img, url:r.url, r2Key:r.key};
+    return img; // 실패하면 원본 유지
+  }));
+  return results;
+}
+
+// R2 연결 테스트
+async function testR2Connection(){
+  if(!notionCfg.workerUrl) return false;
+  try{
+    const r=await fetch(notionCfg.workerUrl+'/r2/list?limit=1');
+    const d=await r.json();
+    return !d.error;
+  }catch(e){ return false; }
+}
+
 // ── 연결 테스트 ──
+async function testR2Btn(){
+  const res=document.getElementById('notionTestResult');
+  if(res) res.innerHTML='<span style="color:var(--t3)">R2 연결 테스트 중...</span>';
+  const worker=(document.getElementById('notion_worker')?.value||'').trim();
+  if(!worker){ if(res) res.innerHTML='<span style="color:var(--red)">⚠ Worker URL을 입력해 주세요</span>'; return; }
+  try{
+    const r=await fetch(worker+'/r2/list?limit=1');
+    const d=await r.json();
+    if(d.files!==undefined){
+      if(res) res.innerHTML=`<span style="color:var(--grn)">✅ R2 연결 성공! 저장된 파일: ${d.files.length}개</span>`;
+    } else {
+      if(res) res.innerHTML=`<span style="color:var(--red)">✗ R2 오류: ${d.error||'버킷 바인딩 확인 필요'}</span>`;
+    }
+  }catch(e){
+    if(res) res.innerHTML=`<span style="color:var(--red)">✗ R2 연결 실패: ${e.message}</span>`;
+  }
+}
 async function testNotionConnection(){
   const res=document.getElementById('notionTestResult');
   if(res) res.innerHTML='<span style="color:var(--t3)">연결 테스트 중...</span>';
   const worker=(document.getElementById('notion_worker')?.value||'').trim();
   if(!worker){ if(res) res.innerHTML='<span style="color:var(--red)">⚠ Worker URL을 입력해 주세요</span>'; return; }
   try{
-    const r=await fetch(worker+'/users/me',{headers:notionCfg.token?{'Authorization':'Bearer '+notionCfg.token}:{}});
+    // Worker가 NOTION_TOKEN 환경변수로 Notion API 호출
+    const r=await fetch(worker+'/notion/users/me');
     const d=await r.json();
-    if(d.object==='user') { if(res) res.innerHTML=`<span style="color:var(--grn)">✅ 연결 성공! (${d.name||d.id}) — 7개 DB 동기화 준비 완료</span>`; }
-    else if(d.status===401){ if(res) res.innerHTML='<span style="color:var(--red)">✗ Token 오류 — Worker 환경변수 NOTION_TOKEN 확인</span>'; }
-    else { if(res) res.innerHTML=`<span style="color:var(--org)">${JSON.stringify(d).slice(0,120)}</span>`; }
-  }catch(e){ if(res) res.innerHTML=`<span style="color:var(--red)">✗ Worker 연결 실패: ${e.message}</span>`; }
+    if(d.object==='user'){
+      if(res) res.innerHTML=`<span style="color:var(--grn)">✅ Notion 연결 성공! (${d.name||d.id})</span>`;
+    } else if(d.status===401||d.code==='unauthorized'){
+      if(res) res.innerHTML='<span style="color:var(--red)">✗ Token 오류 — Worker Settings → Variables에서 NOTION_TOKEN 확인</span>';
+    } else if(d.error&&d.error.includes('NOTION_TOKEN')){
+      if(res) res.innerHTML='<span style="color:var(--red)">✗ Worker에 NOTION_TOKEN이 설정되지 않았습니다</span>';
+    } else {
+      if(res) res.innerHTML=`<span style="color:var(--org)">Worker 응답: ${JSON.stringify(d).slice(0,150)}</span>`;
+    }
+  }catch(e){
+    if(res) res.innerHTML=`<span style="color:var(--red)">✗ 연결 실패: ${e.message}</span>`;
+  }
 }
 
 // ══ 헬퍼: _notionId 저장 ══
@@ -3512,15 +3605,26 @@ function saveSmp(){
   const now=new Date().toISOString();
   const isAi=document.getElementById('s_aiParsed')?.value==='1';
   const obj={name,type:gv('s_type'),manager:gv('s_manager'),reqDate:gv('s_reqDate'),due:gv('s_due'),qty:gv('s_qty'),itemNo:gv('s_itemNo'),sz1:gv('s_sz1'),sz2:gv('s_sz2'),sz3:gv('s_sz3'),sz4:gv('s_sz4'),mat:gv('s_mat'),plating:gv('s_plating'),wt:gv('s_wt'),engr:gv('s_engr'),clrchi:gv('s_clrchi'),card:gv('s_card'),desc:gv('s_desc'),devNote:gv('s_devNote'),caution:gv('s_caution'),status:gv('s_status'),imgs:[...smpImgBuf],refs:[...smpRefBuf],sourceDoc:[...(smpSrcBuf||[])],devCost:+gv('s_devCost')||0,unitPrice:+gv('s_unitPrice')||0,costPrice:+gv('s_costPrice')||0,invNo:gv('s_invNo'),itemCode:gv('s_invNo')};
-  if(id){
-    const i=samples.findIndex(x=>x.id==id);
-    if(i>=0)samples[i]={...samples[i],...obj};
+  // R2 이미지 업로드 후 저장
+  const doSaveSmp = async (uploadedImgs) => {
+    const finalObj = {...obj, imgs: uploadedImgs||obj.imgs};
+    if(id){
+      const i=samples.findIndex(x=>x.id==id);
+      if(i>=0)samples[i]={...samples[i],...finalObj};
+    } else {
+      samples.push({id:Date.now(),createdAt:now,aiParsed:isAi,...finalObj});
+    }
+    save();closeM('mSmp');renderTab();updateBadges();
+    if(!id){showRegToast(finalObj.name,'sample');setTimeout(()=>{const ns=samples[samples.length-1];syncSampleToNotion(ns||finalObj,false);},50);}
+    else{const us=samples.find(x=>x.id==id);syncSampleToNotion(us||finalObj,true);}
+  };
+  // R2 연동 시 이미지 업로드
+  if(notionCfg.workerUrl && smpImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
+    showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
+    uploadImagesToR2([...smpImgBuf]).then(uploaded=>doSaveSmp(uploaded));
   } else {
-    samples.push({id:Date.now(),createdAt:now,aiParsed:isAi,...obj});
+    doSaveSmp(obj.imgs);
   }
-  save();closeM('mSmp');renderTab();updateBadges();
-  if(!id){showRegToast(obj.name,'sample');setTimeout(()=>{const ns=samples[samples.length-1];syncSampleToNotion(ns||obj,false);},50);}
-  else{const us=samples.find(x=>x.id==id);syncSampleToNotion(us||obj,true);}
 }
 function saveAndInvoice(){
   // save first, then open invoice
