@@ -616,8 +616,21 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="form-sec">기본 정보</div>
   <div class="fr3">
     <div class="fg"><label>샘플명 *</label><input class="fi" id="s_name" placeholder="11mm 원형 스톤 원터치"></div>
-    <div class="fg"><label>아이템 유형</label><select class="fs" id="s_type"><option>EARRING</option><option>RING</option><option>NECKLACE</option><option>BRACELET</option><option>BROOCH</option><option>기타</option></select></div>
-    <div class="fg"><label>진행 상태</label><select class="fs" id="s_status"><option>의뢰</option><option>제작중</option><option>수정중</option><option>확정</option><option>취소</option></select></div>
+    <div class="fg"><label>아이템 유형 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(직접입력 가능)</span></label>
+      <input class="fi" id="s_type" list="smpTypeList" placeholder="선택 또는 직접입력">
+      <datalist id="smpTypeList">
+        <option value="EARRING"><option value="RING"><option value="NECKLACE">
+        <option value="BRACELET"><option value="BROOCH"><option value="ANKLET">
+        <option value="PENDANT"><option value="CHARM"><option value="기타">
+      </datalist>
+    </div>
+    <div class="fg"><label>진행 상태 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(직접입력 가능)</span></label>
+      <input class="fi" id="s_status" list="smpStatusList" placeholder="선택 또는 직접입력">
+      <datalist id="smpStatusList">
+        <option value="의뢰"><option value="제작중"><option value="수정중">
+        <option value="확정"><option value="취소"><option value="보류">
+      </datalist>
+    </div>
   </div>
   <div class="fr3">
     <div class="fg" style="position:relative"><label>업체</label>
@@ -631,7 +644,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
   <div class="fr2">
     <div class="fg"><label>발주량</label><input class="fi" id="s_qty" placeholder="1EA"></div>
-    <div class="fg"><label>아이템 번호</label><input class="fi" id="s_itemNo" placeholder="EARRING 1EA"></div>
+    <div class="fg"><label>품번</label><input class="fi" id="s_itemNo" placeholder=""></div>
   </div>
 
   <div class="form-sec">스펙</div>
@@ -650,7 +663,13 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <option value="티타늄"><option value="기타">
       </datalist>
     </div>
-    <div class="fg"><label>도금</label><select class="fs" id="s_plating"><option>실버</option><option>골드</option><option>로즈골드</option><option>무도금</option><option>변색방지 코팅</option><option>기타</option></select></div>
+    <div class="fg"><label>도금 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(직접입력 가능)</span></label>
+      <input class="fi" id="s_plating" list="smpPlatingList" placeholder="선택 또는 직접입력">
+      <datalist id="smpPlatingList">
+        <option value="실버"><option value="골드"><option value="로즈골드">
+        <option value="무도금"><option value="변색방지 코팅"><option value="블랙"><option value="기타">
+      </datalist>
+    </div>
     <div class="fg"><label>중량</label><input class="fi" id="s_wt" placeholder="g"></div>
   </div>
   <div class="fr2">
@@ -838,7 +857,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 <div class="ov" id="mProc"><div class="modal">
   <div class="mt" id="mProc_t">공정 항목</div>
   <input type="hidden" id="p_id">
-  <div class="fr2"><div class="fg"><label>품목명 *</label><input class="fi" id="p_name"></div><div class="fg"><label>업체</label><select class="fs" id="p_vendor"><option>VT</option><option>WB</option><option>TT</option><option>AXI</option><option>YG</option><option>VIVI</option><option>TMT</option><option>BW</option><option>기타</option></select></div></div>
+  <div class="fr2"><div class="fg"><label>품목명 *</label><input class="fi" id="p_name"></div><div class="fg"><label>업체 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(직접입력 가능)</span></label><input class="fi" id="p_vendor" list="pVendorList" placeholder="선택 또는 직접입력"><datalist id="pVendorList"><option value="VT"><option value="WB"><option value="TT"><option value="AXI"><option value="YG"><option value="VIVI"><option value="TMT"><option value="BW"><option value="기타"></datalist></div></div>
   <div class="fr2"><div class="fg"><label>수량</label><input class="fi" id="p_qty"></div><div class="fg"><label>출고 예정일 *</label><input class="fi" type="date" id="p_due"></div></div>
   <div class="fg"><label>현재 단계</label><select class="fs" id="p_stage"><option value="0">주물</option><option value="1">도금</option><option value="2">검품</option><option value="3">포장</option><option value="4">출고</option></select></div>
   
@@ -2927,19 +2946,22 @@ function openDataMgr(){
   openM('mDataMgr');
 }
 function resetAllData(){
-  showConfirm('모든 데이터를 삭제합니다.\n이 작업은 되돌릴 수 없습니다.',()=>{
-    // OEM 데이터
-    [SK.s,SK.o,SK.p,SK.t,SK.a,SK.pd].forEach(k=>localStorage.removeItem(k));
+  showConfirm('모든 데이터를 삭제합니다.\n(샘플·발주·공정·업무·AS·제품DB·청구이력·달력 일정)\n\n설정(API키, 회사정보, Notion 연동)은 유지됩니다.\n이 작업은 되돌릴 수 없습니다.',()=>{
+    // OEM 데이터 (청구이력 SK.iv 포함)
+    [SK.s,SK.o,SK.p,SK.t,SK.a,SK.pd,SK.iv].forEach(k=>localStorage.removeItem(k));
     // 영업 데이터
     [SL_K.cli,SL_K.prop,SL_K.prj].forEach(k=>localStorage.removeItem(k));
     // 체크리스트
     [CL_KEY_WEEK,CL_KEY_MONTH].forEach(k=>localStorage.removeItem(k));
+    // 업로드 이력
+    localStorage.removeItem('ek3_import_hist');
     // 재초기화
-    samples=[];orders=[];procItems=[];tasks=[];asItems=[];productDB=[];
+    samples=[];orders=[];procItems=[];tasks=[];asItems=[];productDB=[];invoiceHistory=[];
     clients=[];proposals=[];projects=[];
     weekChecklist=[];monthChecklist=[];
+    if(window._importHistory)window._importHistory=[];
     _salesInited=false;
-    showToast('✓ 모든 데이터가 삭제되었습니다','var(--grn)',3000);
+    showToast('✓ 모든 데이터가 삭제되었습니다 (달력 포함)','var(--grn)',3000);
     renderTab();updateBadges();
   },'⚠ 전체 데이터 초기화','🗑');
 }
@@ -3141,9 +3163,29 @@ function renderSmpMgrDropdown(kw){
   slLoad();
   const el=document.getElementById('smpMgrDropdown'); if(!el) return;
   const q=(kw||'').toLowerCase().trim();
-  const list=clients.filter(c=>!q||(c.name+' '+(c.initials||'')).toLowerCase().includes(q)).slice(0,10);
+
+  // 고객사 DB가 비어있는 경우 안내
+  if(!clients || !clients.length){
+    el.innerHTML='<div style="padding:10px 12px;font-size:11.5px;color:var(--t3);line-height:1.5">등록된 고객사가 없습니다.<br><span style="color:var(--t2);font-size:10.5px">영업관리 → 고객사 등록 후 사용하거나,<br>직접 이니셜을 입력해 주세요.</span></div>';
+    el.style.display='block';
+    return;
+  }
+
+  // 이니셜 우선 매칭 → 이름 매칭 순으로 정렬
+  let list;
+  if(!q){
+    list=clients.slice(0,10);
+  } else {
+    const initMatch=clients.filter(c=>(c.initials||'').toLowerCase().includes(q));
+    const nameMatch=clients.filter(c=>
+      !(c.initials||'').toLowerCase().includes(q) &&
+      (c.name||'').toLowerCase().includes(q)
+    );
+    list=[...initMatch, ...nameMatch].slice(0,10);
+  }
+
   if(!list.length){
-    el.innerHTML='<div style="padding:10px 12px;font-size:11.5px;color:var(--t3)">일치하는 고객사가 없습니다</div>';
+    el.innerHTML='<div style="padding:10px 12px;font-size:11.5px;color:var(--t3);line-height:1.5">일치하는 고객사가 없습니다.<br><span style="color:var(--t2);font-size:10.5px">입력한 값을 그대로 사용하려면 Enter 또는 Tab</span></div>';
   } else {
     el.innerHTML=list.map(c=>{
       const init=(c.initials||'').trim().toUpperCase()||'??';
@@ -3415,6 +3457,9 @@ function applyParseToOrd(parsed){
 function setSelect(id,val){
   if(!val)return;
   const el=document.getElementById(id);if(!el)return;
+  // input (datalist 포함) 요소인 경우 값 직접 설정
+  if(el.tagName==='INPUT'){ el.value=val; return; }
+  // select 요소인 경우 기존 로직
   for(let i=0;i<el.options.length;i++){
     if(el.options[i].value.includes(val)||val.includes(el.options[i].value)||el.options[i].value===val){el.selectedIndex=i;return;}
   }
