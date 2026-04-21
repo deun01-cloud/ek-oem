@@ -2299,7 +2299,38 @@ function searchProductDB(query){
 // ════════════════════════════════
 const NOTION_CFG_KEY = 'ek_notion_cfg';
 const ANTHROPIC_KEY_SK = 'ek_anthropic_key';
-let anthropicKey = localStorage.getItem(ANTHROPIC_KEY_SK)||'';
+let anthropicKey = '';
+try { anthropicKey = localStorage.getItem(ANTHROPIC_KEY_SK)||''; } catch(e) {}
+
+// Claude API 호출 — Worker 프록시 우선, 없으면 직접 호출
+async function callClaudeAPI(body) {
+  const workerUrl = notionCfg && notionCfg.workerUrl;
+  if (workerUrl) {
+    // Worker 프록시 (CORS 없음)
+    const resp = await fetch(workerUrl + '/claude', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-anthropic-key': anthropicKey  // Worker에 키 없을 경우 대비
+      },
+      body: JSON.stringify(body)
+    });
+    return resp.json();
+  } else {
+    // 직접 호출 (GitHub Pages 등 HTTPS에서만 작동)
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify(body)
+    });
+    return resp.json();
+  }
+}
 let notionCfg = {
   workerUrl: '',
   token: '',
@@ -3018,16 +3049,11 @@ JSON 형식으로만 응답하세요. 다른 텍스트 없이:
   });
 
   try{
-    const resp=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({
+    const data=await callClaudeAPI({
         model:'claude-sonnet-4-20250514',
         max_tokens:1000,
         messages:[{role:'user',content}]
-      })
-    });
-    const data=await resp.json();
+      });
     // API 오류 체크
     if(data.error){
       const errType=data.error.type||'';
@@ -3052,7 +3078,7 @@ JSON 형식으로만 응답하세요. 다른 텍스트 없이:
   }catch(err){
     // Fallback: show manual entry option
     resultEl.innerHTML=`<div style="padding:12px;background:var(--org-bg);border-radius:6px;color:var(--org);font-size:12px">
-      <b>API 연결 필요</b> — AI 자동인식을 사용하려면 Anthropic API 연결이 필요합니다.<br>
+      <b>연결 오류 (${err.message})</b> — CORS 차단일 수 있습니다. Claude.ai 앱(claude.ai)에서 파일을 사용하세요.<br>
       <span style="font-size:11px;margin-top:4px;display:block">아래에서 문서 유형을 직접 선택하여 이미지를 첨부할 수 있습니다.</span>
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="btn bp-blu bs" onclick="openSmpWithImgs(${JSON.stringify(imgs).replace(/"/g,'&quot;')})">📋 샘플의뢰서로 등록</button>
@@ -3717,16 +3743,11 @@ ${csvText}
 }`;
 
   try{
-    const resp=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({
+    const data=await callClaudeAPI({
         model:'claude-sonnet-4-20250514',
         max_tokens:1200,
         messages:[{role:'user',content:[{type:'text',text:prompt}]}]
-      })
-    });
-    const data=await resp.json();
+      });
     if(data.error){
       const errMsg=data.error.message||'API 오류';
       resultEl.innerHTML='<div style="padding:12px;background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;font-size:12px;color:var(--red)"><b>API 오류:</b> '+errMsg+'</div>';
@@ -3738,7 +3759,8 @@ ${csvText}
     catch{parsed={docType:tabType==='sample'?'샘플의뢰서':'발주서',confidence:0,notes:text.slice(0,200)};}
     showTabParseResult(parsed,[],resultEl,tabType,'엑셀/CSV');
   }catch(err){
-    showTabFallback(resultEl,tabType,[]);
+    resultEl.innerHTML='<div style="padding:12px;background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;font-size:12px;color:var(--red)">'
+      +'<b>연결 오류:</b> '+err.message+'</div>';
   }
 }
 
@@ -3767,12 +3789,7 @@ JSON 형식으로만 응답하세요 (다른 텍스트 없이):
   const imgs=filePayloads.filter(fp=>fp.kind==='image');
 
   try{
-    const resp=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1200,messages:[{role:'user',content}]})
-    });
-    const data=await resp.json();
+    const data=await callClaudeAPI({model:'claude-sonnet-4-20250514',max_tokens:1200,messages:[{role:'user',content}]});
     if(data.error){
       const errMsg=data.error.message||'API 오류';
       const isAuth=data.error.type?.includes('auth')||errMsg.includes('API key')||errMsg.includes('authentication');
@@ -3789,7 +3806,10 @@ JSON 형식으로만 응답하세요 (다른 텍스트 없이):
     const srcLabel=filePayloads.some(fp=>fp.kind==='pdf')?'PDF':filePayloads.some(fp=>fp.kind==='image')?'이미지':'파일';
     showTabParseResult(parsed,imgs,resultEl,tabType,srcLabel);
   }catch(err){
-    showTabFallback(resultEl,tabType,imgs);
+    resultEl.innerHTML='<div style="padding:12px;background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;font-size:12px;color:var(--red)">'
+      +'<b>연결 오류:</b> '+err.message
+      +'<br><span style="font-size:11px;color:var(--t2)">CORS 차단일 경우 Claude.ai 앱에서 사용해야 합니다. 브라우저 직접 접근 시 API 키 헤더가 필요합니다.</span>'
+      +'</div>';
   }
 }
 
