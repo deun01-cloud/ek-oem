@@ -2304,14 +2304,23 @@ try { anthropicKey = localStorage.getItem(ANTHROPIC_KEY_SK)||''; } catch(e) {}
 
 // Claude API 호출 — Worker 프록시 우선, 없으면 직접 호출
 async function callClaudeAPI(body) {
-  const workerUrl = notionCfg && notionCfg.workerUrl;
+  // notionCfg가 아직 안 로드됐을 경우 localStorage에서 직접 읽기
+  let workerUrl = '';
+  try {
+    workerUrl = (notionCfg && notionCfg.workerUrl) || '';
+    if(!workerUrl){
+      const cfg = JSON.parse(localStorage.getItem('ek_notion_cfg')||'{}');
+      workerUrl = cfg.workerUrl || '';
+    }
+  } catch(e) {}
+
   if (workerUrl) {
     // Worker 프록시 (CORS 없음)
-    const resp = await fetch(workerUrl + '/claude', {
+    const resp = await fetch(workerUrl.replace(/\/$/, '') + '/claude', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-anthropic-key': anthropicKey  // Worker에 키 없을 경우 대비
+        'x-anthropic-key': anthropicKey
       },
       body: JSON.stringify(body)
     });
