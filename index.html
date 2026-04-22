@@ -2879,7 +2879,7 @@ function initAutoSync(){
 // ════════════════════════════════
 // R2 업로드: base64 dataURL → Worker → R2 버킷 → 퍼블릭 URL 반환
 async function r2Upload(dataUrl, fileName, fileType){
-  if(!notionCfg.workerUrl) return null;
+  if(!notionCfg.workerUrl){ console.warn('[r2Upload] workerUrl 없음'); return null; }
   try{
     const res = await fetch(notionCfg.workerUrl+'/r2/upload',{
       method:'POST',
@@ -2891,12 +2891,22 @@ async function r2Upload(dataUrl, fileName, fileType){
       },
       body: dataUrl  // data:image/xxx;base64,xxx 그대로 전송
     });
-    if(!res.ok) return null;
+    if(!res.ok){
+      const errText=await res.text().catch(()=>'');
+      console.warn(`[r2Upload] HTTP ${res.status} — ${fileName}: ${errText.slice(0,200)}`);
+      return null;
+    }
     const d=await res.json();
-    if(!d.success) return null;
+    if(!d.success){
+      console.warn(`[r2Upload] Worker 응답 실패 — ${fileName}:`, d);
+      return null;
+    }
     // Worker 경유 URL로 변환: workerUrl + /r2/file/key
     return {key:d.key, url: notionCfg.workerUrl+'/r2/file/'+encodeURIComponent(d.key), name:d.name, type:d.type, size:d.size};
-  }catch(e){ console.warn('R2 upload failed:',e.message); return null; }
+  }catch(e){
+    console.warn(`[r2Upload] 네트워크 오류 — ${fileName}:`, e.message);
+    return null;
+  }
 }
 
 // R2 파일 삭제
@@ -2910,8 +2920,9 @@ async function r2Delete(key){
 // type이 없으면 dataURL에서 자동 추출 (예: "data:application/pdf;base64," → "application/pdf")
 async function uploadImagesToR2(imgBuf){
   if(!notionCfg.workerUrl||!imgBuf||!imgBuf.length) return imgBuf;
+  let uploadedCount=0, failedCount=0, alreadyR2=0;
   const results = await Promise.all(imgBuf.map(async img=>{
-    if(!img.url||img.url.startsWith('http')||img.url.startsWith('/r2')) return img; // 이미 업로드된 것
+    if(!img.url||img.url.startsWith('http')||img.url.startsWith('/r2')){ alreadyR2++; return img; } // 이미 업로드된 것
     // type이 없으면 dataURL에서 자동 추출
     let type=img.type;
     if(!type && img.url.startsWith('data:')){
@@ -2920,9 +2931,16 @@ async function uploadImagesToR2(imgBuf){
     }
     type=type||'application/octet-stream';
     const r=await r2Upload(img.url, img.name||'file', type);
-    if(r) return {...img, url:r.url, r2Key:r.key, type:type};
-    return img; // 실패하면 원본 유지
+    if(r){ uploadedCount++; return {...img, url:r.url, r2Key:r.key, type:type}; }
+    failedCount++;
+    console.warn(`[R2] 업로드 실패: ${img.name} (${type})`);
+    return img; // 실패하면 원본 base64 유지 → 로컬 저장
   }));
+  if(failedCount>0){
+    showToast(`⚠ R2 업로드 실패 ${failedCount}개 — 로컬에만 저장됨 (브라우저 초기화 시 사라짐)`,'var(--red)',5000);
+  } else if(uploadedCount>0){
+    console.log(`[R2] ${uploadedCount}개 파일 업로드 완료 (기존 유지 ${alreadyR2}개)`);
+  }
   return results;
 }
 
@@ -3269,7 +3287,35 @@ let prevImages=[], prevIdx=0;
 // STORAGE
 // ════════════════════════════════
 const SK={s:'ek3_smp',o:'ek3_ord',p:'ek3_proc',t:'ek3_task',a:'ek3_as',pd:'ek3_products',iv:'ek3_invoices'};
-function save(){try{localStorage.setItem(SK.s,JSON.stringify(samples));localStorage.setItem(SK.o,JSON.stringify(orders));localStorage.setItem(SK.p,JSON.stringify(procItems));localStorage.setItem(SK.t,JSON.stringify(tasks));localStorage.setItem(SK.a,JSON.stringify(asItems));localStorage.setItem(SK.pd,JSON.stringify(productDB));localStorage.setItem(SK.iv,JSON.stringify(invoiceHistory));}catch(e){showToast('⚠ 저장 용량 초과 — 이미지를 줄여주세요','var(--red)',5000);}}
+function save(){
+  const saveKey=(key, data, label)=>{
+    try{
+      const json=JSON.stringify(data);
+      localStorage.setItem(key, json);
+      return true;
+    }catch(e){
+      console.error(`[save] ${label}(${key}) 저장 실패:`, e.message, '— 크기:', (JSON.stringify(data).length/1024).toFixed(1)+'KB');
+      showToast(`⚠ ${label} 저장 실패 — localStorage 용량 초과`,'var(--red)',5000);
+      return false;
+    }
+  };
+  const results={
+    samples: saveKey(SK.s, samples, '샘플'),
+    orders: saveKey(SK.o, orders, '발주'),
+    proc: saveKey(SK.p, procItems, '공정'),
+    tasks: saveKey(SK.t, tasks, '업무'),
+    as: saveKey(SK.a, asItems, 'AS'),
+    products: saveKey(SK.pd, productDB, '제품DB'),
+    invoices: saveKey(SK.iv, invoiceHistory, '청구이력'),
+  };
+  // 디버깅: 실패가 있으면 전체 용량 진단
+  if(Object.values(results).some(v=>!v)){
+    try{
+      const total=Object.keys(localStorage).reduce((sum,k)=>sum+(localStorage.getItem(k)||'').length,0);
+      console.warn(`[save] localStorage 현재 총 용량: ${(total/1024/1024).toFixed(2)}MB / 한계 5~10MB`);
+    }catch(e){}
+  }
+}
 function load(){try{const s=localStorage.getItem(SK.s);if(s)samples=JSON.parse(s);const o=localStorage.getItem(SK.o);if(o)orders=JSON.parse(o);const p=localStorage.getItem(SK.p);if(p)procItems=JSON.parse(p);const t=localStorage.getItem(SK.t);if(t)tasks=JSON.parse(t);const a=localStorage.getItem(SK.a);if(a)asItems=JSON.parse(a);const pd=localStorage.getItem(SK.pd);if(pd)productDB=JSON.parse(pd);const iv=localStorage.getItem(SK.iv);if(iv)invoiceHistory=JSON.parse(iv);}catch(e){}}
 // ── 데이터 관리 모달 ──
 function saveAnthropicKey(inputId){
@@ -3510,11 +3556,12 @@ function renderSmpPrev(){
         else if(type.includes('sheet')||type.includes('excel')||['XLSX','XLS','CSV'].includes(ext)){ icon='📊'; iconColor='#d8ecd8'; iconText='#1e7a1e'; }
         const sz=im.size ? (im.size>1048576 ? (im.size/1048576).toFixed(1)+'MB' : Math.round(im.size/1024)+'KB') : '';
         if(isImg){
-          // 이미지: 기존 썸네일 스타일
+          // 이미지: 작업지시서용 썸네일 + 카테고리 이동 버튼
           return `<div style="position:relative;border-radius:6px;overflow:hidden;border:2px solid var(--gold-line);flex-shrink:0;width:90px;height:90px">
             <img src="${safeUrl}" style="width:100%;height:100%;object-fit:cover;display:block;cursor:pointer"
               onclick="window._srcPrev_modal=smpSrcBuf;openPrevList(window._srcPrev_modal,${i},true)">
             <button onclick="event.stopPropagation();smpSrcBuf.splice(${i},1);renderSmpPrev()" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;line-height:1;padding:0;z-index:2" title="삭제">✕</button>
+            <button onclick="event.stopPropagation();moveSmpFile('smpSrcBuf',${i},'smpImgBuf')" style="position:absolute;top:2px;left:2px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:9px;padding:1px 6px;font-size:9px;cursor:pointer;z-index:2;font-family:inherit" title="예시 이미지로 이동">→🖼</button>
             <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(139,105,20,.8);color:#fff;font-size:9px;padding:3px 5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📋 ${im.name||'원본'}</div>
           </div>`;
         } else {
@@ -3522,12 +3569,13 @@ function renderSmpPrev(){
           const openLink = safeUrl
             ? `onclick="const a=document.createElement('a');a.href='${safeUrl}';a.download='${safeName}';a.click()"`
             : '';
-          return `<div style="position:relative;display:inline-flex;align-items:center;gap:8px;background:var(--s2);border:1.5px solid var(--gold-line);border-radius:6px;padding:8px 12px 8px 8px;font-size:11.5px;max-width:260px;cursor:pointer" ${openLink} title="클릭하여 다운로드">
+          return `<div style="position:relative;display:inline-flex;align-items:center;gap:8px;background:var(--s2);border:1.5px solid var(--gold-line);border-radius:6px;padding:8px 12px 8px 8px;font-size:11.5px;max-width:280px;cursor:pointer" ${openLink} title="클릭하여 다운로드">
             <span style="display:inline-flex;align-items:center;justify-content:center;min-width:38px;height:38px;background:${iconColor};border-radius:5px;font-size:18px">${icon}</span>
             <div style="min-width:0;flex:1">
               <div style="font-weight:600;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${safeName}">${im.name||'원본'}</div>
               <div style="font-size:9.5px;color:${iconText};font-weight:600">${ext}${sz?' · '+sz:''}</div>
             </div>
+            <button onclick="event.stopPropagation();moveSmpFile('smpSrcBuf',${i},'smpCadBuf')" style="background:none;border:1px solid var(--bdr);border-radius:10px;padding:2px 6px;font-size:9px;cursor:pointer;color:var(--t3);font-family:inherit" title="각인·캐드로 이동">→📐</button>
             <button onclick="event.stopPropagation();smpSrcBuf.splice(${i},1);renderSmpPrev()" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:15px;padding:0 4px;line-height:1;font-family:inherit" title="삭제">×</button>
           </div>`;
         }
@@ -3542,8 +3590,12 @@ function renderSmpPrev(){
 function thumbHtml(im,i,buf,size=80){
   const safeUrl=im.url||'';
   const safeName=(im.name||'').replace(/'/g,'\\\'');
+  const moveBtn = (buf==='smpImgBuf')
+    ? `<button onmousedown="event.stopPropagation()" onclick="event.stopPropagation();event.preventDefault();moveSmpFile('smpImgBuf',${i},'smpSrcBuf')" style="position:absolute;top:2px;left:2px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:9px;padding:1px 6px;font-size:9px;cursor:pointer;z-index:10;font-family:inherit" title="작업지시서로 이동">→📋</button>`
+    : '';
   return `<div class="file-thumb" style="width:${size}px;height:${size}px;position:relative" onclick="openPrev('${buf}',${i})">
     <img src="${safeUrl}" style="width:100%;height:100%;object-fit:cover;display:block">
+    ${moveBtn}
     <button class="ft-del" style="z-index:10" onmousedown="event.stopPropagation()" onclick="event.stopPropagation();event.preventDefault();removeBuf('${buf}',${i})">✕</button>
     <div class="ft-lbl" style="pointer-events:none">${im.name||''}</div>
   </div>`;
@@ -3602,8 +3654,8 @@ function _loadSmpSrcFiles(files){
 }
 
 // ── 통합 드롭존 — 파일 타입/확장자로 자동 분류 ──
-function handleSmpAllFiles(e){ _classifyAndLoad(Array.from(e.target.files)); e.target.value=''; }
-function handleSmpAllDrop(e){ e.preventDefault(); dzOut(document.getElementById('smpAllDz')); _classifyAndLoad(Array.from(e.dataTransfer.files)); }
+function handleSmpAllFiles(e){ _classifyAndLoad(Array.from(e.target.files), 'auto'); e.target.value=''; }
+function handleSmpAllDrop(e){ e.preventDefault(); dzOut(document.getElementById('smpAllDz')); _classifyAndLoad(Array.from(e.dataTransfer.files), 'auto'); }
 function handleSmpAllPaste(e){
   const items=(e.clipboardData||window.clipboardData)?.items||[];
   const files=[];
@@ -3615,34 +3667,34 @@ function handleSmpAllPaste(e){
   }
   if(files.length){
     e.preventDefault();
-    _classifyAndLoad(files);
-    showToast(`📋 ${files.length}개 파일 붙여넣기 완료`,'var(--blu)',1500);
+    // 붙여넣기(스크린샷) 이미지는 "작업지시서" 기본 — 스크린샷/워드 캡처 케이스 많음
+    _classifyAndLoad(files, 'paste');
+    showToast(`📋 ${files.length}개 파일 붙여넣기 → 작업지시서`,'var(--blu)',1800);
   }
 }
-// 파일을 종류별로 분류
-function _classifyFile(f){
+// 파일을 종류별로 분류 (origin: 'auto' = 파일선택/드래그, 'paste' = 붙여넣기)
+function _classifyFile(f, origin){
   const type=(f.type||'').toLowerCase();
   const ext=(f.name||'').split('.').pop().toLowerCase();
   // 1) CAD 파일 우선 판정 (확장자 기반)
   if(['ai','dxf','dwg','stl','3dm','igs','iges','step','stp','obj','skp'].includes(ext)){
     return 'cad';
   }
-  // 2) 이미지 → 예시 이미지
-  if(type.startsWith('image/') || ['jpg','jpeg','png','gif','heic','heif','webp','bmp','svg'].includes(ext)){
-    return 'img';
-  }
-  // 3) PDF/엑셀 → 작업지시서
+  // 2) PDF/엑셀 → 작업지시서
   if(type.includes('pdf') || type.includes('sheet') || type.includes('excel') || type.includes('csv') ||
      ['pdf','xlsx','xls','csv','ods'].includes(ext)){
     return 'src';
   }
+  // 3) 이미지 분류 — 붙여넣기(스크린샷)는 작업지시서 기본, 파일선택/드래그는 예시이미지
+  if(type.startsWith('image/') || ['jpg','jpeg','png','gif','heic','heif','webp','bmp','svg'].includes(ext)){
+    return origin==='paste' ? 'src' : 'img';
+  }
   // 4) 기타 → CAD 영역으로
   return 'cad';
 }
-function _classifyAndLoad(files){
-  let imgCount=0, srcCount=0, cadCount=0;
+function _classifyAndLoad(files, origin){
   files.forEach(f=>{
-    const kind=_classifyFile(f);
+    const kind=_classifyFile(f, origin||'auto');
     const r=new FileReader();
     r.onload=ev=>{
       let nm=f.name;
@@ -3654,19 +3706,27 @@ function _classifyAndLoad(files){
       if(kind==='img'){
         if(smpImgBuf.length>=4){ showToast('⚠ 예시 이미지는 최대 4장까지','var(--org)',2000); return; }
         smpImgBuf.push({url:ev.target.result,name:nm,type:f.type||'image/jpeg'});
-        imgCount++;
       } else if(kind==='src'){
         smpSrcBuf.push({name:nm,type:f.type||'application/octet-stream',size:f.size,url:ev.target.result});
-        srcCount++;
       } else {
         smpCadBuf.push({name:nm,type:f.type||'application/octet-stream',size:f.size,url:ev.target.result});
-        cadCount++;
       }
       renderSmpPrev();
       renderSmpCadPrev();
     };
     r.readAsDataURL(f);
   });
+}
+// 파일을 카테고리 간 이동 (사용자가 수동으로 옮길 때)
+function moveSmpFile(fromBuf, fromIdx, toBuf){
+  const src=window[fromBuf];
+  const dst=window[toBuf];
+  if(!src||!dst||!src[fromIdx])return;
+  if(toBuf==='smpImgBuf' && dst.length>=4){ showToast('⚠ 예시 이미지는 최대 4장까지','var(--org)',2000); return; }
+  const [item]=src.splice(fromIdx,1);
+  dst.push(item);
+  renderSmpPrev();
+  renderSmpCadPrev();
 }
 function renderSmpCadPrev(){
   const el=document.getElementById('smpCadPrev'); if(!el) return;
