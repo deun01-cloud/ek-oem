@@ -92,6 +92,10 @@ tr.row-w:hover td{background:rgba(168,90,16,.08)!important}
 .cal-dn{font-size:11px;font-weight:600;color:var(--t2);width:20px;height:20px;display:flex;align-items:center;justify-content:center;margin-bottom:2px}
 .cal-evt{font-size:9px;padding:1px 4px;border-radius:2px;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;border-left:2px solid;display:flex;align-items:center;gap:2px}
 .cal-evt .cl-init{width:14px;height:14px;font-size:8px;border-radius:3px;flex-shrink:0}
+.cal-evt.ev-done{text-decoration:line-through;text-decoration-thickness:1.5px;text-decoration-color:#000}
+.cal-evt.ev-done .cl-init{text-decoration:none}
+.cal-evt.ev-canceled{text-decoration:line-through;text-decoration-thickness:1.5px;text-decoration-color:var(--red);color:var(--red)}
+.cal-evt.ev-canceled .cl-init{text-decoration:none}
 .ev-ship{background:rgba(192,48,48,.1);border-color:var(--red);color:var(--red)}
 .ev-ord{background:rgba(168,90,16,.1);border-color:var(--org);color:var(--org)}
 .ev-smp{background:rgba(26,109,181,.1);border-color:var(--blu);color:var(--blu)}
@@ -4755,10 +4759,16 @@ function renderWeekSchedulePanel(){
     const ds=toLocalDateStr(d);
     const isToday=ds===todayStr;
     const evts=[];
-    // 발주 출고 (o.ship 기준)
-    orders.filter(o=>o.ship===ds&&o.status!=='출고완료'&&o.status!=='취소').forEach(o=>evts.push({cls:'ev-ord',label:'발주출고',name:o.vendor,detail:`${(o.rows||[]).length}개 품목`}));
-    // 샘플 출고 (s.due = 샘플 납기일 기준)
-    samples.filter(s=>s.due===ds&&s.status!=='취소').forEach(s=>evts.push({cls:'ev-smp',label:'샘플출고',name:s.name,detail:`${s.manager||''} · ${s.status||''}`}));
+    // 발주 출고 (o.ship 기준) — 완료/취소는 삭선으로 표시
+    orders.filter(o=>o.ship===ds).forEach(o=>{
+      const st=o.status||'진행중';
+      evts.push({cls:'ev-ord',label:'발주출고',name:o.vendor,detail:`${(o.rows||[]).length}개 품목`,done:st==='출고완료'||st==='취소',canceled:st==='취소'});
+    });
+    // 샘플 출고 (s.due = 샘플 납기일 기준) — 확정/취소는 삭선
+    samples.filter(s=>s.due===ds).forEach(s=>{
+      const st=s.status||'의뢰';
+      evts.push({cls:'ev-smp',label:'샘플출고',name:s.name,detail:`${s.manager||''} · ${st}`,done:st==='확정'||st==='취소',canceled:st==='취소'});
+    });
     if(evts.length)hasAny=true;
     return{d,ds,isToday,evts};
   });
@@ -4784,8 +4794,11 @@ function renderWeekSchedulePanel(){
           e.cls==='ev-smp'?'background:rgba(26,109,181,.08);border-color:var(--blu)':
           'background:rgba(80,64,160,.06);border-color:var(--prp)'}">
           <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:1px;color:${
-            e.cls==='ev-ship'?'var(--red)':e.cls==='ev-ord'?'var(--org)':e.cls==='ev-smp'?'var(--blu)':'var(--prp)'}">${e.label}</div>
-          <div style="font-size:11.5px;font-weight:500;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.name}</div>
+            e.cls==='ev-ship'?'var(--red)':e.cls==='ev-ord'?'var(--org)':e.cls==='ev-smp'?'var(--blu)':'var(--prp)'}">${e.label}${e.canceled?' (취소)':e.done?' (완료)':''}</div>
+          <div style="font-size:11.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${
+            e.canceled?'text-decoration:line-through;text-decoration-thickness:1.5px;text-decoration-color:var(--red);color:var(--red)':
+            e.done?'text-decoration:line-through;text-decoration-thickness:1.5px;text-decoration-color:#000;color:var(--t1)':
+            'color:var(--t1)'}">${e.name}</div>
           <div style="font-size:10px;color:var(--t3);margin-top:1px">${e.detail}</div>
         </div>`).join('')}
     </div>`;
@@ -4810,24 +4823,34 @@ function renderCalWidget(){
     const ds=toLocalDateStr(d);const r=[];
 
     // 1) 발주 출고 — 발주서의 요청출고일(o.ship) 기준
-    orders.filter(o=>o.ship===ds&&o.status!=='출고완료'&&o.status!=='취소').forEach(o=>{
+    //    출고완료/취소도 표시 (삭선으로 구분)
+    orders.filter(o=>o.ship===ds).forEach(o=>{
       const initBadge=vendorInitHtml(o.vendor, true);
+      const st=o.status||'진행중';
+      const isDone = st==='출고완료' || st==='취소';
       r.push({
         cls:'ev-ord',
+        done: isDone,
+        canceled: st==='취소',
         t:`${initBadge}<span style="margin-left:4px">발주: ${(o.vendor||'').substring(0,6)}</span>`,
         click:`calGoOrder(${o.id})`,
-        title: `${o.vendor||''} — 발주 요청출고일 · 품목 ${(o.rows||[]).length}개`
+        title: `${o.vendor||''} — 발주 요청출고일 · 품목 ${(o.rows||[]).length}개 · ${st}`
       });
     });
 
     // 2) 샘플 출고 — 샘플의뢰서의 납기일(s.due) 기준
-    samples.filter(s=>s.due===ds&&s.status!=='취소').forEach(s=>{
+    //    확정/취소도 표시 (삭선으로 구분)
+    samples.filter(s=>s.due===ds).forEach(s=>{
       const initBadge=vendorInitHtml(s.manager, true);
+      const st=s.status||'의뢰';
+      const isDone = st==='확정' || st==='취소';
       r.push({
         cls:'ev-smp',
+        done: isDone,
+        canceled: st==='취소',
         t:`${initBadge}<span style="margin-left:4px">샘플: ${(s.name||'').substring(0,6)}</span>`,
         click:`calGoSample(${s.id})`,
-        title: `${s.name||''} — ${s.manager||''} · 샘플 납기일 (${s.status||''})`
+        title: `${s.name||''} — ${s.manager||''} · 샘플 납기일 (${st})`
       });
     });
 
@@ -4858,7 +4881,7 @@ function renderCalWidget(){
           <div class="cal-dn" style="width:22px;height:22px;font-size:12px;${isRedDay?'color:var(--red)':''}">${d.getDate()}</div>
           ${holiday?`<span style="font-size:9.5px;color:var(--red);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${holiday}">${holiday}</span>`:''}
         </div>
-        ${ev.slice(0,4).map(e=>`<div class="cal-evt ${e.cls}" style="font-size:10px;padding:2px 5px;margin-bottom:2px;cursor:pointer" onclick="event.stopPropagation();${e.click}" title="${(e.title||'').replace(/"/g,'&quot;')}">${e.t}</div>`).join('')}
+        ${ev.slice(0,4).map(e=>`<div class="cal-evt ${e.cls}${e.done?' ev-done':''}${e.canceled?' ev-canceled':''}" style="font-size:10px;padding:2px 5px;margin-bottom:2px;cursor:pointer" onclick="event.stopPropagation();${e.click}" title="${(e.title||'').replace(/"/g,'&quot;')}">${e.t}</div>`).join('')}
         ${ev.length>4?`<div style="font-size:9px;color:var(--t3);padding-left:4px;cursor:pointer" onclick="event.stopPropagation();calClick('${ds}')">+${ev.length-4}개 더</div>`:''}
       </div>`;
     }).join('')}</div>
@@ -6800,8 +6823,8 @@ function getAutoItems(ds, cat){
         click: p.orderId ? `calGoOrder(${p.orderId})` : `calGoProc(${p.id})`
       });
     });
-    // orderId가 없는 발주 — 공정 연결 안 된 발주
-    orders.filter(o=>o.ship===ds).forEach(o=>{
+    // orderId가 없는 발주 — 공정 연결 안 된 발주 (완료/취소 제외)
+    orders.filter(o=>o.ship===ds&&o.status!=='출고완료'&&o.status!=='취소').forEach(o=>{
       if(!procItems.find(p=>p.orderId===o.id)){
         const cl=matchClient(o.vendor);
         items.push({
@@ -6899,8 +6922,16 @@ function renderMonthView(sc){
   <div class="cal-dow-row">${['월','화','수','목','금','토','일'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}</div>
   <div class="cal-grid">${cells.map(d=>{if(!d)return`<div class="cal-cell other"></div>`;const ds=toLocalDateStr(d);const isT=ds===todayStr;const dow=(d.getDay()+6)%7;
   const evts=[];
-  procItems.filter(p=>!p.shipped&&p.due===ds).forEach(p=>evts.push({cls:'ev-ship',t:`출고: ${p.name.substring(0,7)}`}));
-  orders.filter(o=>o.ship===ds).forEach(o=>evts.push({cls:'ev-ord',t:`납기: ${o.vendor.substring(0,5)}`}));
+  // 발주 출고 (요청출고일 기준) — 완료/취소는 삭선
+  orders.filter(o=>o.ship===ds).forEach(o=>{
+    const st=o.status||'진행중';
+    evts.push({cls:'ev-ord',t:`발주: ${o.vendor.substring(0,5)}`,done:st==='출고완료'||st==='취소',canceled:st==='취소'});
+  });
+  // 샘플 출고 (납기일 기준) — 확정/취소는 삭선
+  samples.filter(s=>s.due===ds).forEach(s=>{
+    const st=s.status||'의뢰';
+    evts.push({cls:'ev-smp',t:`샘플: ${(s.name||'').substring(0,5)}`,done:st==='확정'||st==='취소',canceled:st==='취소'});
+  });
   tasks.filter(t=>t.date===ds&&!t.done).forEach(t=>evts.push({cls:'ev-task',t:t.cont?.substring(0,8)||''}));
   const hol=getHoliday(ds);
   const isRedDay=hol||dow===6;
@@ -6909,7 +6940,7 @@ function renderMonthView(sc){
       <div class="cal-dn" style="${isRedDay?'color:var(--red)':''}">${d.getDate()}</div>
       ${hol?`<span style="font-size:9px;color:var(--red);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${hol}">${hol.length>5?hol.slice(0,4)+'…':hol}</span>`:''}
     </div>
-    ${evts.slice(0,3).map(e=>`<div class="cal-evt ${e.cls}">${e.t}</div>`).join('')}${evts.length>3?`<div style="font-size:9px;color:var(--t3);padding-left:3px">+${evts.length-3}</div>`:''}
+    ${evts.slice(0,3).map(e=>`<div class="cal-evt ${e.cls}${e.done?' ev-done':''}${e.canceled?' ev-canceled':''}">${e.t}</div>`).join('')}${evts.length>3?`<div style="font-size:9px;color:var(--t3);padding-left:3px">+${evts.length-3}</div>`:''}
   </div>`;}).join('')}</div>`;
 }
 
