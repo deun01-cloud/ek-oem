@@ -4979,7 +4979,24 @@ function parseOrdQty(v){
 
 function renderOrdRows(){
   const w=document.getElementById('ordRowsWrap');if(!w)return;
-  w.innerHTML=ordRowsBuf.map((r,i)=>{
+
+  // 컬럼 헤더 (맨 위에 1회만) + 공유 datalist
+  const header=`
+  <datalist id="ordPlatingList"><option value="실버"><option value="골드"><option value="로즈골드"><option value="무도금"><option value="건메탈"><option value="블랙"><option value="기타"></datalist>
+  <datalist id="ordMatList"><option value="브라스 (BRASS)"><option value="925 실버"><option value="14K 골드"><option value="스테인리스"><option value="써지컬스틸"><option value="아연합금"><option value="기타"></datalist>
+  <div style="display:grid;grid-template-columns:22px 28px 1fr 60px 80px 100px 65px 90px 28px;gap:4px;align-items:center;padding:6px 0 4px 0;border-bottom:1px solid var(--bdr);margin-bottom:2px;font-size:10px;color:var(--t3);font-weight:600;letter-spacing:.3px">
+    <div style="text-align:center">#</div>
+    <div style="text-align:center">검색</div>
+    <div>품목명</div>
+    <div style="text-align:center">발주량</div>
+    <div style="text-align:center">도금</div>
+    <div style="text-align:center">소재</div>
+    <div style="text-align:center">규격</div>
+    <div style="text-align:right;padding-right:4px">단가(원)</div>
+    <div></div>
+  </div>`;
+
+  const rows=ordRowsBuf.map((r,i)=>{
     const ordQty=parseOrdQty(r.qty);
     // rcvHistory: [{date, qty, note}]
     const hist=r.rcvHistory||[];
@@ -5004,17 +5021,8 @@ function renderOrdRows(){
         <input class="fi" value="${r.qty||''}" oninput="ordRowsBuf[${i}].qty=this.value;renderOrdRows()" placeholder="발주량" style="font-size:11.5px;padding:4px 7px;text-align:center;width:100%" title="발주 수량 (예: 80, '각 20개 (총 80개)')">
         ${(r.qty&&String(r.qty).trim()&&parseOrdQty(r.qty)>0&&String(parseOrdQty(r.qty))!==String(r.qty).trim())?`<div style="position:absolute;top:100%;left:0;right:0;font-size:9px;color:var(--gold-lt);text-align:center;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="잔량 계산에 사용되는 수량">= ${parseOrdQty(r.qty).toLocaleString()}개</div>`:''}
       </div>
-      <select class="fs" onchange="ordRowsBuf[${i}].plating=this.value" style="font-size:11px;padding:3px 4px">
-        <option ${r.plating==='실버'?'selected':''}>실버</option>
-        <option ${r.plating==='골드'?'selected':''}>골드</option>
-        <option ${r.plating==='로즈골드'?'selected':''}>로즈골드</option>
-        <option ${r.plating==='무도금'?'selected':''}>무도금</option>
-      </select>
-      <select class="fs" onchange="ordRowsBuf[${i}].mat=this.value" style="font-size:11px;padding:3px 4px">
-        <option ${(r.mat||'').includes('브라스')?'selected':''}>브라스 (BRASS)</option>
-        <option ${(r.mat||'').includes('925')?'selected':''}>925 실버</option>
-        <option>스테인리스</option>
-      </select>
+      <input class="fi" list="ordPlatingList" value="${(r.plating||'').replace(/"/g,'&quot;')}" oninput="ordRowsBuf[${i}].plating=this.value" placeholder="도금" style="font-size:11px;padding:4px 6px" title="선택 또는 직접입력">
+      <input class="fi" list="ordMatList" value="${(r.mat||'').replace(/"/g,'&quot;')}" oninput="ordRowsBuf[${i}].mat=this.value" placeholder="소재" style="font-size:11px;padding:4px 6px" title="선택 또는 직접입력">
       <input class="fi" value="${r.size||''}" oninput="ordRowsBuf[${i}].size=this.value" placeholder="11mm" style="font-size:11.5px;padding:4px 7px">
       <input class="fi" type="number" value="${r.unitPrice||''}" oninput="ordRowsBuf[${i}].unitPrice=+this.value" placeholder="단가" style="font-size:11px;padding:4px 6px;text-align:right">
       <button onclick="ordRowsBuf.splice(${i},1);renderOrdRows()" style="padding:3px 5px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-size:12px;color:var(--t3)">×</button>
@@ -5073,6 +5081,8 @@ function renderOrdRows(){
     </div>`;})():''}
   </div>`;
   }).join('');
+
+  w.innerHTML = header + rows;
 }
 function addOrdRow(){ordRowsBuf.push({name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:'',itemCode:'',unitPrice:0,rcvHistory:[]});renderOrdRows();}
 
