@@ -1005,6 +1005,29 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
 </div></div>
 
+<!-- 발주/샘플 첨부 파일 미리보기 모달 (PDF·Excel·기타) -->
+<div class="ov" id="mFilePrev" style="z-index:400"><div class="modal wide" style="max-width:1000px;max-height:92vh;overflow:hidden;padding:0;display:flex;flex-direction:column">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid var(--bdr);background:var(--s1);flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">
+      <span id="mFilePrev_icon" style="font-size:18px">📎</span>
+      <div style="min-width:0;flex:1">
+        <div id="mFilePrev_name" style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">파일명</div>
+        <div id="mFilePrev_meta" style="font-size:10.5px;color:var(--t3);margin-top:1px"></div>
+      </div>
+      <div id="mFilePrev_nav" style="display:none;align-items:center;gap:6px;flex-shrink:0">
+        <button class="btn bgo bs" onclick="navFilePrev(-1)" title="이전 파일">◀</button>
+        <span id="mFilePrev_idx" style="font-size:11px;color:var(--t2);font-family:monospace">1 / 1</span>
+        <button class="btn bgo bs" onclick="navFilePrev(1)" title="다음 파일">▶</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0;margin-left:12px">
+      <a id="mFilePrev_dl" download class="btn bgo bs" style="text-decoration:none;padding:6px 12px">⬇ 다운로드</a>
+      <button class="btn bgo bs" onclick="closeM('mFilePrev')">✕ 닫기</button>
+    </div>
+  </div>
+  <div id="mFilePrev_body" style="flex:1;overflow:auto;background:#f5f5f5;padding:0;min-height:400px"></div>
+</div></div>
+
 <!-- 제품DB 등록/수정 모달 -->
 <div class="ov" id="mProduct"><div class="modal wide" style="max-width:640px">
   <div class="mt" id="mProduct_t">📦 제품 등록</div>
@@ -3492,7 +3515,7 @@ function openM(id){document.getElementById(id)?.classList.add('open');}
 
 // 편집용 모달들 — 바깥 클릭이나 ESC로 실수로 닫히지 않게 보호
 // (저장/취소 버튼을 통해서만 닫혀야 하는 모달들)
-const PROTECTED_MODALS=['mSmp','mOrd','mCl','mProp','mProc','mTask','mProduct','mComp','mInv','mPrintPreview','mConfirm','mNotion','mDataMgr','mItemSearch','mVendorSearch','mClientImport','mProductImport','mOrdDocQty','mInvDetail','mImportHist'];
+const PROTECTED_MODALS=['mSmp','mOrd','mCl','mProp','mProc','mTask','mProduct','mComp','mInv','mPrintPreview','mConfirm','mNotion','mDataMgr','mItemSearch','mVendorSearch','mClientImport','mProductImport','mOrdDocQty','mInvDetail','mImportHist','mFilePrev'];
 document.addEventListener('DOMContentLoaded',()=>{
   PROTECTED_MODALS.forEach(id=>{
     const ov=document.getElementById(id);
@@ -4043,9 +4066,11 @@ function showParseResult(parsed,imgs,resultEl){
 
 function applyParseToSmp(parsed,imgList){
   const s=parsed.sample||{};
-  const imgs=Array.isArray(imgList)?imgList.map(im=>({url:im.url,name:im.name||'업로드 이미지'})):[];
+  const imgs=Array.isArray(imgList)?imgList.map(im=>({url:im.url,name:im.name||'업로드 이미지',type:im.type||'image/jpeg'})):[];
   smpImgBuf=[...imgs];
-  smpSrcBuf=[...imgs];
+  // 업로드된 원본 파일 전체(엑셀/PDF 포함)를 sourceDoc(작업지시서)로
+  const origFiles=Array.isArray(window._pSmpFiles)?[...window._pSmpFiles]:[];
+  smpSrcBuf = origFiles.length ? origFiles : [...imgs];
   smpCadBuf=[];
   openSmpModal(null);
   setTimeout(()=>{
@@ -4080,11 +4105,14 @@ function onCostPriceInput(){
 function applyParseToOrd(parsed){
   const o=parsed.order||{};
   ordRowsBuf=o.rows&&o.rows.length?o.rows:[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];
+  // 업로드했던 원본 파일(엑셀/PDF/이미지)을 발주서 첨부파일로 이어받음
+  ordFileBuf=Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[];
   openOrdModal(null);
   setTimeout(()=>{
     sv('o_vendor',o.vendor);sv('o_date',o.date);sv('o_ship',o.shipDate);sv('o_manager',o.manager);
     document.getElementById('ord_ai_badge').style.display='';
     renderOrdRows();
+    renderOrdFilePrev();
   },100);
 }
 
@@ -4796,6 +4824,22 @@ function processTabFiles(files,tabType){
     return;
   }
 
+  // 원본 파일들을 base64로 보관 (발주/샘플 등록 시 첨부로 저장)
+  const bufKey=tabType==='sample'?'_pSmpFiles':'_pOrdFiles';
+  window[bufKey]=[];
+  valid.forEach(f=>{
+    const r=new FileReader();
+    r.onload=ev=>{
+      window[bufKey].push({
+        name:f.name,
+        type:f.type||'application/octet-stream',
+        size:f.size,
+        url:ev.target.result
+      });
+    };
+    r.readAsDataURL(f);
+  });
+
   // Show file list badge
   const fileNames=valid.map(f=>{
     const k=getFileKind(f);
@@ -5281,7 +5325,7 @@ function showTabParseResult(parsed,imgs,resultEl,tabType,srcLabel){
 }
 
 // ── 샘플 바로 등록
-function quickRegSample(){
+async function quickRegSample(){
   var parsed=window._pSmp;
   var imgList=window['_pImgList_sample']||[];
   if(!parsed||!parsed.sample){
@@ -5295,7 +5339,20 @@ function quickRegSample(){
     return;
   }
   var now=new Date().toISOString();
-  samples.push({
+
+  // 업로드된 원본 파일(엑셀/PDF/이미지 전체)을 sourceDoc로 저장
+  var origFiles=Array.isArray(window._pSmpFiles)?[...window._pSmpFiles]:[];
+  if(notionCfg.workerUrl && origFiles.some(f=>f.url&&String(f.url).startsWith('data:'))){
+    showToast('🔄 원본 파일 업로드 중...','var(--blu)',2500);
+    origFiles=await uploadImagesToR2(origFiles);
+  }
+  // AI에 보낸 이미지 따로도 R2에 업로드 (예시 이미지로 쓸 수 있음)
+  var uploadedImgs=imgList;
+  if(notionCfg.workerUrl && imgList.some(im=>im.url&&String(im.url).startsWith('data:'))){
+    uploadedImgs=await uploadImagesToR2(imgList.map(im=>({url:im.url,name:im.name,type:im.type||'image/jpeg'})));
+  }
+
+  var newSmp={
     id:Date.now(),createdAt:now,aiParsed:true,
     name:s.name,type:s.type||'',manager:s.manager||'',
     reqDate:s.reqDate||todayStr,due:s.due||'',qty:s.qty||'',
@@ -5303,9 +5360,16 @@ function quickRegSample(){
     mat:s.mat||'',plating:s.plating||'',wt:'',
     engr:s.engr||'',clrchi:'',card:'',
     desc:s.desc||'',devNote:s.devNote||'',caution:s.caution||'',
-    status:'의뢰',imgs:imgList,refs:[],sourceDoc:imgList
-  });
+    status:'의뢰',imgs:uploadedImgs,refs:[],
+    // 엑셀/PDF 원본은 sourceDoc에 저장
+    sourceDoc: origFiles.length ? origFiles : uploadedImgs,
+    cadFiles:[]
+  };
+  samples.push(newSmp);
   save();
+  // Notion 동기화
+  setTimeout(()=>syncSampleToNotion(newSmp,false),50);
+  window._pSmpFiles=[];
   // Show toast immediately, defer re-render so onclick can clear result div first
   showRegToast(s.name,'sample');
   setTimeout(function(){renderTab();updateBadges();},50);
@@ -5343,12 +5407,20 @@ async function quickRegOrder(){
     });
   }
 
+  // 업로드했던 원본 파일들(엑셀/PDF 등)도 발주서 첨부로 저장
+  var origFiles=Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[];
+  if(notionCfg.workerUrl && origFiles.some(f=>f.url&&String(f.url).startsWith('data:'))){
+    showToast('🔄 원본 파일 업로드 중...','var(--blu)',2500);
+    origFiles=await uploadImagesToR2(origFiles);
+  }
+
   var ordId=Date.now();
   var newOrd={
     id:ordId,createdAt:now,aiParsed:true,
     vendor:o.vendor,date:o.date||todayStr,
     ship:o.shipDate||'',manager:o.manager||'',
-    no:'ORD-'+ordId,memo:'',rows:rows
+    no:'ORD-'+ordId,memo:'',rows:rows,
+    files:origFiles
   };
   orders.push(newOrd);
   if(o.shipDate){
@@ -5364,6 +5436,8 @@ async function quickRegOrder(){
   save();
   // Notion 동기화
   setTimeout(()=>syncOrderToNotion(newOrd,false),50);
+  // 다음 파일 업로드를 위해 버퍼 비움
+  window._pOrdFiles=[];
   showRegToast(o.vendor,'order');
   setTimeout(function(){renderTab();updateBadges();},50);
 }
@@ -5747,16 +5821,143 @@ function toggleProcSection(ordId){
   if(arrow)arrow.style.transform=isOpen?'':'rotate(90deg)';
 }
 
+// 발주서 첨부 파일 미리보기 — PDF·Excel·이미지·기타 모두 지원
+// 모달 상태를 window._filePrevState에 저장 (여러 파일 간 이동 가능)
 function showOrdFiles(ordId){
   const o=orders.find(x=>x.id==ordId);
-  if(!o||!o.files||!o.files.length)return;
-  // Reuse the existing image preview overlay
-  const imgFiles=o.files.filter(f=>f.type&&f.type.startsWith('image/'));
-  if(imgFiles.length){
-    openPrevList(imgFiles.map(f=>({url:f.url,name:f.name})),0,false);
-  } else {
-    // For non-image files, show toast with filenames
-    showToast('📎 '+o.files.map(f=>f.name).join(', '),'var(--blu)',4000);
+  if(!o||!o.files||!o.files.length){ showToast('⚠ 첨부 파일이 없습니다','var(--org)'); return; }
+  openFilePreviewList(o.files, 0);
+}
+
+// 임의 파일 배열을 받아 첫번째부터 미리보기 (공용 함수)
+function openFilePreviewList(files, startIdx){
+  if(!files||!files.length) return;
+  window._filePrevState={
+    files:files.map(f=>({name:f.name||'파일',url:f.url,type:f.type||'',size:f.size})),
+    idx: Math.max(0, Math.min(startIdx||0, files.length-1))
+  };
+  openM('mFilePrev');
+  renderFilePreview();
+}
+function navFilePrev(delta){
+  const st=window._filePrevState; if(!st) return;
+  st.idx = Math.max(0, Math.min(st.idx+delta, st.files.length-1));
+  renderFilePreview();
+}
+function renderFilePreview(){
+  const st=window._filePrevState; if(!st) return;
+  const f=st.files[st.idx]; if(!f) return;
+  const nameEl=document.getElementById('mFilePrev_name');
+  const iconEl=document.getElementById('mFilePrev_icon');
+  const metaEl=document.getElementById('mFilePrev_meta');
+  const dlEl=document.getElementById('mFilePrev_dl');
+  const body=document.getElementById('mFilePrev_body');
+  const navEl=document.getElementById('mFilePrev_nav');
+  const idxEl=document.getElementById('mFilePrev_idx');
+  if(!body) return;
+
+  // 파일 메타
+  const type=(f.type||'').toLowerCase();
+  const ext=(f.name||'').split('.').pop().toLowerCase();
+  const isImg = type.startsWith('image/') || ['jpg','jpeg','png','gif','webp','heic','heif','bmp','svg'].includes(ext) || (f.url||'').startsWith('data:image/');
+  const isPdf = type.includes('pdf') || ext==='pdf';
+  const isXl = type.includes('sheet') || type.includes('excel') || ['xlsx','xls','csv','ods'].includes(ext);
+  const sz = f.size ? (f.size>1048576?(f.size/1048576).toFixed(1)+'MB':Math.round(f.size/1024)+'KB') : '';
+  const icon = isImg?'🖼':isPdf?'📄':isXl?'📊':'📎';
+
+  if(nameEl) nameEl.textContent=f.name||'파일';
+  if(iconEl) iconEl.textContent=icon;
+  if(metaEl) metaEl.textContent=[ext.toUpperCase(), sz].filter(Boolean).join(' · ');
+  if(dlEl){ dlEl.href=f.url||'#'; dlEl.download=f.name||'file'; }
+  if(navEl){
+    if(st.files.length>1){ navEl.style.display='flex'; }
+    else { navEl.style.display='none'; }
+  }
+  if(idxEl) idxEl.textContent=(st.idx+1)+' / '+st.files.length;
+
+  // 본문 렌더
+  body.innerHTML='<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">로딩 중...</div>';
+  try{
+    if(isImg){
+      body.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;min-height:400px;padding:20px">
+        <img src="${f.url}" style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:6px;box-shadow:0 2px 12px rgba(0,0,0,.15)">
+      </div>`;
+    } else if(isPdf){
+      // PDF는 iframe으로 (dataURL 또는 http URL 모두 작동)
+      body.innerHTML=`<iframe src="${f.url}" style="width:100%;height:calc(92vh - 60px);border:none;background:#fff" title="${(f.name||'').replace(/"/g,'&quot;')}"></iframe>`;
+    } else if(isXl){
+      // 엑셀/CSV: SheetJS로 읽어서 테이블 출력
+      renderExcelPreview(f, body);
+    } else {
+      // 기타: 다운로드 안내
+      body.innerHTML=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:360px;padding:40px;gap:16px;color:var(--t2)">
+        <div style="font-size:56px">📎</div>
+        <div style="font-size:14px;font-weight:600">${f.name||'파일'}</div>
+        <div style="font-size:11.5px;color:var(--t3)">이 파일 형식은 브라우저에서 직접 열 수 없습니다</div>
+        <a href="${f.url}" download="${(f.name||'file').replace(/"/g,'&quot;')}" class="btn bp" style="text-decoration:none;padding:9px 28px;font-size:13px">⬇ 다운로드하여 열기</a>
+      </div>`;
+    }
+  }catch(e){
+    body.innerHTML=`<div style="padding:20px;color:var(--red);font-size:12px">미리보기 오류: ${e.message}</div>`;
+  }
+}
+
+// 엑셀 미리보기 — SheetJS로 읽어서 HTML 테이블 + 이미지 그리드
+async function renderExcelPreview(f, body){
+  try{
+    // URL이 http면 fetch, dataURL이면 바로 디코드
+    let ab;
+    if(f.url.startsWith('data:')){
+      const base64=f.url.split(',')[1];
+      const bin=atob(base64);
+      const arr=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+      ab=arr.buffer;
+    } else {
+      const res=await fetch(f.url);
+      ab=await res.arrayBuffer();
+    }
+    // 시트 텍스트 + 이미지 추출
+    const wb=XLSX.read(ab,{type:'array'});
+    const rowImages = await extractExcelImages(ab);  // 이전에 만든 함수 재사용
+
+    let html='<div style="padding:16px;background:#f5f5f5">';
+    // 이미지 그리드 (있으면 맨 위)
+    const imgEntries=Object.entries(rowImages).sort((a,b)=>(+a[0])-(+b[0]));
+    if(imgEntries.length){
+      html+='<div style="background:#fff;border-radius:8px;padding:14px 18px;margin-bottom:14px;box-shadow:0 1px 6px rgba(0,0,0,.05)">'
+        +'<div style="font-size:11px;color:var(--t3);font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.8px">📦 내부 이미지 '+imgEntries.length+'개</div>'
+        +'<div style="display:flex;gap:10px;flex-wrap:wrap">';
+      imgEntries.forEach(([row, dataUrl])=>{
+        html+=`<div style="display:flex;flex-direction:column;align-items:center;gap:3px">
+          <img src="${dataUrl}" style="width:80px;height:80px;object-fit:cover;border-radius:5px;border:1.5px solid var(--gold-line);cursor:pointer"
+            onclick="openPrevList([{url:'${dataUrl}',name:'row${row}'}],0,false)">
+          <div style="font-size:9.5px;color:var(--t3)">행 ${+row+1}</div>
+        </div>`;
+      });
+      html+='</div></div>';
+    }
+    // 시트별 테이블
+    wb.SheetNames.forEach(sn=>{
+      const ws=wb.Sheets[sn];
+      html+='<div style="background:#fff;border-radius:8px;padding:14px 18px;margin-bottom:14px;box-shadow:0 1px 6px rgba(0,0,0,.05);overflow-x:auto">';
+      html+='<div style="font-size:11px;color:var(--t3);font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.8px">📊 '+sn+'</div>';
+      const htmlTbl=XLSX.utils.sheet_to_html(ws,{header:'',footer:'',editable:false});
+      // 기본 스타일 개선
+      html+='<style>#mFilePrev_body table{border-collapse:collapse;font-size:11.5px;font-family:inherit}#mFilePrev_body table td{border:1px solid #ddd;padding:5px 8px;min-width:40px;max-width:280px;word-break:break-all;vertical-align:top}#mFilePrev_body table tr:first-child td{background:var(--gold-bg);font-weight:600}</style>';
+      html+=htmlTbl;
+      html+='</div>';
+    });
+    html+='</div>';
+    body.innerHTML=html;
+  }catch(e){
+    console.warn('엑셀 미리보기 오류:', e);
+    body.innerHTML=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:360px;padding:40px;gap:12px;color:var(--t2)">
+      <div style="font-size:48px">📊</div>
+      <div style="font-size:13px">엑셀 미리보기를 표시할 수 없습니다</div>
+      <div style="font-size:11px;color:var(--t3)">${e.message||''}</div>
+      <a href="${f.url}" download="${(f.name||'file').replace(/"/g,'&quot;')}" class="btn bp" style="text-decoration:none;padding:8px 24px;margin-top:4px">⬇ 엑셀 다운로드</a>
+    </div>`;
   }
 }
 
