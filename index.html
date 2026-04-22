@@ -789,14 +789,14 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   
   <!-- 파일 첨부 (원본·CAD·각인) -->
   <div class="fg" style="margin-top:8px">
-    <label>📎 첨부 파일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">원본 발주서 · CAD · 각인 · 작업지시서</span></label>
-    <div class="drop-zone" id="ordFileDz" style="padding:10px 14px;cursor:pointer;min-height:unset"
+    <label>📎 첨부 파일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">원본 발주서 · CAD · 각인 · 작업지시서 · 클립보드 붙여넣기 지원</span></label>
+    <div class="drop-zone" id="ordFileDz" style="padding:12px 14px;cursor:pointer;min-height:unset" tabindex="0"
       onclick="document.getElementById('ordFileInput').click()"
       ondragover="dzOver(event,this)" ondragleave="dzOut(this)" ondrop="handleOrdFileDrop(event)">
       <input type="file" id="ordFileInput" accept="*/*" multiple style="display:none" onchange="handleOrdFiles(event)">
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-size:18px">📁</span>
-        <span style="font-size:11.5px;color:var(--t3)">이미지 · PDF · 엑셀 · CAD 파일 드래그 또는 클릭</span>
+        <span style="font-size:11.5px;color:var(--t3)">이미지 · PDF · 엑셀 · CAD 파일 드래그 · 클릭 · <b>Ctrl+V 붙여넣기</b></span>
       </div>
     </div>
     <div id="ordFilePrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
@@ -6577,6 +6577,88 @@ function openOrdModal(idOrNull){
   document.getElementById('ord_ai_badge').style.display='none';
   if(!ordRowsBuf||!ordRowsBuf.length)ordRowsBuf=o?(o.rows||[]).map(r=>({...r})):[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];
   renderOrdRows();openM('mOrd');
+
+  // 발주 모달 전용 paste 리스너 등록 (이전 리스너가 있으면 제거)
+  if(_ordPasteHandler){
+    document.removeEventListener('paste', _ordPasteHandler);
+    _ordPasteHandler=null;
+  }
+  _ordPasteHandler=function(e){
+    if(e._ordHandled) return;
+    e._ordHandled=true;
+    const ae=document.activeElement;
+    // 입력 필드에서는 텍스트가 같이 있으면 통과, 파일만 있으면 첨부 처리
+    if(ae && (ae.tagName==='INPUT'||ae.tagName==='TEXTAREA')){
+      const items=(e.clipboardData||{}).items||[];
+      const hasFile=Array.from(items).some(it=>it.kind==='file');
+      const hasText=Array.from(items).some(it=>it.kind==='string');
+      if(hasFile && !hasText){
+        handleOrdPaste(e);
+      }
+      return;
+    }
+    handleOrdPaste(e);
+  };
+  document.addEventListener('paste', _ordPasteHandler);
+}
+let _ordPasteHandler=null;
+// closeM 훅해서 mOrd 닫힐 때 paste 리스너 제거
+(function(){
+  const origCloseM=window.closeM;
+  if(typeof origCloseM==='function' && !window._closeMPatchedForOrd){
+    window._closeMPatchedForOrd=true;
+    window.closeM=function(id){
+      if(id==='mOrd' && _ordPasteHandler){
+        document.removeEventListener('paste', _ordPasteHandler);
+        _ordPasteHandler=null;
+      }
+      return origCloseM(id);
+    };
+  }
+})();
+
+// 발주 모달 Ctrl+V 핸들러
+function handleOrdPaste(e){
+  const cd=e.clipboardData||window.clipboardData;
+  if(!cd) return;
+  const files=[];
+  if(cd.files && cd.files.length){
+    Array.from(cd.files).forEach(f=>files.push(f));
+  }
+  if(cd.items && cd.items.length){
+    Array.from(cd.items).forEach(item=>{
+      if(item.kind==='file'){
+        const f=item.getAsFile();
+        if(f && !files.find(x=>x.name===f.name && x.size===f.size)) files.push(f);
+      }
+    });
+  }
+  if(!files.length) return;
+  e.preventDefault();
+
+  // 클립보드 이미지는 보통 이름이 없음 → 타임스탬프 이름 부여
+  const ts=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+  files.forEach((f,idx)=>{
+    const r=new FileReader();
+    r.onload=ev=>{
+      const fileName=f.name && f.name!=='image.png' ? f.name : `paste_${ts}_${idx+1}.png`;
+      ordFileBuf.push({
+        name:fileName,
+        type:f.type||'image/png',
+        size:f.size,
+        url:ev.target.result
+      });
+      renderOrdFilePrev();
+    };
+    r.readAsDataURL(f);
+  });
+  // 드롭존 반짝 효과
+  const dz=document.getElementById('ordFileDz');
+  if(dz){
+    dz.classList.add('paste-active');
+    setTimeout(()=>dz.classList.remove('paste-active'),600);
+  }
+  showToast(`📋 ${files.length}개 파일 첨부됨`, 'var(--grn)', 1800);
 }
 // 발주량 문자열에서 총수량 추출
 // 예: "20" → 20, "각 20개 (총 80개)" → 80, "50개" → 50, "" → 0
