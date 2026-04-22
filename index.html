@@ -421,6 +421,15 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div id="dataSummary" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:12px"></div>
   </div>
 
+  <!-- 중복 정리 -->
+  <div style="margin-bottom:14px;padding:10px 14px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px">
+    <div style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">🧹 중복 정리</div>
+    <button onclick="deduplicateAllData()" style="width:100%;padding:8px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">
+      중복된 발주서 · 샘플 · 고객사 제거
+    </button>
+    <div style="font-size:10.5px;color:var(--t3);margin-top:6px;opacity:.8">동일한 발주번호/샘플명을 가진 중복 항목을 하나로 합칩니다</div>
+  </div>
+
   <!-- 위험 구역 -->
   <div style="border:1px solid rgba(192,48,48,.3);border-radius:6px;padding:10px 14px;background:var(--red-bg)">
     <div style="font-size:10px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">⚠ 위험 구역</div>
@@ -2859,7 +2868,26 @@ async function pullFromNotion(opts){
         return out;
       });
       // 로컬 전용 데이터(아직 노션에 저장되지 않은 것) 보존
-      const localOnly=local.filter(x=>!x._notionId);
+      // ⚠ 단, remote(merged)에 동일한 내용이 이미 존재하면 제외 (고스트 중복 방지)
+      const localOnly=local.filter(x=>{
+        if(x._notionId) return false; // 이미 Notion에 있는 건 merged에서 처리
+        // 중복 판정: 발주번호(no) 또는 샘플명(name) + 핵심 필드가 동일한 remote가 있으면 제외
+        const key=(item)=>{
+          // 발주: no (발주번호), 샘플: name+reqDate, 고객사: initials, 기타는 name+createdAt
+          if(item.no) return 'no:'+item.no;
+          if(item.name && item.reqDate) return 'smp:'+item.name+'_'+item.reqDate;
+          if(item.initials) return 'cli:'+item.initials;
+          if(item.name) return 'name:'+item.name+'_'+(item.createdAt||'');
+          return null;
+        };
+        const xKey=key(x);
+        if(!xKey) return true;
+        const dup = merged.some(m=>key(m)===xKey);
+        if(dup){
+          console.warn('[merge] 로컬 중복 발견, 제거:', xKey);
+        }
+        return !dup;
+      });
       return [...merged, ...localOnly];
     }
 
@@ -3461,6 +3489,86 @@ function openDataMgr(){
   ].map(([k,v])=>`<div style="display:flex;justify-content:space-between"><span style="color:var(--t3)">${k}</span><span style="font-weight:600;color:var(--t1)">${v}</span></div>`).join('');
   openM('mDataMgr');
 }
+// 중복 제거 — 같은 발주번호/샘플명 등을 가진 항목을 하나로 합침
+function deduplicateAllData(){
+  const countBefore = {
+    orders: orders.length, samples: samples.length,
+    clients: clients.length, proposals: proposals.length,
+    procItems: procItems.length, asItems: asItems.length,
+    productDB: productDB.length, tasks: tasks.length,
+  };
+
+  // 공통 중복 제거 함수
+  // _notionId가 있는 게 우선 (노션과 동기화된 원본)
+  // 그 다음 createdAt이 더 오래된 게 우선 (먼저 만들어진 게 원본)
+  function dedupBy(arr, keyFn){
+    const bucket={};
+    arr.forEach(item=>{
+      const k=keyFn(item);
+      if(!k) return;
+      if(!bucket[k]) bucket[k]=[];
+      bucket[k].push(item);
+    });
+    // 키가 없는 항목은 그대로 유지
+    const noKey=arr.filter(x=>!keyFn(x));
+    const result=[...noKey];
+    Object.values(bucket).forEach(group=>{
+      if(group.length===1){ result.push(group[0]); return; }
+      // 우선순위: 1) _notionId 있는 것, 2) 생성일 오래된 것
+      group.sort((a,b)=>{
+        if(a._notionId && !b._notionId) return -1;
+        if(!a._notionId && b._notionId) return 1;
+        const ta=new Date(a.createdAt||0).getTime();
+        const tb=new Date(b.createdAt||0).getTime();
+        return ta-tb;
+      });
+      result.push(group[0]); // 첫 번째(원본) 채택
+    });
+    return result;
+  }
+
+  // 발주: 발주번호로 중복 판정
+  orders = dedupBy(orders, o=>o.no||null);
+  // 샘플: 샘플명 + 의뢰일
+  samples = dedupBy(samples, s=>s.name?s.name+'_'+(s.reqDate||''):null);
+  // 고객사: 이름 또는 이니셜
+  clients = dedupBy(clients, c=>c.name||c.initials||null);
+  // 영업제안: 제목
+  proposals = dedupBy(proposals, p=>p.title||p.name||null);
+  // 공정: orderId + 품목명
+  procItems = dedupBy(procItems, p=>p.orderId?p.orderId+'_'+p.name:null);
+  // AS: 제목 + 날짜
+  asItems = dedupBy(asItems, a=>a.title?a.title+'_'+(a.date||''):null);
+  // 제품DB: 품목코드
+  productDB = dedupBy(productDB, p=>p.code||null);
+  // 업무: 내용 + 날짜 + 카테고리
+  tasks = dedupBy(tasks, t=>t.cont?t.cont+'_'+(t.date||'')+'_'+(t.cat||''):null);
+
+  save();
+
+  const removed={
+    orders: countBefore.orders-orders.length,
+    samples: countBefore.samples-samples.length,
+    clients: countBefore.clients-clients.length,
+    proposals: countBefore.proposals-proposals.length,
+    procItems: countBefore.procItems-procItems.length,
+    asItems: countBefore.asItems-asItems.length,
+    productDB: countBefore.productDB-productDB.length,
+    tasks: countBefore.tasks-tasks.length,
+  };
+  const totalRemoved=Object.values(removed).reduce((a,b)=>a+b,0);
+  if(totalRemoved===0){
+    showToast('✓ 중복 항목이 발견되지 않았습니다','var(--grn)',3000);
+  } else {
+    const detail=Object.entries(removed).filter(([k,v])=>v>0).map(([k,v])=>{
+      const lbl={orders:'발주',samples:'샘플',clients:'고객사',proposals:'영업제안',procItems:'공정',asItems:'AS',productDB:'제품DB',tasks:'업무'}[k];
+      return lbl+' '+v+'건';
+    }).join(', ');
+    showToast(`✓ ${totalRemoved}건의 중복 항목을 제거했습니다 (${detail})`,'var(--grn)',5000);
+  }
+  renderTab();updateBadges();
+}
+
 function resetAllData(){
   showConfirm('모든 데이터를 삭제합니다.\n(샘플·발주·공정·업무·AS·제품DB·청구이력·달력 일정)\n\n설정(API키, 회사정보, Notion 연동)은 유지됩니다.\n이 작업은 되돌릴 수 없습니다.',()=>{
     // OEM 데이터 (청구이력 SK.iv 포함)
