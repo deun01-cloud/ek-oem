@@ -629,12 +629,14 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <option value="PENDANT"><option value="CHARM"><option value="기타">
       </datalist>
     </div>
-    <div class="fg"><label>진행 상태 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(직접입력 가능)</span></label>
-      <input class="fi" id="s_status" list="smpStatusList" placeholder="선택 또는 직접입력">
-      <datalist id="smpStatusList">
-        <option value="의뢰"><option value="제작중"><option value="수정중">
-        <option value="확정"><option value="취소"><option value="보류">
-      </datalist>
+    <div class="fg"><label>진행 상태</label>
+      <select class="fs" id="s_status">
+        <option value="의뢰">의뢰</option>
+        <option value="제작중">제작중</option>
+        <option value="수정중">수정중</option>
+        <option value="확정">확정</option>
+        <option value="취소">취소</option>
+      </select>
     </div>
   </div>
   <div class="fr3">
@@ -689,7 +691,6 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="fg">
     <div class="drop-zone" id="smpAllDz" onclick="document.getElementById('smpAllInput').click()"
       ondrop="handleSmpAllDrop(event)" ondragover="dzOver(event,this)" ondragleave="dzOut(this)" tabindex="0"
-      onpaste="handleSmpAllPaste(event)"
       style="padding:20px 18px;cursor:pointer;outline:none"
       title="클릭·드래그·Ctrl+V 붙여넣기 모두 가능 — 파일 타입은 자동 분류됩니다">
       <input type="file" id="smpAllInput" accept="*/*" multiple style="display:none" onchange="handleSmpAllFiles(event)">
@@ -3479,12 +3480,35 @@ document.addEventListener('DOMContentLoaded',()=>{
   PROTECTED_MODALS.forEach(id=>{
     const ov=document.getElementById(id);
     if(!ov)return;
-    // 오버레이 자체 클릭 시 이벤트 차단 (바깥 클릭으로 닫히는 행동 방지)
+
+    // mousedown이 어디서 시작됐는지만 추적
+    // - 모달 내부(버튼/입력필드 등) 시작 → true
+    // - 오버레이 배경 시작 → false
+    let _startedInside=false;
+    ov.addEventListener('mousedown',e=>{
+      _startedInside = (e.target !== ov);
+    });
+
+    // click 차단 조건: 오버레이 배경(ov 자체)에서 click이 발생했고,
+    // mousedown도 오버레이 배경이었을 때만 닫힘 방지
+    // (= 순수 바깥 클릭. 드래그는 mousedown이 내부인 경우 포함)
     ov.addEventListener('click',e=>{
-      if(e.target===ov){ // modal 내부가 아니라 오버레이 배경을 직접 눌렀을 때만
-        e.stopPropagation();
-        e.preventDefault();
+      // 배경 click인 경우만 차단 고려
+      if(e.target!==ov) return; // 버튼/필드 클릭은 간섭 없음
+      // 배경 click이 확실한 경우 → 닫히지 않도록 차단
+      e.stopPropagation();
+      e.preventDefault();
+      _startedInside=false;
+    });
+
+    // 드래그 mouseup이 배경에서 발생한 경우 click 이벤트 차단
+    ov.addEventListener('mouseup',e=>{
+      if(_startedInside && e.target===ov){
+        // 안쪽에서 시작된 드래그가 바깥에서 끝남 → 이후 click 이벤트를 무력화
+        // 브라우저는 mousedown과 mouseup의 공통 조상에서 click을 발생시키는데,
+        // 이 경우 click이 ov에서 발생해도 위 click 핸들러가 이미 차단함
       }
+      _startedInside=false;
     });
   });
   // ESC 키로 활성 편집 모달 닫기 방지 (이미지 미리보기는 기존 로직 유지)
@@ -5726,8 +5750,17 @@ function openSmpModal(idOrNull){
   renderSmpCadPrev();
   hideSmpMgrDropdown();
   openM('mSmp');
+  // 이전에 등록된 핸들러가 있다면 반드시 제거 (이중 등록 방지)
+  if(_smpPasteHandler){
+    document.removeEventListener('paste', _smpPasteHandler);
+    _smpPasteHandler=null;
+  }
   // 모달 전역 paste 리스너 등록 (텍스트 입력 중엔 비활성) — 통합 자동분류
   _smpPasteHandler = function(e){
+    // 같은 이벤트가 여러 경로로 들어오는 것 방지
+    if(e._smpHandled) return;
+    e._smpHandled=true;
+
     const ae=document.activeElement;
     if(ae && (ae.tagName==='INPUT'||ae.tagName==='TEXTAREA')){
       // 텍스트 입력 중이지만 클립보드에 파일만 있고 텍스트가 없으면 파일 처리
@@ -6583,9 +6616,13 @@ function printInvoice(){
 }
 
 // ════════════════════════════════
-// CLOSE MODAL ON BG
+// CLOSE MODAL ON BG — 단, 편집 모달(PROTECTED_MODALS)은 제외
+// 편집 모달은 취소/저장/닫기 버튼으로만 닫히도록 보호
 // ════════════════════════════════
-document.querySelectorAll('.ov').forEach(ov=>{ov.addEventListener('click',e=>{if(e.target===ov)ov.classList.remove('open');});});
+document.querySelectorAll('.ov').forEach(ov=>{
+  if(PROTECTED_MODALS.includes(ov.id)) return; // 편집 모달은 바깥 클릭으로 안 닫힘
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.classList.remove('open');});
+});
 
 switchTab('dash',document.querySelector('.tab-btn'));
 
