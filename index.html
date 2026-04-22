@@ -90,7 +90,8 @@ tr.row-w:hover td{background:rgba(168,90,16,.08)!important}
 .cal-cell.holiday{background:rgba(192,48,48,.04)}
 .cal-cell.holiday.today-c{background:linear-gradient(135deg,var(--gold-bg) 0%,rgba(192,48,48,.08) 100%)}
 .cal-dn{font-size:11px;font-weight:600;color:var(--t2);width:20px;height:20px;display:flex;align-items:center;justify-content:center;margin-bottom:2px}
-.cal-evt{font-size:9px;padding:1px 4px;border-radius:2px;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;border-left:2px solid}
+.cal-evt{font-size:9px;padding:1px 4px;border-radius:2px;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;border-left:2px solid;display:flex;align-items:center;gap:2px}
+.cal-evt .cl-init{width:14px;height:14px;font-size:8px;border-radius:3px;flex-shrink:0}
 .ev-ship{background:rgba(192,48,48,.1);border-color:var(--red);color:var(--red)}
 .ev-ord{background:rgba(168,90,16,.1);border-color:var(--org);color:var(--org)}
 .ev-smp{background:rgba(26,109,181,.1);border-color:var(--blu);color:var(--blu)}
@@ -1404,6 +1405,9 @@ function toggleOrdVendorFilter(v){
 
 // data
 let samples=[], orders=[], procItems=[], tasks=[], asItems=[], productDB=[], invoiceHistory=[];
+
+// ── 고객사 이니셜 색상 팔레트 (전역, 상단에 정의해서 TDZ 방지) ──
+const INIT_COLORS=['#1A6DB5','#8B6914','#2E8B2C','#A04010','#5040A0','#B03030','#20808A','#805080','#807020','#308080'];
 
 
 // ════════════════════════════════
@@ -4751,10 +4755,10 @@ function renderWeekSchedulePanel(){
     const ds=toLocalDateStr(d);
     const isToday=ds===todayStr;
     const evts=[];
-    procItems.filter(p=>!p.shipped&&p.due===ds).forEach(p=>evts.push({cls:'ev-ship',label:'출고',name:p.name,detail:`${p.vendor||''} · ${STAGES[p.stageIdx||0]}`}));
-    orders.filter(o=>o.ship===ds).forEach(o=>evts.push({cls:'ev-ord',label:'발주납기',name:o.vendor,detail:`${(o.rows||[]).length}개 품목`}));
-    samples.filter(s=>s.due===ds&&s.status!=='확정'&&s.status!=='취소').forEach(s=>evts.push({cls:'ev-smp',label:'샘플',name:s.name,detail:`${s.manager||''} · ${s.status}`}));
-    tasks.filter(t=>t.date===ds&&!t.done).forEach(t=>evts.push({cls:'ev-task',label:'업무',name:t.cont||'',detail:t.cat||''}));
+    // 발주 출고 (o.ship 기준)
+    orders.filter(o=>o.ship===ds&&o.status!=='출고완료'&&o.status!=='취소').forEach(o=>evts.push({cls:'ev-ord',label:'발주출고',name:o.vendor,detail:`${(o.rows||[]).length}개 품목`}));
+    // 샘플 출고 (s.due = 샘플 납기일 기준)
+    samples.filter(s=>s.due===ds&&s.status!=='취소').forEach(s=>evts.push({cls:'ev-smp',label:'샘플출고',name:s.name,detail:`${s.manager||''} · ${s.status||''}`}));
     if(evts.length)hasAny=true;
     return{d,ds,isToday,evts};
   });
@@ -4804,27 +4808,29 @@ function renderCalWidget(){
   for(let d=1;d<=last.getDate();d++)cells.push(new Date(calY,calM,d));
   function evts(d){
     const ds=toLocalDateStr(d);const r=[];
-    // 공정 출고 (due가 있는 미출고 공정)
-    procItems.filter(p=>!p.shipped&&p.due===ds).forEach(p=>r.push({
-      cls:'ev-ship',
-      t:`출고: ${(p.name||'').substring(0,10)}`,
-      click: p.orderId ? `calGoOrder(${p.orderId})` : `calGoProc(${p.id})`,
-      title: `${p.name||''} — ${p.vendor||''} (${STAGES[p.stageIdx||0]||''})`
-    }));
-    // 발주 납기 — 클릭 시 해당 발주서 열기
-    orders.filter(o=>o.ship===ds).forEach(o=>r.push({
-      cls:'ev-ord',
-      t:`발주: ${(o.vendor||'').substring(0,8)}`,
-      click:`calGoOrder(${o.id})`,
-      title: `${o.vendor||''} — 품목 ${(o.rows||[]).length}개`
-    }));
-    // 샘플 납기 — 클릭 시 샘플 편집 모달
-    samples.filter(s=>s.due===ds&&s.status!=='확정'&&s.status!=='취소').forEach(s=>r.push({
-      cls:'ev-smp',
-      t:`샘플: ${(s.name||'').substring(0,9)}`,
-      click:`calGoSample(${s.id})`,
-      title: `${s.name||''} — ${s.manager||''} (${s.status||''})`
-    }));
+
+    // 1) 발주 출고 — 발주서의 요청출고일(o.ship) 기준
+    orders.filter(o=>o.ship===ds&&o.status!=='출고완료'&&o.status!=='취소').forEach(o=>{
+      const initBadge=vendorInitHtml(o.vendor, true);
+      r.push({
+        cls:'ev-ord',
+        t:`${initBadge}<span style="margin-left:4px">발주: ${(o.vendor||'').substring(0,6)}</span>`,
+        click:`calGoOrder(${o.id})`,
+        title: `${o.vendor||''} — 발주 요청출고일 · 품목 ${(o.rows||[]).length}개`
+      });
+    });
+
+    // 2) 샘플 출고 — 샘플의뢰서의 납기일(s.due) 기준
+    samples.filter(s=>s.due===ds&&s.status!=='취소').forEach(s=>{
+      const initBadge=vendorInitHtml(s.manager, true);
+      r.push({
+        cls:'ev-smp',
+        t:`${initBadge}<span style="margin-left:4px">샘플: ${(s.name||'').substring(0,6)}</span>`,
+        click:`calGoSample(${s.id})`,
+        title: `${s.name||''} — ${s.manager||''} · 샘플 납기일 (${s.status||''})`
+      });
+    });
+
     return r;
   }
   return`<div class="cal-wrap">
@@ -4835,10 +4841,9 @@ function renderCalWidget(){
         <button class="cal-nb" onclick="calM++;if(calM>11){calM=0;calY++;}renderTab()">&#8250;</button>
         <button class="btn bgo bs" onclick="calY=TODAY.getFullYear();calM=TODAY.getMonth();renderTab()" style="margin-left:4px">오늘</button>
       </div>
-      <div style="display:flex;gap:12px;font-size:10.5px;color:var(--t3);flex-wrap:wrap">
-        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(192,48,48,.45);border-radius:2px"></span>출고</span>
-        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(168,90,16,.45);border-radius:2px"></span>발주납기</span>
-        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(26,109,181,.45);border-radius:2px"></span>샘플납기</span>
+      <div style="display:flex;gap:10px;font-size:10.5px;color:var(--t3);flex-wrap:wrap">
+        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(168,90,16,.45);border-radius:2px"></span>발주 출고</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(26,109,181,.45);border-radius:2px"></span>샘플 출고</span>
       </div>
     </div>
     <div class="cal-dow-row">${['월','화','수','목','금','토','일'].map(d=>`<div class="cal-dow" style="padding:8px 4px;font-size:11px">${d}</div>`).join('')}</div>
@@ -7376,11 +7381,20 @@ function renderItemSearchResults(){
     renderItemSearchResults._lastQ=q;
   }
 
-  const pdAll=productDB.filter(p=>!q||(p.code+' '+p.name+' '+p.mat+' '+p.type).toLowerCase().includes(q));
+  const pdAll=productDB.filter(p=>!q||(p.code+' '+p.name+' '+p.mat+' '+p.type).toLowerCase().includes(q))
+    .sort((a,b)=>{
+      const da=a.lastModified||a.createdDate||a.createdAt||'';
+      const db=b.lastModified||b.createdDate||b.createdAt||'';
+      return db.localeCompare(da); // 최근 수정/등록순
+    });
   const smpAll=samples.filter(s=>{
     if(s.status==='취소')return false;
     if(!q)return true;
     return [s.itemCode||'',s.invNo||'',s.name||'',s.manager||'',s.type||'',s.mat||'',s.plating||''].join(' ').toLowerCase().includes(q);
+  }).sort((a,b)=>{
+    const da=a.reqDate||(a.createdAt||'').slice(0,10);
+    const db=b.reqDate||(b.createdAt||'').slice(0,10);
+    return db.localeCompare(da); // 최근 의뢰순
   });
 
   const pdTotal=pdAll.length, smpTotal=smpAll.length;
@@ -7402,13 +7416,25 @@ function renderItemSearchResults(){
 
   const mkPd=p=>{
     const img=p.imgs&&p.imgs.length?`<img src="${p.imgs[0].url}" style="width:48px;height:48px;object-fit:cover;border-radius:5px;flex-shrink:0;border:1px solid var(--bdr)">`:`<div style="width:48px;height:48px;border-radius:5px;background:var(--s3);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📦</div>`;
-    return`<div onclick="applyProductToRow(${p.id})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:5px;margin-bottom:3px"><span style="font-size:9.5px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);font-weight:700">📦 제품DB</span>${p.code?`<span style="font-size:10px;font-family:monospace;color:var(--t3)">${p.code}</span>`:''}</div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div><div style="font-size:10.5px;color:var(--t2)">${p.type||''} · ${p.mat||''} / ${p.plating||''}${p.size?' · '+p.size:''}</div></div><div style="text-align:right;flex-shrink:0">${p.price?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${p.price.toLocaleString()}원</div>`:''}</div></div>`;
+    // 등록일 / 최종수정일
+    const regDate = p.createdDate || (p.createdAt ? p.createdAt.slice(0,10) : '');
+    const modDate = p.lastModified || '';
+    const dateLine = (regDate || modDate)
+      ? `<div style="font-size:9.5px;color:var(--t3);margin-top:2px">${regDate?`📅 등록 ${regDate}`:''}${regDate&&modDate?' · ':''}${modDate?`✎ 수정 ${modDate}`:''}</div>`
+      : '';
+    return`<div onclick="applyProductToRow(${p.id})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:5px;margin-bottom:3px"><span style="font-size:9.5px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);font-weight:700">📦 제품DB</span>${p.code?`<span style="font-size:10px;font-family:monospace;color:var(--t3)">${p.code}</span>`:''}</div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div><div style="font-size:10.5px;color:var(--t2)">${p.type||''} · ${p.mat||''} / ${p.plating||''}${p.size?' · '+p.size:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${p.price?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${p.price.toLocaleString()}원</div>`:''}</div></div>`;
   };
   const mkSmp=s=>{
     const hasCode=!!s.itemCode;
     const stCls={의뢰:'chip',제작중:'cb',수정중:'co',확정:'cg',취소:'chip'}[s.status]||'chip';
     const img=s.imgs&&s.imgs.length?`<img src="${s.imgs[0].url||s.imgs[0]}" style="width:48px;height:48px;object-fit:cover;border-radius:5px;flex-shrink:0;border:1px solid var(--bdr)">`:`<div style="width:48px;height:48px;border-radius:5px;background:var(--s3);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">◎</div>`;
-    return`<div onclick="applyItemToRow(${s.id})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:6px;margin-bottom:3px">${hasCode?`<span style="font-size:10px;font-weight:700;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 6px;border-radius:4px">📌 ${s.itemCode}</span>`:'<span style="font-size:10px;color:var(--t3);background:var(--s2);padding:1px 6px;border-radius:4px">품번없음</span>'}<span class="chip ${stCls}" style="font-size:9.5px">${s.status}</span></div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div><div style="font-size:10.5px;color:var(--t2)">${s.type||''} · ${s.mat||''} / ${s.plating||''}${s.sz1?' · '+s.sz1:''}</div></div><div style="text-align:right;flex-shrink:0">${s.unitPrice?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${s.unitPrice.toLocaleString()}원</div>`:''}</div></div>`;
+    // 의뢰일 · 납기일 · (업데이트일)
+    const reqDate = s.reqDate || (s.createdAt ? s.createdAt.slice(0,10) : '');
+    const dueDate = s.due || '';
+    const dateLine = (reqDate || dueDate)
+      ? `<div style="font-size:9.5px;color:var(--t3);margin-top:2px">${reqDate?`📅 의뢰 ${reqDate}`:''}${reqDate&&dueDate?' → ':''}${dueDate?`납기 <b style="color:var(--t2)">${dueDate}</b>`:''}</div>`
+      : '';
+    return`<div onclick="applyItemToRow(${s.id})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:6px;margin-bottom:3px">${hasCode?`<span style="font-size:10px;font-weight:700;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 6px;border-radius:4px">📌 ${s.itemCode}</span>`:'<span style="font-size:10px;color:var(--t3);background:var(--s2);padding:1px 6px;border-radius:4px">품번없음</span>'}<span class="chip ${stCls}" style="font-size:9.5px">${s.status}</span></div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div><div style="font-size:10.5px;color:var(--t2)">${s.type||''} · ${s.mat||''} / ${s.plating||''}${s.sz1?' · '+s.sz1:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${s.unitPrice?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${s.unitPrice.toLocaleString()}원</div>`:''}</div></div>`;
   };
 
   let html='';
@@ -8592,7 +8618,6 @@ function vClients(c){
 }
 
 // ── 고객사 이니셜 표시 헬퍼 ──
-const INIT_COLORS=['#1A6DB5','#8B6914','#2E8B2C','#A04010','#5040A0','#B03030','#20808A','#805080','#807020','#308080'];
 function clInitColor(cl){
   const idx=clients.findIndex(c=>c.id===(cl.id||cl));
   return INIT_COLORS[Math.max(0,idx)%INIT_COLORS.length];
