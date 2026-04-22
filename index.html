@@ -685,8 +685,18 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="form-sec">디자인 설명 & 이미지</div>
   <div class="fg"><label>디자인 설명</label><textarea class="fta" id="s_desc" rows="3" placeholder="디자인 설명을 입력하세요..."></textarea></div>
 
-  <div class="fg"><label>작업지시서 원본 (업로드 파일) — 클릭하면 전체화면 미리보기</label>
-    <div id="smpSrcPrev" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;min-height:10px"></div>
+  <div class="fg"><label>작업지시서 원본 (업로드 파일) — 클릭하면 전체화면 미리보기 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(이미지 · PDF · 엑셀 / Ctrl+V 붙여넣기 지원)</span></label>
+    <div class="drop-zone" id="smpSrcDz" onclick="document.getElementById('smpSrcInput').click()"
+      ondrop="handleSmpSrcDrop(event)" ondragover="dzOver(event,this)" ondragleave="dzOut(this)" tabindex="0"
+      onpaste="handleSmpSrcPaste(event)"
+      style="padding:14px 18px;cursor:pointer;outline:none"
+      title="클릭·드래그·Ctrl+V 붙여넣기 모두 가능">
+      <input type="file" id="smpSrcInput" accept="image/*,.pdf,.xlsx,.xls,.csv" multiple style="display:none" onchange="handleSmpSrcFiles(event)">
+      <div class="dz-icon" style="font-size:22px">📋</div>
+      <div class="dz-title" style="font-size:12.5px">작업지시서 드래그 · 클릭 · 붙여넣기 (Ctrl+V)</div>
+      <div class="dz-sub" style="font-size:10.5px">이미지(JPG/PNG/HEIC) · PDF · 엑셀(XLSX/XLS/CSV)</div>
+    </div>
+    <div id="smpSrcPrev" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;min-height:10px"></div>
   </div>
 
   <div class="fg"><label>예시 이미지 (최대 4장) — 클릭하면 전체화면 미리보기</label>
@@ -3480,19 +3490,43 @@ function loadFilesToBuf(files,key){
 function renderSmpPrev(){
   const p=document.getElementById('smpImgPrev');
   if(p)p.innerHTML=smpImgBuf.map((im,i)=>thumbHtml(im,i,'smpImgBuf')).join('');
-  // Source doc preview (work order originals)
+  // Source doc preview (work order originals) — 이미지/PDF/엑셀 다 지원
   const srcEl=document.getElementById('smpSrcPrev');
   if(srcEl){
     if(smpSrcBuf&&smpSrcBuf.length){
       srcEl.style.display='flex';
       srcEl.innerHTML=smpSrcBuf.map((im,i)=>{
         const safeUrl=im.url||'';
-        const safeName=(im.name||'원본').replace(/'/g,"\\'");
-        return `<div style="position:relative;cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid var(--gold-line);flex-shrink:0"
-          onclick="window._srcPrev_modal=smpSrcBuf;openPrevList(window._srcPrev_modal,${i},true)">
-          <img src="${safeUrl}" style="width:90px;height:90px;object-fit:cover;display:block">
-          <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(139,105,20,.8);color:#fff;font-size:9px;padding:3px 5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📋 ${im.name||'원본'}</div>
-        </div>`;
+        const safeName=(im.name||'원본').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+        const type=im.type||'';
+        const isImg=type.startsWith('image/') || (safeUrl && safeUrl.startsWith('data:image/'));
+        const ext=((im.name||'').split('.').pop()||'').toUpperCase().slice(0,4);
+        let icon='📋', iconColor='var(--gold-bg)', iconText='var(--gold-lt)';
+        if(type.includes('pdf') || ext==='PDF'){ icon='📄'; iconColor='#ffe5e5'; iconText='#c52828'; }
+        else if(type.includes('sheet')||type.includes('excel')||['XLSX','XLS','CSV'].includes(ext)){ icon='📊'; iconColor='#d8ecd8'; iconText='#1e7a1e'; }
+        const sz=im.size ? (im.size>1048576 ? (im.size/1048576).toFixed(1)+'MB' : Math.round(im.size/1024)+'KB') : '';
+        if(isImg){
+          // 이미지: 기존 썸네일 스타일
+          return `<div style="position:relative;border-radius:6px;overflow:hidden;border:2px solid var(--gold-line);flex-shrink:0;width:90px;height:90px">
+            <img src="${safeUrl}" style="width:100%;height:100%;object-fit:cover;display:block;cursor:pointer"
+              onclick="window._srcPrev_modal=smpSrcBuf;openPrevList(window._srcPrev_modal,${i},true)">
+            <button onclick="event.stopPropagation();smpSrcBuf.splice(${i},1);renderSmpPrev()" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;line-height:1;padding:0;z-index:2" title="삭제">✕</button>
+            <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(139,105,20,.8);color:#fff;font-size:9px;padding:3px 5px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📋 ${im.name||'원본'}</div>
+          </div>`;
+        } else {
+          // PDF/엑셀: 아이콘 + 파일명
+          const openLink = safeUrl
+            ? `onclick="const a=document.createElement('a');a.href='${safeUrl}';a.download='${safeName}';a.click()"`
+            : '';
+          return `<div style="position:relative;display:inline-flex;align-items:center;gap:8px;background:var(--s2);border:1.5px solid var(--gold-line);border-radius:6px;padding:8px 12px 8px 8px;font-size:11.5px;max-width:260px;cursor:pointer" ${openLink} title="클릭하여 다운로드">
+            <span style="display:inline-flex;align-items:center;justify-content:center;min-width:38px;height:38px;background:${iconColor};border-radius:5px;font-size:18px">${icon}</span>
+            <div style="min-width:0;flex:1">
+              <div style="font-weight:600;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${safeName}">${im.name||'원본'}</div>
+              <div style="font-size:9.5px;color:${iconText};font-weight:600">${ext}${sz?' · '+sz:''}</div>
+            </div>
+            <button onclick="event.stopPropagation();smpSrcBuf.splice(${i},1);renderSmpPrev()" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:15px;padding:0 4px;line-height:1;font-family:inherit" title="삭제">×</button>
+          </div>`;
+        }
       }).join('');
     } else {
       srcEl.style.display='none';
@@ -3523,6 +3557,42 @@ function _loadCadFiles(files){
   files.forEach(f=>{
     const r=new FileReader();
     r.onload=ev=>{ smpCadBuf.push({name:f.name,type:f.type,size:f.size,url:ev.target.result}); renderSmpCadPrev(); };
+    r.readAsDataURL(f);
+  });
+}
+
+// ── 작업지시서 원본 파일 업로드 (이미지/PDF/엑셀 + 붙여넣기 지원) ──
+function handleSmpSrcFiles(e){ _loadSmpSrcFiles(Array.from(e.target.files)); e.target.value=''; }
+function handleSmpSrcDrop(e){ e.preventDefault(); dzOut(document.getElementById('smpSrcDz')); _loadSmpSrcFiles(Array.from(e.dataTransfer.files)); }
+function handleSmpSrcPaste(e){
+  const items=(e.clipboardData||window.clipboardData)?.items||[];
+  const files=[];
+  for(const it of items){
+    if(it.kind==='file'){
+      const f=it.getAsFile();
+      if(f) files.push(f);
+    }
+  }
+  if(files.length){
+    e.preventDefault();
+    _loadSmpSrcFiles(files);
+    showToast(`📋 ${files.length}개 파일 붙여넣기 완료`,'var(--blu)',1500);
+  }
+}
+function _loadSmpSrcFiles(files){
+  files.forEach(f=>{
+    const r=new FileReader();
+    r.onload=ev=>{
+      // 이름이 없는 붙여넣기 이미지는 자동 이름 생성
+      let nm=f.name;
+      if(!nm || nm==='image.png'){
+        const ts=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+        const ext=(f.type||'image/png').split('/')[1]||'png';
+        nm=`pasted_${ts}.${ext}`;
+      }
+      smpSrcBuf.push({name:nm,type:f.type||'application/octet-stream',size:f.size,url:ev.target.result});
+      renderSmpPrev();
+    };
     r.readAsDataURL(f);
   });
 }
@@ -5522,7 +5592,39 @@ function openSmpModal(idOrNull){
   renderSmpCadPrev();
   hideSmpMgrDropdown();
   openM('mSmp');
+  // 모달 전역 paste 리스너 등록 (텍스트 입력 중엔 비활성)
+  _smpPasteHandler = function(e){
+    // 현재 포커스가 텍스트 입력 필드면 무시 (일반 텍스트 붙여넣기 방해 금지)
+    const ae=document.activeElement;
+    if(ae && (ae.tagName==='INPUT'||ae.tagName==='TEXTAREA')){
+      // 텍스트 입력 중이지만 클립보드에 파일만 있고 텍스트가 없으면 파일 처리
+      const items=(e.clipboardData||{}).items||[];
+      const hasFile=Array.from(items).some(it=>it.kind==='file');
+      const hasText=Array.from(items).some(it=>it.kind==='string');
+      if(hasFile && !hasText){
+        handleSmpSrcPaste(e);
+      }
+      return;
+    }
+    handleSmpSrcPaste(e);
+  };
+  document.addEventListener('paste', _smpPasteHandler);
 }
+let _smpPasteHandler=null;
+// 기존 closeM 훅해서 mSmp 닫힐 때 paste 리스너 제거
+(function(){
+  const origCloseM=window.closeM;
+  if(typeof origCloseM==='function' && !window._closeMPatchedForSmp){
+    window._closeMPatchedForSmp=true;
+    window.closeM=function(id){
+      if(id==='mSmp' && _smpPasteHandler){
+        document.removeEventListener('paste', _smpPasteHandler);
+        _smpPasteHandler=null;
+      }
+      return origCloseM(id);
+    };
+  }
+})();
 
 function saveSmp(){
   const name=gv('s_name');if(!name)return showToast('⚠ 샘플명을 입력해 주세요','var(--red)');
