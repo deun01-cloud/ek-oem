@@ -1409,6 +1409,8 @@ function toggleOrdVendorFilter(v){
 
 // data
 let samples=[], orders=[], procItems=[], tasks=[], asItems=[], productDB=[], invoiceHistory=[];
+let inquiries=[]; // 고객사 문의 관리
+let newDesigns=[]; // 신규 디자인 제안 관리
 
 // ── 고객사 이니셜 색상 팔레트 (전역, 상단에 정의해서 TDZ 방지) ──
 const INIT_COLORS=['#1A6DB5','#8B6914','#2E8B2C','#A04010','#5040A0','#B03030','#20808A','#805080','#807020','#308080'];
@@ -2738,7 +2740,8 @@ let notionCfg = {
   taskDb:  'fbd18fa997864266868634b0f7496e8a', // 업무일지
   asDb:    'd06349df1c614e9991851b4d3b90c2cb', // AS관리
   invDb:   'c6f0c23a17e24996b8bb9b4e51800213', // 거래명세서 이력
-  productDb: '1ae024e2addf455a90cc57488ede7772', // 제품DB (자동 생성됨)
+  productDb: '1ae024e2addf455a90cc57488ede7772', // 제품DB
+  ndDb:    '201b2b17b3924161b636134229f532ee', // 신규 디자인 제안
 };
 
 function loadNotionCfg(){
@@ -3563,6 +3566,62 @@ async function deleteProposalFromNotion(prop){
 }
 
 // ══════════════════════════════════
+// 신규 디자인 제안 ↔ Notion
+// ══════════════════════════════════
+// 파일 배열 → Notion FILES 속성 형식으로 변환 (URL이 https인 것만, base64/data URL은 제외)
+function ndFilesToNotion(arr){
+  if(!Array.isArray(arr)) return [];
+  return arr
+    .filter(f=>f && f.url && String(f.url).startsWith('http'))
+    .slice(0, 100) // Notion 최대 100
+    .map(f=>({
+      name: (f.name||'file').substring(0, 100),
+      type: 'external',
+      external: { url: f.url }
+    }));
+}
+
+async function syncNewDesignToNotion(nd){
+  if(!notionCfg.workerUrl||!notionCfg.ndDb) return;
+  const p={
+    "디자인명":{"title":[{"text":{"content":nd.title||''}}]},
+    "고객사":{"rich_text":[{"text":{"content":nd.vendor||''}}]},
+    "메모":{"rich_text":[{"text":{"content":(nd.note||'').substring(0,2000)}}]},
+    "로컬ID":{"rich_text":[{"text":{"content":String(nd.id||'')}}]},
+  };
+  if(nd.category) p["카테고리"]={"select":{"name":nd.category}};
+  if(nd.status) p["상태"]={"select":{"name":nd.status}};
+  if(nd.proposedAt) p["제안일"]={"date":{"start":nd.proposedAt}};
+  // FILES 속성 — R2 업로드 완료된 것만
+  const imgFiles = ndFilesToNotion(nd.imgs||[]);
+  const attachFiles = ndFilesToNotion(nd.files||[]);
+  if(imgFiles.length) p["이미지"]={"files":imgFiles};
+  if(attachFiles.length) p["첨부파일"]={"files":attachFiles};
+
+  try{
+    if(nd._notionId){
+      await nUpdate(nd._notionId, p);
+      showToast('☁ Notion 동기화됨','var(--grn)',1500);
+    } else {
+      const r = await nCreate(notionCfg.ndDb, p);
+      if(r?.id){
+        nd._notionId = r.id;
+        slSave();
+        showToast('☁ Notion 저장됨','var(--grn)',1500);
+      }
+    }
+  }catch(e){
+    console.warn('신규 디자인 Notion 동기화 실패:',e);
+  }
+}
+
+async function deleteNewDesignFromNotion(nd){
+  if(nd && nd._notionId) {
+    try{ await nDelete(nd._notionId); }catch(e){ console.warn('ND 삭제 실패:',e); }
+  }
+}
+
+// ══════════════════════════════════
 // 5. 고객사 ↔ Notion
 // ══════════════════════════════════
 async function syncClientToNotion(cl, update){
@@ -3708,10 +3767,20 @@ async function syncInvoiceToNotion(inv, update){
 
 // ── Sales data (declared early to avoid TDZ) ──
 let clients=[], proposals=[], projects=[];
-let _salesInited=false, _salesSubTab='newdesign';
-const SL_K={cli:'ek_v9_cli',prop:'ek_v9_prop',prj:'ek_v9_prj'};
-function slSave(){try{localStorage.setItem(SL_K.cli,JSON.stringify(clients));localStorage.setItem(SL_K.prop,JSON.stringify(proposals));localStorage.setItem(SL_K.prj,JSON.stringify(projects));}catch(e){}}
-function slLoad(){try{const d=k=>JSON.parse(localStorage.getItem(k)||'[]');clients=d(SL_K.cli);proposals=d(SL_K.prop);projects=d(SL_K.prj);}catch(e){}}
+let _salesInited=false, _salesSubTab='inquiry';
+const SL_K={cli:'ek_v9_cli',prop:'ek_v9_prop',prj:'ek_v9_prj',inq:'ek_inquiries',nd:'ek_newdesigns'};
+function slSave(){try{
+  localStorage.setItem(SL_K.cli,JSON.stringify(clients));
+  localStorage.setItem(SL_K.prop,JSON.stringify(proposals));
+  localStorage.setItem(SL_K.prj,JSON.stringify(projects));
+  localStorage.setItem(SL_K.inq,JSON.stringify(inquiries));
+  localStorage.setItem(SL_K.nd,JSON.stringify(newDesigns));
+}catch(e){}}
+function slLoad(){try{
+  const d=k=>JSON.parse(localStorage.getItem(k)||'[]');
+  clients=d(SL_K.cli);proposals=d(SL_K.prop);projects=d(SL_K.prj);
+  inquiries=d(SL_K.inq);newDesigns=d(SL_K.nd);
+}catch(e){}}
 // ── Sales arrow helpers (declared after TODAY/dday are available as functions are hoisted) ──
 const elapsed=d=>d?Math.floor((TODAY-new Date(d))/86400000):0;
 const ddChip=ds=>{const n=dday(ds);if(n===null)return '';if(n<0)return`<span class="dd dd-r">D+${Math.abs(n)}초과</span>`;if(n===0)return`<span class="dd dd-r">D-DAY</span>`;if(n<=3)return`<span class="dd dd-r">D-${n}</span>`;if(n<=7)return`<span class="dd dd-o">D-${n}</span>`;return`<span class="dd dd-g">D-${n}</span>`;};
@@ -8151,8 +8220,9 @@ function renderSalesTab(){
 
   const c=document.getElementById('content');
   c.innerHTML=`
-  <div style="display:flex;border-bottom:1px solid var(--bdr);background:var(--s1);margin:-14px -16px 14px;padding:0 16px">
-    <button class="sl-subtab ${_salesSubTab==='newdesign'?'on':''}" onclick="setSalesSubTab('newdesign')">✏️ 세일즈 현황</button>
+  <div style="display:flex;border-bottom:1px solid var(--bdr);background:var(--s1);margin:-14px -16px 14px;padding:0 16px;overflow-x:auto">
+    <button class="sl-subtab ${_salesSubTab==='inquiry'?'on':''}" onclick="setSalesSubTab('inquiry')">📬 고객사 문의</button>
+    <button class="sl-subtab ${_salesSubTab==='proposals'?'on':''}" onclick="setSalesSubTab('proposals')">💡 신규 제안</button>
     <button class="sl-subtab ${_salesSubTab==='monthly'?'on':''}" onclick="setSalesSubTab('monthly')">📊 월별 실적</button>
     <button class="sl-subtab ${_salesSubTab==='clients'?'on':''}" onclick="setSalesSubTab('clients')">🏢 고객사</button>
   </div>
@@ -8165,9 +8235,8 @@ function setSalesSubTab(tab){
   _salesSubTab=tab;
   // update tab buttons
   document.querySelectorAll('.sl-subtab').forEach(b=>{
-    b.classList.toggle('on', b.textContent.includes(
-      tab==='newdesign'?'세일즈':tab==='monthly'?'월별':'고객사'
-    ));
+    const label = {inquiry:'문의',proposals:'제안',monthly:'월별',clients:'고객사'}[tab];
+    b.classList.toggle('on', label && b.textContent.includes(label));
   });
   renderSalesSubTab();
 }
@@ -8176,9 +8245,11 @@ function renderSalesSubTab(){
   const c=document.getElementById('slTabContent');
   if(!c) return;
   c.innerHTML='';
-  if(_salesSubTab==='newdesign') vNewDesign(c);
+  if(_salesSubTab==='inquiry') vInquiry(c);
+  else if(_salesSubTab==='proposals') vNewProposals(c);
   else if(_salesSubTab==='monthly') vMonthly(c);
   else if(_salesSubTab==='clients') vClients(c);
+  else { _salesSubTab='inquiry'; vInquiry(c); } // fallback: 예전 'newdesign'으로 저장된 상태 복구
 }
 
 // Override closeDp / showClientDp / showClientPropDp to use slDp panel
@@ -8453,8 +8524,14 @@ function vMonthly(c){
   const thisMStr=months[5];
 
   // ── OEM 발주서 기반 월별 집계 ──
-  // unitPrice × qty 합산 (또는 rows의 unitPrice 사용)
+  // 발주서 금액: 발행된 거래명세서 있으면 그 합계, 없으면 품목 단가×수량
   function ordAmt(o){
+    // 1) 이 발주서에 대해 발행된 거래명세서가 있으면 그 공급가액 합계 사용
+    const invs=invoiceHistory.filter(v=>v.ordId===o.id);
+    if(invs.length){
+      return invs.reduce((s,v)=>s+(+v.supplyAmt||0),0);
+    }
+    // 2) 없으면 품목 단가×수량 합계
     return(o.rows||[]).reduce((s,r)=>s+(+(r.unitPrice||0))*(+(r.qty||1)),0);
   }
   const mOrdAmt=months.map(m=>({
@@ -8464,13 +8541,18 @@ function vMonthly(c){
   const mSmpCnt=months.map(m=>samples.filter(s=>s.reqDate&&s.reqDate.startsWith(m)).length);
   const mSmpDone=months.map(m=>samples.filter(s=>s.reqDate&&s.reqDate.startsWith(m)&&s.status==='확정').length);
 
-  // ── 잔여(미완료) 집계 ──
+  // ── 잔여(미완료) 집계 — 발주 상태 기반으로 통일 ──
+  //   · 진행중 발주(status가 출고완료/취소가 아닌 것) = 잔여 건수
+  //   · 그 중 거래명세서 미발행 = 잔여 금액 (발행된 건 이미 청구된 것으로 간주)
   const pendingOrders=orders.filter(o=>{
-    // 공정 미완료 발주서 = linked procItems 중 shipped 아닌 게 있거나 proc 없음
-    const linked=procItems.filter(p=>p.orderId===o.id);
-    return linked.length===0||linked.some(p=>!p.shipped);
+    const st=o.status||'진행중';
+    return st!=='출고완료' && st!=='취소';
   });
-  const pendingOrdAmt=pendingOrders.reduce((s,o)=>s+ordAmt(o),0);
+  // 거래명세서 미발행 발주만 골라서 "예상 금액" 합산
+  const pendingOrdersNotInvoiced=pendingOrders.filter(o=>
+    !invoiceHistory.some(v=>v.ordId===o.id)
+  );
+  const pendingOrdAmt=pendingOrdersNotInvoiced.reduce((s,o)=>s+ordAmt(o),0);
   const pendingOrdCnt=pendingOrders.length;
 
   const pendingSmp=samples.filter(s=>s.status!=='확정'&&s.status!=='취소');
@@ -8512,7 +8594,7 @@ function vMonthly(c){
         <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--org)"></div>
         <div style="font-size:10px;color:var(--org);font-weight:700;margin-bottom:6px">잔여 발주 금액</div>
         <div style="font-size:24px;font-weight:700;color:var(--t1)">${pendingOrdAmt>0?pendingOrdAmt.toLocaleString():'—'}<span style="font-size:12px;font-weight:400;color:var(--t3);margin-left:2px">${pendingOrdAmt>0?'원':''}</span></div>
-        <div style="font-size:10.5px;color:var(--t3);margin-top:4px">단가 × 수량 기준</div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:4px">거래명세서 미발행 · ${pendingOrdersNotInvoiced.length}건</div>
       </div>
       <div style="background:var(--s1);border:2px solid var(--blu);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden">
         <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--blu)"></div>
@@ -8640,6 +8722,700 @@ function vClients(c){
   <tbody>${clients.map(cl=>`<tr><td onclick="showClientDp(${cl.id})" style="cursor:pointer"><span class="cl-lbl">${clInitHtml(cl)}<span class="cn" title="${cl.name}">${cl.name}</span></span></td><td>${cl.contact||''}<br><span class="csub">${cl.phone||''}</span></td><td>${cl.cat||''}</td><td><span class="chip ${cl.grade==='VIP'?'cgold':cl.grade==='우수'?'cg':''}">${cl.grade||''}</span></td><td style="color:var(--t2);font-size:11.5px">${cl.brandStyle||'-'}</td><td style="font-size:11px">${(cl.materials||'').split(',').map(m=>m.trim()).filter(Boolean).map(m=>`<span class="chip" style="font-size:9.5px;margin:1px">${m}</span>`).join('')||'-'}</td><td><span class="chip co" style="font-size:10px">${cl.priceRange||'-'}</span></td><td><span class="chip ${cl.status==='inactive'?'cr':'cg'}">${cl.status==='inactive'?'미활성':'활성'}</span></td><td style="text-align:center"><button onclick="openClModal(${cl.id})" style="padding:3px 8px;font-size:11px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'">수정</button></td></tr>`).join('')}
   </tbody></table></div></div>`;
 }
+
+// ════════════════════════════════
+// 📬 고객사 문의 관리
+// ════════════════════════════════
+let _inqFilter='all';
+function setInqFilter(v){ _inqFilter=v; renderSalesSubTab(); }
+
+function vInquiry(c){
+  let list=[...inquiries];
+  if(_inqFilter==='open') list=list.filter(q=>q.status!=='완료'&&q.status!=='취소');
+  if(_inqFilter==='closed') list=list.filter(q=>q.status==='완료'||q.status==='취소');
+  list.sort((a,b)=>(b.receivedAt||'').localeCompare(a.receivedAt||''));
+
+  const openCnt=inquiries.filter(q=>q.status!=='완료'&&q.status!=='취소').length;
+  const closedCnt=inquiries.filter(q=>q.status==='완료'||q.status==='취소').length;
+
+  const STATUS_COLORS={'접수':'var(--red)','처리중':'var(--org)','답변대기':'var(--blu)','완료':'var(--grn)','취소':'var(--t3)'};
+
+  c.innerHTML=`
+  <div class="card">
+    <div class="ch" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div>
+        <div class="ch-t">📬 고객사 문의 관리</div>
+        <div class="ch-s">고객사로부터 접수된 문의·요청 사항</div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <div style="display:flex;gap:2px;padding:3px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px">
+          <button onclick="setInqFilter('all')" style="padding:5px 12px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${_inqFilter==='all'?'700':'500'};background:${_inqFilter==='all'?'var(--s1)':'transparent'};color:${_inqFilter==='all'?'var(--t1)':'var(--t3)'}">전체 <span style="font-size:10px;opacity:.7">${inquiries.length}</span></button>
+          <button onclick="setInqFilter('open')" style="padding:5px 12px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${_inqFilter==='open'?'700':'500'};background:${_inqFilter==='open'?'var(--s1)':'transparent'};color:${_inqFilter==='open'?'var(--org)':'var(--t3)'}">🔄 처리중 <span style="font-size:10px;opacity:.7">${openCnt}</span></button>
+          <button onclick="setInqFilter('closed')" style="padding:5px 12px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${_inqFilter==='closed'?'700':'500'};background:${_inqFilter==='closed'?'var(--s1)':'transparent'};color:${_inqFilter==='closed'?'var(--grn)':'var(--t3)'}">✓ 완료 <span style="font-size:10px;opacity:.7">${closedCnt}</span></button>
+        </div>
+        <button class="btn bp bs" onclick="openInqModal()">+ 문의 등록</button>
+      </div>
+    </div>
+    ${list.length ? `
+    <div class="tbl-wrap"><table>
+      <thead><tr>
+        <th style="width:90px">접수일</th>
+        <th style="width:140px">고객사</th>
+        <th>문의 내용</th>
+        <th style="width:90px">카테고리</th>
+        <th style="width:90px">담당자</th>
+        <th style="width:80px">상태</th>
+        <th style="width:50px"></th>
+      </tr></thead>
+      <tbody>
+      ${list.map(q=>{
+        const isDone=q.status==='완료'||q.status==='취소';
+        const stColor=STATUS_COLORS[q.status]||'var(--t3)';
+        return `<tr style="cursor:pointer;${isDone?'opacity:.65':''}" onclick="openInqModal(${q.id})">
+          <td style="font-size:11px;color:var(--t3);white-space:nowrap">${q.receivedAt||''}</td>
+          <td><span class="cl-lbl">${vendorInitHtml(q.vendor,true)}<span class="cn">${q.vendor||'-'}</span></span></td>
+          <td style="font-size:12px">${(q.content||'').slice(0,80)}${(q.content||'').length>80?'…':''}</td>
+          <td><span class="chip" style="font-size:10px">${q.category||'일반'}</span></td>
+          <td style="font-size:11.5px;color:var(--t2)">${q.manager||'-'}</td>
+          <td><span class="chip" style="font-size:10.5px;background:${stColor}15;border-color:${stColor}40;color:${stColor};font-weight:600">${q.status||'접수'}</span></td>
+          <td style="text-align:center"><button onclick="event.stopPropagation();deleteInq(${q.id})" style="padding:2px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;color:var(--t3);font-family:inherit">삭제</button></td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table></div>
+    ` : `<div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">
+      ${_inqFilter==='open'?'처리 중인 문의가 없습니다':_inqFilter==='closed'?'완료된 문의가 없습니다':'등록된 문의가 없습니다 — 오른쪽 위 <b>+ 문의 등록</b>으로 추가하세요'}
+    </div>`}
+  </div>`;
+}
+
+function openInqModal(id){
+  const q = id ? inquiries.find(x=>x.id==id) : null;
+  const todayS = toLocalDateStr(new Date());
+  const vendorOpts = clients.map(cl=>`<option value="${(cl.name||'').replace(/"/g,'&quot;')}">${cl.name}</option>`).join('');
+  const html = `
+    <div style="font-size:15px;font-weight:700;margin-bottom:12px">📬 ${id?'문의 수정':'고객사 문의 등록'}</div>
+    <div class="fg"><label>고객사 *</label>
+      <input class="fi" id="inq_vendor" list="inq_vendor_dl" value="${q?q.vendor||'':''}" placeholder="고객사명 (등록 또는 직접 입력)">
+      <datalist id="inq_vendor_dl">${vendorOpts}</datalist>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div class="fg"><label>접수일 *</label><input class="fi" type="date" id="inq_date" value="${q?q.receivedAt||todayS:todayS}"></div>
+      <div class="fg"><label>담당자</label><input class="fi" id="inq_manager" value="${q?q.manager||'':''}" placeholder="담당자명"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div class="fg"><label>카테고리</label>
+        <select class="fs" id="inq_category">
+          ${['일반','견적','납기','재고','불량/AS','샘플요청','기타'].map(opt=>`<option value="${opt}" ${q&&q.category===opt?'selected':''}>${opt}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>상태</label>
+        <select class="fs" id="inq_status">
+          ${['접수','처리중','답변대기','완료','취소'].map(opt=>`<option value="${opt}" ${q&&q.status===opt?'selected':(!q&&opt==='접수'?'selected':'')}>${opt}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="fg"><label>문의 내용 *</label>
+      <textarea class="fi" id="inq_content" rows="4" placeholder="고객사 문의 내용을 입력하세요">${q?q.content||'':''}</textarea>
+    </div>
+    <div class="fg"><label>답변/처리 메모</label>
+      <textarea class="fi" id="inq_reply" rows="3" placeholder="답변 또는 처리 내용 메모">${q?q.reply||'':''}</textarea>
+    </div>
+    <input type="hidden" id="inq_id" value="${q?q.id:''}">
+    <div class="ma">
+      <button class="btn bgo" onclick="closeM('mInquiry')">취소</button>
+      ${id?'<button class="btn bp-red" onclick="deleteInq('+id+')">삭제</button>':''}
+      <button class="btn bp" onclick="saveInq()">저장</button>
+    </div>`;
+  let m = document.getElementById('mInquiry');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mInquiry';
+    m.className = 'ov';
+    m.innerHTML = '<div class="modal" style="max-width:560px"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mInquiry');
+}
+
+function saveInq(){
+  const vendor = gv('inq_vendor').trim();
+  const content = gv('inq_content').trim();
+  if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
+  if(!content){ showToast('⚠ 문의 내용을 입력해 주세요','var(--red)'); return; }
+  const id = gv('inq_id');
+  const obj = {
+    vendor, receivedAt: gv('inq_date'), manager: gv('inq_manager'),
+    category: gv('inq_category'), status: gv('inq_status'),
+    content, reply: gv('inq_reply')
+  };
+  if(id){
+    const i = inquiries.findIndex(x=>x.id==id);
+    if(i>=0) inquiries[i] = {...inquiries[i], ...obj};
+  } else {
+    inquiries.unshift({id:Date.now(), createdAt:new Date().toISOString(), ...obj});
+  }
+  slSave();
+  closeM('mInquiry');
+  showToast('✓ 문의 저장됨','var(--grn)');
+  renderSalesSubTab();
+}
+
+function deleteInq(id){
+  const q = inquiries.find(x=>x.id==id);
+  showConfirm(`"${q?.vendor||'문의'}" 항목을 삭제합니다.`, ()=>{
+    inquiries = inquiries.filter(x=>x.id!=id);
+    slSave();
+    closeM('mInquiry');
+    renderSalesSubTab();
+    showToast('✓ 삭제됨','var(--grn)');
+  });
+}
+
+// ════════════════════════════════
+// 💡 신규 디자인 제안 관리
+// ════════════════════════════════
+let _ndFilter='all';
+let _ndImgBuf=[];
+let _ndFileBuf=[];
+let _ndViewMode='grid'; // 'grid' | 'cards'
+let _ndCellVendor=null; // 셀 클릭 시 상세 패널
+let _ndCellMonth=null;
+function setNdFilter(v){ _ndFilter=v; renderSalesSubTab(); }
+function setNdViewMode(v){ _ndViewMode=v; _ndCellVendor=null; _ndCellMonth=null; renderSalesSubTab(); }
+function openNdCell(vendor, month){
+  _ndCellVendor=vendor;
+  _ndCellMonth=month;
+  renderSalesSubTab();
+}
+function closeNdCell(){ _ndCellVendor=null; _ndCellMonth=null; renderSalesSubTab(); }
+
+function vNewProposals(c){
+  const STATUS_COLORS={'기획':'var(--t3)','제안':'var(--blu)','피드백':'var(--org)','채택':'var(--grn)','거절':'var(--red)'};
+
+  // ── 그리드 뷰: 행=고객사, 열=월 (최근 6개월), 셀=채택/전체 ──
+  if(_ndViewMode==='grid'){
+    // 최근 6개월 (오늘 포함, 오래된 → 최근 순)
+    const today=new Date();
+    const months=[];
+    for(let i=5;i>=0;i--){
+      const d=new Date(today.getFullYear(), today.getMonth()-i, 1);
+      const ym=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      months.push({ym, label:`${d.getFullYear().toString().slice(2)}.${d.getMonth()+1}월`});
+    }
+
+    // 고객사 목록: newDesigns에서 나온 vendor + 등록된 clients를 union
+    const vendorSet=new Set();
+    newDesigns.forEach(p=>p.vendor && vendorSet.add(p.vendor));
+    clients.forEach(cl=>cl.name && vendorSet.add(cl.name));
+    // 정렬: 제안 있는 고객사 먼저, 그 다음 제안 수 많은 순
+    const vendorList=Array.from(vendorSet).map(v=>{
+      const total=newDesigns.filter(p=>p.vendor===v).length;
+      return {name:v, total};
+    }).sort((a,b)=>b.total-a.total);
+
+    // 셀 데이터 계산: (vendor, ym) → {total, adopted, rejected, pending}
+    const cellData=(vendor, ym)=>{
+      const items=newDesigns.filter(p=>p.vendor===vendor && (p.proposedAt||'').startsWith(ym));
+      const adopted=items.filter(p=>p.status==='채택').length;
+      const rejected=items.filter(p=>p.status==='거절').length;
+      const pending=items.length - adopted - rejected;
+      return {total:items.length, adopted, rejected, pending, items};
+    };
+    // 월별 합계
+    const monthTotals=months.map(m=>{
+      const tot=newDesigns.filter(p=>(p.proposedAt||'').startsWith(m.ym)).length;
+      const adp=newDesigns.filter(p=>(p.proposedAt||'').startsWith(m.ym)&&p.status==='채택').length;
+      return {total:tot, adopted:adp};
+    });
+    // 전체 집계
+    const totalProposals=newDesigns.length;
+    const totalAdopted=newDesigns.filter(p=>p.status==='채택').length;
+    const totalRejected=newDesigns.filter(p=>p.status==='거절').length;
+    const adoptRate=totalProposals?Math.round(totalAdopted*100/totalProposals):0;
+
+    // 셀 색상 (채택률 기반 히트맵)
+    const cellBg=(cell)=>{
+      if(cell.total===0) return 'transparent';
+      const rate=cell.adopted/cell.total;
+      if(rate>=0.5) return 'rgba(46,139,44,.18)';   // 채택률 50%+ 진한 녹색
+      if(rate>=0.3) return 'rgba(46,139,44,.10)';   // 30%+ 연한 녹색
+      if(rate>0)    return 'rgba(46,139,44,.04)';   // 1개라도 채택
+      if(cell.pending>0) return 'rgba(168,90,16,.06)'; // 대기중
+      return 'rgba(192,48,48,.04)';  // 전부 거절
+    };
+
+    c.innerHTML=`
+    <!-- 상단 요약 -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
+      <div style="background:var(--s1);border:1px solid var(--bdr);border-radius:var(--r);padding:12px 14px">
+        <div style="font-size:10px;color:var(--t3);font-weight:700;margin-bottom:4px">누적 제안</div>
+        <div style="font-size:22px;font-weight:700">${totalProposals}<span style="font-size:12px;font-weight:400;color:var(--t3);margin-left:2px">건</span></div>
+      </div>
+      <div style="background:var(--s1);border:1px solid var(--grn);border-radius:var(--r);padding:12px 14px">
+        <div style="font-size:10px;color:var(--grn);font-weight:700;margin-bottom:4px">채택</div>
+        <div style="font-size:22px;font-weight:700;color:var(--grn)">${totalAdopted}<span style="font-size:12px;font-weight:400;color:var(--t3);margin-left:2px">건</span></div>
+      </div>
+      <div style="background:var(--s1);border:1px solid var(--red);border-radius:var(--r);padding:12px 14px">
+        <div style="font-size:10px;color:var(--red);font-weight:700;margin-bottom:4px">거절</div>
+        <div style="font-size:22px;font-weight:700;color:var(--red)">${totalRejected}<span style="font-size:12px;font-weight:400;color:var(--t3);margin-left:2px">건</span></div>
+      </div>
+      <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:var(--r);padding:12px 14px">
+        <div style="font-size:10px;color:var(--gold-lt);font-weight:700;margin-bottom:4px">전체 채택률</div>
+        <div style="font-size:22px;font-weight:700;color:var(--gold-lt)">${adoptRate}<span style="font-size:12px;font-weight:400;color:var(--t3);margin-left:2px">%</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ch" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>
+          <div class="ch-t">💡 신규 디자인 제안 — 월별 매트릭스</div>
+          <div class="ch-s">행: 고객사 · 열: 월 · 셀: 채택/전체 (클릭하면 상세)</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <div style="display:flex;gap:2px;padding:3px;background:var(--s2);border:1px solid var(--bdr);border-radius:7px">
+            <button onclick="setNdViewMode('grid')" style="padding:5px 10px;font-size:11px;border:none;border-radius:5px;cursor:pointer;font-family:inherit;font-weight:${_ndViewMode==='grid'?'700':'500'};background:${_ndViewMode==='grid'?'var(--s1)':'transparent'};color:${_ndViewMode==='grid'?'var(--t1)':'var(--t3)'}">📊 매트릭스</button>
+            <button onclick="setNdViewMode('cards')" style="padding:5px 10px;font-size:11px;border:none;border-radius:5px;cursor:pointer;font-family:inherit;font-weight:${_ndViewMode==='cards'?'700':'500'};background:${_ndViewMode==='cards'?'var(--s1)':'transparent'};color:${_ndViewMode==='cards'?'var(--t1)':'var(--t3)'}">🖼 카드</button>
+          </div>
+          <button class="btn bp bs" onclick="openNdModal()">+ 제안 등록</button>
+        </div>
+      </div>
+
+      ${vendorList.length===0 ? `
+      <div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">
+        등록된 고객사가 없습니다. 먼저 <b>🏢 고객사</b> 탭에서 고객사를 등록하거나, <b>+ 제안 등록</b>으로 제안을 추가해 주세요.
+      </div>
+      ` : `
+      <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:separate;border-spacing:0;font-size:12px">
+        <thead>
+          <tr style="background:var(--s2)">
+            <th style="position:sticky;left:0;background:var(--s2);padding:10px 12px;text-align:left;font-weight:700;font-size:11px;color:var(--t2);border-bottom:2px solid var(--bdr);min-width:140px;z-index:2">고객사</th>
+            ${months.map(m=>`<th style="padding:10px 8px;text-align:center;font-weight:700;font-size:11px;color:var(--t2);border-bottom:2px solid var(--bdr);min-width:70px">${m.label}</th>`).join('')}
+            <th style="padding:10px 8px;text-align:center;font-weight:700;font-size:11px;color:var(--gold-lt);border-bottom:2px solid var(--bdr);background:var(--gold-bg);min-width:80px">누적 채택률</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${vendorList.map(v=>{
+            const vendorTotal=newDesigns.filter(p=>p.vendor===v.name).length;
+            const vendorAdopted=newDesigns.filter(p=>p.vendor===v.name&&p.status==='채택').length;
+            const vendorRate=vendorTotal?Math.round(vendorAdopted*100/vendorTotal):0;
+            return `<tr>
+              <td style="position:sticky;left:0;background:var(--s1);padding:8px 12px;border-bottom:1px solid var(--bdr);z-index:1">
+                <div style="display:flex;align-items:center;gap:6px">
+                  ${vendorInitHtml(v.name, true)}
+                  <div>
+                    <div style="font-size:12px;font-weight:600">${v.name}</div>
+                    <div style="font-size:10px;color:var(--t3)">누적 ${vendorTotal}건</div>
+                  </div>
+                </div>
+              </td>
+              ${months.map(m=>{
+                const cell=cellData(v.name, m.ym);
+                if(cell.total===0){
+                  return `<td style="text-align:center;padding:8px;border-bottom:1px solid var(--bdr);color:var(--t3);font-size:12px">—</td>`;
+                }
+                return `<td style="text-align:center;padding:6px;border-bottom:1px solid var(--bdr);background:${cellBg(cell)};cursor:pointer;transition:.15s" onmouseover="this.style.filter='brightness(.95)'" onmouseout="this.style.filter=''" onclick="openNdCell('${v.name.replace(/'/g,"\\'")}','${m.ym}')">
+                  <div style="font-size:13px;font-weight:700;color:var(--t1)"><span style="color:var(--grn)">${cell.adopted}</span><span style="color:var(--t3);font-weight:400">/${cell.total}</span></div>
+                  <div style="font-size:9px;color:var(--t3);margin-top:1px">
+                    ${cell.pending>0?`<span style="color:var(--org)">⏳${cell.pending}</span>`:''}
+                    ${cell.rejected>0?`<span style="color:var(--red);margin-left:3px">✕${cell.rejected}</span>`:''}
+                  </div>
+                </td>`;
+              }).join('')}
+              <td style="text-align:center;padding:8px;border-bottom:1px solid var(--bdr);background:var(--gold-bg);font-weight:700;color:${vendorRate>=50?'var(--grn)':vendorRate>=20?'var(--gold-lt)':'var(--t3)'}">
+                ${vendorTotal===0?'—':vendorRate+'%'}
+              </td>
+            </tr>`;
+          }).join('')}
+          <!-- 월별 합계 행 -->
+          <tr style="background:var(--s2);font-weight:700">
+            <td style="position:sticky;left:0;background:var(--s2);padding:8px 12px;font-size:11px;color:var(--t2);z-index:1">월별 합계</td>
+            ${monthTotals.map(mt=>`<td style="text-align:center;padding:8px;font-size:12px;color:${mt.total===0?'var(--t3)':'var(--t1)'}">${mt.total===0?'—':`<span style="color:var(--grn)">${mt.adopted}</span><span style="color:var(--t3);font-weight:400">/${mt.total}</span>`}</td>`).join('')}
+            <td style="text-align:center;padding:8px;background:var(--gold-bg);color:var(--gold-lt);font-size:12px">${adoptRate}%</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+
+      <!-- 범례 -->
+      <div style="padding:10px 14px;border-top:1px solid var(--bdr);font-size:10.5px;color:var(--t3);display:flex;gap:12px;flex-wrap:wrap">
+        <span>🎨 <b>배경색</b>: 채택률 기반 (짙은 녹색 = 채택률 50%+)</span>
+        <span><span style="color:var(--grn);font-weight:700">채택</span>/<span style="color:var(--t3)">전체</span></span>
+        <span><span style="color:var(--org)">⏳ 대기</span></span>
+        <span><span style="color:var(--red)">✕ 거절</span></span>
+      </div>
+      `}
+    </div>
+
+    ${_ndCellVendor && _ndCellMonth ? renderNdCellDetail() : ''}
+    `;
+    return;
+  }
+
+  // ── 카드 뷰 (기존 방식, 필터 기반) ──
+  let list=[...newDesigns];
+  if(_ndFilter!=='all') list=list.filter(p=>p.status===_ndFilter);
+  list.sort((a,b)=>(b.proposedAt||'').localeCompare(a.proposedAt||''));
+
+  const counts={
+    all: newDesigns.length,
+    '기획': newDesigns.filter(p=>p.status==='기획').length,
+    '제안': newDesigns.filter(p=>p.status==='제안').length,
+    '피드백': newDesigns.filter(p=>p.status==='피드백').length,
+    '채택': newDesigns.filter(p=>p.status==='채택').length,
+    '거절': newDesigns.filter(p=>p.status==='거절').length,
+  };
+
+  c.innerHTML=`
+  <div class="card">
+    <div class="ch" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div>
+        <div class="ch-t">💡 신규 디자인 제안 — 카드 뷰</div>
+        <div class="ch-s">전체 제안 목록 (상태별 필터)</div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <div style="display:flex;gap:2px;padding:3px;background:var(--s2);border:1px solid var(--bdr);border-radius:7px">
+          <button onclick="setNdViewMode('grid')" style="padding:5px 10px;font-size:11px;border:none;border-radius:5px;cursor:pointer;font-family:inherit;font-weight:${_ndViewMode==='grid'?'700':'500'};background:${_ndViewMode==='grid'?'var(--s1)':'transparent'};color:${_ndViewMode==='grid'?'var(--t1)':'var(--t3)'}">📊 매트릭스</button>
+          <button onclick="setNdViewMode('cards')" style="padding:5px 10px;font-size:11px;border:none;border-radius:5px;cursor:pointer;font-family:inherit;font-weight:${_ndViewMode==='cards'?'700':'500'};background:${_ndViewMode==='cards'?'var(--s1)':'transparent'};color:${_ndViewMode==='cards'?'var(--t1)':'var(--t3)'}">🖼 카드</button>
+        </div>
+        <div style="display:flex;gap:2px;padding:3px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px;flex-wrap:wrap">
+          ${['all','기획','제안','피드백','채택','거절'].map(k=>{
+            const on=_ndFilter===k;
+            const color= k==='all'?'var(--t1)' : STATUS_COLORS[k];
+            const label= k==='all'?'전체' : k;
+            return `<button onclick="setNdFilter('${k}')" style="padding:5px 10px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${on?'700':'500'};background:${on?'var(--s1)':'transparent'};color:${on?color:'var(--t3)'}">${label} <span style="font-size:10px;opacity:.7">${counts[k]}</span></button>`;
+          }).join('')}
+        </div>
+        <button class="btn bp bs" onclick="openNdModal()">+ 제안 등록</button>
+      </div>
+    </div>
+    ${list.length ? `
+    <div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">
+      ${list.map(p=>{
+        const stColor=STATUS_COLORS[p.status]||'var(--t3)';
+        const thumb = (p.imgs && p.imgs.length) ? p.imgs[0].url : '';
+        return `<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;background:var(--s1);cursor:pointer;transition:.15s" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'" onclick="openNdModal(${p.id})">
+          <div style="height:130px;background:var(--s2);display:flex;align-items:center;justify-content:center;overflow:hidden;border-bottom:1px solid var(--bdr)">
+            ${thumb ? `<img src="${thumb}" style="width:100%;height:100%;object-fit:cover">` : `<span style="font-size:32px;opacity:.3">💎</span>`}
+          </div>
+          <div style="padding:9px 11px">
+            <div style="display:flex;align-items:center;gap:5px;margin-bottom:4px">
+              ${vendorInitHtml(p.vendor,true)}
+              <span style="font-size:11px;font-weight:600;color:var(--t2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.vendor||'—'}</span>
+              <span class="chip" style="font-size:10px;background:${stColor}15;border-color:${stColor}40;color:${stColor};font-weight:600">${p.status||'기획'}</span>
+            </div>
+            <div style="font-size:12.5px;font-weight:700;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.title||'(제목 없음)'}</div>
+            <div style="font-size:10px;color:var(--t3);display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              ${p.proposedAt?`<span>${p.proposedAt}</span>`:''}
+              ${p.category?`<span>· ${p.category}</span>`:''}
+              ${p.imgs&&p.imgs.length?`<span title="이미지 ${p.imgs.length}장">🖼${p.imgs.length}</span>`:''}
+              ${p.files&&p.files.length?`<span title="첨부 ${p.files.length}개">📎${p.files.length}</span>`:''}
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    ` : `<div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">
+      등록된 제안이 없습니다
+    </div>`}
+  </div>`;
+}
+
+// 셀 상세 패널 — 특정 고객사×월 조합의 제안 리스트
+function renderNdCellDetail(){
+  const vendor=_ndCellVendor, ym=_ndCellMonth;
+  if(!vendor||!ym) return '';
+  const items=newDesigns.filter(p=>p.vendor===vendor && (p.proposedAt||'').startsWith(ym))
+    .sort((a,b)=>(b.proposedAt||'').localeCompare(a.proposedAt||''));
+  const STATUS_COLORS={'기획':'var(--t3)','제안':'var(--blu)','피드백':'var(--org)','채택':'var(--grn)','거절':'var(--red)'};
+  const [yy,mm]=ym.split('-');
+  return `
+  <div class="card" style="margin-top:12px">
+    <div class="ch" style="display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div class="ch-t">${vendorInitHtml(vendor,true)} ${vendor} — ${yy}년 ${+mm}월 제안 (${items.length}건)</div>
+        <div class="ch-s">이 고객사에 해당 월에 제안한 디자인들</div>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn bp bs" onclick='openNdModal(null,${JSON.stringify({vendor,proposedAt:ym+"-01"}).replace(/"/g,"&quot;")})'>+ 추가</button>
+        <button class="btn bgo bs" onclick="closeNdCell()">닫기</button>
+      </div>
+    </div>
+    ${items.length ? `
+    <div style="padding:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
+      ${items.map(p=>{
+        const stColor=STATUS_COLORS[p.status]||'var(--t3)';
+        const thumb = (p.imgs && p.imgs.length) ? p.imgs[0].url : '';
+        return `<div style="border:1px solid var(--bdr);border-radius:7px;overflow:hidden;background:var(--s1);cursor:pointer" onclick="openNdModal(${p.id})" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'">
+          <div style="height:110px;background:var(--s2);display:flex;align-items:center;justify-content:center;overflow:hidden">
+            ${thumb ? `<img src="${thumb}" style="width:100%;height:100%;object-fit:cover">` : `<span style="font-size:28px;opacity:.3">💎</span>`}
+          </div>
+          <div style="padding:8px 10px">
+            <div style="font-size:12px;font-weight:700;margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.title||'(제목 없음)'}</div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <span class="chip" style="font-size:9.5px;background:${stColor}15;border-color:${stColor}40;color:${stColor};font-weight:600">${p.status||'기획'}</span>
+              ${p.category?`<span style="font-size:10px;color:var(--t3)">${p.category}</span>`:''}
+              ${p.imgs&&p.imgs.length?`<span style="font-size:10px;color:var(--t3)" title="이미지 ${p.imgs.length}장">🖼${p.imgs.length}</span>`:''}
+              ${p.files&&p.files.length?`<span style="font-size:10px;color:var(--t3)" title="첨부 ${p.files.length}개">📎${p.files.length}</span>`:''}
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    ` : `<div style="padding:30px;text-align:center;color:var(--t3);font-size:12px">
+      이 고객사에 ${yy}년 ${+mm}월 제안이 없습니다
+    </div>`}
+  </div>`;
+}
+
+function openNdModal(id, prefill){
+  const p = id ? newDesigns.find(x=>x.id==id) : null;
+  _ndImgBuf = p ? [...(p.imgs||[])] : [];
+  _ndFileBuf = p ? [...(p.files||[])] : [];
+  const todayS = toLocalDateStr(new Date());
+  // prefill: {vendor, proposedAt} — 셀 클릭 후 + 추가 시 전달
+  const initVendor = p ? (p.vendor||'') : (prefill&&prefill.vendor)||'';
+  const initDate = p ? (p.proposedAt||todayS) : (prefill&&prefill.proposedAt)||todayS;
+  const vendorOpts = clients.map(cl=>`<option value="${(cl.name||'').replace(/"/g,'&quot;')}">${cl.name}</option>`).join('');
+  const html = `
+    <div style="font-size:15px;font-weight:700;margin-bottom:12px">💡 ${id?'제안 수정':'신규 디자인 제안 등록'}</div>
+    <div class="fg"><label>디자인명 *</label>
+      <input class="fi" id="nd_title" value="${p?p.title||'':''}" placeholder="예: 하트 탄생석 목걸이 리뉴얼">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div class="fg"><label>대상 고객사</label>
+        <input class="fi" id="nd_vendor" list="nd_vendor_dl" value="${initVendor}" placeholder="고객사명">
+        <datalist id="nd_vendor_dl">${vendorOpts}</datalist>
+      </div>
+      <div class="fg"><label>카테고리</label>
+        <select class="fs" id="nd_category">
+          ${['귀걸이','목걸이','반지','팔찌','펜던트','세트','기타'].map(opt=>`<option value="${opt}" ${p&&p.category===opt?'selected':''}>${opt}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div class="fg"><label>제안일</label><input class="fi" type="date" id="nd_date" value="${initDate}"></div>
+      <div class="fg"><label>상태</label>
+        <select class="fs" id="nd_status">
+          ${['기획','제안','피드백','채택','거절'].map(opt=>`<option value="${opt}" ${p&&p.status===opt?'selected':(!p&&opt==='기획'?'selected':'')}>${opt}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="fg"><label>📎 파일 첨부 (이미지·PDF·Excel·CAD 등 · 여러 개 가능)</label>
+      <div class="drop-zone" id="ndDropZone" style="padding:14px 16px;cursor:pointer;min-height:unset" onclick="document.getElementById('ndFileInput').click()" ondragover="dzOver(event,this)" ondragleave="dzOut(this)" ondrop="handleNdDropAll(event)">
+        <input type="file" id="ndFileInput" multiple style="display:none" onchange="handleNdFilesAll(event)">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:22px">📎</span>
+          <div>
+            <div style="font-size:12px;color:var(--t2);font-weight:600">드래그 · 클릭 · Ctrl+V로 파일 추가</div>
+            <div style="font-size:10.5px;color:var(--t3);margin-top:2px">이미지는 썸네일로, 그 외(PDF/Excel/CAD 등)는 첨부파일로 자동 분류</div>
+          </div>
+        </div>
+      </div>
+      <div id="ndImgPrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div>
+      <div id="ndFilePrev" style="display:flex;flex-direction:column;gap:4px;margin-top:6px"></div>
+    </div>
+    <div class="fg"><label>제안 메모 / 컨셉 설명</label>
+      <textarea class="fi" id="nd_note" rows="3" placeholder="디자인 컨셉, 타겟, 가격대, 피드백 등">${p?p.note||'':''}</textarea>
+    </div>
+    <input type="hidden" id="nd_id" value="${p?p.id:''}">
+    <div class="ma">
+      <button class="btn bgo" onclick="closeM('mNewDesign');_ndPasteCleanup()">취소</button>
+      ${id?'<button class="btn bp-red" onclick="deleteNd('+id+')">삭제</button>':''}
+      <button class="btn bp" onclick="saveNd()">저장</button>
+    </div>`;
+  let m = document.getElementById('mNewDesign');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mNewDesign';
+    m.className = 'ov';
+    m.innerHTML = '<div class="modal" style="max-width:600px"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mNewDesign');
+  setTimeout(()=>{ renderNdImgPrev(); renderNdFilePrev(); }, 50);
+  // Ctrl+V paste handler
+  _ndPasteSetup();
+}
+
+// Ctrl+V 이미지 붙여넣기
+let _ndPasteHandler=null;
+function _ndPasteSetup(){
+  _ndPasteCleanup();
+  _ndPasteHandler = (e)=>{
+    const items = e.clipboardData && e.clipboardData.items;
+    if(!items) return;
+    for(let i=0;i<items.length;i++){
+      const it = items[i];
+      if(it.kind==='file'){
+        const f = it.getAsFile();
+        if(!f) continue;
+        const r = new FileReader();
+        r.onload = ev => {
+          const ext=(f.name||'').split('.').pop()||'png';
+          const name=f.name && f.name!=='image.png' ? f.name : `paste_${toLocalDateStr(new Date())}_${Date.now()}.${ext}`;
+          if((f.type||'').startsWith('image/')){
+            _ndImgBuf.push({name, type:f.type, url:ev.target.result, size:f.size});
+            renderNdImgPrev();
+          } else {
+            _ndFileBuf.push({name, type:f.type||'application/octet-stream', url:ev.target.result, size:f.size});
+            renderNdFilePrev();
+          }
+        };
+        r.readAsDataURL(f);
+      }
+    }
+  };
+  document.addEventListener('paste', _ndPasteHandler);
+}
+function _ndPasteCleanup(){
+  if(_ndPasteHandler){
+    document.removeEventListener('paste', _ndPasteHandler);
+    _ndPasteHandler=null;
+  }
+}
+
+function renderNdImgPrev(){
+  const el = document.getElementById('ndImgPrev');
+  if(!el) return;
+  el.innerHTML = _ndImgBuf.map((im,i)=>`
+    <div style="position:relative;width:80px;height:80px;border-radius:6px;overflow:hidden;border:1px solid var(--bdr)">
+      <img src="${im.url}" style="width:100%;height:100%;object-fit:cover;cursor:pointer" onclick="openFilePreviewList(_ndImgBuf,${i})">
+      <button onclick="_ndImgBuf.splice(${i},1);renderNdImgPrev()" style="position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;border:none;background:rgba(0,0,0,.6);color:#fff;cursor:pointer;font-size:11px;line-height:1;padding:0">×</button>
+    </div>`).join('');
+}
+
+function handleNdImgs(e){
+  const files = Array.from(e.target.files||[]);
+  files.forEach(f=>{
+    const r = new FileReader();
+    r.onload = ev => {
+      _ndImgBuf.push({name:f.name, type:f.type||'image/jpeg', url:ev.target.result, size:f.size});
+      renderNdImgPrev();
+    };
+    r.readAsDataURL(f);
+  });
+  e.target.value='';
+}
+function handleNdImgDrop(e){
+  e.preventDefault();
+  const dz=document.getElementById('ndImgDz'); if(dz) dz.classList.remove('dz-over');
+  Array.from(e.dataTransfer.files||[]).forEach(f=>{
+    if(!f.type.startsWith('image/')) return;
+    const r=new FileReader();
+    r.onload=ev=>{ _ndImgBuf.push({name:f.name,type:f.type,url:ev.target.result,size:f.size}); renderNdImgPrev(); };
+    r.readAsDataURL(f);
+  });
+}
+
+// 통합 파일 드롭존 — 이미지는 _ndImgBuf, 그 외는 _ndFileBuf로 자동 분류
+function _ndClassifyFile(f){
+  const r = new FileReader();
+  r.onload = ev => {
+    const item = {name:f.name, type:f.type||'application/octet-stream', url:ev.target.result, size:f.size};
+    if((f.type||'').startsWith('image/')){
+      _ndImgBuf.push(item);
+      renderNdImgPrev();
+    } else {
+      _ndFileBuf.push(item);
+      renderNdFilePrev();
+    }
+  };
+  r.readAsDataURL(f);
+}
+function handleNdFilesAll(e){
+  Array.from(e.target.files||[]).forEach(_ndClassifyFile);
+  e.target.value='';
+}
+function handleNdDropAll(e){
+  e.preventDefault();
+  const dz=document.getElementById('ndDropZone'); if(dz) dz.classList.remove('dz-over');
+  Array.from(e.dataTransfer.files||[]).forEach(_ndClassifyFile);
+}
+
+// 첨부 파일(비 이미지) 프리뷰 렌더
+function renderNdFilePrev(){
+  const el = document.getElementById('ndFilePrev');
+  if(!el) return;
+  el.innerHTML = _ndFileBuf.map((f,i)=>{
+    const icon = /pdf/i.test(f.type)?'📄':/sheet|excel|xlsx?/i.test(f.type+f.name)?'📊':/cad|dxf|step|stp|iges|igs/i.test(f.name)?'🔧':/zip|rar|7z/i.test(f.type+f.name)?'🗜':/doc|word/i.test(f.type+f.name)?'📝':'📎';
+    const sizeKB = f.size ? Math.round(f.size/1024)+'KB' : '';
+    const stored = f.url && !String(f.url).startsWith('data:') ? '<span style="font-size:9px;color:var(--grn);margin-left:4px">☁</span>' : '<span style="font-size:9px;color:var(--t3);margin-left:4px">💾</span>';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--bdr);border-radius:5px;background:var(--s1)">
+      <span style="font-size:16px">${icon}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:11.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.name}${stored}</div>
+        ${sizeKB?`<div style="font-size:9.5px;color:var(--t3)">${sizeKB}</div>`:''}
+      </div>
+      <button onclick="openFilePreviewList(_ndFileBuf,${i})" style="padding:2px 7px;font-size:10px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">보기</button>
+      <button onclick="_ndFileBuf.splice(${i},1);renderNdFilePrev()" style="padding:2px 7px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--red);font-family:inherit">×</button>
+    </div>`;
+  }).join('');
+}
+
+async function saveNd(){
+  const title = gv('nd_title').trim();
+  if(!title){ showToast('⚠ 디자인명을 입력해 주세요','var(--red)'); return; }
+  let imgs = [..._ndImgBuf];
+  let files = [..._ndFileBuf];
+  if(notionCfg.workerUrl){
+    const needUpload = imgs.some(im=>im.url&&String(im.url).startsWith('data:')) || files.some(f=>f.url&&String(f.url).startsWith('data:'));
+    if(needUpload){
+      showToast('🔄 파일 업로드 중...','var(--blu)',2500);
+      try{ imgs = await uploadImagesToR2(imgs); }catch(e){ console.warn('이미지 R2 업로드 실패:',e); }
+      try{ files = await uploadImagesToR2(files); }catch(e){ console.warn('파일 R2 업로드 실패:',e); }
+    }
+  }
+  const id = gv('nd_id');
+  const obj = {
+    title,
+    vendor: gv('nd_vendor').trim(),
+    category: gv('nd_category'),
+    proposedAt: gv('nd_date'),
+    status: gv('nd_status'),
+    note: gv('nd_note'),
+    imgs,
+    files
+  };
+  let saved;
+  if(id){
+    const i = newDesigns.findIndex(x=>x.id==id);
+    if(i>=0){ newDesigns[i] = {...newDesigns[i], ...obj}; saved = newDesigns[i]; }
+  } else {
+    saved = {id:Date.now(), createdAt:new Date().toISOString(), ...obj};
+    newDesigns.unshift(saved);
+  }
+  slSave();
+  closeM('mNewDesign');
+  _ndPasteCleanup();
+  showToast('✓ 제안 저장됨','var(--grn)');
+  renderSalesSubTab();
+  // Notion 동기화
+  if(saved && notionCfg.enabled){
+    setTimeout(()=>syncNewDesignToNotion(saved).catch(e=>console.warn('Notion 동기화 실패:',e)), 100);
+  }
+}
+
+function deleteNd(id){
+  const p = newDesigns.find(x=>x.id==id);
+  if(!p) return;
+  showConfirm(`"${p.title||'제안'}" 항목을 삭제합니다.`, ()=>{
+    // Notion 먼저 삭제
+    if(p._notionId && notionCfg.enabled){
+      deleteNewDesignFromNotion(p).catch(e=>console.warn(e));
+    }
+    newDesigns = newDesigns.filter(x=>x.id!=id);
+    slSave();
+    closeM('mNewDesign');
+    _ndPasteCleanup();
+    renderSalesSubTab();
+    showToast('✓ 삭제됨','var(--grn)');
+  });
+}
+
 
 // ── 고객사 이니셜 표시 헬퍼 ──
 function clInitColor(cl){
