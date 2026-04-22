@@ -2515,10 +2515,20 @@ function mapNotionSample(row){
     _notionId:row.id,
     name:     np.title(p['샘플명']),
     itemCode: np.text(p['품번']),
+    itemNo:   np.text(p['품번']), // 호환
     manager:  np.text(p['담당자_고객사']),
     mat:      np.text(p['소재']),
     sz1:      np.text(p['사이즈']),
+    sz2:      np.text(p['호수']),
+    sz3:      np.text(p['보조줄']),
+    sz4:      np.text(p['장식']),
+    wt:       np.text(p['중량']),
+    engr:     np.text(p['각인위치']),
+    card:     np.text(p['카드파일']),
+    qty:      np.text(p['발주량']),
     desc:     np.text(p['메모']),
+    devNote:  np.text(p['개발사항']),
+    caution:  np.text(p['주의사항']),
     type:     np.select(p['유형']),
     plating:  np.select(p['도금']),
     status:   np.select(p['상태'])||'의뢰',
@@ -2533,12 +2543,34 @@ function mapNotionSample(row){
 }
 function mapNotionOrder(row){
   const p=row.properties||{};
-  const itemStr=np.text(p['품목목록']);
-  // "A ×3, B ×2" → rows 복원
-  const rows=itemStr?itemStr.split(',').map(s=>{
-    const m=s.trim().match(/^(.+?)\s*×\s*(\d+)$/);
-    return m?{name:m[1].trim(),qty:m[2],plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}:null;
-  }).filter(Boolean):[];
+  // 우선 품목상세JSON에서 완전 복원 시도
+  let rows=[];
+  const rowsJson=np.text(p['품목상세JSON']);
+  if(rowsJson){
+    try{
+      const parsed=JSON.parse(rowsJson);
+      if(Array.isArray(parsed)) rows=parsed;
+    }catch(e){/* 폴백으로 내려감 */}
+  }
+  // 폴백: 품목목록 텍스트에서 기본 rows 복원 ("A ×3, B ×2")
+  if(!rows.length){
+    const itemStr=np.text(p['품목목록']);
+    if(itemStr){
+      rows=itemStr.split(',').map(s=>{
+        const m=s.trim().match(/^(.+?)\s*×\s*(\d+)$/);
+        return m?{name:m[1].trim(),qty:m[2],plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}:null;
+      }).filter(Boolean);
+    }
+  }
+  // 첨부파일 JSON 복원
+  let files=[];
+  const filesJson=np.text(p['첨부파일JSON']);
+  if(filesJson){
+    try{
+      const parsed=JSON.parse(filesJson);
+      if(Array.isArray(parsed)) files=parsed;
+    }catch(e){}
+  }
   return{
     _notionId:row.id,
     no:      np.title(p['발주번호']),
@@ -2548,8 +2580,8 @@ function mapNotionOrder(row){
     date:    np.date(p['발주일']),
     ship:    np.date(p['요청출고일']),
     rows,
+    files,
     createdAt:row.created_time||new Date().toISOString(),
-    files:[],
   };
 }
 function mapNotionProc(row){
@@ -2867,12 +2899,20 @@ async function r2Delete(key){
 
 // 이미지 버퍼를 R2에 업로드하고 URL로 교체
 // [{name, url(base64), type}] → [{name, url(r2), key, type}]
+// type이 없으면 dataURL에서 자동 추출 (예: "data:application/pdf;base64," → "application/pdf")
 async function uploadImagesToR2(imgBuf){
   if(!notionCfg.workerUrl||!imgBuf||!imgBuf.length) return imgBuf;
   const results = await Promise.all(imgBuf.map(async img=>{
     if(!img.url||img.url.startsWith('http')||img.url.startsWith('/r2')) return img; // 이미 업로드된 것
-    const r=await r2Upload(img.url, img.name||'image.jpg', img.type||'image/jpeg');
-    if(r) return {...img, url:r.url, r2Key:r.key};
+    // type이 없으면 dataURL에서 자동 추출
+    let type=img.type;
+    if(!type && img.url.startsWith('data:')){
+      const m=img.url.match(/^data:([^;,]+)[;,]/);
+      if(m) type=m[1];
+    }
+    type=type||'application/octet-stream';
+    const r=await r2Upload(img.url, img.name||'file', type);
+    if(r) return {...img, url:r.url, r2Key:r.key, type:type};
     return img; // 실패하면 원본 유지
   }));
   return results;
@@ -2945,11 +2985,20 @@ async function syncSampleToNotion(s, update){
   if(!notionCfg.workerUrl||!notionCfg.smpDb) return;
   const p={
     "샘플명":{"title":[{"text":{"content":s.name||''}}]},
-    "품번":{"rich_text":[{"text":{"content":s.itemCode||''}}]},
+    "품번":{"rich_text":[{"text":{"content":s.itemCode||s.itemNo||''}}]},
     "담당자_고객사":{"rich_text":[{"text":{"content":s.manager||''}}]},
     "소재":{"rich_text":[{"text":{"content":s.mat||''}}]},
     "사이즈":{"rich_text":[{"text":{"content":s.sz1||''}}]},
+    "호수":{"rich_text":[{"text":{"content":s.sz2||''}}]},
+    "보조줄":{"rich_text":[{"text":{"content":s.sz3||''}}]},
+    "장식":{"rich_text":[{"text":{"content":s.sz4||''}}]},
+    "중량":{"rich_text":[{"text":{"content":s.wt||''}}]},
+    "각인위치":{"rich_text":[{"text":{"content":s.engr||''}}]},
+    "카드파일":{"rich_text":[{"text":{"content":s.card||''}}]},
+    "발주량":{"rich_text":[{"text":{"content":s.qty||''}}]},
     "메모":{"rich_text":[{"text":{"content":(s.desc||'').slice(0,2000)}}]},
+    "개발사항":{"rich_text":[{"text":{"content":(s.devNote||'').slice(0,2000)}}]},
+    "주의사항":{"rich_text":[{"text":{"content":(s.caution||'').slice(0,2000)}}]},
   };
   if(s.type)    p["유형"]={"select":{"name":s.type}};
   if(s.plating) p["도금"]={"select":{"name":s.plating}};
@@ -2972,11 +3021,17 @@ async function deleteSampleFromNotion(s){
 async function syncOrderToNotion(o, update){
   if(!notionCfg.workerUrl||!notionCfg.ordDb) return;
   const items=(o.rows||[]).map(r=>`${r.name} ×${r.qty||1}`).join(', ');
+  // 품목 상세 전체 JSON (rcvHistory 포함) — Notion에 2000자 제한
+  const rowsJson=JSON.stringify(o.rows||[]).slice(0,2000);
+  // 첨부파일 URL 목록 (R2 URL 또는 이름)
+  const filesJson=JSON.stringify((o.files||[]).map(f=>({name:f.name,url:f.url,type:f.type,r2Key:f.r2Key}))).slice(0,2000);
   const p={
     "발주번호":{"title":[{"text":{"content":o.no||o.id+''}}]},
     "업체명":{"rich_text":[{"text":{"content":o.vendor||''}}]},
     "담당자":{"rich_text":[{"text":{"content":o.manager||''}}]},
     "품목목록":{"rich_text":[{"text":{"content":items.slice(0,2000)}}]},
+    "품목상세JSON":{"rich_text":[{"text":{"content":rowsJson}}]},
+    "첨부파일JSON":{"rich_text":[{"text":{"content":filesJson}}]},
     "품목수":{"number":(o.rows||[]).length},
     "메모":{"rich_text":[{"text":{"content":o.memo||''}}]},
     "상태":{"select":{"name":"진행중"}},
@@ -5487,8 +5542,13 @@ function saveSmp(){
     devCost:+gv('s_devCost')||0, unitPrice:+gv('s_unitPrice')||0, costPrice:+gv('s_costPrice')||0,
     invNo:gv('s_invNo'), itemCode:gv('s_invNo')
   };
-  const doSaveSmp = async (uploadedImgs) => {
-    const finalObj = {...obj, imgs: uploadedImgs||obj.imgs};
+  const doSaveSmp = async (uploadedImgs, uploadedSrc, uploadedCad) => {
+    const finalObj = {
+      ...obj,
+      imgs: uploadedImgs||obj.imgs,
+      sourceDoc: uploadedSrc||obj.sourceDoc,
+      cadFiles: uploadedCad||obj.cadFiles,
+    };
     if(id){
       const i=samples.findIndex(x=>x.id==id);
       if(i>=0)samples[i]={...samples[i],...finalObj};
@@ -5499,11 +5559,20 @@ function saveSmp(){
     if(!id){showRegToast(finalObj.name,'sample');setTimeout(()=>{const ns=samples[samples.length-1];syncSampleToNotion(ns||finalObj,false);},50);}
     else{const us=samples.find(x=>x.id==id);syncSampleToNotion(us||finalObj,true);}
   };
-  if(notionCfg.workerUrl && smpImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
-    showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
-    uploadImagesToR2([...smpImgBuf]).then(uploaded=>doSaveSmp(uploaded));
+  // 모든 파일(예시이미지/작업지시서/CAD)에 base64 데이터가 있으면 R2에 업로드
+  const hasAnyLocalFile =
+    smpImgBuf.some(img=>img.url&&img.url.startsWith('data:')) ||
+    (smpSrcBuf||[]).some(f=>f.url&&f.url.startsWith('data:')) ||
+    smpCadBuf.some(f=>f.url&&f.url.startsWith('data:'));
+  if(notionCfg.workerUrl && hasAnyLocalFile){
+    showToast('🔄 파일 업로드 중...','var(--blu)',2500);
+    Promise.all([
+      uploadImagesToR2([...smpImgBuf]),
+      uploadImagesToR2([...(smpSrcBuf||[])]),
+      uploadImagesToR2([...smpCadBuf]),
+    ]).then(([up1,up2,up3])=>doSaveSmp(up1,up2,up3));
   } else {
-    doSaveSmp(obj.imgs);
+    doSaveSmp(obj.imgs, obj.sourceDoc, obj.cadFiles);
   }
 }
 function saveAndInvoice(){
@@ -5825,13 +5894,23 @@ function applyItemToRow(smpId){
   renderOrdRows();
   showToast(`✓ "${s.name}" 적용됨`, 'var(--gold-lt)');
 }
-function saveOrd(){
+async function saveOrd(){
   const vendor=gv('o_vendor');if(!vendor)return showToast('⚠ 업체명을 입력해 주세요','var(--red)');
   const id=gv('o_id');const isNew=!id;
   const now=new Date().toISOString();
   // UI 전용 플래그(_expanded) 제거 후 저장
   const cleanRows=ordRowsBuf.map(r=>{const {_expanded,...rest}=r;return rest;});
-  const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),manager:gv('o_manager'),no:gv('o_no'),memo:gv('o_memo'),rows:cleanRows,files:[...ordFileBuf]};
+
+  // 첨부 파일 중 아직 base64인 것이 있으면 R2에 업로드 후 URL로 교체
+  let filesToSave=[...ordFileBuf];
+  const hasLocalFiles=filesToSave.some(f=>f.url&&f.url.startsWith('data:'));
+  if(notionCfg.workerUrl && hasLocalFiles){
+    showToast('🔄 첨부 파일 업로드 중...','var(--blu)',2500);
+    filesToSave=await uploadImagesToR2(filesToSave);
+    ordFileBuf=filesToSave; // 버퍼도 업데이트 (모달 다시 열었을 때 R2 URL 유지)
+  }
+
+  const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),manager:gv('o_manager'),no:gv('o_no'),memo:gv('o_memo'),rows:cleanRows,files:filesToSave};
   let ordId;
   if(id){
     const i=orders.findIndex(x=>x.id==id);
@@ -5951,10 +6030,20 @@ function renderTaskFilePrev(){
       <button onclick="taskFileBuf.splice(${i},1);renderTaskFilePrev()" style="position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;border:none;border-radius:50%;width:16px;height:16px;font-size:10px;cursor:pointer;line-height:1;padding:0">×</button>
     </div>`).join('');
 }
-function saveTask(){
+async function saveTask(){
   const cont=gv('t_cont');if(!cont)return showToast('⚠ 내용을 입력해 주세요','var(--red)');
   const id=gv('t_id');
-  const obj={cont,date:gv('t_date'),ap:gv('t_ap'),cat:gv('t_cat'),note:gv('t_note'),files:[...taskFileBuf]};
+
+  // 첨부 파일 중 base64 데이터가 있으면 R2에 업로드
+  let filesToSave=[...taskFileBuf];
+  const hasLocalFiles=filesToSave.some(f=>f.url&&f.url.startsWith('data:'));
+  if(notionCfg.workerUrl && hasLocalFiles){
+    showToast('🔄 첨부 파일 업로드 중...','var(--blu)',2500);
+    filesToSave=await uploadImagesToR2(filesToSave);
+    taskFileBuf=filesToSave;
+  }
+
+  const obj={cont,date:gv('t_date'),ap:gv('t_ap'),cat:gv('t_cat'),note:gv('t_note'),files:filesToSave};
   if(id){const i=tasks.findIndex(x=>x.id==id);if(i>=0){tasks[i]={...tasks[i],...obj};syncTaskToNotion(tasks[i],true);}}
   else{const nt={id:Date.now(),done:false,...obj};tasks.push(nt);setTimeout(()=>syncTaskToNotion(nt,false),50);}
   save();closeM('mTask');
