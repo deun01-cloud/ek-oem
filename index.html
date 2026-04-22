@@ -4374,23 +4374,9 @@ function renderCalWidget(){
     // 샘플 납기 — 클릭 시 샘플 편집 모달
     samples.filter(s=>s.due===ds&&s.status!=='확정'&&s.status!=='취소').forEach(s=>r.push({
       cls:'ev-smp',
-      t:`샘플납기: ${(s.name||'').substring(0,8)}`,
+      t:`샘플: ${(s.name||'').substring(0,9)}`,
       click:`calGoSample(${s.id})`,
       title: `${s.name||''} — ${s.manager||''} (${s.status||''})`
-    }));
-    // 샘플 의뢰일 — 별도 색(보조)으로 표시
-    samples.filter(s=>s.reqDate===ds&&s.status!=='확정'&&s.status!=='취소').forEach(s=>r.push({
-      cls:'ev-smp-req',
-      t:`샘플의뢰: ${(s.name||'').substring(0,8)}`,
-      click:`calGoSample(${s.id})`,
-      title: `${s.name||''} — 의뢰일 (${s.status||''})`
-    }));
-    // 업무 — 클릭 시 업무 탭 해당 날짜로
-    tasks.filter(t=>t.date===ds&&!t.done).forEach(t=>r.push({
-      cls:'ev-task',
-      t:`업무: ${(t.cont||'').substring(0,9)}`,
-      click:`calGoTask('${ds}')`,
-      title: `${t.cat||''} — ${t.cont||''}`
     }));
     return r;
   }
@@ -4406,8 +4392,6 @@ function renderCalWidget(){
         <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(192,48,48,.45);border-radius:2px"></span>출고</span>
         <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(168,90,16,.45);border-radius:2px"></span>발주납기</span>
         <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(26,109,181,.45);border-radius:2px"></span>샘플납기</span>
-        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(26,109,181,.15);border:1px solid rgba(26,109,181,.4);border-radius:2px"></span>샘플의뢰</span>
-        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(80,64,160,.35);border-radius:2px"></span>업무</span>
       </div>
     </div>
     <div class="cal-dow-row">${['월','화','수','목','금','토','일'].map(d=>`<div class="cal-dow" style="padding:8px 4px;font-size:11px">${d}</div>`).join('')}</div>
@@ -4955,9 +4939,10 @@ function processTabFiles(files,tabType){
   }
 
   // 원본 파일들을 base64로 보관 (발주/샘플 등록 시 첨부로 저장)
+  // Promise로 처리 — 파싱 전에 파일 읽기 완료를 보장
   const bufKey=tabType==='sample'?'_pSmpFiles':'_pOrdFiles';
   window[bufKey]=[];
-  valid.forEach(f=>{
+  const filePromises=valid.map(f=>new Promise((resolve,reject)=>{
     const r=new FileReader();
     r.onload=ev=>{
       window[bufKey].push({
@@ -4966,8 +4951,14 @@ function processTabFiles(files,tabType){
         size:f.size,
         url:ev.target.result
       });
+      resolve();
     };
+    r.onerror=err=>{ console.warn('파일 읽기 실패:',f.name,err); resolve(); };
     r.readAsDataURL(f);
+  }));
+  // 파일 읽기가 완료될 때까지 대기 후 AI 파싱 진행
+  Promise.all(filePromises).then(()=>{
+    console.warn('⚡ [원본파일] '+bufKey+'에 '+window[bufKey].length+'개 저장 완료');
   });
 
   // Show file list badge
@@ -5539,9 +5530,16 @@ async function quickRegOrder(){
 
   // 업로드했던 원본 파일들(엑셀/PDF 등)도 발주서 첨부로 저장
   var origFiles=Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[];
+  // 혹시 파일 읽기가 아직 안 끝났으면 잠시 대기 (AI 파싱 완료 후 바로 등록 누른 경우)
+  if(!origFiles.length){
+    await new Promise(r=>setTimeout(r,400));
+    origFiles=Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[];
+  }
+  console.warn('⚡ [발주등록] 원본 파일 개수:', origFiles.length, '첫 파일:', origFiles[0]?.name);
   if(notionCfg.workerUrl && origFiles.some(f=>f.url&&String(f.url).startsWith('data:'))){
     showToast('🔄 원본 파일 업로드 중...','var(--blu)',2500);
     origFiles=await uploadImagesToR2(origFiles);
+    console.warn('⚡ [발주등록] R2 업로드 후:', origFiles);
   }
 
   var ordId=Date.now();
@@ -7310,12 +7308,21 @@ function handleOrdFileDrop(e){
 }
 function renderOrdFilePrev(){
   const el=document.getElementById('ordFilePrev');if(!el)return;
-  el.innerHTML=ordFileBuf.map((f,i)=>`
-    <div style="display:inline-flex;align-items:center;gap:5px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:4px 8px;font-size:11px">
-      <span>${f.type&&f.type.startsWith('image/')?'🖼':'📄'}</span>
-      <span style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2)">${f.name}</span>
-      <button onclick="ordFileBuf.splice(${i},1);renderOrdFilePrev()" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:0 2px">×</button>
-    </div>`).join('');
+  el.innerHTML=ordFileBuf.map((f,i)=>{
+    const ext=(f.name||'').split('.').pop().toLowerCase();
+    const isImg=(f.type&&f.type.startsWith('image/'))||['jpg','jpeg','png','gif','webp','heic'].includes(ext);
+    const isPdf=f.type==='application/pdf'||ext==='pdf';
+    const isXl=(f.type&&(f.type.includes('sheet')||f.type.includes('excel')))||['xlsx','xls','csv'].includes(ext);
+    const icon=isImg?'🖼':isPdf?'📄':isXl?'📊':'📎';
+    return`
+    <div style="display:inline-flex;align-items:center;gap:5px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer"
+      onclick="openFilePreviewList(ordFileBuf,${i})"
+      title="클릭하여 미리보기">
+      <span>${icon}</span>
+      <span style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2)">${f.name||'파일'}</span>
+      <button onclick="event.stopPropagation();ordFileBuf.splice(${i},1);renderOrdFilePrev()" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:0 2px" title="제거">×</button>
+    </div>`;
+  }).join('');
 }
 
 // ════════════════════════════════
