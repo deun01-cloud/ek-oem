@@ -87,11 +87,14 @@ tr.row-w:hover td{background:rgba(168,90,16,.08)!important}
 .cal-cell.today-c{background:var(--gold-bg)}
 .cal-cell.today-c .cal-dn{background:var(--gold);color:#FFF;border-radius:50%}
 .cal-cell.sun .cal-dn{color:var(--red)}.cal-cell.sat .cal-dn{color:var(--blu)}
+.cal-cell.holiday{background:rgba(192,48,48,.04)}
+.cal-cell.holiday.today-c{background:linear-gradient(135deg,var(--gold-bg) 0%,rgba(192,48,48,.08) 100%)}
 .cal-dn{font-size:11px;font-weight:600;color:var(--t2);width:20px;height:20px;display:flex;align-items:center;justify-content:center;margin-bottom:2px}
 .cal-evt{font-size:9px;padding:1px 4px;border-radius:2px;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;border-left:2px solid}
 .ev-ship{background:rgba(192,48,48,.1);border-color:var(--red);color:var(--red)}
 .ev-ord{background:rgba(168,90,16,.1);border-color:var(--org);color:var(--org)}
 .ev-smp{background:rgba(26,109,181,.1);border-color:var(--blu);color:var(--blu)}
+.ev-smp-req{background:rgba(26,109,181,.05);border-color:rgba(26,109,181,.35);color:var(--blu);opacity:.8}
 .ev-task{background:rgba(80,64,160,.08);border-color:var(--prp);color:var(--prp)}
 
 /* ── Layout (search-box only) ── */
@@ -1194,7 +1197,62 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 // CONSTANTS & STATE
 // ════════════════════════════════
 const TODAY=new Date();TODAY.setHours(0,0,0,0);
-const todayStr=TODAY.toISOString().split('T')[0];
+// ⚠ toISOString()은 UTC 기준이라 한국(UTC+9)에선 하루 밀리는 버그가 생김
+// 아래 헬퍼는 "로컬 날짜"를 YYYY-MM-DD 문자열로 안전하게 변환
+function toLocalDateStr(d){
+  if(!d) return '';
+  if(typeof d === 'string') return d.split('T')[0]; // 이미 문자열이면 그대로
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const day=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+const todayStr=toLocalDateStr(TODAY);
+
+// ════════════════════════════════
+// 한국 공휴일 데이터 (2024~2027)
+// 양력으로 고정된 날짜 + 음력 공휴일을 양력으로 변환한 값 포함
+// 대체공휴일(substitute holiday)도 포함
+// ════════════════════════════════
+const KR_HOLIDAYS={
+  // 2024년
+  '2024-01-01':'신정', '2024-02-09':'설날 연휴', '2024-02-10':'설날', '2024-02-11':'설날 연휴', '2024-02-12':'대체공휴일',
+  '2024-03-01':'삼일절', '2024-04-10':'국회의원선거',
+  '2024-05-05':'어린이날', '2024-05-06':'대체공휴일', '2024-05-15':'부처님오신날',
+  '2024-06-06':'현충일', '2024-08-15':'광복절',
+  '2024-09-16':'추석 연휴', '2024-09-17':'추석', '2024-09-18':'추석 연휴',
+  '2024-10-01':'국군의날', '2024-10-03':'개천절', '2024-10-09':'한글날',
+  '2024-12-25':'크리스마스',
+  // 2025년
+  '2025-01-01':'신정', '2025-01-28':'설날 연휴', '2025-01-29':'설날', '2025-01-30':'설날 연휴',
+  '2025-03-01':'삼일절', '2025-03-03':'대체공휴일',
+  '2025-05-05':'어린이날·부처님오신날', '2025-05-06':'대체공휴일',
+  '2025-06-03':'대통령선거', '2025-06-06':'현충일',
+  '2025-08-15':'광복절',
+  '2025-10-03':'개천절', '2025-10-05':'추석 연휴', '2025-10-06':'추석', '2025-10-07':'추석 연휴',
+  '2025-10-08':'대체공휴일', '2025-10-09':'한글날',
+  '2025-12-25':'크리스마스',
+  // 2026년
+  '2026-01-01':'신정', '2026-02-16':'설날 연휴', '2026-02-17':'설날', '2026-02-18':'설날 연휴',
+  '2026-03-01':'삼일절', '2026-03-02':'대체공휴일',
+  '2026-05-05':'어린이날', '2026-05-24':'부처님오신날', '2026-05-25':'대체공휴일',
+  '2026-06-06':'현충일',
+  '2026-08-15':'광복절', '2026-08-17':'대체공휴일',
+  '2026-09-24':'추석 연휴', '2026-09-25':'추석', '2026-09-26':'추석 연휴',
+  '2026-10-03':'개천절', '2026-10-05':'대체공휴일', '2026-10-09':'한글날',
+  '2026-12-25':'크리스마스',
+  // 2027년
+  '2027-01-01':'신정', '2027-02-06':'설날 연휴', '2027-02-07':'설날', '2027-02-08':'설날 연휴', '2027-02-09':'대체공휴일',
+  '2027-03-01':'삼일절',
+  '2027-05-05':'어린이날', '2027-05-13':'부처님오신날',
+  '2027-06-06':'현충일', '2027-06-07':'대체공휴일',
+  '2027-08-15':'광복절', '2027-08-16':'대체공휴일',
+  '2027-09-14':'추석 연휴', '2027-09-15':'추석', '2027-09-16':'추석 연휴',
+  '2027-10-03':'개천절', '2027-10-04':'대체공휴일', '2027-10-09':'한글날', '2027-10-11':'대체공휴일',
+  '2027-12-25':'크리스마스',
+};
+function getHoliday(ds){ return KR_HOLIDAYS[ds]||''; }
+function isHoliday(ds){ return !!KR_HOLIDAYS[ds]; }
 const DAY_KR=['일','월','화','수','목','금','토'];
 const STAGES=['주물','도금','검품','포장','출고'];
 const SMP_CATS=['전체','의뢰','제작중','수정중','확정','취소'];
@@ -1993,7 +2051,7 @@ function confirmOrdDoc(){
   const activeRows=rows.filter(r=>+r._docQty>0);
   if(!activeRows.length){showToast('⚠ 출하 수량이 0인 항목만 있습니다','var(--org)');return;}
   closeM('mOrdDocQty');
-  const today=new Date().toISOString().split('T')[0];
+  const today=toLocalDateStr(new Date());
   const co=company||{name:'이케이아이엔티'};
   if(type==='delivery'){
     const rowsHtml=activeRows.map((r,i)=>`<tr>
@@ -4243,7 +4301,7 @@ function renderWeekSchedulePanel(){
   // Build per-day event rows
   let hasAny=false;
   const dayBlocks=days.map(d=>{
-    const ds=d.toISOString().split('T')[0];
+    const ds=toLocalDateStr(d);
     const isToday=ds===todayStr;
     const evts=[];
     procItems.filter(p=>!p.shipped&&p.due===ds).forEach(p=>evts.push({cls:'ev-ship',label:'출고',name:p.name,detail:`${p.vendor||''} · ${STAGES[p.stageIdx||0]}`}));
@@ -4298,11 +4356,42 @@ function renderCalWidget(){
   const cells=[];for(let i=0;i<sd;i++)cells.push(null);
   for(let d=1;d<=last.getDate();d++)cells.push(new Date(calY,calM,d));
   function evts(d){
-    const ds=d.toISOString().split('T')[0];const r=[];
-    procItems.filter(p=>!p.shipped&&p.due===ds).forEach(p=>r.push({cls:'ev-ship',t:`출고: ${p.name.substring(0,10)}`}));
-    orders.filter(o=>o.ship===ds).forEach(o=>r.push({cls:'ev-ord',t:`납기: ${o.vendor.substring(0,8)}`}));
-    samples.filter(s=>s.due===ds&&s.status!=='확정'&&s.status!=='취소').forEach(s=>r.push({cls:'ev-smp',t:`샘플: ${s.name.substring(0,9)}`}));
-    tasks.filter(t=>t.date===ds&&!t.done).forEach(t=>r.push({cls:'ev-task',t:(t.cont||'').substring(0,9)}));
+    const ds=toLocalDateStr(d);const r=[];
+    // 공정 출고 (due가 있는 미출고 공정)
+    procItems.filter(p=>!p.shipped&&p.due===ds).forEach(p=>r.push({
+      cls:'ev-ship',
+      t:`출고: ${(p.name||'').substring(0,10)}`,
+      click: p.orderId ? `calGoOrder(${p.orderId})` : `calGoProc(${p.id})`,
+      title: `${p.name||''} — ${p.vendor||''} (${STAGES[p.stageIdx||0]||''})`
+    }));
+    // 발주 납기 — 클릭 시 해당 발주서 열기
+    orders.filter(o=>o.ship===ds).forEach(o=>r.push({
+      cls:'ev-ord',
+      t:`발주: ${(o.vendor||'').substring(0,8)}`,
+      click:`calGoOrder(${o.id})`,
+      title: `${o.vendor||''} — 품목 ${(o.rows||[]).length}개`
+    }));
+    // 샘플 납기 — 클릭 시 샘플 편집 모달
+    samples.filter(s=>s.due===ds&&s.status!=='확정'&&s.status!=='취소').forEach(s=>r.push({
+      cls:'ev-smp',
+      t:`샘플납기: ${(s.name||'').substring(0,8)}`,
+      click:`calGoSample(${s.id})`,
+      title: `${s.name||''} — ${s.manager||''} (${s.status||''})`
+    }));
+    // 샘플 의뢰일 — 별도 색(보조)으로 표시
+    samples.filter(s=>s.reqDate===ds&&s.status!=='확정'&&s.status!=='취소').forEach(s=>r.push({
+      cls:'ev-smp-req',
+      t:`샘플의뢰: ${(s.name||'').substring(0,8)}`,
+      click:`calGoSample(${s.id})`,
+      title: `${s.name||''} — 의뢰일 (${s.status||''})`
+    }));
+    // 업무 — 클릭 시 업무 탭 해당 날짜로
+    tasks.filter(t=>t.date===ds&&!t.done).forEach(t=>r.push({
+      cls:'ev-task',
+      t:`업무: ${(t.cont||'').substring(0,9)}`,
+      click:`calGoTask('${ds}')`,
+      title: `${t.cat||''} — ${t.cont||''}`
+    }));
     return r;
   }
   return`<div class="cal-wrap">
@@ -4313,25 +4402,66 @@ function renderCalWidget(){
         <button class="cal-nb" onclick="calM++;if(calM>11){calM=0;calY++;}renderTab()">&#8250;</button>
         <button class="btn bgo bs" onclick="calY=TODAY.getFullYear();calM=TODAY.getMonth();renderTab()" style="margin-left:4px">오늘</button>
       </div>
-      <div style="display:flex;gap:12px;font-size:10.5px;color:var(--t3)">
+      <div style="display:flex;gap:12px;font-size:10.5px;color:var(--t3);flex-wrap:wrap">
         <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(192,48,48,.45);border-radius:2px"></span>출고</span>
         <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(168,90,16,.45);border-radius:2px"></span>발주납기</span>
         <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(26,109,181,.45);border-radius:2px"></span>샘플납기</span>
+        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(26,109,181,.15);border:1px solid rgba(26,109,181,.4);border-radius:2px"></span>샘플의뢰</span>
         <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(80,64,160,.35);border-radius:2px"></span>업무</span>
       </div>
     </div>
     <div class="cal-dow-row">${['월','화','수','목','금','토','일'].map(d=>`<div class="cal-dow" style="padding:8px 4px;font-size:11px">${d}</div>`).join('')}</div>
     <div class="cal-grid">${cells.map((d,i)=>{
       if(!d)return`<div class="cal-cell other" style="min-height:100px"></div>`;
-      const ds=d.toISOString().split('T')[0];const isT=ds===todayStr;
+      const ds=toLocalDateStr(d);const isT=ds===todayStr;
       const dow=(d.getDay()+6)%7;const ev=evts(d);
-      return`<div class="cal-cell ${isT?'today-c':''} ${dow===6?'sun':dow===5?'sat':''}" style="min-height:100px;padding:4px 5px" onclick="calClick('${ds}')">
-        <div class="cal-dn" style="width:22px;height:22px;font-size:12px;margin-bottom:3px">${d.getDate()}</div>
-        ${ev.slice(0,4).map(e=>`<div class="cal-evt ${e.cls}" style="font-size:10px;padding:2px 5px;margin-bottom:2px">${e.t}</div>`).join('')}
-        ${ev.length>4?`<div style="font-size:9px;color:var(--t3);padding-left:4px">+${ev.length-4}개 더</div>`:''}
+      const holiday=getHoliday(ds);
+      const isRedDay=holiday||dow===6; // 공휴일 또는 일요일
+      return`<div class="cal-cell ${isT?'today-c':''} ${dow===6?'sun':dow===5?'sat':''} ${holiday?'holiday':''}" style="min-height:100px;padding:4px 5px" onclick="calClick('${ds}')">
+        <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">
+          <div class="cal-dn" style="width:22px;height:22px;font-size:12px;${isRedDay?'color:var(--red)':''}">${d.getDate()}</div>
+          ${holiday?`<span style="font-size:9.5px;color:var(--red);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${holiday}">${holiday}</span>`:''}
+        </div>
+        ${ev.slice(0,4).map(e=>`<div class="cal-evt ${e.cls}" style="font-size:10px;padding:2px 5px;margin-bottom:2px;cursor:pointer" onclick="event.stopPropagation();${e.click}" title="${(e.title||'').replace(/"/g,'&quot;')}">${e.t}</div>`).join('')}
+        ${ev.length>4?`<div style="font-size:9px;color:var(--t3);padding-left:4px;cursor:pointer" onclick="event.stopPropagation();calClick('${ds}')">+${ev.length-4}개 더</div>`:''}
       </div>`;
     }).join('')}</div>
   </div>`;
+}
+// 달력 이벤트 클릭 네비게이션
+function calGoOrder(ordId){
+  switchTab('order',document.querySelectorAll('.tab-btn')[2]);
+  setTimeout(()=>{
+    const o=orders.find(x=>x.id===ordId);
+    if(o){
+      ordRowsBuf=(o.rows||[]).map(r=>({...r}));
+      openOrdModal(ordId);
+    } else {
+      showToast('⚠ 발주서를 찾을 수 없습니다','var(--org)');
+    }
+  },120);
+}
+function calGoProc(procId){
+  // 공정 단독(발주와 연결 안 됨) — 발주 탭으로 이동
+  switchTab('order',document.querySelectorAll('.tab-btn')[2]);
+  setTimeout(()=>{
+    const p=procItems.find(x=>x.id===procId);
+    if(p){ showToast(`공정 "${p.name}" — ${p.vendor||''}`,'var(--blu)',3000); }
+  },120);
+}
+function calGoSample(smpId){
+  switchTab('sample',document.querySelectorAll('.tab-btn')[1]);
+  setTimeout(()=>{
+    const s=samples.find(x=>x.id===smpId);
+    if(s){ openSmpModal(smpId); }
+    else { showToast('⚠ 샘플을 찾을 수 없습니다','var(--org)'); }
+  },120);
+}
+function calGoTask(ds){
+  schedView='day';
+  const d=new Date(ds);
+  schedWOff=Math.round((d-TODAY)/86400000);
+  switchTab('schedule',document.querySelectorAll('.tab-btn')[3]);
 }
 function calClick(ds){schedView='week';const d=new Date(ds);schedWOff=Math.round((d-TODAY)/86400000);switchTab('schedule',document.querySelectorAll('.tab-btn')[4]);}
 
@@ -6027,7 +6157,7 @@ function renderSchedContent(){
 }
 function renderDayView(sc){
   const d=new Date(TODAY);d.setDate(TODAY.getDate()+schedWOff);
-  const ds=d.toISOString().split('T')[0];
+  const ds=toLocalDateStr(d);
   const dayT=tasks.filter(t=>t.date===ds);
   const pct=dayT.length?Math.round(dayT.filter(t=>t.done).length/dayT.length*100):0;
 
@@ -6042,9 +6172,9 @@ function renderDayView(sc){
         <button class="add-t" onclick="openTaskFull('${ds}','${ap}','${cat}')" style="font-size:11px;padding:0 5px;height:18px;line-height:18px">＋</button>
       </div>
       ${autoItems.map(it=>`
-        <div class="task-it" style="opacity:.8;margin-bottom:2px">
-          <span style="font-size:9px;background:rgba(0,0,0,.06);border-radius:3px;padding:1px 4px;color:${CAT_COL[cat]};margin-right:3px;flex-shrink:0">자동</span>
-          <span class="tt ${it.done?'done':''}" style="font-size:11px">${it.cont}</span>
+        <div class="task-it" style="margin-bottom:2px;cursor:${it.click?'pointer':'default'}" ${it.click?`onclick="${it.click}"`:''} title="${it.cont.replace(/"/g,'&quot;')}">
+          ${it.badge||''}
+          <span class="tt ${it.done?'done':''}" style="font-size:11px;flex:1;margin-left:${it.badge?'2px':'0'}">${it.cont}</span>
         </div>`).join('')}
       ${manualTasks.map(t=>`
         <div class="task-it" style="margin-bottom:2px">
@@ -6079,17 +6209,70 @@ function renderDayView(sc){
 // 발주출고/샘플출고 자동 연동 아이템 (주간·일간 공통 사용)
 function getAutoItems(ds, cat){
   const items=[];
+  // 업체명 문자열 → client 객체 매칭 (이니셜/이름/괄호 제거된 이름 모두 시도)
+  const matchClient=(vendor)=>{
+    if(!vendor) return null;
+    const v=String(vendor).trim();
+    const vU=v.toUpperCase();
+    const vClean=v.replace(/^\(.*?\)/,'').trim();
+    return clients.find(c=>
+      (c.initials||'').trim().toUpperCase()===vU ||
+      (c.name||'').trim()===v ||
+      (c.name||'').replace(/^\(.*?\)/,'').trim()===vClean
+    )||null;
+  };
+  // 이니셜 배지 HTML 생성 (clInitHtml 재사용 — 없으면 문자열로 fallback)
+  const initBadge=(clientObj, fallbackName)=>{
+    if(clientObj) return clInitHtml(clientObj, true); // small 배지
+    // 고객사에 없는 경우 → 이름에서 이니셜 추출 + 해시 기반 색상
+    if(!fallbackName) return '';
+    const nm=String(fallbackName).replace(/^\(.*?\)/,'').trim();
+    const words=nm.split(/\s+/);
+    let init='';
+    if(words.length>=2) init=(words[0][0]+(words[1][0]||'')).toUpperCase();
+    else init=nm.slice(0,2).toUpperCase();
+    if(!init) return '';
+    const color=strToColor(fallbackName);
+    return `<span class="cl-init cl-init-sm" style="background:${color}" title="${fallbackName}">${init}</span>`;
+  };
   if(cat==='발주출고'){
+    // 공정(발주에서 자동 생성) — 클릭 시 해당 발주서로
     procItems.filter(p=>p.due===ds).forEach(p=>{
-      items.push({auto:true,cont:p.name+(p.shipped?' ✓':''),done:p.shipped,id:'proc_'+p.id});
+      const cl=matchClient(p.vendor);
+      items.push({
+        auto:true,
+        cont:p.name+(p.shipped?' ✓':''),
+        badge: initBadge(cl, p.vendor),
+        done:p.shipped,
+        id:'proc_'+p.id,
+        click: p.orderId ? `calGoOrder(${p.orderId})` : `calGoProc(${p.id})`
+      });
     });
+    // orderId가 없는 발주 — 공정 연결 안 된 발주
     orders.filter(o=>o.ship===ds).forEach(o=>{
-      if(!procItems.find(p=>p.orderId===o.id))
-        items.push({auto:true,cont:o.vendor+' 납기',done:false,id:'ord_'+o.id});
+      if(!procItems.find(p=>p.orderId===o.id)){
+        const cl=matchClient(o.vendor);
+        items.push({
+          auto:true,
+          cont:o.vendor+' 납기',
+          badge: initBadge(cl, o.vendor),
+          done:false,
+          id:'ord_'+o.id,
+          click: `calGoOrder(${o.id})`
+        });
+      }
     });
   } else if(cat==='샘플출고'){
     samples.filter(s=>s.due===ds&&s.status!=='취소').forEach(s=>{
-      items.push({auto:true,cont:s.name+(s.status==='확정'?' ✓':''),done:s.status==='확정',id:'smp_'+s.id});
+      const cl=matchClient(s.manager);
+      items.push({
+        auto:true,
+        cont:s.name+(s.status==='확정'?' ✓':''),
+        badge: initBadge(cl, s.manager),
+        done:s.status==='확정',
+        id:'smp_'+s.id,
+        click: `calGoSample(${s.id})`
+      });
     });
   }
   return items;
@@ -6112,20 +6295,31 @@ function renderWeekView(sc){
   <div style="overflow-x:auto">
     <div style="display:grid;grid-template-columns:76px repeat(7,1fr);min-width:660px">
       <div class="wg-cat" style="background:var(--s3);border-bottom:1px solid var(--bdr)"></div>
-      ${days.map(d=>{const ds=d.toISOString().split('T')[0];const isT=ds===todayStr;const dt=tasks.filter(t=>t.date===ds);return`<div class="wg-cat" style="justify-content:center;flex-direction:column;align-items:center;background:${isT?'var(--gold-bg)':'var(--s2)'};color:${isT?'var(--gold-lt)':'var(--t2)'};border-bottom:1px solid var(--bdr)"><div style="font-size:11px;font-weight:600">${DAY_KR[d.getDay()]} ${d.getDate()}</div>${dt.length?`<div style="font-size:9px;color:var(--t3)">${dt.filter(t=>t.done).length}/${dt.length}</div>`:''}</div>`;}).join('')}
+      ${days.map(d=>{
+        const ds=toLocalDateStr(d);
+        const isT=ds===todayStr;
+        const dt=tasks.filter(t=>t.date===ds);
+        const hol=getHoliday(ds);
+        const isRed=hol||d.getDay()===0;
+        return`<div class="wg-cat" style="justify-content:center;flex-direction:column;align-items:center;background:${isT?'var(--gold-bg)':hol?'rgba(192,48,48,.05)':'var(--s2)'};color:${isT?'var(--gold-lt)':isRed?'var(--red)':'var(--t2)'};border-bottom:1px solid var(--bdr)">
+          <div style="font-size:11px;font-weight:600">${DAY_KR[d.getDay()]} ${d.getDate()}</div>
+          ${hol?`<div style="font-size:9px;color:var(--red);font-weight:600;margin-top:1px" title="${hol}">${hol.length>6?hol.slice(0,5)+'…':hol}</div>`:''}
+          ${dt.length?`<div style="font-size:9px;color:var(--t3)">${dt.filter(t=>t.done).length}/${dt.length}</div>`:''}
+        </div>`;
+      }).join('')}
       ${CATS_SCHED.map(cat=>{
         const isShip=CAT_HAS_FILES.includes(cat);
         return`
         <div class="wg-cat" style="background:${CAT_BG[cat]};color:${CAT_COL[cat]};font-size:10.5px">${cat}</div>
         ${days.map(d=>{
-          const ds=d.toISOString().split('T')[0];
+          const ds=toLocalDateStr(d);
           const manualTasks=tasks.filter(t=>t.date===ds&&t.cat===cat);
           const autoItems=(cat==='발주출고'||cat==='샘플출고')?getAutoItems(ds,cat):[];
           const hasFiles=manualTasks.some(t=>t.files&&t.files.length);
           return`<div class="wg-cell" style="background:${CAT_BG[cat]||'transparent'};min-height:38px">
-            ${autoItems.map(it=>`<div class="task-it" style="opacity:.85">
-              <span style="font-size:9px;background:var(--s3);border-radius:3px;padding:1px 4px;color:var(--t3);margin-right:2px;flex-shrink:0">자동</span>
-              <span class="tt ${it.done?'done':''}" style="font-size:10.5px">${it.cont}</span>
+            ${autoItems.map(it=>`<div class="task-it" style="cursor:${it.click?'pointer':'default'}" ${it.click?`onclick="${it.click}"`:''} title="${it.cont.replace(/"/g,'&quot;')}">
+              ${it.badge||''}
+              <span class="tt ${it.done?'done':''}" style="font-size:10.5px;flex:1;margin-left:${it.badge?'2px':'0'}">${it.cont}</span>
             </div>`).join('')}
             ${manualTasks.map(t=>`<div class="task-it">
               <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask(${t.id})">
@@ -6151,12 +6345,20 @@ function renderMonthView(sc){
   </div>
   ${renderChecklistWidget('month')}
   <div class="cal-dow-row">${['월','화','수','목','금','토','일'].map(d=>`<div class="cal-dow">${d}</div>`).join('')}</div>
-  <div class="cal-grid">${cells.map(d=>{if(!d)return`<div class="cal-cell other"></div>`;const ds=d.toISOString().split('T')[0];const isT=ds===todayStr;const dow=(d.getDay()+6)%7;
+  <div class="cal-grid">${cells.map(d=>{if(!d)return`<div class="cal-cell other"></div>`;const ds=toLocalDateStr(d);const isT=ds===todayStr;const dow=(d.getDay()+6)%7;
   const evts=[];
   procItems.filter(p=>!p.shipped&&p.due===ds).forEach(p=>evts.push({cls:'ev-ship',t:`출고: ${p.name.substring(0,7)}`}));
   orders.filter(o=>o.ship===ds).forEach(o=>evts.push({cls:'ev-ord',t:`납기: ${o.vendor.substring(0,5)}`}));
   tasks.filter(t=>t.date===ds&&!t.done).forEach(t=>evts.push({cls:'ev-task',t:t.cont?.substring(0,8)||''}));
-  return`<div class="cal-cell ${isT?'today-c':''} ${dow===6?'sun':dow===5?'sat':''}" onclick="schedView='day';schedWOff=Math.round((new Date('${ds}')-TODAY)/86400000);renderSchedContent()"><div class="cal-dn">${d.getDate()}</div>${evts.slice(0,3).map(e=>`<div class="cal-evt ${e.cls}">${e.t}</div>`).join('')}${evts.length>3?`<div style="font-size:9px;color:var(--t3);padding-left:3px">+${evts.length-3}</div>`:''}</div>`;}).join('')}</div>`;
+  const hol=getHoliday(ds);
+  const isRedDay=hol||dow===6;
+  return`<div class="cal-cell ${isT?'today-c':''} ${dow===6?'sun':dow===5?'sat':''} ${hol?'holiday':''}" onclick="schedView='day';schedWOff=Math.round((new Date('${ds}')-TODAY)/86400000);renderSchedContent()">
+    <div style="display:flex;align-items:center;gap:3px">
+      <div class="cal-dn" style="${isRedDay?'color:var(--red)':''}">${d.getDate()}</div>
+      ${hol?`<span style="font-size:9px;color:var(--red);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${hol}">${hol.length>5?hol.slice(0,4)+'…':hol}</span>`:''}
+    </div>
+    ${evts.slice(0,3).map(e=>`<div class="cal-evt ${e.cls}">${e.t}</div>`).join('')}${evts.length>3?`<div style="font-size:9px;color:var(--t3);padding-left:3px">+${evts.length-3}</div>`:''}
+  </div>`;}).join('')}</div>`;
 }
 
 // ════════════════════════════════
@@ -6406,7 +6608,7 @@ function renderOrdRows(){
     const pct=ordQty>0?Math.min(Math.round(rcvTotal/ordQty*100),100):0;
     const isDone=ordQty>0&&rcvTotal>=ordQty;
     const barColor=isDone?'var(--grn)':pct>=50?'var(--gold)':'var(--org)';
-    const todayStr2=new Date().toISOString().split('T')[0];
+    const todayStr2=toLocalDateStr(new Date());
 
     return`
   <div style="border-bottom:0.5px solid var(--bdr);padding:8px 0;${isDone?'opacity:.8':''}">
@@ -7919,7 +8121,7 @@ function openPropModal(idOrNull){
   renderPropPreviews();
   if(!p){
     const end=new Date(todayStr);end.setDate(end.getDate()+5);
-    document.getElementById('prop_nextdate').value=end.toISOString().split('T')[0];
+    document.getElementById('prop_nextdate').value=toLocalDateStr(end);
   }
   const delBtn=document.getElementById('prop_del_btn');
   if(delBtn)delBtn.style.display=p?'':'none';
