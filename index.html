@@ -2305,6 +2305,11 @@ try { anthropicKey = localStorage.getItem(ANTHROPIC_KEY_SK)||''; } catch(e) {}
 
 // Claude API 호출 — Worker 프록시 우선, 없으면 직접 호출
 async function callClaudeAPI(body) {
+  // API 키 사전 체크 — 없으면 명확한 에러 반환
+  if(!anthropicKey || !anthropicKey.trim()){
+    return { error: { message: 'Anthropic API 키가 설정되지 않았습니다. 우측 상단 ⚙ 설정 → API 키에서 입력해 주세요.' } };
+  }
+
   // notionCfg가 아직 안 로드됐을 경우 localStorage에서 직접 읽기
   let workerUrl = '';
   try {
@@ -4839,6 +4844,7 @@ function readPdfAsB64(pdfFile,tabType,resultEl,extraImgs){
 }
 
 function readExcelAsText(xlFile,tabType,resultEl){
+  console.warn('⚡ [발주서AI] 엑셀 읽기 시작:', xlFile.name, 'size:', xlFile.size, 'tabType:', tabType);
   const r=new FileReader();
   r.onload=ev=>{
     try{
@@ -4855,10 +4861,13 @@ function readExcelAsText(xlFile,tabType,resultEl){
           text+='\n\n';
         });
       }
-      // Trim to 4000 chars to avoid token overflow
-      if(text.length>4000)text=text.substring(0,4000)+'...(이하 생략)';
+      console.warn('⚡ [발주서AI] 엑셀→텍스트 변환 완료, 길이:', text.length);
+      console.log('⚡ [발주서AI] 텍스트 미리보기 (처음 600자):\n', text.slice(0,600));
+      // Trim to 8000 chars to avoid token overflow (발주서 품목 많을 수 있음)
+      if(text.length>8000)text=text.substring(0,8000)+'...(이하 생략)';
       callAIParseForTabText(text,xlFile.name,tabType,resultEl);
     }catch(err){
+      console.error('⚡ [발주서AI] 엑셀 읽기 오류:', err);
       resultEl.innerHTML=`<div style="padding:10px;background:var(--red-bg);border-radius:var(--r);color:var(--red);font-size:12px">엑셀 파일을 읽는 중 오류가 발생했습니다: ${err.message}</div>`;
     }
   };
@@ -4866,8 +4875,21 @@ function readExcelAsText(xlFile,tabType,resultEl){
 }
 
 async function callAIParseForTabText(csvText,fileName,tabType,resultEl){
-  const hint=tabType==='sample'?'이 데이터는 샘플의뢰서 내용입니다.':'이 데이터는 발주서 내용입니다.';
-  const prompt=`다음은 주얼리 OEM 제조업체의 엑셀/CSV 파일 내용입니다. ${hint}
+  const hint=tabType==='sample'?'이 데이터는 샘플의뢰서 내용입니다.':'이 데이터는 발주서/오더발주서 내용입니다.';
+  const orderGuide=tabType==='sample'?'':`
+
+발주서 파싱 가이드 (중요):
+1. 상단 몇 행에는 보통 제목·업체명·요청출고일이 있습니다. 표 본문은 "구분/번호", "발주일자", "납기일자", "품목명", "수량" 등의 헤더 아래부터 시작합니다.
+2. 첫 열이 숫자(1,2,3...)인 행이 각 품목입니다. 빈 컬럼은 무시하세요.
+3. 품목명에 괄호로 호수/사이즈가 있으면(예: "볼드 파이 반지 (11호)", "L 파이 이어링") size 필드에 괄호 안 내용("11호") 또는 규격("L")을 추출하고 name 필드의 괄호는 유지해도 됩니다.
+4. 소재 컬럼이 복합 표기(예: "브라스 + 실버도금 + 변색방지 금속코팅")인 경우:
+   - mat에는 주 소재(예: "브라스" 또는 "925실버" 또는 "브라스 + 925실버")
+   - plating에는 도금·코팅 정보(예: "실버도금 + 변색방지 코팅")
+5. "침 925실버 그 외 브라스 + 실버도금" 같이 복합 기재인 경우 원문을 mat에 그대로 넣어도 됩니다.
+6. 적요/비고/메모 컬럼은 note 필드로.
+7. 요청 출고일은 보통 "요청 출고일", "납기일자" 열에서 우선 추출.`;
+
+  const prompt=`다음은 주얼리 OEM 제조업체의 엑셀/CSV 파일 내용입니다. ${hint}${orderGuide}
 
 파일명: ${fileName}
 내용:
@@ -4878,27 +4900,41 @@ ${csvText}
   "docType": "${tabType==='sample'?'샘플의뢰서':'발주서'}",
   "confidence": 0~1 사이 숫자,
   "sample": { "name":"", "type":"RING/EARRING/NECKLACE 등", "manager":"", "reqDate":"YYYY-MM-DD", "due":"YYYY-MM-DD", "qty":"", "mat":"소재", "plating":"도금", "sz1":"외경/길이", "sz2":"호수", "engr":"각인위치", "desc":"디자인설명", "devNote":"개발사항", "caution":"주의사항" },
-  "order": { "vendor":"업체명", "date":"YYYY-MM-DD", "shipDate":"YYYY-MM-DD", "manager":"", "rows":[{"name":"품목명","qty":"수량","plating":"도금","mat":"소재","size":"사이즈","note":"적요"}] },
+  "order": { "vendor":"업체명", "date":"YYYY-MM-DD", "shipDate":"YYYY-MM-DD", "manager":"", "rows":[{"name":"품목명","qty":"수량","plating":"도금","mat":"소재","size":"사이즈/호수","note":"적요"}] },
   "notes": "특이사항"
 }`;
 
   try{
+    console.log('[AI파싱] 엑셀/CSV 전송 중...', fileName, 'textLen:', csvText.length);
     const data=await callClaudeAPI({
         model:'claude-sonnet-4-5',
-        max_tokens:1200,
+        max_tokens:2000,
         messages:[{role:'user',content:[{type:'text',text:prompt}]}]
       });
     if(data.error){
+      console.error('[AI파싱] API 오류:', data.error);
       const errMsg=data.error.message||'API 오류';
       resultEl.innerHTML='<div style="padding:12px;background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;font-size:12px;color:var(--red)"><b>API 오류:</b> '+errMsg+'</div>';
       return;
     }
+    // content 블록이 없으면 응답 구조 이상 — 원본 표시
+    if(!data.content || !Array.isArray(data.content) || !data.content.length){
+      console.error('[AI파싱] 비정상 응답 (content 없음):', data);
+      resultEl.innerHTML='<div style="padding:12px;background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;font-size:12px;color:var(--red)"><b>AI 응답이 비었습니다.</b><br>Worker 또는 API 연결에 문제가 있을 수 있습니다.<br><code style="font-size:10px;color:var(--t3)">'+JSON.stringify(data).slice(0,200)+'</code></div>';
+      return;
+    }
     const text=data.content?.find(b=>b.type==='text')?.text||'{}';
+    console.log('[AI파싱] 응답 원문 (처음 500자):', text.slice(0,500));
     let parsed;
     try{parsed=JSON.parse(text.replace(/```json|```/g,'').trim());}
-    catch{parsed={docType:tabType==='sample'?'샘플의뢰서':'발주서',confidence:0,notes:text.slice(0,200)};}
+    catch(parseErr){
+      console.error('[AI파싱] JSON 파싱 실패:', parseErr.message, '원문:', text.slice(0,800));
+      parsed={docType:tabType==='sample'?'샘플의뢰서':'발주서',confidence:0,notes:text.slice(0,200)};
+    }
+    console.log('[AI파싱] 최종 결과:', parsed);
     showTabParseResult(parsed,[],resultEl,tabType,'엑셀/CSV');
   }catch(err){
+    console.error('[AI파싱] 네트워크 오류:', err);
     resultEl.innerHTML='<div style="padding:12px;background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;font-size:12px;color:var(--red)">'
       +'<b>연결 오류:</b> '+err.message+'</div>';
   }
@@ -5022,7 +5058,15 @@ function showTabParseResult(parsed,imgs,resultEl,tabType,srcLabel){
       fieldsHtml+='<div class="parse-field"><div class="parse-label">'+p[0]+'</div><div class="parse-val">'+p[1]+'</div></div>';
     });
   } else {
-    fieldsHtml='<div style="color:var(--org);font-size:11.5px;padding:6px;grid-column:1/-1">필드를 인식하지 못했습니다. 폼에서 직접 입력해 주세요.</div>';
+    // 인식 실패 원인 추정
+    var reason='';
+    if(parsed.notes && parsed.notes.length>5){
+      reason='<div style="margin-top:6px;font-size:10.5px;color:var(--t3);font-family:monospace">AI 응답: '+parsed.notes.slice(0,200)+'</div>';
+    }
+    if(conf===0 && !parsed.order && !parsed.sample){
+      reason+='<div style="margin-top:6px;font-size:10.5px;color:var(--t3)">💡 원인 가능: (1) API 키 미설정 — 우측 상단 ⚙ → Anthropic API 키 입력 (2) Worker 연결 문제 (3) 파일 형식 인식 실패</div>';
+    }
+    fieldsHtml='<div style="color:var(--org);font-size:11.5px;padding:6px;grid-column:1/-1">필드를 인식하지 못했습니다. 폼에서 직접 입력해 주세요.'+reason+'</div>';
   }
   var body='<div style="padding:12px 14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px">'+fieldsHtml+'</div>';
 
