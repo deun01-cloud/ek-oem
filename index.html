@@ -6397,6 +6397,7 @@ function renderOrder(){
         <div style="display:flex;align-items:stretch;padding:10px 14px;gap:12px;cursor:pointer;background:${isOrdDone?'rgba(46,139,44,.04)':isOrdCanceled?'rgba(192,48,48,.04)':urg?'rgba(192,48,48,.04)':warn?'rgba(168,90,16,.04)':'var(--s1)'}" onclick="ordRowsBuf=[...(orders.find(x=>x.id===${o.id})?.rows||[])].map(r=>({...r}));openOrdModal(${o.id})">
           <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              ${vendorInitHtml(o.vendor, true)}
               <span style="font-size:13px;font-weight:700;${isOrdDone||isOrdCanceled?'text-decoration:line-through;color:var(--t3)':''}">${o.vendor||'—'}</span>
               <span style="font-size:10.5px;color:var(--t3);font-family:monospace">${o.no||''}</span>
               ${o.manager?`<span style="font-size:10.5px;color:var(--t2)">${o.manager}</span>`:''}
@@ -8626,6 +8627,32 @@ function clInitHtml(cl, small){
   const sz=small?'cl-init cl-init-sm':'cl-init';
   return`<span class="${sz}" style="background:${color}" title="${cl.name}">${init}</span>`;
 }
+
+// 업체명(문자열)으로 이니셜 배지 생성 — 등록된 고객사 있으면 사용, 없으면 이름 기반 자동 생성
+// 발주·공정·샘플 등 어디서나 쓸 수 있는 범용 헬퍼
+function vendorInitHtml(vendorName, small){
+  const name=(vendorName||'').trim();
+  if(!name) return '';
+  // 1) 고객사 DB 등록된 업체면 해당 이니셜/색상 사용
+  const cl=clients.find(c=>
+    (c.name||'').trim()===name ||
+    (c.initials||'').trim().toUpperCase()===name.toUpperCase()
+  );
+  if(cl) return clInitHtml(cl, small);
+  // 2) 등록 안 됨 → 이름에서 이니셜 자동 생성 + 문자열 해시 색상
+  const nm=name.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
+  const words=nm.split(/\s+/);
+  let init;
+  if(words.length>=2){
+    init=(words[0][0]+(words[1][0]||'')).toUpperCase();
+  } else {
+    init=nm.slice(0,2).toUpperCase();
+  }
+  if(!init) return '';
+  const sz=small?'cl-init cl-init-sm':'cl-init';
+  return`<span class="${sz}" style="background:${strToColor(name)}" title="${name}">${init}</span>`;
+}
+
 // 고객사 전체 라벨 (뱃지 + 이름 or 뱃지만)
 function clLabel(cl, nameOnly){
   if(!cl)return '?';
