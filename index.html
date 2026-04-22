@@ -4125,16 +4125,17 @@ function showParseResult(parsed,imgs,resultEl){
 async function applyParseToSmp(parsed,imgList){
   const s=parsed.sample||{};
   const imgs=Array.isArray(imgList)?imgList.map(im=>({url:im.url,name:im.name||'업로드 이미지',type:im.type||'image/jpeg'})):[];
-  smpImgBuf=[...imgs];
   // 업로드된 원본 파일 전체(엑셀/PDF 포함)를 sourceDoc(작업지시서)로
   // parsed._origFiles 우선, 없으면 window._pSmpFiles 폴백
   let origFiles = (parsed._origFiles && parsed._origFiles.length)
     ? [...parsed._origFiles]
     : (Array.isArray(window._pSmpFiles)?[...window._pSmpFiles]:[]);
   console.warn('⚡ [applyParseToSmp] 원본 파일 개수:', origFiles.length, origFiles.map(f=>f.name));
+  // openSmpModal이 내부에서 버퍼를 덮어쓸 수 있으므로, 모달 먼저 열고 그 다음 세팅
+  openSmpModal(null);
+  smpImgBuf=[...imgs];
   smpSrcBuf = origFiles.length ? origFiles : [...imgs];
   smpCadBuf=[];
-  openSmpModal(null);
   setTimeout(()=>{
     sv('s_name',s.name);
     setSelect('s_type',s.type);
@@ -4172,8 +4173,10 @@ async function applyParseToOrd(parsed){
     ? [...parsed._origFiles]
     : (Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[]);
   console.warn('⚡ [applyParseToOrd] 원본 파일 개수:', origFiles.length, origFiles.map(f=>f.name));
-  ordFileBuf=origFiles;
+  // ⚠ openOrdModal이 내부에서 ordFileBuf=[]로 덮어쓰기 때문에,
+  // 모달을 먼저 열고 그 다음에 ordFileBuf를 설정해야 함
   openOrdModal(null);
+  ordFileBuf=origFiles;  // 모달 open 후 덮어쓰기
   setTimeout(()=>{
     sv('o_vendor',o.vendor);sv('o_date',o.date);sv('o_ship',o.shipDate);sv('o_manager',o.manager);
     document.getElementById('ord_ai_badge').style.display='';
