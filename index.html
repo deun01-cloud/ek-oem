@@ -787,16 +787,16 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="form-sec">메모 & 파일 첨부</div>
   <div class="fg"><textarea class="fta" id="o_memo" rows="2" placeholder="메모..."></textarea></div>
   
-  <!-- 파일 첨부 (CAD / 각인 파일) -->
+  <!-- 파일 첨부 (원본·CAD·각인) -->
   <div class="fg" style="margin-top:8px">
-    <label>📎 첨부 파일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">CAD · 각인 · 작업지시서</span></label>
+    <label>📎 첨부 파일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">원본 발주서 · CAD · 각인 · 작업지시서</span></label>
     <div class="drop-zone" id="ordFileDz" style="padding:10px 14px;cursor:pointer;min-height:unset"
       onclick="document.getElementById('ordFileInput').click()"
       ondragover="dzOver(event,this)" ondragleave="dzOut(this)" ondrop="handleOrdFileDrop(event)">
-      <input type="file" id="ordFileInput" accept="image/*,.pdf,.dxf,.ai,.eps" multiple style="display:none" onchange="handleOrdFiles(event)">
+      <input type="file" id="ordFileInput" accept="*/*" multiple style="display:none" onchange="handleOrdFiles(event)">
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-size:18px">📁</span>
-        <span style="font-size:11.5px;color:var(--t3)">이미지 · PDF · CAD 파일 드래그 또는 클릭</span>
+        <span style="font-size:11.5px;color:var(--t3)">이미지 · PDF · 엑셀 · CAD 파일 드래그 또는 클릭</span>
       </div>
     </div>
     <div id="ordFilePrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
@@ -4122,12 +4122,17 @@ function showParseResult(parsed,imgs,resultEl){
   </div>`;
 }
 
-function applyParseToSmp(parsed,imgList){
+async function applyParseToSmp(parsed,imgList){
   const s=parsed.sample||{};
   const imgs=Array.isArray(imgList)?imgList.map(im=>({url:im.url,name:im.name||'업로드 이미지',type:im.type||'image/jpeg'})):[];
   smpImgBuf=[...imgs];
   // 업로드된 원본 파일 전체(엑셀/PDF 포함)를 sourceDoc(작업지시서)로
-  const origFiles=Array.isArray(window._pSmpFiles)?[...window._pSmpFiles]:[];
+  // FileReader 비동기라 비어있으면 잠시 대기
+  let origFiles=Array.isArray(window._pSmpFiles)?[...window._pSmpFiles]:[];
+  if(!origFiles.length){
+    await new Promise(r=>setTimeout(r,500));
+    origFiles=Array.isArray(window._pSmpFiles)?[...window._pSmpFiles]:[];
+  }
   smpSrcBuf = origFiles.length ? origFiles : [...imgs];
   smpCadBuf=[];
   openSmpModal(null);
@@ -4160,11 +4165,17 @@ function onCostPriceInput(){
   if(unitEl&&cost>0)unitEl.value=Math.round(cost*2);
 }
 
-function applyParseToOrd(parsed){
+async function applyParseToOrd(parsed){
   const o=parsed.order||{};
   ordRowsBuf=o.rows&&o.rows.length?o.rows:[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];
   // 업로드했던 원본 파일(엑셀/PDF/이미지)을 발주서 첨부파일로 이어받음
+  // FileReader가 비동기라서, 비어있으면 잠시 대기 후 재시도
   ordFileBuf=Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[];
+  if(!ordFileBuf.length){
+    await new Promise(r=>setTimeout(r,500));
+    ordFileBuf=Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[];
+  }
+  console.warn('⚡ [발주모달] ordFileBuf 개수:', ordFileBuf.length, ordFileBuf.map(f=>f.name));
   openOrdModal(null);
   setTimeout(()=>{
     sv('o_vendor',o.vendor);sv('o_date',o.date);sv('o_ship',o.shipDate);sv('o_manager',o.manager);
