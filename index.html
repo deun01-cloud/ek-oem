@@ -453,12 +453,17 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>📦 발주서 DB ID</label><input class="fi" id="notion_ord_db" placeholder="97ff79daa2c04b30..."></div>
   </div>
   <div class="fg"><label>📊 영업제안 DB ID</label><input class="fi" id="notion_prop_db" placeholder="ec27bf5f4cbc4de3..."></div>
+  <div class="fr2">
+    <div class="fg"><label>🧾 거래명세서 DB ID</label><input class="fi" id="notion_inv_db" placeholder="c6f0c23a17e24996..."></div>
+    <div class="fg"><label>📦 제품DB ID <span style="font-size:9.5px;color:var(--t3)">(신규)</span></label><input class="fi" id="notion_product_db" placeholder="Notion에서 DB 생성 후 ID 입력"></div>
+  </div>
   <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;padding:10px 13px;margin-top:10px;font-size:11px;color:var(--gold-lt)">
-    <b>📌 미리 생성된 Notion DB</b><br>
-    아래 DB들이 Notion 워크스페이스에 이미 생성되어 있습니다:<br>
+    <b>📌 미리 생성된 Notion DB (모두 자동 연결됨)</b><br>
     • 📋 샘플의뢰 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">dad8448577d74ea8bbbcb52f4419be3b</code><br>
     • 📦 발주서 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">97ff79daa2c04b309df42a7a1a2c7b89</code><br>
-    • 📊 영업제안 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">ec27bf5f4cbc4de3b2ed9aafabae4e9c</code>
+    • 📊 영업제안 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">ec27bf5f4cbc4de3b2ed9aafabae4e9c</code><br>
+    • 🧾 거래명세서 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">c6f0c23a17e24996b8bb9b4e51800213</code><br>
+    • 📦 제품DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">1ae024e2addf455a90cc57488ede7772</code>
   </div>
   <div class="fg" style="margin-top:10px">
     <button class="btn bgo" style="width:100%;font-size:12px" onclick="testNotionConnection()">🧪 Notion 연결 테스트</button>
@@ -1468,6 +1473,7 @@ function renderProducts(){
 function pdDeleteOne(id){
   const p=productDB.find(x=>x.id==id);
   showConfirm(`"${p?.name||'제품'}"을 삭제합니다.`,()=>{
+    if(p) deleteProductFromNotion(p);
     productDB=productDB.filter(x=>x.id!=id);
     save();renderTab();
     showToast('✓ 삭제됨','var(--grn)');
@@ -1494,6 +1500,7 @@ function pdDeleteSelected(){
   const ids=Array.from(document.querySelectorAll('.pd-chk:checked')).map(cb=>+cb.value);
   if(!ids.length) return;
   showConfirm(`선택한 ${ids.length}개 품목을 삭제합니다.`,()=>{
+    productDB.filter(p=>ids.includes(+p.id)).forEach(p=>deleteProductFromNotion(p));
     productDB=productDB.filter(p=>!ids.includes(+p.id));
     save();renderTab();
     showToast(`✓ ${ids.length}개 삭제됨`,'var(--grn)');
@@ -1501,6 +1508,7 @@ function pdDeleteSelected(){
 }
 function pdDeleteAll(){
   showConfirm(`제품DB 전체(${productDB.length.toLocaleString()}개)를 삭제합니다.\n이 작업은 되돌릴 수 없습니다.`,()=>{
+    productDB.forEach(p=>deleteProductFromNotion(p));
     productDB=[];
     save();renderTab();
     showToast('✓ 전체 삭제됨','var(--grn)');
@@ -1555,11 +1563,19 @@ function saveProduct(){
   };
   const doSaveProduct = async (uploadedImgs) => {
     const finalObj = {...obj, imgs: uploadedImgs||obj.imgs};
-    if(id){const i=productDB.findIndex(x=>x.id==id);if(i>=0)productDB[i]={...productDB[i],...finalObj};}
-    else productDB.push({id:Date.now(),createdAt:new Date().toISOString(),...finalObj});
+    let savedProduct;
+    if(id){
+      const i=productDB.findIndex(x=>x.id==id);
+      if(i>=0){ productDB[i]={...productDB[i],...finalObj}; savedProduct=productDB[i]; }
+    } else {
+      savedProduct={id:Date.now(),createdAt:new Date().toISOString(),...finalObj};
+      productDB.push(savedProduct);
+    }
     save();closeM('mProduct');renderTab();
     showToast('✓ 제품 저장됨','var(--grn)');
     if(typeof syncSels==='function') syncSels();
+    // Notion 동기화
+    if(savedProduct) setTimeout(()=>syncProductToNotion(savedProduct, !!id), 50);
   };
   if(notionCfg.workerUrl && pdImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
     showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
@@ -1572,6 +1588,7 @@ function deleteProduct(){
   const id=gv('pd_id');if(!id)return;
   const p=productDB.find(x=>x.id==id);
   showConfirm(`"${p?.name||'제품'}"을 삭제합니다.`,()=>{
+    if(p) deleteProductFromNotion(p);
     productDB=productDB.filter(x=>x.id!=id);
     save();closeM('mProduct');renderTab();
   },'제품 삭제','🗑');
@@ -1747,14 +1764,18 @@ function confirmImport(){
   const importTime = new Date().toISOString();
   const fileName = _importFileName||'알 수 없는 파일';
   let added=0, updated=0;
+  const toSync=[]; // 노션 동기화 대상
   _importRows.forEach(row=>{
     const exist=productDB.find(p=>p.code&&p.code===row.code);
     if(exist){
       Object.assign(exist,{...row,imgs:exist.imgs,importSource:importId});
       updated++;
+      toSync.push({obj:exist, update:true});
     } else {
-      productDB.push({id:Date.now()+Math.random(),createdAt:importTime,...row,importSource:importId});
+      const np={id:Date.now()+Math.random(),createdAt:importTime,...row,importSource:importId};
+      productDB.push(np);
       added++;
+      toSync.push({obj:np, update:false});
     }
   });
   // 업로드 이력 저장
@@ -1763,6 +1784,17 @@ function confirmImport(){
   localStorage.setItem('ek3_import_hist',JSON.stringify(window._importHistory.slice(0,20)));
   save();closeM('mProductImport');renderTab();
   showToast(`✓ ${added}개 추가 / ${updated}개 업데이트됨`,'var(--grn)',3000);
+  // 노션 동기화: 속도 제한 고려하여 순차적으로 처리 (100ms 간격)
+  if(notionCfg.workerUrl && notionCfg.productDb && toSync.length){
+    showToast(`🔄 Notion에 ${toSync.length}개 동기화 중...`,'var(--blu)',2500);
+    (async()=>{
+      for(let i=0;i<toSync.length;i++){
+        try{ await syncProductToNotion(toSync[i].obj, toSync[i].update); }catch(e){}
+        await new Promise(r=>setTimeout(r,100));
+      }
+      showToast(`✓ Notion 동기화 완료`,'var(--grn)',2200);
+    })();
+  }
 }
 let _importFileName='';
 
@@ -1913,20 +1945,10 @@ function confirmOrdDoc(){
     };
     invoiceHistory.unshift(invRec);
     save();
-    // Notion 거래명세서 이력 저장
+    // Notion 거래명세서 이력 저장 (syncInvoiceToNotion으로 통일)
     if(notionCfg.workerUrl && notionCfg.invDb){
-      nCreate(notionCfg.invDb,{
-        '고객사':{'title':[{'text':{'content':o.vendor||''}}]},
-        '발주번호':{'rich_text':[{'text':{'content':o.no||''}}]},
-        '발행일자':{'date':{'start':today}},
-        '출고일자':{'date':{'start':o.ship||today}},
-        '품목내역':{'rich_text':[{'text':{'content':invRec.itemSummary}}]},
-        '공급가액':{'number':totalAmt},
-        '부가세':{'number':tax},
-        '합계금액':{'number':total},
-        '상태':{'select':{'name':'발행완료'}},
-      }).then(r=>{
-        if(r&&r.id){invRec._notionId=r.id;save();showToast('✓ Notion에 저장됨','var(--grn)',2000);}
+      syncInvoiceToNotion(invRec, false).then(()=>{
+        if(invRec._notionId) showToast('✓ Notion에 저장됨','var(--grn)',2000);
       });
     }
     showPrintPreview('🧾 거래명세서',`<div style="font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#222">
@@ -2244,6 +2266,7 @@ let notionCfg = {
   taskDb:  'fbd18fa997864266868634b0f7496e8a', // 업무일지
   asDb:    'd06349df1c614e9991851b4d3b90c2cb', // AS관리
   invDb:   'c6f0c23a17e24996b8bb9b4e51800213', // 거래명세서 이력
+  productDb: '1ae024e2addf455a90cc57488ede7772', // 제품DB (자동 생성됨)
 };
 
 function loadNotionCfg(){
@@ -2261,6 +2284,8 @@ function saveNotionSettings(){
     procDb:  notionCfg.procDb,
     taskDb:  notionCfg.taskDb,
     asDb:    notionCfg.asDb,
+    invDb:   document.getElementById('notion_inv_db')?.value.trim()||notionCfg.invDb,
+    productDb:document.getElementById('notion_product_db')?.value.trim()||notionCfg.productDb,
   };
   try{ localStorage.setItem(NOTION_CFG_KEY, JSON.stringify(notionCfg)); }catch(e){}
   closeM('mNotion'); updateNotionNavLabel();
@@ -2279,13 +2304,15 @@ function openNotionSettings(){
   if(g('notion_smp_db')) g('notion_smp_db').value=notionCfg.smpDb||'';
   if(g('notion_ord_db')) g('notion_ord_db').value=notionCfg.ordDb||'';
   if(g('notion_prop_db'))g('notion_prop_db').value=notionCfg.propDb||'';
+  if(g('notion_inv_db')) g('notion_inv_db').value=notionCfg.invDb||'';
+  if(g('notion_product_db')) g('notion_product_db').value=notionCfg.productDb||'';
   const res=document.getElementById('notionTestResult'); if(res) res.textContent='';
   updateNotionMode(); openM('mNotion');
 }
 function updateNotionMode(){
   const worker=(document.getElementById('notion_worker')?.value||'').trim();
   const el=document.getElementById('notionModeInfo'); if(!el) return;
-  if(worker) el.innerHTML=`<span style="color:var(--grn)">🟢 Worker 모드</span> — Notion 7개 DB 실시간 동기화 + R2 파일 저장 활성화`;
+  if(worker) el.innerHTML=`<span style="color:var(--grn)">🟢 Worker 모드</span> — Notion 9개 DB 실시간 동기화 + R2 파일 저장 활성화`;
   else el.innerHTML=`<span style="color:var(--org)">⚠️ Worker URL 없음</span> — Cloudflare Worker를 설정하면 실시간 동기화와 파일 저장이 활성화됩니다.`;
 }
 function updateNotionNavLabel(){
@@ -2474,6 +2501,43 @@ function mapNotionAS(row){
     billing: np.select(p['청구상태'])||'미청구',
   };
 }
+function mapNotionProduct(row){
+  const p=row.properties||{};
+  return{
+    _notionId:row.id,
+    code:       np.title(p['품목코드']),
+    name:       np.text(p['품목명']),
+    type:       np.select(p['유형']),
+    mat:        np.select(p['소재']),
+    plating:    np.select(p['도금']),
+    size:       np.text(p['규격']),
+    metal:      np.text(p['금속종류']),
+    platingSpec:np.text(p['도금스펙']),
+    memo:       np.text(p['메모']),
+    price:      np.number(p['출고단가']),
+    costPrice:  np.number(p['입고단가']),
+    stock:      np.number(p['재고수량']),
+    weight:     np.number(p['중량']),
+    createdDate:  np.date(p['최초등록일']),
+    lastModified: np.date(p['최종수정일']),
+  };
+}
+function mapNotionInvoice(row){
+  const p=row.properties||{};
+  return{
+    _notionId:row.id,
+    vendor:    np.title(p['고객사']),
+    ordNo:     np.text(p['발주번호']),
+    itemSummary:np.text(p['품목내역']),
+    memo:      np.text(p['메모']),
+    supplyAmt: np.number(p['공급가액']),
+    tax:       np.number(p['부가세']),
+    total:     np.number(p['합계금액']),
+    issuedAt:  np.date(p['발행일자']),
+    shipDate:  np.date(p['출고일자']),
+    status:    np.select(p['상태'])||'발행완료',
+  };
+}
 
 // ─── 동기화 상태 UI ───
 function setSyncState(txt, color){
@@ -2496,8 +2560,8 @@ async function pullFromNotion(opts){
   if(!silent) setSyncState('Notion 동기화 중...','var(--org)');
 
   try{
-    // 7개 DB를 병렬 쿼리
-    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows]=await Promise.all([
+    // 9개 DB를 병렬 쿼리
+    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows]=await Promise.all([
       notionCfg.smpDb   ? nQueryAll(notionCfg.smpDb)   : Promise.resolve([]),
       notionCfg.ordDb   ? nQueryAll(notionCfg.ordDb)   : Promise.resolve([]),
       notionCfg.procDb  ? nQueryAll(notionCfg.procDb)  : Promise.resolve([]),
@@ -2505,6 +2569,8 @@ async function pullFromNotion(opts){
       notionCfg.clientDb? nQueryAll(notionCfg.clientDb): Promise.resolve([]),
       notionCfg.taskDb  ? nQueryAll(notionCfg.taskDb)  : Promise.resolve([]),
       notionCfg.asDb    ? nQueryAll(notionCfg.asDb)    : Promise.resolve([]),
+      notionCfg.productDb ? nQueryAll(notionCfg.productDb) : Promise.resolve([]),
+      notionCfg.invDb   ? nQueryAll(notionCfg.invDb)   : Promise.resolve([]),
     ]);
 
     // "Notion 마스터" 정책 — 로컬의 이미지/파일 필드는 id로 매칭해서 보존
@@ -2546,6 +2612,14 @@ async function pullFromNotion(opts){
     if(asRows.length || asItems.some(x=>x._notionId)){
       asItems=mergeLocalAttachments(asRows.map(mapNotionAS), asItems, []);
     }
+    if(pdRows.length || productDB.some(x=>x._notionId)){
+      // 제품DB는 이미지(imgs)와 업로드 출처(importSource)는 로컬 보존
+      productDB=mergeLocalAttachments(pdRows.map(mapNotionProduct), productDB, ['imgs','importSource','createdAt']);
+    }
+    if(invRows.length || invoiceHistory.some(x=>x._notionId)){
+      // 청구이력은 items 배열(상세 품목)과 ordId 로컬 보존
+      invoiceHistory=mergeLocalAttachments(invRows.map(mapNotionInvoice), invoiceHistory, ['items','ordId']);
+    }
 
     save(); slSave();
     _lastSyncAt=Date.now();
@@ -2554,7 +2628,7 @@ async function pullFromNotion(opts){
     if(typeof renderTab==='function') try{renderTab();updateBadges();}catch(e){}
 
     if(!silent){
-      const total=smpRows.length+ordRows.length+procRows.length+propRows.length+cliRows.length+taskRows.length+asRows.length;
+      const total=smpRows.length+ordRows.length+procRows.length+propRows.length+cliRows.length+taskRows.length+asRows.length+pdRows.length+invRows.length;
       setSyncState('Notion 🟢','var(--grn)');
       showToast(`✓ Notion 동기화 완료 (${total}건)`,'var(--grn)',2200);
     } else {
@@ -2873,6 +2947,56 @@ async function syncASToNotion(a, update){
 }
 async function deleteASFromNotion(a){
   if(a._notionId) await nDelete(a._notionId);
+}
+
+// ══════════════════════════════════
+// 8. 제품DB ↔ Notion
+// ══════════════════════════════════
+async function syncProductToNotion(pd, update){
+  if(!notionCfg.workerUrl||!notionCfg.productDb) return;
+  const p={
+    "품목코드":{"title":[{"text":{"content":pd.code||''}}]},
+    "품목명":{"rich_text":[{"text":{"content":pd.name||''}}]},
+    "규격":{"rich_text":[{"text":{"content":pd.size||''}}]},
+    "금속종류":{"rich_text":[{"text":{"content":pd.metal||''}}]},
+    "도금스펙":{"rich_text":[{"text":{"content":pd.platingSpec||''}}]},
+    "메모":{"rich_text":[{"text":{"content":(pd.memo||'').slice(0,2000)}}]},
+    "출고단가":{"number":+pd.price||0},
+    "입고단가":{"number":+pd.costPrice||0},
+    "재고수량":{"number":+pd.stock||0},
+    "중량":{"number":+pd.weight||0},
+  };
+  if(pd.type)    p["유형"]={"select":{"name":pd.type}};
+  if(pd.mat)     p["소재"]={"select":{"name":pd.mat}};
+  if(pd.plating) p["도금"]={"select":{"name":pd.plating}};
+  if(pd.createdDate)  p["최초등록일"]={"date":{"start":pd.createdDate}};
+  if(pd.lastModified) p["최종수정일"]={"date":{"start":pd.lastModified}};
+  if(update && pd._notionId){ nUpdate(pd._notionId,p); }
+  else{ const r=await nCreate(notionCfg.productDb,p); if(r?.id) saveNotionId(productDB,pd.id,r.id,SK.pd); }
+}
+async function deleteProductFromNotion(pd){
+  if(pd._notionId) await nDelete(pd._notionId);
+}
+
+// ══════════════════════════════════
+// 9. 거래명세서 이력 ↔ Notion (update + pull 지원)
+// ══════════════════════════════════
+async function syncInvoiceToNotion(inv, update){
+  if(!notionCfg.workerUrl||!notionCfg.invDb) return;
+  const p={
+    "고객사":{"title":[{"text":{"content":inv.vendor||''}}]},
+    "발주번호":{"rich_text":[{"text":{"content":inv.ordNo||''}}]},
+    "품목내역":{"rich_text":[{"text":{"content":(inv.itemSummary||'').slice(0,2000)}}]},
+    "메모":{"rich_text":[{"text":{"content":inv.memo||''}}]},
+    "공급가액":{"number":+inv.supplyAmt||0},
+    "부가세":{"number":+inv.tax||0},
+    "합계금액":{"number":+inv.total||0},
+  };
+  if(inv.issuedAt) p["발행일자"]={"date":{"start":inv.issuedAt}};
+  if(inv.shipDate) p["출고일자"]={"date":{"start":inv.shipDate}};
+  if(inv.status)   p["상태"]={"select":{"name":inv.status}};
+  if(update && inv._notionId){ nUpdate(inv._notionId,p); }
+  else{ const r=await nCreate(notionCfg.invDb,p); if(r?.id){ inv._notionId=r.id; save(); } }
 }
 
 // ── Sales data (declared early to avoid TDZ) ──
