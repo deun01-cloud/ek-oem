@@ -2858,36 +2858,55 @@ async function pullFromNotion(opts){
     // "Notion 마스터" 정책 — 로컬의 이미지/파일 필드는 id로 매칭해서 보존
     // (이미지/첨부파일은 Notion에 저장되지 않기 때문)
     function mergeLocalAttachments(remote, local, idFields){
+      // 중복 판정 키 (발주번호, 샘플명+의뢰일, 고객사 이니셜 등)
+      const dupKey=(item)=>{
+        if(!item) return null;
+        if(item.no) return 'no:'+item.no; // 발주
+        if(item.name && item.reqDate) return 'smp:'+item.name+'_'+item.reqDate;
+        if(item.initials) return 'cli:'+item.initials;
+        if(item.title && item.date) return 'as:'+item.title+'_'+item.date;
+        if(item.name) return 'name:'+item.name+'_'+(item.createdAt||'');
+        return null;
+      };
+
+      // 1단계: remote 자체의 중복 제거 (노션에 중복 페이지가 있어도 하나만 채택)
+      const remoteSeenKeys=new Set();
+      const remoteDedupe=[];
+      remote.forEach(r=>{
+        const k=dupKey(r);
+        if(k){
+          if(remoteSeenKeys.has(k)){
+            console.warn('[merge] remote 중복 제외:', k, r._notionId);
+            return;
+          }
+          remoteSeenKeys.add(k);
+        }
+        remoteDedupe.push(r);
+      });
+
+      // 2단계: 기존처럼 병합 (로컬 _notionId 일치 항목 보존)
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map(x=>[x._notionId,x]));
-      const merged=remote.map(r=>{
+      const merged=remoteDedupe.map(r=>{
         const prev=byNotionId[r._notionId];
         if(!prev) return {id:Date.now()+Math.random(), ...r};
-        // id 유지 + Notion 필드 덮어쓰기 + 로컬 전용 필드 보존
         const out={...r, id:prev.id};
         idFields.forEach(f=>{ if(prev[f]!==undefined) out[f]=prev[f]; });
         return out;
       });
-      // 로컬 전용 데이터(아직 노션에 저장되지 않은 것) 보존
-      // ⚠ 단, remote(merged)에 동일한 내용이 이미 존재하면 제외 (고스트 중복 방지)
+
+      // 3단계: 로컬 전용 데이터 보존. 단, merged에 같은 내용이 있으면 제외
+      const mergedKeys=new Set(merged.map(dupKey).filter(Boolean));
       const localOnly=local.filter(x=>{
-        if(x._notionId) return false; // 이미 Notion에 있는 건 merged에서 처리
-        // 중복 판정: 발주번호(no) 또는 샘플명(name) + 핵심 필드가 동일한 remote가 있으면 제외
-        const key=(item)=>{
-          // 발주: no (발주번호), 샘플: name+reqDate, 고객사: initials, 기타는 name+createdAt
-          if(item.no) return 'no:'+item.no;
-          if(item.name && item.reqDate) return 'smp:'+item.name+'_'+item.reqDate;
-          if(item.initials) return 'cli:'+item.initials;
-          if(item.name) return 'name:'+item.name+'_'+(item.createdAt||'');
-          return null;
-        };
-        const xKey=key(x);
-        if(!xKey) return true;
-        const dup = merged.some(m=>key(m)===xKey);
-        if(dup){
-          console.warn('[merge] 로컬 중복 발견, 제거:', xKey);
+        if(x._notionId) return false; // 이미 위에서 처리됨
+        const xKey=dupKey(x);
+        if(!xKey) return true; // 키 생성 불가 → 그대로 보존
+        if(mergedKeys.has(xKey)){
+          console.warn('[merge] 로컬 고스트 중복 제거:', xKey);
+          return false;
         }
-        return !dup;
+        return true;
       });
+
       return [...merged, ...localOnly];
     }
 
@@ -3150,7 +3169,7 @@ async function syncSampleToNotion(s, update){
   if(s.costPrice) p["입고원가"]={"number":+s.costPrice};
   if(s.unitPrice) p["샘플단가"]={"number":+s.unitPrice};
   if(s.devCost)   p["개발비"]={"number":+s.devCost};
-  if(update && s._notionId){ nUpdate(s._notionId,p); }
+  if(s._notionId){ await nUpdate(s._notionId,p); }
   else{ const r=await nCreate(notionCfg.smpDb,p); if(r?.id) saveNotionId(samples,s.id,r.id,SK.s); }
 }
 async function deleteSampleFromNotion(s){
@@ -3191,8 +3210,13 @@ async function syncOrderToNotion(o, update){
   };
   if(o.date) p["발주일"]={"date":{"start":o.date}};
   if(o.ship) p["요청출고일"]={"date":{"start":o.ship}};
-  if(update && o._notionId){ nUpdate(o._notionId,p); }
-  else{ const r=await nCreate(notionCfg.ordDb,p); if(r?.id) saveNotionId(orders,o.id,r.id,SK.o); }
+  // ⚠ 중복 방지: _notionId가 이미 있으면 반드시 update (update 플래그 무시)
+  if(o._notionId){
+    await nUpdate(o._notionId,p);
+  } else {
+    const r=await nCreate(notionCfg.ordDb,p);
+    if(r?.id) saveNotionId(orders,o.id,r.id,SK.o);
+  }
 }
 async function deleteOrderFromNotion(o){
   if(o._notionId) await nDelete(o._notionId);
@@ -3218,7 +3242,7 @@ async function syncProcToNotion(proc, update){
   if(proc.due) p["출고예정일"]={"date":{"start":proc.due}};
   const stageName=STAGES_N[proc.stageIdx||0];
   if(stageName) p["단계"]={"select":{"name":stageName}};
-  if(update && proc._notionId){ nUpdate(proc._notionId,p); }
+  if(proc._notionId){ await nUpdate(proc._notionId,p); }
   else{ const r=await nCreate(notionCfg.procDb,p); if(r?.id) saveNotionId(procItems,proc.id,r.id,SK.p); }
 }
 async function deleteProcFromNotion(proc){
@@ -3240,7 +3264,7 @@ async function syncProposalToNotion(prop, update){
   if(prop.reaction) p["반응"]={"select":{"name":prop.reaction}};
   if(prop.date)     p["제안일"]={"date":{"start":prop.date}};
   if(prop.nextDate) p["다음제안예정"]={"date":{"start":prop.nextDate}};
-  if(update && prop._notionId){ nUpdate(prop._notionId,p); }
+  if(prop._notionId){ await nUpdate(prop._notionId,p); }
   else{ const r=await nCreate(notionCfg.propDb,p); if(r?.id) saveNotionId(proposals,prop.id,r.id,SL_K.prop); }
 }
 async function deleteProposalFromNotion(prop){
@@ -3274,7 +3298,7 @@ async function syncClientToNotion(cl, update){
   if(cl.cat)   p["카테고리"]={"select":{"name":cl.cat}};
   if(cl.grade) p["등급"]={"select":{"name":cl.grade}};
   try{
-    if(update && cl._notionId){
+    if(cl._notionId){
       const r=await nUpdate(cl._notionId,p);
       if(r && !r.error) showToast('☁ Notion 동기화됨','var(--grn)',1500);
     } else {
@@ -3308,7 +3332,7 @@ async function syncTaskToNotion(task, update){
   if(task.date) p["날짜"]={"date":{"start":task.date}};
   if(task.ap)   p["오전오후"]={"select":{"name":task.ap}};
   if(task.cat)  p["카테고리"]={"select":{"name":task.cat}};
-  if(update && task._notionId){ nUpdate(task._notionId,p); }
+  if(task._notionId){ await nUpdate(task._notionId,p); }
   else{ const r=await nCreate(notionCfg.taskDb,p); if(r?.id) saveNotionId(tasks,task.id,r.id,SK.t); }
 }
 async function deleteTaskFromNotion(task){
@@ -3334,7 +3358,7 @@ async function syncASToNotion(a, update){
   if(a.due)  p["완료예정일"]={"date":{"start":a.due}};
   if(a.status)  p["진행상태"]={"select":{"name":a.status}};
   if(a.billing) p["청구상태"]={"select":{"name":a.billing}};
-  if(update && a._notionId){ nUpdate(a._notionId,p); }
+  if(a._notionId){ await nUpdate(a._notionId,p); }
   else{ const r=await nCreate(notionCfg.asDb,p); if(r?.id) saveNotionId(asItems,a.id,r.id,SK.a); }
 }
 async function deleteASFromNotion(a){
@@ -3363,7 +3387,7 @@ async function syncProductToNotion(pd, update){
   if(pd.plating) p["도금"]={"select":{"name":pd.plating}};
   if(pd.createdDate)  p["최초등록일"]={"date":{"start":pd.createdDate}};
   if(pd.lastModified) p["최종수정일"]={"date":{"start":pd.lastModified}};
-  if(update && pd._notionId){ nUpdate(pd._notionId,p); }
+  if(pd._notionId){ await nUpdate(pd._notionId,p); }
   else{ const r=await nCreate(notionCfg.productDb,p); if(r?.id) saveNotionId(productDB,pd.id,r.id,SK.pd); }
 }
 async function deleteProductFromNotion(pd){
@@ -3387,7 +3411,7 @@ async function syncInvoiceToNotion(inv, update){
   if(inv.issuedAt) p["발행일자"]={"date":{"start":inv.issuedAt}};
   if(inv.shipDate) p["출고일자"]={"date":{"start":inv.shipDate}};
   if(inv.status)   p["상태"]={"select":{"name":inv.status}};
-  if(update && inv._notionId){ nUpdate(inv._notionId,p); }
+  if(inv._notionId){ await nUpdate(inv._notionId,p); }
   else{ const r=await nCreate(notionCfg.invDb,p); if(r?.id){ inv._notionId=r.id; save(); } }
 }
 
@@ -3490,7 +3514,8 @@ function openDataMgr(){
   openM('mDataMgr');
 }
 // 중복 제거 — 같은 발주번호/샘플명 등을 가진 항목을 하나로 합침
-function deduplicateAllData(){
+// Notion에도 중복이 있으면 제거 (같은 key의 페이지 중 가장 오래된 것만 유지)
+async function deduplicateAllData(){
   const countBefore = {
     orders: orders.length, samples: samples.length,
     clients: clients.length, proposals: proposals.length,
@@ -3498,9 +3523,10 @@ function deduplicateAllData(){
     productDB: productDB.length, tasks: tasks.length,
   };
 
+  // 노션에서 삭제할 중복 _notionId 수집
+  const notionIdsToDelete=[];
+
   // 공통 중복 제거 함수
-  // _notionId가 있는 게 우선 (노션과 동기화된 원본)
-  // 그 다음 createdAt이 더 오래된 게 우선 (먼저 만들어진 게 원본)
   function dedupBy(arr, keyFn){
     const bucket={};
     arr.forEach(item=>{
@@ -3509,12 +3535,11 @@ function deduplicateAllData(){
       if(!bucket[k]) bucket[k]=[];
       bucket[k].push(item);
     });
-    // 키가 없는 항목은 그대로 유지
     const noKey=arr.filter(x=>!keyFn(x));
     const result=[...noKey];
     Object.values(bucket).forEach(group=>{
       if(group.length===1){ result.push(group[0]); return; }
-      // 우선순위: 1) _notionId 있는 것, 2) 생성일 오래된 것
+      // 우선순위: _notionId 있는 것 > 오래된 것
       group.sort((a,b)=>{
         if(a._notionId && !b._notionId) return -1;
         if(!a._notionId && b._notionId) return 1;
@@ -3522,26 +3547,24 @@ function deduplicateAllData(){
         const tb=new Date(b.createdAt||0).getTime();
         return ta-tb;
       });
-      result.push(group[0]); // 첫 번째(원본) 채택
+      // 첫 번째 채택, 나머지는 노션에서도 삭제
+      result.push(group[0]);
+      group.slice(1).forEach(dup=>{
+        if(dup._notionId){
+          notionIdsToDelete.push(dup._notionId);
+        }
+      });
     });
     return result;
   }
 
-  // 발주: 발주번호로 중복 판정
   orders = dedupBy(orders, o=>o.no||null);
-  // 샘플: 샘플명 + 의뢰일
   samples = dedupBy(samples, s=>s.name?s.name+'_'+(s.reqDate||''):null);
-  // 고객사: 이름 또는 이니셜
   clients = dedupBy(clients, c=>c.name||c.initials||null);
-  // 영업제안: 제목
   proposals = dedupBy(proposals, p=>p.title||p.name||null);
-  // 공정: orderId + 품목명
   procItems = dedupBy(procItems, p=>p.orderId?p.orderId+'_'+p.name:null);
-  // AS: 제목 + 날짜
   asItems = dedupBy(asItems, a=>a.title?a.title+'_'+(a.date||''):null);
-  // 제품DB: 품목코드
   productDB = dedupBy(productDB, p=>p.code||null);
-  // 업무: 내용 + 날짜 + 카테고리
   tasks = dedupBy(tasks, t=>t.cont?t.cont+'_'+(t.date||'')+'_'+(t.cat||''):null);
 
   save();
@@ -3557,6 +3580,23 @@ function deduplicateAllData(){
     tasks: countBefore.tasks-tasks.length,
   };
   const totalRemoved=Object.values(removed).reduce((a,b)=>a+b,0);
+
+  // Notion에서도 중복 페이지 삭제
+  if(notionIdsToDelete.length && notionCfg.workerUrl){
+    showToast(`🔄 Notion 중복 ${notionIdsToDelete.length}개 삭제 중...`,'var(--blu)',2500);
+    let nSuccess=0, nFail=0;
+    for(const nid of notionIdsToDelete){
+      try{
+        await nDelete(nid);
+        nSuccess++;
+      }catch(e){
+        nFail++;
+        console.warn('Notion 삭제 실패:', nid, e);
+      }
+    }
+    console.warn(`[dedup] Notion 삭제: 성공 ${nSuccess} / 실패 ${nFail}`);
+  }
+
   if(totalRemoved===0){
     showToast('✓ 중복 항목이 발견되지 않았습니다','var(--grn)',3000);
   } else {
@@ -3564,7 +3604,8 @@ function deduplicateAllData(){
       const lbl={orders:'발주',samples:'샘플',clients:'고객사',proposals:'영업제안',procItems:'공정',asItems:'AS',productDB:'제품DB',tasks:'업무'}[k];
       return lbl+' '+v+'건';
     }).join(', ');
-    showToast(`✓ ${totalRemoved}건의 중복 항목을 제거했습니다 (${detail})`,'var(--grn)',5000);
+    const notionMsg = notionIdsToDelete.length ? ` · Notion ${notionIdsToDelete.length}개 삭제` : '';
+    showToast(`✓ ${totalRemoved}건 중복 제거됨 (${detail}${notionMsg})`,'var(--grn)',5000);
   }
   renderTab();updateBadges();
 }
@@ -7082,7 +7123,11 @@ async function saveOrd(){
     }
   }
   save();
-  setTimeout(()=>{const so=orders.find(x=>x.id==obj.id)||obj;syncOrderToNotion(so,!isNew);},50);
+  // 저장된 최신 order를 _notionId 포함해서 정확히 찾아서 sync (이전에는 obj.id가 undefined라서 항상 create됨)
+  setTimeout(()=>{
+    const so=orders.find(x=>x.id===ordId);
+    if(so) syncOrderToNotion(so, !isNew);
+  },50);
   closeM('mOrd');renderTab();updateBadges();
 }
 // saveOrd, deleteOrd defined above
