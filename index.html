@@ -4127,12 +4127,11 @@ async function applyParseToSmp(parsed,imgList){
   const imgs=Array.isArray(imgList)?imgList.map(im=>({url:im.url,name:im.name||'업로드 이미지',type:im.type||'image/jpeg'})):[];
   smpImgBuf=[...imgs];
   // 업로드된 원본 파일 전체(엑셀/PDF 포함)를 sourceDoc(작업지시서)로
-  // FileReader 비동기라 비어있으면 잠시 대기
-  let origFiles=Array.isArray(window._pSmpFiles)?[...window._pSmpFiles]:[];
-  if(!origFiles.length){
-    await new Promise(r=>setTimeout(r,500));
-    origFiles=Array.isArray(window._pSmpFiles)?[...window._pSmpFiles]:[];
-  }
+  // parsed._origFiles 우선, 없으면 window._pSmpFiles 폴백
+  let origFiles = (parsed._origFiles && parsed._origFiles.length)
+    ? [...parsed._origFiles]
+    : (Array.isArray(window._pSmpFiles)?[...window._pSmpFiles]:[]);
+  console.warn('⚡ [applyParseToSmp] 원본 파일 개수:', origFiles.length, origFiles.map(f=>f.name));
   smpSrcBuf = origFiles.length ? origFiles : [...imgs];
   smpCadBuf=[];
   openSmpModal(null);
@@ -4168,14 +4167,12 @@ function onCostPriceInput(){
 async function applyParseToOrd(parsed){
   const o=parsed.order||{};
   ordRowsBuf=o.rows&&o.rows.length?o.rows:[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];
-  // 업로드했던 원본 파일(엑셀/PDF/이미지)을 발주서 첨부파일로 이어받음
-  // FileReader가 비동기라서, 비어있으면 잠시 대기 후 재시도
-  ordFileBuf=Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[];
-  if(!ordFileBuf.length){
-    await new Promise(r=>setTimeout(r,500));
-    ordFileBuf=Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[];
-  }
-  console.warn('⚡ [발주모달] ordFileBuf 개수:', ordFileBuf.length, ordFileBuf.map(f=>f.name));
+  // 원본 파일: parsed._origFiles(파싱 시 심어둔 것) → 없으면 window._pOrdFiles 폴백
+  let origFiles=Array.isArray(parsed._origFiles)&&parsed._origFiles.length
+    ? [...parsed._origFiles]
+    : (Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[]);
+  console.warn('⚡ [applyParseToOrd] 원본 파일 개수:', origFiles.length, origFiles.map(f=>f.name));
+  ordFileBuf=origFiles;
   openOrdModal(null);
   setTimeout(()=>{
     sv('o_vendor',o.vendor);sv('o_date',o.date);sv('o_ship',o.shipDate);sv('o_manager',o.manager);
@@ -4949,8 +4946,18 @@ function processTabFiles(files,tabType){
     return;
   }
 
+  // Show file list badge 먼저 표시
+  const fileNames=valid.map(f=>{
+    const k=getFileKind(f);
+    const icon=k==='image'?'🖼':k==='pdf'?'📄':k==='excel'||k==='csv'?'📊':'📁';
+    return`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 8px;border-radius:4px;background:var(--s2);border:1px solid var(--bdr)">${icon} ${f.name}</span>`;
+  }).join('');
+  resultEl.innerHTML=`
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">${fileNames}</div>
+    <div class="ai-loading"><div class="spin"></div>파일 읽는 중...</div>`;
+
   // 원본 파일들을 base64로 보관 (발주/샘플 등록 시 첨부로 저장)
-  // Promise로 처리 — 파싱 전에 파일 읽기 완료를 보장
+  // Promise로 처리 — 파일 읽기 완료까지 기다린 후 AI 파싱 시작
   const bufKey=tabType==='sample'?'_pSmpFiles':'_pOrdFiles';
   window[bufKey]=[];
   const filePromises=valid.map(f=>new Promise((resolve,reject)=>{
@@ -4967,36 +4974,28 @@ function processTabFiles(files,tabType){
     r.onerror=err=>{ console.warn('파일 읽기 실패:',f.name,err); resolve(); };
     r.readAsDataURL(f);
   }));
-  // 파일 읽기가 완료될 때까지 대기 후 AI 파싱 진행
+
+  // 파일 읽기가 완료된 후에 AI 파싱 진행 (타이밍 문제 근절)
   Promise.all(filePromises).then(()=>{
-    console.warn('⚡ [원본파일] '+bufKey+'에 '+window[bufKey].length+'개 저장 완료');
+    console.warn('⚡ [원본파일] '+bufKey+'에 '+window[bufKey].length+'개 저장 완료', window[bufKey].map(f=>f.name));
+    // AI 파싱 로딩 메시지로 변경
+    resultEl.innerHTML=`
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">${fileNames}</div>
+      <div class="ai-loading"><div class="spin"></div>AI가 ${tabType==='sample'?'샘플의뢰서':'발주서'}를 분석하는 중...</div>`;
+
+    // Route by file type
+    const imgFiles=valid.filter(f=>getFileKind(f)==='image');
+    const pdfFiles=valid.filter(f=>getFileKind(f)==='pdf');
+    const xlFiles=valid.filter(f=>getFileKind(f)==='excel'||getFileKind(f)==='csv');
+
+    if(xlFiles.length>0){
+      readExcelAsText(xlFiles[0],tabType,resultEl);
+    } else if(pdfFiles.length>0){
+      readPdfAsB64(pdfFiles[0],tabType,resultEl,imgFiles);
+    } else {
+      readImagesAsB64(imgFiles,tabType,resultEl);
+    }
   });
-
-  // Show file list badge
-  const fileNames=valid.map(f=>{
-    const k=getFileKind(f);
-    const icon=k==='image'?'🖼':k==='pdf'?'📄':k==='excel'||k==='csv'?'📊':'📁';
-    return`<span style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 8px;border-radius:4px;background:var(--s2);border:1px solid var(--bdr)">${icon} ${f.name}</span>`;
-  }).join('');
-  resultEl.innerHTML=`
-    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">${fileNames}</div>
-    <div class="ai-loading"><div class="spin"></div>AI가 ${tabType==='sample'?'샘플의뢰서':'발주서'}를 분석하는 중...</div>`;
-
-  // Route by file type
-  const imgFiles=valid.filter(f=>getFileKind(f)==='image');
-  const pdfFiles=valid.filter(f=>getFileKind(f)==='pdf');
-  const xlFiles=valid.filter(f=>getFileKind(f)==='excel'||getFileKind(f)==='csv');
-
-  if(xlFiles.length>0){
-    // Excel/CSV → extract text with SheetJS → text prompt
-    readExcelAsText(xlFiles[0],tabType,resultEl);
-  } else if(pdfFiles.length>0){
-    // PDF → base64 → Claude document type
-    readPdfAsB64(pdfFiles[0],tabType,resultEl,imgFiles);
-  } else {
-    // Images only
-    readImagesAsB64(imgFiles,tabType,resultEl);
-  }
 }
 
 function readImagesAsB64(files,tabType,resultEl){
@@ -5344,9 +5343,12 @@ function showTabParseResult(parsed,imgs,resultEl,tabType,srcLabel){
   const listKey='_pImgList_'+tabType;
   window[listKey]=imgList;
 
-  // Store parsed globally
+  // Store parsed globally + 원본 파일을 parsed 객체에 직접 심어 유실 방지
+  const filesBufKey=tabType==='sample'?'_pSmpFiles':'_pOrdFiles';
+  parsed._origFiles = Array.isArray(window[filesBufKey]) ? [...window[filesBufKey]] : [];
   if(isSample) window._pSmp=parsed;
   else window._pOrd=parsed;
+  console.warn('⚡ [파싱완료] '+tabType+' — 원본 파일 '+(parsed._origFiles.length)+'개 포함', parsed._origFiles.map(f=>f.name));
 
   // Build field pairs
   var pairs=[];
@@ -5473,10 +5475,13 @@ async function quickRegSample(){
   var now=new Date().toISOString();
 
   // 업로드된 원본 파일(엑셀/PDF/이미지 전체)을 sourceDoc로 저장
-  var origFiles=Array.isArray(window._pSmpFiles)?[...window._pSmpFiles]:[];
+  var origFiles = (parsed._origFiles && parsed._origFiles.length)
+    ? [...parsed._origFiles]
+    : (Array.isArray(window._pSmpFiles)?[...window._pSmpFiles]:[]);
+  console.warn('⚡ [샘플등록] 원본 파일 개수:', origFiles.length, origFiles.map(f=>f.name));
   if(notionCfg.workerUrl && origFiles.some(f=>f.url&&String(f.url).startsWith('data:'))){
     showToast('🔄 원본 파일 업로드 중...','var(--blu)',2500);
-    origFiles=await uploadImagesToR2(origFiles);
+    try{ origFiles=await uploadImagesToR2(origFiles); }catch(err){ console.warn('샘플 원본 R2 실패:',err); }
   }
   // AI에 보낸 이미지 따로도 R2에 업로드 (예시 이미지로 쓸 수 있음)
   var uploadedImgs=imgList;
@@ -5540,17 +5545,19 @@ async function quickRegOrder(){
   }
 
   // 업로드했던 원본 파일들(엑셀/PDF 등)도 발주서 첨부로 저장
-  var origFiles=Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[];
-  // 혹시 파일 읽기가 아직 안 끝났으면 잠시 대기 (AI 파싱 완료 후 바로 등록 누른 경우)
-  if(!origFiles.length){
-    await new Promise(r=>setTimeout(r,400));
-    origFiles=Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[];
-  }
-  console.warn('⚡ [발주등록] 원본 파일 개수:', origFiles.length, '첫 파일:', origFiles[0]?.name);
+  // parsed._origFiles (파싱 시 심어둔 것) 우선, 없으면 window._pOrdFiles 폴백
+  var origFiles = (parsed._origFiles && parsed._origFiles.length)
+    ? [...parsed._origFiles]
+    : (Array.isArray(window._pOrdFiles)?[...window._pOrdFiles]:[]);
+  console.warn('⚡ [발주등록] 원본 파일 개수:', origFiles.length, origFiles.map(f=>f.name));
   if(notionCfg.workerUrl && origFiles.some(f=>f.url&&String(f.url).startsWith('data:'))){
     showToast('🔄 원본 파일 업로드 중...','var(--blu)',2500);
-    origFiles=await uploadImagesToR2(origFiles);
-    console.warn('⚡ [발주등록] R2 업로드 후:', origFiles);
+    try{
+      origFiles=await uploadImagesToR2(origFiles);
+      console.warn('⚡ [발주등록] R2 업로드 후:', origFiles.map(f=>({name:f.name,hasUrl:!!f.url,isR2:f.url&&!f.url.startsWith('data:')})));
+    }catch(err){
+      console.warn('⚡ [발주등록] R2 업로드 실패, base64로 저장:', err);
+    }
   }
 
   var ordId=Date.now();
@@ -7325,12 +7332,20 @@ function renderOrdFilePrev(){
     const isPdf=f.type==='application/pdf'||ext==='pdf';
     const isXl=(f.type&&(f.type.includes('sheet')||f.type.includes('excel')))||['xlsx','xls','csv'].includes(ext);
     const icon=isImg?'🖼':isPdf?'📄':isXl?'📊':'📎';
+    // 저장 상태 배지 (R2 업로드 완료 or 로컬 base64)
+    const isR2=f.url && !String(f.url).startsWith('data:');
+    const sz=f.size?(f.size>1048576?(f.size/1048576).toFixed(1)+'MB':Math.round(f.size/1024)+'KB'):'';
+    const statusBadge=isR2
+      ? '<span style="font-size:9px;background:rgba(46,139,44,.12);color:var(--grn);padding:1px 5px;border-radius:3px;font-weight:600" title="클라우드에 저장됨 (영구)">☁ 저장됨</span>'
+      : '<span style="font-size:9px;background:rgba(168,90,16,.12);color:var(--org);padding:1px 5px;border-radius:3px;font-weight:600" title="로컬에만 저장됨. 저장 버튼을 누르면 클라우드에 업로드됩니다">💾 로컬</span>';
     return`
-    <div style="display:inline-flex;align-items:center;gap:5px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer"
+    <div style="display:inline-flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:5px 9px;font-size:11px;cursor:pointer"
       onclick="openFilePreviewList(ordFileBuf,${i})"
-      title="클릭하여 미리보기">
+      title="클릭하여 미리보기 · ${f.name||''}">
       <span>${icon}</span>
-      <span style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2)">${f.name||'파일'}</span>
+      <span style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2);font-weight:500">${f.name||'파일'}</span>
+      ${sz?`<span style="font-size:9.5px;color:var(--t3)">${sz}</span>`:''}
+      ${statusBadge}
       <button onclick="event.stopPropagation();ordFileBuf.splice(${i},1);renderOrdFilePrev()" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:0 2px" title="제거">×</button>
     </div>`;
   }).join('');
