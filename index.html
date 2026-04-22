@@ -6319,6 +6319,12 @@ function handlePasteEvent(e){
   const tag=(e.target.tagName||'').toUpperCase();
   if(['INPUT','TEXTAREA','SELECT'].includes(tag))return;
 
+  // 편집 모달이 열려있으면 AI 파싱 리스너는 작동하지 않음
+  // (샘플/발주 모달 안에서 이미지 붙여넣을 때 AI 파싱까지 동시 발동되는 것을 방지)
+  const anyEditModalOpen = ['mSmp','mOrd','mCl','mProp','mProc','mTask','mProduct','mComp','mInv','mAS','mNotion','mDataMgr']
+    .some(id=>document.getElementById(id)?.classList.contains('open'));
+  if(anyEditModalOpen) return;
+
   const tabType=getActivePasteTarget();
   if(!tabType)return; // paste only active on sample/order tabs
 
