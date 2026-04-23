@@ -399,6 +399,10 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       샘플의뢰서·발주서 AI 자동인식에 사용됩니다 ·
       <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:var(--blu)">키 발급 →</a>
     </div>
+    <div style="font-size:10px;color:var(--blu);margin-top:5px;padding:6px 8px;background:rgba(26,109,181,.06);border-radius:4px;border-left:2px solid var(--blu)">
+      ☁ 저장 시 Notion에도 자동 백업 → 다른 기기에서 접속하면 자동 복원됩니다
+      <br><span style="color:var(--org)">⚠ Notion 워크스페이스 접근자는 API 키를 볼 수 있습니다. 개인 워크스페이스 사용 권장.</span>
+    </div>
   </div>
   <div style="margin-bottom:14px">
     <div style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">💾 백업 / 복원</div>
@@ -1912,10 +1916,54 @@ function updateASField(id, field, value, ev){
 
 function renderAS(){
   const c=document.getElementById('content');
-  // 필터 적용
+
+  // ── 이니셜 추출 헬퍼 (vendorInitHtml과 동일 로직) ──
+  const getVendorInit=(name)=>{
+    const nm=(name||'').trim();
+    if(!nm) return '';
+    // 1) 고객사 DB에 등록된 업체면 해당 이니셜 사용
+    const cl=clients.find(c=>
+      (c.name||'').trim()===nm ||
+      (c.initials||'').trim().toUpperCase()===nm.toUpperCase()
+    );
+    if(cl && cl.initials) return cl.initials.trim().toUpperCase();
+    // 2) 자동 이니셜 생성 (공백 제거, 법인 표기 제거)
+    const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
+    const words=clean.split(/\s+/);
+    let init;
+    if(words.length>=2){
+      init=(words[0][0]+(words[1][0]||'')).toUpperCase();
+    } else {
+      init=clean.slice(0,2).toUpperCase();
+    }
+    return init;
+  };
+
+  // 이니셜 기준으로 고객사들을 그룹핑 (표기 변형 통합)
+  const vendorGroups = {}; // { 이니셜: {count, names:Set, displayName} }
+  asItems.forEach(a=>{
+    const v=(a.client||'').trim();
+    if(!v) return;
+    const init=getVendorInit(v);
+    if(!init) return;
+    if(!vendorGroups[init]){
+      vendorGroups[init] = {init, count:0, names:new Set(), displayName:v};
+    }
+    vendorGroups[init].count += 1;
+    vendorGroups[init].names.add(v);
+    // 가장 자주 나오는 이름을 displayName으로 (단순하게: 가장 긴 이름 or 첫번째)
+    // 길이 긴 쪽(정식명칭일 가능성) 우선
+    if(v.length > vendorGroups[init].displayName.length){
+      vendorGroups[init].displayName = v;
+    }
+  });
+  const groupList = Object.values(vendorGroups).sort((a,b)=>b.count-a.count);
+
+  // 필터: 필터값이 이니셜이면 해당 이니셜 그룹의 모든 이름 매칭
   const filterFn=(a)=>{
     if(!_asVendorFilter) return true;
-    return (a.client||'').trim()===_asVendorFilter;
+    const aInit = getVendorInit(a.client);
+    return aInit === _asVendorFilter;
   };
   const filteredAll = asItems.filter(filterFn);
   const active = filteredAll.filter(a=>a.status!=='완료'&&a.status!=='반송');
@@ -1923,14 +1971,10 @@ function renderAS(){
   const pending = filteredAll.filter(a=>a.billing==='미청구'||a.billing==='청구 예정');
   const pendingAmt = pending.reduce((s,a)=>s+(a.qty||1)*(a.unitCost||0),0);
 
-  // 고객사별 카운트 집계 (필터 버튼용)
-  const vendorCounts = {};
-  asItems.forEach(a=>{
-    const v=(a.client||'').trim();
-    if(!v) return;
-    vendorCounts[v]=(vendorCounts[v]||0)+1;
-  });
-  const vendorList = Object.keys(vendorCounts).sort((a,b)=>vendorCounts[b]-vendorCounts[a]);
+  // 현재 필터 그룹의 대표 이름
+  const currentGroupName = _asVendorFilter && vendorGroups[_asVendorFilter]
+    ? vendorGroups[_asVendorFilter].displayName
+    : '';
 
   const STATUS_CLS={접수:'cb',수리중:'co',완료:'cg',반송:'chip'};
   const BILL_CLS={미청구:'cr','청구 예정':'co','청구 완료':'cg','무상처리':'chip'};
@@ -1975,31 +2019,35 @@ function renderAS(){
       <td style="font-size:11px;color:var(--t2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(a.note||'').replace(/"/g,'&quot;')}">${a.note||'<span style=\"color:var(--t3)\">—</span>'}</td>
     </tr>`;
 
-  // 이니셜 필터 버튼
-  const filterBar = vendorList.length ? `
+  // 이니셜 필터 버튼 (같은 이니셜 고객사들을 하나로 묶음)
+  const filterBar = groupList.length ? `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;padding:10px 12px;background:var(--s1);border:1px solid var(--bdr);border-radius:8px">
       <span style="font-size:11px;color:var(--t3);font-weight:600;white-space:nowrap">🏢 고객사:</span>
       <button onclick="setASVendorFilter('')" style="padding:4px 12px;font-size:11.5px;border:1px solid ${!_asVendorFilter?'var(--gold)':'var(--bdr)'};border-radius:16px;cursor:pointer;font-family:inherit;background:${!_asVendorFilter?'var(--gold-bg)':'var(--s1)'};color:${!_asVendorFilter?'var(--gold-lt)':'var(--t2)'};font-weight:${!_asVendorFilter?'700':'500'}">전체 <span style="font-size:10px;opacity:.7">${asItems.length}</span></button>
-      ${vendorList.map(v=>{
-        const on=_asVendorFilter===v;
-        return `<button onclick="setASVendorFilter('${v.replace(/'/g,"\\'")}')" style="display:flex;align-items:center;gap:5px;padding:3px 10px 3px 5px;font-size:11.5px;border:1px solid ${on?'var(--gold)':'var(--bdr)'};border-radius:16px;cursor:pointer;font-family:inherit;background:${on?'var(--gold-bg)':'var(--s1)'};color:${on?'var(--gold-lt)':'var(--t2)'};font-weight:${on?'700':'500'}">${vendorInitHtml(v, true)}<span>${v}</span><span style="font-size:10px;opacity:.7">${vendorCounts[v]}</span></button>`;
+      ${groupList.map(g=>{
+        const on=_asVendorFilter===g.init;
+        // 같은 이니셜이지만 다른 이름이 있는지 표시
+        const names = [...g.names];
+        const title = names.length>1 ? `${g.init}로 그룹화됨:\n- ${names.join('\n- ')}` : g.displayName;
+        // 대표 이름으로 이니셜 배지 렌더
+        return `<button onclick="setASVendorFilter('${g.init.replace(/'/g,"\\'")}')" title="${title.replace(/"/g,'&quot;').replace(/\n/g,'&#10;')}" style="display:flex;align-items:center;gap:5px;padding:3px 10px 3px 5px;font-size:11.5px;border:1px solid ${on?'var(--gold)':'var(--bdr)'};border-radius:16px;cursor:pointer;font-family:inherit;background:${on?'var(--gold-bg)':'var(--s1)'};color:${on?'var(--gold-lt)':'var(--t2)'};font-weight:${on?'700':'500'}">${vendorInitHtml(g.displayName, true)}<span>${g.displayName}</span>${names.length>1?`<span style="font-size:9px;color:var(--t3);margin-left:-2px">+${names.length-1}</span>`:''}<span style="font-size:10px;opacity:.7">${g.count}</span></button>`;
       }).join('')}
     </div>
   ` : '';
 
   c.innerHTML=`
   <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
-    <div class="kpi k-r"><div class="kpi-l">진행 중 AS${_asVendorFilter?` · ${_asVendorFilter}`:''}</div><div class="kpi-v">${active.length}<span class="kpi-d">건</span></div></div>
+    <div class="kpi k-r"><div class="kpi-l">진행 중 AS${currentGroupName?` · ${currentGroupName}`:''}</div><div class="kpi-v">${active.length}<span class="kpi-d">건</span></div></div>
     <div class="kpi k-o"><div class="kpi-l">미청구 금액</div><div class="kpi-v" style="font-size:18px">${pendingAmt>0?pendingAmt.toLocaleString():'0'}<span class="kpi-d">원</span></div></div>
     <div class="kpi k-g"><div class="kpi-l">완료 AS</div><div class="kpi-v">${done.length}<span class="kpi-d">건</span></div></div>
-    <div class="kpi"><div class="kpi-l">${_asVendorFilter?'표시 AS':'전체 AS'}</div><div class="kpi-v">${filteredAll.length}<span class="kpi-d">건</span></div></div>
+    <div class="kpi"><div class="kpi-l">${currentGroupName?'표시 AS':'전체 AS'}</div><div class="kpi-v">${filteredAll.length}<span class="kpi-d">건</span></div></div>
   </div>
 
   ${filterBar}
 
   <div class="card">
     <div class="ch">
-      <div class="ch-t">🔧 AS 진행 현황 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${active.length}건${_asVendorFilter?` · ${_asVendorFilter} 필터`:''})</span></div>
+      <div class="ch-t">🔧 AS 진행 현황 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${active.length}건${currentGroupName?` · ${currentGroupName} 필터`:''})</span></div>
       <button class="btn bp bs" onclick="openASModal(null)">+ AS 접수</button>
     </div>
     <div style="overflow-x:auto"><table>
@@ -2008,7 +2056,7 @@ function renderAS(){
         <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th>
         <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
       </tr></thead>
-      <tbody>${active.length?active.map(asRow).join(''):`<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--t3)">${_asVendorFilter?`'${_asVendorFilter}' 진행 중 AS 없음`:'진행 중인 AS 없음'}</td></tr>`}</tbody>
+      <tbody>${active.length?active.map(asRow).join(''):`<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 진행 중 AS 없음`:'진행 중인 AS 없음'}</td></tr>`}</tbody>
     </table></div>
   </div>
 
@@ -3131,8 +3179,64 @@ function selectVendorFromModal(name,contact){
 // ════════════════════════════════
 const NOTION_CFG_KEY = 'ek_notion_cfg';
 const ANTHROPIC_KEY_SK = 'ek_anthropic_key';
+const APP_SETTINGS_DB = '2799cf51e05d49d59a5d043bb199f1dc'; // 🔐 앱 설정 DB
+const APP_SETTINGS_DS = '1f38c23f-4b98-457c-9585-e95ea0875ba3';
 let anthropicKey = '';
 try { anthropicKey = localStorage.getItem(ANTHROPIC_KEY_SK)||''; } catch(e) {}
+
+// ── API 키 Notion 백업/복원 ──
+async function syncApiKeyToNotion(){
+  if(!notionCfg.workerUrl){ return {ok:false, msg:'Worker URL 미설정'}; }
+  if(!anthropicKey){ return {ok:false, msg:'저장할 API 키가 없음'}; }
+  const todayISO = new Date().toISOString().split('T')[0];
+  try{
+    // 기존 "anthropic_api_key" 페이지가 있는지 확인
+    const existing = await nQueryAll(APP_SETTINGS_DB);
+    const apiKeyPage = existing.find(r=>{
+      const title = np.title(r.properties?.['설정명']);
+      return title==='anthropic_api_key';
+    });
+    const p = {
+      "설정명": {"title":[{"text":{"content":"anthropic_api_key"}}]},
+      "값": {"rich_text":[{"text":{"content": anthropicKey}}]},
+      "업데이트": {"date":{"start": todayISO}},
+      "설명": {"rich_text":[{"text":{"content":"Anthropic API 키 (AI 자동인식용). 이 키는 이 Notion 워크스페이스에 접근 권한이 있는 누구나 볼 수 있습니다."}}]}
+    };
+    if(apiKeyPage){
+      await nUpdate(apiKeyPage.id, p);
+    } else {
+      await nCreate(APP_SETTINGS_DB, p);
+    }
+    return {ok:true};
+  }catch(e){
+    console.warn('API 키 Notion 동기화 실패:',e);
+    return {ok:false, msg:e.message};
+  }
+}
+
+async function pullApiKeyFromNotion(){
+  if(!notionCfg.workerUrl){ return false; }
+  try{
+    const rows = await nQueryAll(APP_SETTINGS_DB);
+    const apiKeyPage = rows.find(r=>{
+      const title = np.title(r.properties?.['설정명']);
+      return title==='anthropic_api_key';
+    });
+    if(!apiKeyPage) return false;
+    const val = np.text(apiKeyPage.properties?.['값']);
+    if(val && val.trim() && val !== anthropicKey){
+      anthropicKey = val.trim();
+      try{ localStorage.setItem(ANTHROPIC_KEY_SK, anthropicKey); }catch(e){}
+      // 설정 화면이 열려있으면 UI 갱신
+      if(typeof renderSettingsUI==='function'){ try{ renderSettingsUI(); }catch(e){} }
+      return true;
+    }
+    return false;
+  }catch(e){
+    console.warn('API 키 Notion 복원 실패:',e);
+    return false;
+  }
+}
 
 // Claude API 호출 — Worker 프록시 우선, 없으면 직접 호출
 async function callClaudeAPI(body) {
@@ -3821,6 +3925,14 @@ function startAutoSync(){
 // 앱 시작 시 1회 실행 (notionCfg 로드 후)
 function initAutoSync(){
   if(notionCfg.workerUrl){
+    // API 키가 없으면 Notion에서 자동 복원 시도
+    if(!anthropicKey){
+      setTimeout(()=>{
+        pullApiKeyFromNotion().then(restored=>{
+          if(restored) showToast('☁ API 키 자동 복원 완료','var(--grn)',2500);
+        });
+      }, 500);
+    }
     // 즉시 한 번 + 5분마다
     setTimeout(()=>pullFromNotion({silent:true}), 800);
     startAutoSync();
@@ -4427,6 +4539,12 @@ function saveAnthropicKey(inputId){
   if(el) el.value='';
   if(el) el.placeholder='키 설정됨 — 변경하려면 새 키 입력';
   showToast('✓ API 키 저장 완료! 이제 AI 자동인식을 사용할 수 있습니다','var(--grn)',3000);
+  // Notion 백업 (Worker URL 설정되어 있을 때만)
+  if(notionCfg.workerUrl){
+    syncApiKeyToNotion().then(res=>{
+      if(res.ok) showToast('☁ Notion에도 백업됨 (다른 기기에서 자동 복원)','var(--blu)',2500);
+    });
+  }
 }
 
 function openDataMgr(){
