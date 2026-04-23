@@ -4698,14 +4698,50 @@ document.addEventListener('DOMContentLoaded',()=>{
       _startedInside=false;
     });
   });
-  // ESC 키로 활성 편집 모달 닫기 방지 (이미지 미리보기는 기존 로직 유지)
+  // ESC 키로 열려있는 모달 닫기 — 가장 최근(z-index 높은) 모달 먼저 닫음
   document.addEventListener('keydown',e=>{
-    if(e.key!=='Escape')return;
-    // 이미지 미리보기가 열려 있으면 기존 핸들러가 처리하므로 패스
-    if(document.getElementById('prevOv')?.classList.contains('open'))return;
-    // 편집 모달 중 열려있는 게 있으면 ESC 차단
-    const anyOpen=PROTECTED_MODALS.some(id=>document.getElementById(id)?.classList.contains('open'));
-    if(anyOpen){ e.stopPropagation(); e.preventDefault(); }
+    if(e.key!=='Escape') return;
+
+    // 1) prevOv(이미지 미리보기) 우선 닫기
+    const prev = document.getElementById('prevOv');
+    if(prev && prev.classList.contains('open')){
+      prev.classList.remove('open');
+      e.stopPropagation(); e.preventDefault();
+      return;
+    }
+
+    // 2) 열려있는 모든 .ov 모달 수집
+    const openMods = Array.from(document.querySelectorAll('.ov.open'));
+    if(!openMods.length) return;
+
+    // 3) z-index가 가장 높은(가장 위에 있는) 모달 선택
+    //    style에 명시된 z-index 우선, 없으면 computed 사용
+    let topEl = openMods[0];
+    let topZ = -Infinity;
+    openMods.forEach(el=>{
+      const inlineZ = +(el.style.zIndex || 0);
+      const computedZ = +getComputedStyle(el).zIndex || 0;
+      const z = Math.max(inlineZ, computedZ);
+      if(z >= topZ){ topZ = z; topEl = el; }
+    });
+
+    // 4) 특수 모달별 cleanup 처리
+    const id = topEl.id;
+    try{
+      if(id==='mAS' && typeof _asAIPasteCleanup==='function') _asAIPasteCleanup();
+      if(id==='mSmp' && typeof _smpPasteHandler!=='undefined' && _smpPasteHandler){
+        document.removeEventListener('paste', _smpPasteHandler); _smpPasteHandler=null;
+      }
+      if(id==='mOrd' && typeof _ordPasteHandler!=='undefined' && _ordPasteHandler){
+        document.removeEventListener('paste', _ordPasteHandler); _ordPasteHandler=null;
+      }
+      if(id==='mNewDesign' && typeof _ndPasteCleanup==='function') _ndPasteCleanup();
+    }catch(err){/* cleanup 실패 시에도 계속 진행 */}
+
+    // 5) 모달 닫기
+    topEl.classList.remove('open');
+    e.stopPropagation();
+    e.preventDefault();
   },true);
 });
 function gv(id){return(document.getElementById(id)?.value||'').trim();}
