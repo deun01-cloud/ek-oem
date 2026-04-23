@@ -1237,6 +1237,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="form-sec">수리 비용</div>
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
     <div class="fg"><label>개당 수리비 (원)</label><input class="fi" type="number" id="as_unitCost" placeholder="0" min="0" oninput="calcASTotal()"></div>
+    <div class="fg"><label>합계</label><div id="as_totalDisp" style="height:32px;display:flex;align-items:center;font-size:14px;font-weight:700;color:var(--gold-lt)">—</div></div>
     <div class="fg"><label>수리종류</label>
       <select class="fs" id="as_defectType">
         <option value="">선택</option>
@@ -1244,7 +1245,6 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <option value="고객불량">고객불량</option>
       </select>
     </div>
-    <div class="fg"><label>합계</label><div id="as_totalDisp" style="height:32px;display:flex;align-items:center;font-size:14px;font-weight:700;color:var(--gold-lt)">—</div></div>
     <div class="fg"><label>청구 상태</label>
       <select class="fs" id="as_billing">
         <option>미청구</option><option>청구 예정</option><option>청구 완료</option><option>무상처리</option>
@@ -1894,6 +1894,22 @@ function printASInvoice(){
 let _asVendorFilter=''; // 빈 문자열 = 전체
 function setASVendorFilter(v){ _asVendorFilter=v||''; renderAS(); }
 
+// ── 인라인 필드 변경 (chip 클릭으로 select 변경) ──
+function updateASField(id, field, value, ev){
+  if(ev) ev.stopPropagation();
+  const i = asItems.findIndex(x=>x.id==id);
+  if(i<0) return;
+  asItems[i] = {...asItems[i], [field]: value};
+  save();
+  // Notion 동기화 (백그라운드)
+  if(notionCfg.workerUrl && notionCfg.asDb){
+    syncASToNotion(asItems[i], true).catch(e=>console.warn('AS sync 실패:',e));
+  }
+  renderAS();
+  updateBadges();
+  showToast('✓ 변경됨','var(--grn)',1200);
+}
+
 function renderAS(){
   const c=document.getElementById('content');
   // 필터 적용
@@ -1919,6 +1935,31 @@ function renderAS(){
   const STATUS_CLS={접수:'cb',수리중:'co',완료:'cg',반송:'chip'};
   const BILL_CLS={미청구:'cr','청구 예정':'co','청구 완료':'cg','무상처리':'chip'};
 
+  const STATUS_OPTS = ['접수','수리중','완료','반송'];
+  const BILL_OPTS = ['미청구','청구 예정','청구 완료','무상처리'];
+  const DEFECT_OPTS = ['','입고불량','고객불량'];
+
+  // chip 색상 매핑
+  const STATUS_COLOR = {접수:{bg:'rgba(26,109,181,.08)',bd:'rgba(26,109,181,.25)',fg:'var(--blu)'},
+                        수리중:{bg:'rgba(168,90,16,.08)',bd:'rgba(168,90,16,.25)',fg:'var(--org)'},
+                        완료:{bg:'rgba(46,139,44,.08)',bd:'rgba(46,139,44,.25)',fg:'var(--grn)'},
+                        반송:{bg:'var(--s2)',bd:'var(--bdr)',fg:'var(--t3)'}};
+  const BILL_COLOR = {미청구:{bg:'rgba(192,48,48,.08)',bd:'rgba(192,48,48,.25)',fg:'var(--red)'},
+                      '청구 예정':{bg:'rgba(168,90,16,.08)',bd:'rgba(168,90,16,.25)',fg:'var(--org)'},
+                      '청구 완료':{bg:'rgba(46,139,44,.08)',bd:'rgba(46,139,44,.25)',fg:'var(--grn)'},
+                      '무상처리':{bg:'var(--s2)',bd:'var(--bdr)',fg:'var(--t3)'}};
+  const DEFECT_COLOR = {입고불량:{bg:'rgba(192,48,48,.08)',bd:'rgba(192,48,48,.25)',fg:'var(--red)'},
+                        고객불량:{bg:'rgba(168,90,16,.08)',bd:'rgba(168,90,16,.25)',fg:'var(--org)'}};
+
+  // 인라인 선택 select 생성 헬퍼
+  const inlineSelect = (id, field, value, opts, colorMap)=>{
+    const cur = value||'';
+    const c = colorMap[cur] || {bg:'transparent',bd:'var(--bdr)',fg:'var(--t3)'};
+    const optsHtml = opts.map(o=>`<option value="${o}" ${o===cur?'selected':''}>${o||'—'}</option>`).join('');
+    return `<select onclick="event.stopPropagation()" onchange="updateASField(${id},'${field}',this.value,event)"
+      style="font-size:10px;padding:2px 18px 2px 8px;border-radius:10px;border:1px solid ${c.bd};background:${c.bg};color:${c.fg};font-weight:600;cursor:pointer;font-family:inherit;appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,${c.fg} 50%),linear-gradient(135deg,${c.fg} 50%,transparent 50%);background-position:calc(100% - 9px) 8px,calc(100% - 5px) 8px;background-size:4px 4px,4px 4px;background-repeat:no-repeat">${optsHtml}</select>`;
+  };
+
   const asRow=a=>`
     <tr onclick="openASModal(${a.id})" style="cursor:pointer" class="${a.status==='완료'||a.status==='반송'?'':'row-'+(dday(a.due)!==null&&dday(a.due)<=0?'u':dday(a.due)<=3?'w':'')}">
       <td style="font-size:11.5px">${a.date||'—'}</td>
@@ -1926,10 +1967,10 @@ function renderAS(){
       <td style="font-size:11.5px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.item||'—'}</td>
       <td style="text-align:center;color:var(--t2)">${a.qty||1}</td>
       <td style="text-align:right;font-weight:600;color:var(--gold-lt)">${a.unitCost?(+(a.unitCost)).toLocaleString()+'원':'—'}</td>
-      <td style="text-align:center">${a.defectType?`<span class="chip ${a.defectType==='고객불량'?'co':'cr'}" style="font-size:10px">${a.defectType}</span>`:'<span style="color:var(--t3);font-size:11px">—</span>'}</td>
       <td style="text-align:right;color:var(--t1);font-weight:600">${a.unitCost?((a.qty||1)*(a.unitCost)).toLocaleString()+'원':'—'}</td>
-      <td><span class="chip ${STATUS_CLS[a.status]||'chip'}" style="font-size:10px">${a.status}</span></td>
-      <td><span class="chip ${BILL_CLS[a.billing]||'chip'}" style="font-size:10px">${a.billing||'미청구'}</span></td>
+      <td style="text-align:center">${inlineSelect(a.id,'defectType',a.defectType||'',DEFECT_OPTS,DEFECT_COLOR)}</td>
+      <td>${inlineSelect(a.id,'status',a.status||'접수',STATUS_OPTS,STATUS_COLOR)}</td>
+      <td>${inlineSelect(a.id,'billing',a.billing||'미청구',BILL_OPTS,BILL_COLOR)}</td>
       <td>${ddTag(a.due)}</td>
       <td style="font-size:11px;color:var(--t2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(a.note||'').replace(/"/g,'&quot;')}">${a.note||'<span style=\"color:var(--t3)\">—</span>'}</td>
     </tr>`;
@@ -1964,7 +2005,7 @@ function renderAS(){
     <div style="overflow-x:auto"><table>
       <thead><tr>
         <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
-        <th style="text-align:right">개당 수리비</th><th style="text-align:center">수리종류</th><th style="text-align:right">합계</th>
+        <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th>
         <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
       </tr></thead>
       <tbody>${active.length?active.map(asRow).join(''):`<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--t3)">${_asVendorFilter?`'${_asVendorFilter}' 진행 중 AS 없음`:'진행 중인 AS 없음'}</td></tr>`}</tbody>
@@ -1976,7 +2017,7 @@ function renderAS(){
     <div style="overflow-x:auto"><table>
       <thead><tr>
         <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
-        <th style="text-align:right">개당 수리비</th><th style="text-align:center">수리종류</th><th style="text-align:right">합계</th>
+        <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th>
         <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
       </tr></thead>
       <tbody>${done.map(asRow).join('')}</tbody>
