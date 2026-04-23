@@ -3382,6 +3382,17 @@ function mapNotionSample(row){
     legacyDevNote = devText;
     legacyCaution = cautionText;
   }
+  // 파일 필드 복원
+  const parseFilesJson = (txt)=>{
+    if(!txt) return [];
+    try{
+      const parsed = JSON.parse(txt);
+      return Array.isArray(parsed) ? parsed : [];
+    }catch(e){ return []; }
+  };
+  const sourceDoc = parseFilesJson(np.text(p['작업지시서JSON']));
+  const imgs      = parseFilesJson(np.text(p['예시이미지JSON']));
+  const cadFiles  = parseFilesJson(np.text(p['CAD파일JSON']));
   return{
     _notionId:row.id,
     name:     np.title(p['샘플명']),
@@ -3398,8 +3409,8 @@ function mapNotionSample(row){
     card:     np.text(p['카드파일']),
     qty:      np.text(p['발주량']),
     desc:     np.text(p['메모']),
-    devNote:  legacyDevNote, // 호환 — 기존 데이터만
-    caution:  legacyCaution, // 호환 — 기존 데이터만
+    devNote:  legacyDevNote,
+    caution:  legacyCaution,
     notes,
     type:     np.select(p['유형']),
     plating:  np.select(p['도금']),
@@ -3411,7 +3422,7 @@ function mapNotionSample(row){
     devCost:  np.number(p['개발비']),
     dueHistory,
     createdAt:row.created_time||new Date().toISOString(),
-    imgs:[], sourceDoc:[], cadFiles:[],
+    imgs, sourceDoc, cadFiles,
   };
 }
 function mapNotionOrder(row){
@@ -3684,7 +3695,21 @@ async function pullFromNotion(opts){
         const prev=byNotionId[r._notionId];
         if(!prev) return {id:Date.now()+Math.random(), ...r};
         const out={...r, id:prev.id};
-        idFields.forEach(f=>{ if(prev[f]!==undefined) out[f]=prev[f]; });
+        idFields.forEach(f=>{
+          // 배열 필드: 로컬이 더 많은 항목을 가지고 있으면 로컬 유지 (데이터 유실 방지)
+          const isArr = Array.isArray(prev[f]) || Array.isArray(out[f]);
+          if(isArr){
+            const prevArr = Array.isArray(prev[f]) ? prev[f] : [];
+            const remoteArr = Array.isArray(out[f]) ? out[f] : [];
+            if(prevArr.length >= remoteArr.length){
+              out[f] = prevArr;
+            } else {
+              out[f] = remoteArr;
+            }
+          } else if(prev[f] !== undefined){
+            out[f] = prev[f];
+          }
+        });
         return out;
       });
 
@@ -3974,6 +3999,16 @@ async function syncSampleToNotion(s, update){
   } else {
     p["납기일변경이력"] = {"rich_text":[{"text":{"content": ""}}]};
   }
+  // 파일 URL 배열 → JSON 저장 (R2 URL만, base64는 제외)
+  const filesForNotion = (arr)=>{
+    if(!Array.isArray(arr) || !arr.length) return '';
+    const httpsOnly = arr.filter(f=>f && f.url && String(f.url).startsWith('http'))
+      .map(f=>({name:f.name||'', url:f.url, type:f.type||'', r2Key:f.r2Key||''}));
+    return httpsOnly.length ? JSON.stringify(httpsOnly) : '';
+  };
+  p["작업지시서JSON"] = {"rich_text":[{"text":{"content": filesForNotion(s.sourceDoc).slice(0, 2000)}}]};
+  p["예시이미지JSON"] = {"rich_text":[{"text":{"content": filesForNotion(s.imgs).slice(0, 2000)}}]};
+  p["CAD파일JSON"]   = {"rich_text":[{"text":{"content": filesForNotion(s.cadFiles).slice(0, 2000)}}]};
   if(s._notionId){ await nUpdate(s._notionId,p); }
   else{ const r=await nCreate(notionCfg.smpDb,p); if(r?.id) saveNotionId(samples,s.id,r.id,SK.s); }
 }
@@ -9377,7 +9412,7 @@ function vMonthly(c){
       </div>
     </div>
     <div class="card">
-      <div class="ch"><div class="ch-t">월별 샘플 진행 건수</div><div class="ch-s">최근 6개월 · 의뢰일 기준</div></div>
+      <div class="ch"><div class="ch-t">월별 신규 샘플 의뢰</div><div class="ch-s">최근 6개월 · 의뢰일 기준</div></div>
       <div style="padding:12px 14px">
         <div class="bar-chart" style="height:100px">
           ${mSmpCnt.map((cnt,i)=>{
@@ -9399,9 +9434,13 @@ function vMonthly(c){
             ${cnt}건${mSmpDone[i]>0?`<div style="color:var(--grn)">${mSmpDone[i]}확정</div>`:''}
           </div>`).join('')}
         </div>
-        <div style="margin-top:6px;display:flex;gap:10px;font-size:10px;color:var(--t3)">
+        <div style="margin-top:6px;display:flex;gap:10px;font-size:10px;color:var(--t3);flex-wrap:wrap;align-items:center">
           <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--blu-bg);border:1px solid var(--blu);border-radius:1px"></span>진행</span>
           <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--grn);border-radius:1px;opacity:.7"></span>확정</span>
+          <span style="margin-left:auto;font-size:10.5px;color:var(--t2)">
+            최근 6개월 합계: <b style="color:var(--t1)">${mSmpCnt.reduce((s,c)=>s+c,0)}건</b>
+            · 전체 진행 중: <b style="color:var(--gold-lt)">${pendingSmpCnt}건</b>
+          </span>
         </div>
       </div>
     </div>
