@@ -7602,6 +7602,68 @@ function renderSchedContent(){
   else if(schedView==='day')renderDayView(sc);
   else renderMonthView(sc);
 }
+
+// ── 업무 드래그 앤 드롭 ──
+let _draggingTaskId = null;
+function taskDragStart(e, taskId){
+  _draggingTaskId = taskId;
+  try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', String(taskId)); }catch(_){}
+  // 드래그 이미지 불투명도
+  if(e.currentTarget && e.currentTarget.classList){
+    e.currentTarget.classList.add('task-dragging');
+  }
+}
+function taskDragEnd(e){
+  _draggingTaskId = null;
+  document.querySelectorAll('.task-dragging').forEach(el=>el.classList.remove('task-dragging'));
+  document.querySelectorAll('.drop-over').forEach(el=>el.classList.remove('drop-over'));
+}
+function taskDragOver(e, el){
+  if(!_draggingTaskId) return;
+  e.preventDefault();
+  try{ e.dataTransfer.dropEffect='move'; }catch(_){}
+  if(el && !el.classList.contains('drop-over')) el.classList.add('drop-over');
+}
+function taskDragLeave(el){
+  if(el) el.classList.remove('drop-over');
+}
+function taskDrop(e, el){
+  e.preventDefault();
+  if(el) el.classList.remove('drop-over');
+  const taskId = _draggingTaskId || +e.dataTransfer.getData('text/plain');
+  if(!taskId) return;
+  const newDate = el.dataset.date;
+  const newCat = el.dataset.cat;
+  const newAp = el.dataset.ap; // 일간 뷰에서만 있음
+  const t = tasks.find(x=>x.id==taskId);
+  if(!t) return;
+  // 변경 없으면 무시
+  if(t.date===newDate && t.cat===newCat && (newAp===undefined || t.ap===newAp)) return;
+  t.date = newDate || t.date;
+  t.cat = newCat || t.cat;
+  if(newAp) t.ap = newAp;
+  save();
+  // Notion 동기화
+  if(typeof syncTaskToNotion === 'function'){
+    syncTaskToNotion(t, true);
+  }
+  renderSchedContent();
+  showToast('✓ 업무 이동됨','var(--grn)',1500);
+}
+
+// 드래그 스타일
+if(!document.getElementById('taskDragStyles')){
+  const st=document.createElement('style');
+  st.id='taskDragStyles';
+  st.textContent=`
+    .task-dragging{opacity:.4}
+    .wg-cell.drop-over,.drop-over{background:var(--gold-bg)!important;outline:2px dashed var(--gold);outline-offset:-2px;transition:all .12s}
+    .task-it[draggable="true"]{transition:background .15s}
+    .task-it[draggable="true"]:hover{background:rgba(255,255,255,.35)}
+  `;
+  document.head.appendChild(st);
+}
+
 function renderDayView(sc){
   const d=new Date(TODAY);d.setDate(TODAY.getDate()+schedWOff);
   const ds=toLocalDateStr(d);
@@ -7613,7 +7675,7 @@ function renderDayView(sc){
     const manualTasks=dayT.filter(t=>t.ap===ap&&t.cat===cat);
     const autoItems=(cat==='발주출고'||cat==='샘플출고')?getAutoItems(ds,cat):[];
     const hasAny=autoItems.length||manualTasks.length;
-    return`<div style="margin-bottom:10px;padding:7px 9px;border-radius:6px;background:${CAT_BG[cat]||'var(--s2)'};border:1px solid ${CAT_BG[cat]?'transparent':'var(--bdr)'}">
+    return`<div style="margin-bottom:10px;padding:7px 9px;border-radius:6px;background:${CAT_BG[cat]||'var(--s2)'};border:1px solid ${CAT_BG[cat]?'transparent':'var(--bdr)'}" data-date="${ds}" data-cat="${cat}" data-ap="${ap}" ondragover="taskDragOver(event,this)" ondragleave="taskDragLeave(this)" ondrop="taskDrop(event,this)">
       <div style="font-size:10px;color:${CAT_COL[cat]};font-weight:700;margin-bottom:${hasAny?'6px':'0'};display:flex;align-items:center;justify-content:space-between">
         <span>${cat}</span>
         <button class="add-t" onclick="openTaskFull('${ds}','${ap}','${cat}')" style="font-size:11px;padding:0 5px;height:18px;line-height:18px">＋</button>
@@ -7624,7 +7686,7 @@ function renderDayView(sc){
           <span class="tt ${it.done?'done':''}" style="font-size:11px;flex:1;margin-left:${it.badge?'2px':'0'}">${it.cont}</span>
         </div>`).join('')}
       ${manualTasks.map(t=>`
-        <div class="task-it" style="margin-bottom:2px">
+        <div class="task-it" draggable="true" ondragstart="taskDragStart(event,${t.id})" ondragend="taskDragEnd(event)" style="margin-bottom:2px" title="드래그로 이동 가능">
           <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask(${t.id})">
           <span class="tt ${t.done?'done':''}" onclick="openEditTask(${t.id})" style="cursor:pointer;flex:1;font-size:11.5px">${t.cont}</span>
           ${t.files&&t.files.length?`<span onclick="openEditTask(${t.id})" title="${t.files.length}개 첨부" style="font-size:10px;cursor:pointer;color:var(--t3);flex-shrink:0">📎${t.files.length}</span>`:''}
@@ -7763,12 +7825,12 @@ function renderWeekView(sc){
           const manualTasks=tasks.filter(t=>t.date===ds&&t.cat===cat);
           const autoItems=(cat==='발주출고'||cat==='샘플출고')?getAutoItems(ds,cat):[];
           const hasFiles=manualTasks.some(t=>t.files&&t.files.length);
-          return`<div class="wg-cell" style="background:${CAT_BG[cat]||'transparent'};min-height:38px">
+          return`<div class="wg-cell" style="background:${CAT_BG[cat]||'transparent'};min-height:38px" data-date="${ds}" data-cat="${cat}" ondragover="taskDragOver(event,this)" ondragleave="taskDragLeave(this)" ondrop="taskDrop(event,this)">
             ${autoItems.map(it=>`<div class="task-it" style="cursor:${it.click?'pointer':'default'}" ${it.click?`onclick="${it.click}"`:''} title="${it.cont.replace(/"/g,'&quot;')}">
               ${it.badge||''}
               <span class="tt ${it.done?'done':''}" style="font-size:10.5px;flex:1;margin-left:${it.badge?'2px':'0'}">${it.cont}</span>
             </div>`).join('')}
-            ${manualTasks.map(t=>`<div class="task-it">
+            ${manualTasks.map(t=>`<div class="task-it" draggable="true" ondragstart="taskDragStart(event,${t.id})" ondragend="taskDragEnd(event)" title="드래그로 이동 가능">
               <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask(${t.id})">
               <span class="tt ${t.done?'done':''}" onclick="openEditTask(${t.id})" style="cursor:pointer;flex:1">${t.cont}</span>
               ${t.files&&t.files.length?`<span title="${t.files.length}개 첨부" style="font-size:10px;cursor:pointer" onclick="openEditTask(${t.id})">📎${t.files.length}</span>`:''}
