@@ -1229,7 +1229,14 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
 
   <div class="fr3">
-    <div class="fg"><label>고객사 *</label><input class="fi" id="as_client" placeholder="고객사명"></div>
+    <div class="fg" style="position:relative"><label>고객사 *</label>
+      <input class="fi" id="as_client" placeholder="이니셜·이름 입력 → 검색"
+        autocomplete="off"
+        oninput="asClientSearch(this.value)"
+        onfocus="asClientSearch(this.value)"
+        onblur="setTimeout(()=>{const d=document.getElementById('asClientDrop');if(d)d.style.display='none'},200)">
+      <div id="asClientDrop" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--s1);border:1px solid var(--bdr);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.08);max-height:240px;overflow-y:auto;margin-top:2px"></div>
+    </div>
     <div class="fg"><label>접수일 *</label><input class="fi" type="date" id="as_date"></div>
     <div class="fg"><label>완료 예정일</label><input class="fi" type="date" id="as_due"></div>
   </div>
@@ -1525,6 +1532,79 @@ function calcASTotal(){
   if(el) el.textContent=total>0?total.toLocaleString()+'원':'—';
 }
 
+// ── AS 고객사 검색 자동완성 ──
+function asClientSearch(q){
+  const drop=document.getElementById('asClientDrop');
+  if(!drop) return;
+  const query=(q||'').trim().toLowerCase();
+
+  // 후보 수집: ① 등록된 고객사 DB + ② 기존 AS의 고객사 이름 (unique)
+  const seen=new Set();
+  const candidates=[];
+
+  // 1) 고객사 DB
+  (clients||[]).forEach(cl=>{
+    const name=(cl.name||'').trim();
+    if(!name || seen.has(name)) return;
+    seen.add(name);
+    candidates.push({
+      name,
+      initials:(cl.initials||'').trim().toUpperCase(),
+      source:'db',
+      cl
+    });
+  });
+  // 2) AS 기록 고객사 (DB에 없는 것만)
+  (asItems||[]).forEach(a=>{
+    const name=(a.client||'').trim();
+    if(!name || seen.has(name)) return;
+    seen.add(name);
+    candidates.push({
+      name,
+      initials:'',
+      source:'history'
+    });
+  });
+
+  // 필터: 쿼리 있으면 이니셜/이름 match, 없으면 전체
+  let matches=candidates;
+  if(query){
+    matches=candidates.filter(c=>{
+      const nm=c.name.toLowerCase();
+      const init=(c.initials||'').toLowerCase();
+      return nm.includes(query) || (init && init.includes(query));
+    });
+  }
+  // 최대 10개
+  matches=matches.slice(0,10);
+
+  if(!matches.length){
+    drop.style.display='none';
+    return;
+  }
+
+  drop.innerHTML=matches.map(c=>{
+    const badge=vendorInitHtml(c.name, true);
+    const sourceIcon=c.source==='db'?'<span style="font-size:9px;color:var(--blu);margin-left:4px">📋</span>':'<span style="font-size:9px;color:var(--t3);margin-left:4px">AS이력</span>';
+    return `<div onmousedown="asClientPick('${c.name.replace(/'/g,"\\'")}')"
+      style="display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--bdr);font-size:12px"
+      onmouseover="this.style.background='var(--s2)'"
+      onmouseout="this.style.background='transparent'">
+      ${badge}
+      <span style="font-weight:500;flex:1">${c.name}</span>
+      ${sourceIcon}
+    </div>`;
+  }).join('');
+  drop.style.display='';
+}
+
+function asClientPick(name){
+  const inp=document.getElementById('as_client');
+  if(inp) inp.value=name;
+  const drop=document.getElementById('asClientDrop');
+  if(drop) drop.style.display='none';
+}
+
 // ── AS AI 파일 인식 ──
 let _asAIPasteHandler=null;
 function _asAIPasteSetup(){
@@ -1707,42 +1787,157 @@ function showASParseResult(parsed, resultEl){
     </div>`;
     return;
   }
+  // 체크박스 필드 추가 (기본값 true)
+  parsed.items.forEach(it=>{ if(it._checked===undefined) it._checked=true; });
   window._asParsed=parsed;
+  renderASParseTable();
+}
+
+// 편집 가능한 AI 파싱 결과 테이블 렌더
+function renderASParseTable(){
+  const resultEl=document.getElementById('asAiResult');
+  const parsed=window._asParsed;
+  if(!resultEl || !parsed || !Array.isArray(parsed.items)) return;
+  const items=parsed.items;
+  const conf=Math.round((parsed.confidence||0)*100);
+  const checkedCount=items.filter(it=>it._checked!==false).length;
+
+  // 고객사 자동완성용 옵션 (datalist)
+  const vendorOptions = [...new Set([
+    ...clients.map(c=>c.name).filter(Boolean),
+    ...asItems.map(a=>a.client).filter(Boolean)
+  ])];
+
   resultEl.innerHTML=`
   <div style="padding:12px 14px;background:var(--grn-bg);border:1.5px solid var(--grn);border-radius:8px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px">
       <div>
         <div style="font-size:13px;font-weight:700;color:var(--grn)">✦ AI 인식 완료 — ${items.length}건 추출 (신뢰도 ${conf}%)</div>
-        ${parsed.vendor?`<div style="font-size:11px;color:var(--t2);margin-top:2px">고객사: <b>${parsed.vendor}</b></div>`:''}
+        <div style="font-size:10.5px;color:var(--t2);margin-top:2px">💡 각 항목을 클릭해 수정 가능 · 체크 해제 시 등록 제외</div>
       </div>
-      <div style="display:flex;gap:6px">
-        <button class="btn bp-grn bs" onclick="applyASParseAll()">✓ 전부 등록 (${items.length}건)</button>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn bgo bs" onclick="asParseAddRow()" style="font-size:10.5px">+ 항목 추가</button>
+        <button class="btn bp-grn bs" onclick="applyASParseAll()">✓ 선택 항목 등록 (${checkedCount}건)</button>
         <button class="btn bgo bs" onclick="document.getElementById('asAiResult').innerHTML='';window._asParsed=null">취소</button>
       </div>
     </div>
-    <div style="max-height:240px;overflow-y:auto;border:1px solid var(--bdr);border-radius:5px;background:var(--s1)">
+
+    <!-- 공통 고객사 필드 -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px 10px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px">
+      <label style="font-size:10.5px;color:var(--t3);font-weight:600;white-space:nowrap">공통 고객사:</label>
+      <input list="asParseVendorDl" class="fi" id="asParseVendor" value="${(parsed.vendor||'').replace(/"/g,'&quot;')}"
+        oninput="window._asParsed.vendor=this.value"
+        placeholder="고객사명 입력 (이 값이 모든 항목에 적용됩니다)"
+        style="flex:1;font-size:11.5px;padding:4px 8px">
+      <datalist id="asParseVendorDl">
+        ${vendorOptions.map(v=>`<option value="${v.replace(/"/g,'&quot;')}">`).join('')}
+      </datalist>
+    </div>
+
+    <div style="max-height:320px;overflow-y:auto;border:1px solid var(--bdr);border-radius:5px;background:var(--s1)">
       <table style="width:100%;border-collapse:collapse;font-size:11.5px">
         <thead style="position:sticky;top:0;background:var(--s2);z-index:1">
           <tr>
-            <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--bdr);width:30px">#</th>
+            <th style="padding:6px 4px;width:30px;text-align:center;border-bottom:1px solid var(--bdr)">
+              <input type="checkbox" ${items.every(it=>it._checked!==false)?'checked':''} onchange="asParseToggleAll(this.checked)" title="전체 선택">
+            </th>
+            <th style="padding:6px 4px;text-align:left;border-bottom:1px solid var(--bdr);width:26px">#</th>
             <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--bdr)">제품명</th>
-            <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--bdr);width:50px">수량</th>
-            <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--bdr)">불량 사유</th>
-            <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--bdr);width:90px">반품일</th>
+            <th style="padding:6px 8px;text-align:center;border-bottom:1px solid var(--bdr);width:60px">수량</th>
+            <th style="padding:6px 8px;text-align:center;border-bottom:1px solid var(--bdr);width:110px">수리종류</th>
+            <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--bdr);width:120px">불량 사유</th>
+            <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--bdr);width:130px">반품일</th>
+            <th style="padding:6px 4px;border-bottom:1px solid var(--bdr);width:30px"></th>
           </tr>
         </thead>
         <tbody>
-        ${items.map((it,i)=>`<tr>
-          <td style="padding:5px 8px;color:var(--t3);border-bottom:1px solid var(--bdr)">${i+1}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid var(--bdr)">${it.item||'-'}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid var(--bdr);font-weight:600">${it.qty||1}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid var(--bdr);color:var(--red)">${it.reason||'-'}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid var(--bdr);color:var(--t3);white-space:nowrap">${it.date||'-'}</td>
-        </tr>`).join('')}
+        ${items.map((it,i)=>{
+          const checked=it._checked!==false;
+          const defectType=it.defectType || (it.reason||'').includes('입고불량')?'입고불량':(it.reason||'').includes('고객불량')?'고객불량':'';
+          it.defectType=defectType; // 저장
+          return `<tr style="${!checked?'opacity:.45':''}">
+            <td style="padding:3px 4px;text-align:center;border-bottom:1px solid var(--bdr)">
+              <input type="checkbox" ${checked?'checked':''} onchange="window._asParsed.items[${i}]._checked=this.checked;renderASParseTable()">
+            </td>
+            <td style="padding:3px 4px;color:var(--t3);border-bottom:1px solid var(--bdr)">${i+1}</td>
+            <td style="padding:3px 4px;border-bottom:1px solid var(--bdr)">
+              <input class="fi" value="${(it.item||'').replace(/"/g,'&quot;')}"
+                oninput="window._asParsed.items[${i}].item=this.value"
+                style="width:100%;font-size:11px;padding:2px 4px;border:1px solid transparent;background:transparent"
+                onfocus="this.style.border='1px solid var(--bdr)';this.style.background='var(--s1)'"
+                onblur="this.style.border='1px solid transparent';this.style.background='transparent'">
+            </td>
+            <td style="padding:3px 4px;border-bottom:1px solid var(--bdr)">
+              <input type="number" min="1" value="${it.qty||1}"
+                oninput="window._asParsed.items[${i}].qty=+this.value||1"
+                style="width:100%;font-size:11px;padding:2px 4px;border:1px solid transparent;background:transparent;text-align:center;font-weight:600;font-family:inherit"
+                onfocus="this.style.border='1px solid var(--bdr)';this.style.background='var(--s1)'"
+                onblur="this.style.border='1px solid transparent';this.style.background='transparent'">
+            </td>
+            <td style="padding:3px 4px;border-bottom:1px solid var(--bdr)">
+              <select onchange="window._asParsed.items[${i}].defectType=this.value;renderASParseTable()" style="width:100%;font-size:10.5px;padding:2px 4px;border:1px solid var(--bdr);background:${defectType==='입고불량'?'rgba(192,48,48,.08)':defectType==='고객불량'?'rgba(168,90,16,.08)':'var(--s1)'};color:${defectType==='입고불량'?'var(--red)':defectType==='고객불량'?'var(--org)':'var(--t2)'};font-weight:600;font-family:inherit;cursor:pointer">
+                <option value="" ${!defectType?'selected':''}>—</option>
+                <option value="입고불량" ${defectType==='입고불량'?'selected':''}>입고불량</option>
+                <option value="고객불량" ${defectType==='고객불량'?'selected':''}>고객불량</option>
+              </select>
+            </td>
+            <td style="padding:3px 4px;border-bottom:1px solid var(--bdr)">
+              <input class="fi" value="${(it.reason||'').replace(/"/g,'&quot;')}"
+                oninput="window._asParsed.items[${i}].reason=this.value"
+                style="width:100%;font-size:11px;padding:2px 4px;border:1px solid transparent;background:transparent;color:var(--red)"
+                onfocus="this.style.border='1px solid var(--bdr)';this.style.background='var(--s1)'"
+                onblur="this.style.border='1px solid transparent';this.style.background='transparent'">
+            </td>
+            <td style="padding:3px 4px;border-bottom:1px solid var(--bdr)">
+              <input type="date" value="${it.date||''}"
+                oninput="window._asParsed.items[${i}].date=this.value"
+                style="width:100%;font-size:10.5px;padding:2px 4px;border:1px solid var(--bdr);background:var(--s1);font-family:inherit">
+            </td>
+            <td style="padding:3px 4px;text-align:center;border-bottom:1px solid var(--bdr)">
+              <button onclick="asParseRemoveRow(${i})" title="삭제" style="border:none;background:none;cursor:pointer;color:var(--red);font-size:13px;line-height:1;padding:0">×</button>
+            </td>
+          </tr>`;
+        }).join('')}
         </tbody>
       </table>
     </div>
   </div>`;
+}
+
+// 행 추가
+function asParseAddRow(){
+  if(!window._asParsed) return;
+  window._asParsed.items.push({
+    item:'',qty:1,reason:'',date:toLocalDateStr(new Date()),defectType:'',_checked:true
+  });
+  renderASParseTable();
+  // 새 행으로 스크롤
+  setTimeout(()=>{
+    const tbody=document.querySelector('#asAiResult tbody');
+    if(tbody){
+      const rows=tbody.querySelectorAll('tr');
+      const last=rows[rows.length-1];
+      if(last){
+        last.scrollIntoView({behavior:'smooth',block:'nearest'});
+        const firstInput=last.querySelector('input[type="text"],input:not([type])');
+        if(firstInput) firstInput.focus();
+      }
+    }
+  },50);
+}
+
+// 행 삭제
+function asParseRemoveRow(idx){
+  if(!window._asParsed) return;
+  window._asParsed.items.splice(idx,1);
+  renderASParseTable();
+}
+
+// 전체 선택/해제
+function asParseToggleAll(checked){
+  if(!window._asParsed) return;
+  window._asParsed.items.forEach(it=>{ it._checked=checked; });
+  renderASParseTable();
 }
 
 function applyASParseAll(){
@@ -1751,22 +1946,36 @@ function applyASParseAll(){
     showToast('⚠ 추출된 항목이 없습니다','var(--red)');
     return;
   }
-  const vendor=parsed.vendor||'';
+  // 체크된 항목만 필터
+  const checkedItems = parsed.items.filter(it=>it._checked!==false);
+  if(!checkedItems.length){
+    showToast('⚠ 선택된 항목이 없습니다 — 체크 후 다시 시도해 주세요','var(--red)');
+    return;
+  }
+  const vendor=(parsed.vendor||'').trim();
+  if(!vendor){
+    showToast('⚠ 공통 고객사를 입력해 주세요','var(--red)');
+    const vEl=document.getElementById('asParseVendor');
+    if(vEl) vEl.focus();
+    return;
+  }
   const now=new Date().toISOString();
   const todayS=toLocalDateStr(new Date());
   let added=0;
-  parsed.items.forEach((it,i)=>{
-    // 불량 사유에서 수리종류 자동 판단
+  checkedItems.forEach((it,i)=>{
+    // defectType은 사용자가 편집했으면 그 값, 아니면 reason에서 자동 판단
     const reason = (it.reason||'').trim();
-    let defectType = '';
-    if(reason.includes('입고불량')) defectType = '입고불량';
-    else if(reason.includes('고객불량')) defectType = '고객불량';
+    let defectType = it.defectType || '';
+    if(!defectType){
+      if(reason.includes('입고불량')) defectType = '입고불량';
+      else if(reason.includes('고객불량')) defectType = '고객불량';
+    }
     const obj={
       id: Date.now()+i,
       createdAt: now,
       client: vendor,
       date: it.date || todayS,
-      item: it.item || '',
+      item: (it.item||'').trim(),
       qty: +it.qty || 1,
       desc: reason,
       defectType,
@@ -1898,7 +2107,56 @@ function printASInvoice(){
 let _asVendorFilter=''; // 빈 문자열 = 전체
 function setASVendorFilter(v){ _asVendorFilter=v||''; renderAS(); }
 
-// ── 인라인 필드 변경 (chip 클릭으로 select 변경) ──
+// AS 선택 상태
+let _asSelected = new Set();
+function toggleASSelect(id, ev){
+  if(ev) ev.stopPropagation();
+  id = +id;
+  if(_asSelected.has(id)) _asSelected.delete(id);
+  else _asSelected.add(id);
+  renderAS();
+}
+function toggleASSelectAll(idArray, ev){
+  if(ev) ev.stopPropagation();
+  const allSelected = idArray.every(id=>_asSelected.has(+id));
+  if(allSelected){
+    idArray.forEach(id=>_asSelected.delete(+id));
+  } else {
+    idArray.forEach(id=>_asSelected.add(+id));
+  }
+  renderAS();
+}
+function clearASSelection(){
+  _asSelected.clear();
+  renderAS();
+}
+function deleteSelectedAS(){
+  if(_asSelected.size===0){
+    showToast('⚠ 선택된 항목이 없습니다','var(--red)');
+    return;
+  }
+  const count=_asSelected.size;
+  showConfirm(`선택한 ${count}건의 AS를 삭제합니다.\n이 작업은 되돌릴 수 없습니다.`,()=>{
+    const toDelete=[..._asSelected];
+    // 로컬 삭제
+    toDelete.forEach(id=>{
+      const item=asItems.find(x=>x.id===id);
+      // Notion에서도 삭제
+      if(item && item._notionId && notionCfg.workerUrl){
+        setTimeout(()=>{
+          nDelete(item._notionId).catch(e=>console.warn('Notion 삭제 실패:',e));
+        }, 50);
+      }
+    });
+    asItems = asItems.filter(x=>!_asSelected.has(+x.id));
+    _asSelected.clear();
+    save();
+    renderAS();
+    updateBadges();
+    showToast(`✓ ${count}건 삭제 완료`,'var(--grn)',3000);
+  },'⚠ AS 일괄 삭제','🗑','삭제','var(--red)');
+}
+
 function updateASField(id, field, value, ev){
   if(ev) ev.stopPropagation();
   const i = asItems.findIndex(x=>x.id==id);
@@ -1912,6 +2170,13 @@ function updateASField(id, field, value, ev){
   renderAS();
   updateBadges();
   showToast('✓ 변경됨','var(--grn)',1200);
+}
+
+let _asSubtab = 'active'; // 'active' | 'done'
+function setASSubtab(sub){
+  _asSubtab = sub;
+  _asSelected.clear(); // 탭 전환 시 선택 초기화
+  renderAS();
 }
 
 function renderAS(){
@@ -2005,7 +2270,8 @@ function renderAS(){
   };
 
   const asRow=a=>`
-    <tr onclick="openASModal(${a.id})" style="cursor:pointer" class="${a.status==='완료'||a.status==='반송'?'':'row-'+(dday(a.due)!==null&&dday(a.due)<=0?'u':dday(a.due)<=3?'w':'')}">
+    <tr onclick="openASModal(${a.id})" style="cursor:pointer" class="${a.status==='완료'||a.status==='반송'?'':'row-'+(dday(a.due)!==null&&dday(a.due)<=0?'u':dday(a.due)<=3?'w':'')}" ${_asSelected.has(+a.id)?'style="background:var(--gold-bg)"':''}>
+      <td style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" ${_asSelected.has(+a.id)?'checked':''} onclick="toggleASSelect(${a.id},event)" style="cursor:pointer;width:14px;height:14px"></td>
       <td style="font-size:11.5px">${a.date||'—'}</td>
       <td title="${(a.client||'').replace(/"/g,'&quot;')}">${vendorInitHtml(a.client, true)}</td>
       <td style="font-size:11.5px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.item||'—'}</td>
@@ -2045,6 +2311,26 @@ function renderAS(){
 
   ${filterBar}
 
+  <!-- 서브탭 -->
+  <div style="display:flex;gap:0;margin-bottom:12px;border-bottom:1px solid var(--bdr)">
+    <button onclick="setASSubtab('active')" style="padding:8px 18px;font-size:12.5px;font-weight:${_asSubtab==='active'?'700':'500'};background:none;border:none;border-bottom:2.5px solid ${_asSubtab==='active'?'var(--gold)':'transparent'};color:${_asSubtab==='active'?'var(--gold-lt)':'var(--t3)'};cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px">
+      🔧 진행 중 <span style="font-size:10.5px;padding:1px 7px;background:${_asSubtab==='active'?'var(--gold-bg)':'var(--s2)'};border-radius:10px;font-weight:600">${active.length}</span>
+    </button>
+    <button onclick="setASSubtab('done')" style="padding:8px 18px;font-size:12.5px;font-weight:${_asSubtab==='done'?'700':'500'};background:none;border:none;border-bottom:2.5px solid ${_asSubtab==='done'?'var(--gold)':'transparent'};color:${_asSubtab==='done'?'var(--gold-lt)':'var(--t3)'};cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px">
+      ✅ 완료 / 반송 <span style="font-size:10.5px;padding:1px 7px;background:${_asSubtab==='done'?'var(--gold-bg)':'var(--s2)'};border-radius:10px;font-weight:600">${done.length}</span>
+    </button>
+  </div>
+
+  ${_asSelected.size>0?`
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:10px 14px;background:var(--gold-bg);border:1.5px solid var(--gold);border-radius:8px;position:sticky;top:10px;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,.06)">
+    <span style="font-size:12.5px;font-weight:700;color:var(--gold-lt)">✓ ${_asSelected.size}건 선택됨</span>
+    <span style="flex:1"></span>
+    <button onclick="clearASSelection()" style="padding:5px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--t2)">선택 해제</button>
+    <button onclick="deleteSelectedAS()" style="padding:5px 14px;font-size:11.5px;background:var(--red);color:#fff;border:none;border-radius:5px;font-weight:600;cursor:pointer;font-family:inherit">🗑 선택 항목 삭제</button>
+  </div>
+  `:''}
+
+  ${_asSubtab==='active' ? `
   <div class="card">
     <div class="ch">
       <div class="ch-t">🔧 AS 진행 현황 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${active.length}건${currentGroupName?` · ${currentGroupName} 필터`:''})</span></div>
@@ -2052,25 +2338,28 @@ function renderAS(){
     </div>
     <div style="overflow-x:auto"><table>
       <thead><tr>
+        <th style="text-align:center;width:30px"><input type="checkbox" ${active.length&&active.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${active.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
         <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
         <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th>
         <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
       </tr></thead>
-      <tbody>${active.length?active.map(asRow).join(''):`<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 진행 중 AS 없음`:'진행 중인 AS 없음'}</td></tr>`}</tbody>
+      <tbody>${active.length?active.map(asRow).join(''):`<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 진행 중 AS 없음`:'진행 중인 AS 없음'}</td></tr>`}</tbody>
     </table></div>
   </div>
-
-  ${done.length?`<div class="card">
-    <div class="ch"><div class="ch-t">✅ 완료 / 반송 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${done.length}건)</span></div></div>
+  ` : `
+  <div class="card">
+    <div class="ch"><div class="ch-t">✅ 완료 / 반송 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${done.length}건${currentGroupName?` · ${currentGroupName} 필터`:''})</span></div></div>
     <div style="overflow-x:auto"><table>
       <thead><tr>
+        <th style="text-align:center;width:30px"><input type="checkbox" ${done.length&&done.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${done.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
         <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
         <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th>
         <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
       </tr></thead>
-      <tbody>${done.map(asRow).join('')}</tbody>
+      <tbody>${done.length?done.map(asRow).join(''):`<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 완료/반송된 AS 없음`:'완료/반송된 AS 없음'}</td></tr>`}</tbody>
     </table></div>
-  </div>`:''}`;
+  </div>
+  `}`;
 }
 
 // ════════════════════════════════
