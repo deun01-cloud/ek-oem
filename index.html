@@ -3925,17 +3925,45 @@ function startAutoSync(){
 // 앱 시작 시 1회 실행 (notionCfg 로드 후)
 function initAutoSync(){
   if(notionCfg.workerUrl){
-    // API 키가 없으면 Notion에서 자동 복원 시도
-    if(!anthropicKey){
-      setTimeout(()=>{
+    setTimeout(()=>{
+      if(!anthropicKey){
+        // 로컬에 없으면 → Notion에서 복원
         pullApiKeyFromNotion().then(restored=>{
           if(restored) showToast('☁ API 키 자동 복원 완료','var(--grn)',2500);
         });
-      }, 500);
-    }
+      } else {
+        // 로컬에 있으면 → Notion에 백업되어 있는지 확인, 없으면 자동 업로드
+        checkAndBackupApiKey();
+      }
+    }, 500);
     // 즉시 한 번 + 5분마다
     setTimeout(()=>pullFromNotion({silent:true}), 800);
     startAutoSync();
+  }
+}
+
+// 로컬 API 키가 Notion에 백업되어 있는지 확인하고 없으면 업로드
+async function checkAndBackupApiKey(){
+  if(!anthropicKey || !notionCfg.workerUrl) return;
+  try{
+    const rows = await nQueryAll(APP_SETTINGS_DB);
+    const apiKeyPage = rows.find(r=>{
+      const title = np.title(r.properties?.['설정명']);
+      return title==='anthropic_api_key';
+    });
+    if(!apiKeyPage){
+      // Notion에 없음 → 업로드
+      const res = await syncApiKeyToNotion();
+      if(res.ok) showToast('☁ API 키 Notion 자동 백업 완료','var(--blu)',2500);
+    } else {
+      // 있긴 한데 값이 다르면 (로컬이 더 최신일 수도) 업데이트
+      const remoteVal = np.text(apiKeyPage.properties?.['값']);
+      if(remoteVal !== anthropicKey){
+        await syncApiKeyToNotion();
+      }
+    }
+  }catch(e){
+    console.warn('checkAndBackupApiKey 실패:',e);
   }
 }
 
@@ -4556,8 +4584,38 @@ function openDataMgr(){
   }
   const statusEl=document.getElementById('apiKeyStatus');
   if(statusEl) statusEl.innerHTML=anthropicKey
-    ? '<span style="font-size:11px;color:var(--grn);font-weight:600">✅ 설정됨</span>'
+    ? '<span style="font-size:11px;color:var(--grn);font-weight:600">✅ 설정됨</span> <span id="apiKeyBackupStatus" style="font-size:10.5px;color:var(--t3);margin-left:4px">· ☁ 확인 중...</span>'
     : '<span style="font-size:11px;color:var(--red);font-weight:600">❌ 미설정</span>';
+  // Notion 백업 상태 비동기 확인
+  if(anthropicKey && notionCfg.workerUrl){
+    (async ()=>{
+      try{
+        const rows = await nQueryAll(APP_SETTINGS_DB);
+        const apiKeyPage = rows.find(r=>{
+          const title = np.title(r.properties?.['설정명']);
+          return title==='anthropic_api_key';
+        });
+        const backupEl=document.getElementById('apiKeyBackupStatus');
+        if(!backupEl) return;
+        if(apiKeyPage){
+          const remoteVal = np.text(apiKeyPage.properties?.['값']);
+          if(remoteVal === anthropicKey){
+            backupEl.innerHTML = '· <span style="color:var(--blu);font-weight:600">☁ Notion 백업됨</span>';
+          } else {
+            backupEl.innerHTML = '· <span style="color:var(--org);font-weight:600">⚠ Notion 값 다름</span> <button onclick="syncApiKeyToNotion().then(()=>showToast(\'☁ 동기화됨\',\'var(--grn)\'))" style="border:none;background:none;color:var(--blu);font-size:10px;cursor:pointer;text-decoration:underline">[지금 업데이트]</button>';
+          }
+        } else {
+          backupEl.innerHTML = '· <span style="color:var(--org);font-weight:600">⚠ Notion 백업 없음</span> <button onclick="syncApiKeyToNotion().then(r=>{if(r.ok)showToast(\'☁ 백업 완료\',\'var(--grn)\');openDataMgr()})" style="border:none;background:none;color:var(--blu);font-size:10px;cursor:pointer;text-decoration:underline">[지금 백업]</button>';
+        }
+      }catch(e){
+        const backupEl=document.getElementById('apiKeyBackupStatus');
+        if(backupEl) backupEl.innerHTML = '· <span style="color:var(--t3)">☁ 확인 실패</span>';
+      }
+    })();
+  } else if(anthropicKey && !notionCfg.workerUrl){
+    const backupEl=document.getElementById('apiKeyBackupStatus');
+    if(backupEl) backupEl.innerHTML = '· <span style="color:var(--t3)">Worker URL 미설정</span>';
+  }
   const el=document.getElementById('dataSummary');
   if(el) el.innerHTML=[
     ['📋 샘플의뢰', samples.length+'건'],
