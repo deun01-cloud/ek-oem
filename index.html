@@ -4754,6 +4754,98 @@ async function deleteProductFromNotion(pd){
 }
 
 // ══════════════════════════════════
+// 제품DB 일괄 Notion 동기화 (동기화 안 된 것만)
+// ══════════════════════════════════
+async function syncAllProductsToNotion(){
+  if(!notionCfg.workerUrl){
+    showToast('⚠ Worker URL 미설정 — 설정 메뉴에서 연결하세요','var(--red)',4000);
+    return;
+  }
+  if(!notionCfg.productDb){
+    showToast('⚠ 제품DB Notion ID 미설정','var(--red)',3000);
+    return;
+  }
+  // 동기화 안 된 제품만 (_notionId 없는 것)
+  const unsynced = productDB.filter(p=>!p._notionId);
+  const total = productDB.length;
+  const syncedCount = total - unsynced.length;
+
+  if(!unsynced.length){
+    showToast(`✓ 이미 모든 제품(${total}개)이 Notion에 동기화되어 있습니다`,'var(--grn)',3500);
+    return;
+  }
+
+  const minutes = Math.ceil(unsynced.length * 0.15 / 60);
+  showConfirm(
+    `Notion 일괄 동기화\n\n` +
+    `전체 제품: ${total.toLocaleString()}개\n` +
+    `이미 동기화됨: ${syncedCount.toLocaleString()}개\n` +
+    `대기 중: ${unsynced.length.toLocaleString()}개\n\n` +
+    `예상 소요 시간: 약 ${minutes}분\n` +
+    `업로드 중에는 탭을 닫지 마세요.\n\n` +
+    `시작하시겠습니까?`,
+    async ()=>{
+      let done=0, failed=0;
+      const startTs = Date.now();
+      const statusId='bulkSyncStatus';
+
+      // 진행 상태 표시용 플로팅 창
+      if(!document.getElementById(statusId)){
+        const st = document.createElement('div');
+        st.id = statusId;
+        st.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;padding:14px 18px;background:var(--s1);border:1.5px solid var(--blu);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.12);min-width:260px;font-family:inherit';
+        document.body.appendChild(st);
+      }
+      const statusEl = document.getElementById(statusId);
+      const updateStatus = ()=>{
+        if(!statusEl) return;
+        const pct = Math.round(done/unsynced.length*100);
+        const elapsed = Math.round((Date.now()-startTs)/1000);
+        const eta = done>0 ? Math.round((unsynced.length-done)*(elapsed/done)) : '—';
+        statusEl.innerHTML = `
+          <div style="font-size:13px;font-weight:700;color:var(--blu);margin-bottom:6px">☁ Notion 동기화 중</div>
+          <div style="font-size:11.5px;color:var(--t2);margin-bottom:4px">${done.toLocaleString()} / ${unsynced.length.toLocaleString()} (${pct}%)</div>
+          <div style="height:6px;background:var(--s3);border-radius:3px;overflow:hidden;margin-bottom:4px">
+            <div style="height:100%;width:${pct}%;background:var(--blu);transition:width .3s"></div>
+          </div>
+          <div style="font-size:10px;color:var(--t3)">
+            경과 ${elapsed}초 · 남은 시간 ${typeof eta==='number'?eta+'초':eta}
+            ${failed>0?`<span style="color:var(--red);margin-left:6px">⚠ ${failed} 실패</span>`:''}
+          </div>
+        `;
+      };
+      updateStatus();
+
+      // 100ms 간격으로 순차 업로드 (rate limit 방지)
+      for(let i=0;i<unsynced.length;i++){
+        try{
+          await syncProductToNotion(unsynced[i], false);
+          done++;
+        }catch(e){
+          failed++;
+          console.warn('제품 동기화 실패:', unsynced[i].code, e);
+        }
+        // 10개마다 UI 갱신 + 중간 저장
+        if((done+failed) % 10 === 0){
+          updateStatus();
+          save(); // _notionId 저장
+        }
+        await new Promise(r=>setTimeout(r, 100));
+      }
+
+      // 최종 상태
+      save();
+      updateStatus();
+      if(statusEl){
+        statusEl.innerHTML += '<button onclick="document.getElementById(\'bulkSyncStatus\').remove()" style="margin-top:8px;width:100%;padding:4px 0;font-size:11px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit">닫기</button>';
+      }
+      showToast(`✓ Notion 동기화 완료 — ${done}개 성공${failed?`, ${failed}개 실패`:''}`,'var(--grn)',5000);
+    },
+    '☁ Notion 일괄 동기화','☁','시작','var(--blu)'
+  );
+}
+
+// ══════════════════════════════════
 // 9. 거래명세서 이력 ↔ Notion (update + pull 지원)
 // ══════════════════════════════════
 async function syncInvoiceToNotion(inv, update){
@@ -5824,7 +5916,7 @@ function switchTab(tab,el){
   const acts=document.getElementById('subActs');
   acts.innerHTML='';
   if(tab==='as') acts.innerHTML='<button class="btn bp bs" onclick="openASModal(null)">+ AS 접수</button>';
-  else if(tab==='products') acts.innerHTML='<button class="btn bp bs" onclick="openProductModal(null)">+ 제품 등록</button><button class="btn bgo bs" onclick="openProductImport()">📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button>';
+  else if(tab==='products') acts.innerHTML='<button class="btn bp bs" onclick="openProductModal(null)">+ 제품 등록</button><button class="btn bgo bs" onclick="openProductImport()">📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button>';
   else if(tab==='sample') acts.innerHTML='<button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 샘플 등록</button>';
   else if(tab==='order') acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button>';
   else if(tab==='schedule') acts.innerHTML='<button class="btn bp bs" onclick="openTaskModal()">+ 업무 추가</button>';
