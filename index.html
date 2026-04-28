@@ -6860,7 +6860,7 @@ function renderSample(){
       <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
         <div class="ch-t">샘플 의뢰 현황 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${list.length}건)</span></div>
         <div id="smpBulkBar" style="display:flex;align-items:center;gap:6px;padding:4px 12px;background:${window._smpChecked.size?'var(--gold-bg)':'var(--s2)'};border:1px solid ${window._smpChecked.size?'var(--gold-line)':'var(--bdr)'};border-radius:6px;font-size:11.5px;transition:all .15s">
-          <span style="color:${window._smpChecked.size?'var(--gold-lt)':'var(--t3)'};font-weight:600">${window._smpChecked.size?window._smpChecked.size+'건 선택됨':'샘플 선택'}</span>
+          <span onclick="toggleAllSmpChk()" style="color:${window._smpChecked.size?'var(--gold-lt)':'var(--t3)'};font-weight:600;cursor:pointer;user-select:none;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px" title="전체 선택/해제 토글">${window._smpChecked.size?window._smpChecked.size+'건 선택됨':'전체 선택'}</span>
           <button class="btn bs" onclick="exportSelectedSamplesExcel()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--grn)':'var(--s3)'};color:${window._smpChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📊 엑셀</button>
           <button class="btn bs" onclick="openBulkInvoice()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--gold-bg)':'var(--s3)'};color:${window._smpChecked.size?'var(--gold-lt)':'var(--t3)'};border:1px solid ${window._smpChecked.size?'var(--gold-line)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">🧾 명세서 발행</button>
           <button class="btn bs" onclick="deleteBulkSamples()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--red)':'var(--s3)'};color:${window._smpChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">🗑 선택 삭제</button>
@@ -7003,7 +7003,13 @@ function renderSample(){
       <table>
         <thead>
           <tr>
-            <th style="width:32px"><input type="checkbox" id="smpChkAll" onchange="toggleAllSmpChk(this.checked)" title="전체선택"></th>
+            <th style="width:32px">${(()=>{
+              const filtered=list||[];
+              const checked=filtered.length>0 && filtered.every(s=>window._smpChecked.has(s.id));
+              const some=filtered.some(s=>window._smpChecked.has(s.id));
+              const indet=some && !checked;
+              return `<input type="checkbox" id="smpChkAll" onchange="toggleAllSmpChk(this.checked)" ${checked?'checked':''} title="전체선택/해제 토글">`;
+            })()}</th>
             <th>작업지시서</th>
             <th>샘플명</th>
             <th>품번</th>
@@ -7069,7 +7075,14 @@ function renderSample(){
                   onclick="openSmpStatusDropdown(event,${s.id})" title="클릭하여 상태 변경">${s.status} ▾</span>
               </td>
               <td style="font-size:10.5px;color:var(--t2);white-space:nowrap">${s.reqDate||'—'}</td>
-              <td style="font-size:11px;white-space:nowrap">${s.due||'—'}</td>
+              <td style="font-size:11px;white-space:nowrap">${s.due||'—'}${(()=>{
+                if(!s.reqDate||!s.due)return '';
+                const d1=new Date(s.reqDate), d2=new Date(s.due);
+                if(isNaN(d1.getTime())||isNaN(d2.getTime()))return '';
+                const diff=Math.round((d2-d1)/(1000*60*60*24));
+                if(diff<0)return '';
+                return `<br><span style="font-size:9.5px;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 5px;border-radius:3px;font-weight:600;display:inline-block;margin-top:2px" title="의뢰일부터 납기일까지 소요 기간">⏱ ${diff}일</span>`;
+              })()}</td>
               <td>${ddTag(s.due)}</td>
               <td style="font-size:11px;color:var(--t2)">${s.mat||'—'} / ${s.plating||'—'}</td>
               <td style="font-size:11px;color:var(--t2)">${s.sz1||'—'}${s.sz2?` (${s.sz2})`:''}</td>
@@ -7085,6 +7098,8 @@ function renderSample(){
       </table>
     </div>
   </div>`;
+  // 헤더 체크박스의 indeterminate 상태 적용
+  applySmpIndeterminate();
 }
 function filteredSamples(){
   let list=smpFilter==='전체'?samples:samples.filter(s=>s.status===smpFilter);
@@ -7213,8 +7228,29 @@ function toggleSmpChk(id,chk){
 }
 function toggleAllSmpChk(chk){
   if(!window._smpChecked)window._smpChecked=new Set();
-  filteredSamples().forEach(s=>chk?window._smpChecked.add(s.id):window._smpChecked.delete(s.id));
+  // 모두 선택된 상태에서 다시 클릭 → 모두 해제
+  // 일부만 선택된 상태에서 클릭 → 모두 선택
+  // 아무것도 선택 안 된 상태에서 클릭 → 모두 선택
+  const filtered=filteredSamples();
+  const allChecked = filtered.length>0 && filtered.every(s=>window._smpChecked.has(s.id));
+  if(allChecked){
+    // 모두 해제
+    filtered.forEach(s=>window._smpChecked.delete(s.id));
+  } else {
+    // 모두 선택
+    filtered.forEach(s=>window._smpChecked.add(s.id));
+  }
   renderSample();
+}
+
+// 부분 선택 시 indeterminate 표시 (체크박스 가운데 줄)
+function applySmpIndeterminate(){
+  const cb=document.getElementById('smpChkAll');
+  if(!cb)return;
+  const filtered=filteredSamples();
+  const some=filtered.some(s=>window._smpChecked.has(s.id));
+  const all=filtered.length>0 && filtered.every(s=>window._smpChecked.has(s.id));
+  cb.indeterminate = some && !all;
 }
 
 // ── 일괄 명세서 발행
@@ -8264,6 +8300,25 @@ function toggleOrdChk(id,chk){
   renderOrder();
 }
 
+// ── 발주 전체 선택/해제 토글 ──
+function toggleAllOrdChk(){
+  if(!window._ordChecked) window._ordChecked=new Set();
+  // 현재 화면에 보이는 발주 ID들 (DOM에서 추출 — 필터·서브탭 적용된 상태)
+  const visibleIds=[];
+  document.querySelectorAll('input[type="checkbox"][onchange^="toggleOrdChk("]').forEach(cb=>{
+    const m=cb.getAttribute('onchange').match(/toggleOrdChk\((\d+)/);
+    if(m)visibleIds.push(+m[1]);
+  });
+  if(visibleIds.length===0)return;
+  const allChecked = visibleIds.every(id=>window._ordChecked.has(id));
+  if(allChecked){
+    visibleIds.forEach(id=>window._ordChecked.delete(id));
+  } else {
+    visibleIds.forEach(id=>window._ordChecked.add(id));
+  }
+  renderOrder();
+}
+
 // ── 단일 발주 엑셀 다운로드 ──
 function exportOrderExcel(ordId){
   const o=orders.find(x=>x.id==ordId);
@@ -8508,9 +8563,9 @@ function renderOrder(){
   <div class="card">
     <div class="ch" style="flex-wrap:wrap;gap:8px">
       <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
-        <div class="ch-t">발주 · 공정 현황 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${orders.length}건)</span></div>
+        <div class="ch-t">발주 현황 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${orders.length}건)</span></div>
         <div id="ordBulkBar" style="display:flex;align-items:center;gap:6px;padding:4px 12px;background:${window._ordChecked&&window._ordChecked.size?'var(--gold-bg)':'var(--s2)'};border:1px solid ${window._ordChecked&&window._ordChecked.size?'var(--gold-line)':'var(--bdr)'};border-radius:6px;font-size:11.5px;transition:all .15s">
-          <span style="color:${window._ordChecked&&window._ordChecked.size?'var(--gold-lt)':'var(--t3)'};font-weight:600">${window._ordChecked&&window._ordChecked.size?window._ordChecked.size+'건 선택됨':'발주서 선택'}</span>
+          <span onclick="toggleAllOrdChk()" style="color:${window._ordChecked&&window._ordChecked.size?'var(--gold-lt)':'var(--t3)'};font-weight:600;cursor:pointer;user-select:none;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px" title="전체 선택/해제 토글">${window._ordChecked&&window._ordChecked.size?window._ordChecked.size+'건 선택됨':'전체 선택'}</span>
           <button class="btn bs" onclick="exportSelectedOrdersExcel()" ${window._ordChecked&&window._ordChecked.size?'':'disabled'} style="font-size:11px;background:${window._ordChecked&&window._ordChecked.size?'var(--grn)':'var(--s3)'};color:${window._ordChecked&&window._ordChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._ordChecked&&window._ordChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📊 엑셀</button>
           <button class="btn bs" onclick="bulkOpenOrdDeliveryNote()" ${window._ordChecked&&window._ordChecked.size?'':'disabled'} style="font-size:11px;background:${window._ordChecked&&window._ordChecked.size?'var(--blu-bg)':'var(--s3)'};color:${window._ordChecked&&window._ordChecked.size?'var(--blu)':'var(--t3)'};border:1px solid ${window._ordChecked&&window._ordChecked.size?'rgba(26,109,181,.3)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._ordChecked&&window._ordChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📋 출하지시서</button>
           <button class="btn bs" onclick="bulkOpenOrdTaxInvoice()" ${window._ordChecked&&window._ordChecked.size?'':'disabled'} style="font-size:11px;background:${window._ordChecked&&window._ordChecked.size?'var(--gold-bg)':'var(--s3)'};color:${window._ordChecked&&window._ordChecked.size?'var(--gold-lt)':'var(--t3)'};border:1px solid ${window._ordChecked&&window._ordChecked.size?'var(--gold-line)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._ordChecked&&window._ordChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">🧾 거래명세서</button>
@@ -8665,77 +8720,6 @@ function renderOrder(){
       // Find proc items strictly linked to this order
       const ordProcs=procItems.filter(p=>p.orderId===o.id);
 
-      // If no procs yet but order has rows — show rows with empty stages (click to init)
-      const procRows = ordProcs.length > 0
-        ? ordProcs
-        : rows.filter(r=>r.name).map(r=>null); // nulls = uninitialized
-
-      const hasAnyProc = ordProcs.length > 0;
-      // 공정 완료 요약 (닫혔을 때 헤더에 표시)
-      const doneCount = ordProcs.filter(p=>p.shipped).length;
-      const procSummary = hasAnyProc
-        ? `<span style="font-size:10px;color:var(--t3);margin-left:6px">${doneCount}/${ordProcs.length} 완료</span>
-           ${ordProcs.some(p=>!p.shipped&&dday(p.due)!==null&&dday(p.due)<=3)?`<span style="font-size:9.5px;background:var(--red-bg);color:var(--red);border-radius:4px;padding:1px 6px;margin-left:4px">납기임박</span>`:''}`
-        : `<span style="font-size:10px;color:var(--t3);margin-left:6px">미시작</span>`;
-
-      const procHtml=`
-        <div style="border-top:1px solid var(--bdr);background:var(--s2)">
-          <!-- 토글 헤더 -->
-          <div onclick="event.stopPropagation();toggleProcSection(${o.id})" style="padding:8px 14px;display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none" id="procHdr_${o.id}">
-            <span id="procArrow_${o.id}" style="font-size:10px;color:var(--t3);transition:transform .2s;display:inline-block">▶</span>
-            <span style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.8px">⚙ 공정 현황</span>
-            ${procSummary}
-            ${!hasAnyProc?`<button class="btn bgo" style="font-size:10px;padding:2px 8px;margin-left:auto" onclick="event.stopPropagation();initProcForOrder(${o.id})">공정 시작</button>`:''}
-          </div>
-          <!-- 토글 바디 (기본 숨김) -->
-          <div id="procBody_${o.id}" style="display:none;padding:0 10px 10px;display:none;flex-direction:column;gap:5px">
-          ${hasAnyProc ? ordProcs.map(p=>{
-            const pdl=dday(p.due);
-            return`<div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--s1);border-radius:6px;border:1px solid var(--bdr)" onclick="event.stopPropagation()">
-              <div style="width:140px;flex-shrink:0;min-width:0">
-                <div style="font-size:11.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${p.name}">${p.name}</div>
-                ${(p.ordQty>0)?`<div style="margin-top:3px">
-                  <div style="display:flex;align-items:center;gap:4px">
-                    <div style="flex:1;height:4px;background:var(--s3);border-radius:2px;overflow:hidden">
-                      <div style="height:100%;border-radius:2px;background:${(p.rcvQty||0)>=(p.ordQty||1)?'var(--grn)':'var(--gold)'};width:${Math.min(Math.round((p.rcvQty||0)/(p.ordQty||1)*100),100)}%"></div>
-                    </div>
-                    <span style="font-size:9px;color:var(--t3);white-space:nowrap;flex-shrink:0">${p.rcvQty||0}/${p.ordQty}</span>
-                  </div>
-                </div>`:''}
-              </div>
-              <div style="font-size:10px;color:var(--t3);width:30px;flex-shrink:0;text-align:right">${p.qty||''}</div>
-              <div style="display:flex;gap:3px;flex:1;align-items:center">
-                ${STAGES.map((s,i)=>{
-                  const isDone=p.shipped||i<(p.stageIdx||0);
-                  const isActive=!p.shipped&&i===(p.stageIdx||0);
-                  const isFuture=!p.shipped&&i>(p.stageIdx||0);
-                  return`<button onclick="event.stopPropagation();${p.shipped?'':isProcStgClick(p.id,i)}"
-                    style="padding:3px 10px;border-radius:4px;font-size:11px;font-family:inherit;border:1px solid;cursor:${p.shipped||isFuture?'default':'pointer'};white-space:nowrap;transition:.12s;
-                    ${isDone?'background:#E8F5E9;border-color:#81C784;color:#2E7D32;opacity:.7':
-                      isActive?'background:var(--t1);border-color:var(--t1);color:#FFF;font-weight:700':
-                      'background:var(--s2);border-color:var(--bdr);color:var(--t3)'}">${isDone?'✓ ':isActive?'▶ ':''}${s}</button>`;
-                }).join('')}
-              </div>
-              <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
-                ${p.shipped
-                  ?`<span class="chip cg" style="font-size:9px">출고완료</span>
-                    <button class="btn bgo" style="font-size:9.5px;padding:2px 6px" onclick="event.stopPropagation();markShipped(${p.id})">↩</button>`
-                  :`${pdl!==null?ddTag(p.due):''}
-                    <button class="btn bp" style="font-size:9.5px;padding:3px 10px;background:var(--grn)" onclick="event.stopPropagation();markShipped(${p.id})">출고 ✓</button>
-                    <button class="btn bgo" style="font-size:9.5px;padding:2px 6px" onclick="event.stopPropagation();openProcModal(${p.id})">✎</button>`}
-              </div>
-            </div>`;
-          }).join('') : rows.filter(r=>r.name).map(r=>`
-            <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:var(--s1);border-radius:6px;border:1px dashed var(--bdr);opacity:.6">
-              <div style="font-size:11.5px;font-weight:600;width:140px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}${r.qty?` ×${r.qty}`:''}</div>
-              <div style="display:flex;gap:3px;flex:1">
-                ${STAGES.map(s=>`<span style="padding:3px 10px;border-radius:4px;font-size:11px;background:var(--s2);border:1px solid var(--bdr);color:var(--t3)">${s}</span>`).join('')}
-              </div>
-              <span style="font-size:10px;color:var(--t3)">공정 미시작</span>
-            </div>`).join('')}
-          </div>
-        </div>`;
-
       const ordStatus = o.status || '진행중';
       const isOrdDone = ordStatus === '출고완료';
       const isOrdCanceled = ordStatus === '취소';
@@ -8778,9 +8762,15 @@ function renderOrder(){
               ${o.manager?`<span style="font-size:10.5px;color:var(--t2)">${o.manager}</span>`:''}
               ${statusBadge}
               ${!isOrdDone&&!isOrdCanceled?ddTag(o.ship):''}
-            </div>
-            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-              <span style="font-size:10.5px;color:var(--t3)">📅 발주 ${fmt(o.date)} → 출고 <b style="color:var(--t1)">${o.ship||'미정'}</b></span>
+              <span style="font-size:10.5px;color:var(--t3);margin-left:4px">📅 발주 ${fmt(o.date)} → 출고 <b style="color:var(--t1)">${o.ship||'미정'}</b></span>
+              ${(()=>{
+                if(!o.date||!o.ship)return '';
+                const d1=new Date(o.date), d2=new Date(o.ship);
+                if(isNaN(d1.getTime())||isNaN(d2.getTime()))return '';
+                const diff=Math.round((d2-d1)/(1000*60*60*24));
+                if(diff<0)return '';
+                return `<span style="font-size:10.5px;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 7px;border-radius:4px;font-weight:600" title="발주일부터 출고일까지 소요 기간">⏱ ${diff}일</span>`;
+              })()}
               <span style="font-size:10.5px;color:var(--t3)">등록 ${createdFmt}</span>
               ${o.completedAt?`<span style="font-size:10.5px;color:var(--grn)">완료 ${fmt(o.completedAt.split('T')[0])}</span>`:''}
             </div>
@@ -8802,7 +8792,6 @@ function renderOrder(){
             </div>
           </div>
         </div>
-        ${procHtml}
       </div>`;
     }).join('<div style="height:8px"></div>') : `
       <div style="padding:32px;text-align:center;color:var(--t3);font-size:12.5px">
