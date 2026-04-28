@@ -636,7 +636,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 
 <!-- SAMPLE MODAL -->
 <div class="ov" id="mSmp"><div class="modal wide">
-  <div class="mt" id="mSmp_t">샘플 의뢰서 <span id="smp_ai_badge" class="ai-flag" style="display:none">✦ AI 자동입력</span></div>
+  <div class="mt" id="mSmp_t">샘플 의뢰서 <span id="smp_ai_badge" class="ai-flag" style="display:none">✦ AI 자동입력</span> <span id="smp_created_disp" style="font-size:11px;font-weight:400;color:var(--t3);margin-left:8px"></span></div>
   <input type="hidden" id="s_id">
   <input type="hidden" id="s_aiParsed" value="0">
 
@@ -671,7 +671,8 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>의뢰일</label><input class="fi" type="date" id="s_reqDate"></div>
     <div class="fg"><label>납기일 *</label><input class="fi" type="date" id="s_due"></div>
   </div>
-  <div class="fr2">
+  <div class="fr3">
+    <div class="fg"><label>공장 출고일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(중국 출고 일정)</span></label><input class="fi" type="date" id="s_factShip"></div>
     <div class="fg"><label>발주량</label><input class="fi" id="s_qty" placeholder="1EA"></div>
     <div class="fg"><label>품번</label><input class="fi" id="s_itemNo" placeholder=""></div>
   </div>
@@ -798,7 +799,8 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>주문일자</label><input class="fi" type="date" id="o_date"></div>
     <div class="fg"><label>요청 출고일 *</label><input class="fi" type="date" id="o_ship"></div>
   </div>
-  <div class="fr2">
+  <div class="fr3">
+    <div class="fg"><label>공장 출고일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(중국 출고 일정)</span></label><input class="fi" type="date" id="o_factShip"></div>
     <div class="fg"><label>담당자</label><input class="fi" id="o_manager" placeholder="담당자명"></div>
     <div class="fg"><label>발주번호</label><input class="fi" id="o_no" placeholder="자동생성"></div>
   </div>
@@ -1392,7 +1394,7 @@ let smpAdvFilter={
   dday:'',         // 전체/overdue/d3/d7/none
   dueFrom:'', dueTo:'',     // 납기일 범위
   createdFrom:'', createdTo:'', // 생성일 범위
-  sort:'due_asc',  // due_asc/due_desc/created_asc/created_desc/name_asc
+  sort:'req_asc',  // req_asc/req_desc/due_asc/due_desc/created_asc/created_desc/name_asc
   panelOpen:false,
 };
 function smpAdvActiveCount(){
@@ -1402,11 +1404,11 @@ function smpAdvActiveCount(){
   if(smpAdvFilter.dday)n++;
   if(smpAdvFilter.dueFrom||smpAdvFilter.dueTo)n++;
   if(smpAdvFilter.createdFrom||smpAdvFilter.createdTo)n++;
-  if(smpAdvFilter.sort&&smpAdvFilter.sort!=='due_asc')n++;
+  if(smpAdvFilter.sort&&smpAdvFilter.sort!=='req_asc')n++;
   return n;
 }
 function resetSmpAdvFilter(){
-  smpAdvFilter={manager:'',type:'',dday:'',dueFrom:'',dueTo:'',createdFrom:'',createdTo:'',sort:'due_asc',panelOpen:smpAdvFilter.panelOpen};
+  smpAdvFilter={manager:'',type:'',dday:'',dueFrom:'',dueTo:'',createdFrom:'',createdTo:'',sort:'req_asc',panelOpen:smpAdvFilter.panelOpen};
   renderSample();
 }
 
@@ -3301,7 +3303,15 @@ function updateInvStatus(id,status){
 
 function deleteInvRecord(id){
   var v=invoiceHistory.find(function(x){return x.id==id;});
-  showConfirm((v&&v.vendor||'명세서')+' 이력을 삭제합니다.',function(){
+  showConfirm((v&&v.vendor||'명세서')+' 이력을 삭제합니다.\n(Notion에서도 함께 삭제됩니다)',function(){
+    // 1) Notion에서 archive (다시 동기화 시 부활하지 않도록)
+    if(v && v._notionId){
+      nDelete(v._notionId).catch(function(e){
+        console.warn('Notion 삭제 실패:', e);
+        showToast('⚠ Notion 삭제 실패 — 로컬만 삭제됨','var(--org)',3000);
+      });
+    }
+    // 2) 로컬에서 제거
     invoiceHistory=invoiceHistory.filter(function(x){return x.id!=id;});
     save();renderInvoiceHistory();
     showToast('✓ 삭제됨','var(--grn)');
@@ -6587,6 +6597,16 @@ function renderWeekSchedulePanel(){
       const st=s.status||'의뢰';
       evts.push({cls:'ev-smp',label:'샘플출고',name:s.name,detail:`${s.manager||''} · ${st}`,done:st==='확정'||st==='취소',canceled:st==='취소'});
     });
+    // 공장 출고 (샘플) — 중국 출고
+    samples.filter(s=>s.factShip===ds).forEach(s=>{
+      const st=s.status||'의뢰';
+      evts.push({cls:'ev-ship',label:'중국출고',name:s.name,detail:`${s.manager||''} · 샘플 · ${st}`,done:st==='확정'||st==='취소',canceled:st==='취소'});
+    });
+    // 공장 출고 (발주) — 중국 출고
+    orders.filter(o=>o.factShip===ds).forEach(o=>{
+      const st=o.status||'진행중';
+      evts.push({cls:'ev-ship',label:'중국출고',name:o.vendor,detail:`발주 · ${(o.rows||[]).length}개 품목 · ${st}`,done:st==='출고완료'||st==='취소',canceled:st==='취소'});
+    });
     if(evts.length)hasAny=true;
     return{d,ds,isToday,evts};
   });
@@ -6669,6 +6689,34 @@ function renderCalWidget(){
         t:`${initBadge}<span style="margin-left:4px">샘플: ${(s.name||'').substring(0,6)}</span>`,
         click:`calGoSample(${s.id})`,
         title: `${s.name||''} — ${s.manager||''} · 샘플 납기일 (${st})`
+      });
+    });
+
+    // 2-A) 공장 출고일 (샘플) — 중국 출고
+    samples.filter(s=>s.factShip===ds).forEach(s=>{
+      const st=s.status||'의뢰';
+      const isDone = st==='확정' || st==='취소';
+      r.push({
+        cls:'ev-ship',
+        done: isDone,
+        canceled: st==='취소',
+        t:`<span style="margin-right:3px">🇨🇳→</span><span>샘플: ${(s.name||'').substring(0,8)}</span>`,
+        click:`calGoSample(${s.id})`,
+        title: `${s.name||''} — 공장 출고일 (${st})`
+      });
+    });
+
+    // 2-B) 공장 출고일 (발주) — 중국 출고
+    orders.filter(o=>o.factShip===ds).forEach(o=>{
+      const st=o.status||'진행중';
+      const isDone = st==='출고완료' || st==='취소';
+      r.push({
+        cls:'ev-ship',
+        done: isDone,
+        canceled: st==='취소',
+        t:`<span style="margin-right:3px">🇨🇳→</span><span>발주: ${(o.vendor||'').substring(0,8)}</span>`,
+        click:`calGoOrder(${o.id})`,
+        title: `${o.vendor||''} — 발주 공장출고일 · 품목 ${(o.rows||[]).length}개 (${st})`
       });
     });
 
@@ -6919,6 +6967,8 @@ function renderSample(){
           <div>
             <label style="font-size:10px;color:var(--t3);font-weight:700;display:block;margin-bottom:3px">정렬</label>
             <select class="fs" style="width:100%;font-size:11.5px;padding:5px 7px" onchange="smpAdvFilter.sort=this.value;renderSample()">
+              <option value="req_asc" ${af.sort==='req_asc'?'selected':''}>의뢰일 ↑ (빠른순)</option>
+              <option value="req_desc" ${af.sort==='req_desc'?'selected':''}>의뢰일 ↓ (늦은순)</option>
               <option value="due_asc" ${af.sort==='due_asc'?'selected':''}>납기일 ↑ (빠른순)</option>
               <option value="due_desc" ${af.sort==='due_desc'?'selected':''}>납기일 ↓ (늦은순)</option>
               <option value="created_desc" ${af.sort==='created_desc'?'selected':''}>최근 등록순</option>
@@ -6959,12 +7009,12 @@ function renderSample(){
             <th>품번</th>
             <th>유형</th>
             <th>상태</th>
+            <th>의뢰일</th>
+            <th>납기일</th>
+            <th>D-day</th>
             <th>소재 / 도금</th>
             <th>사이즈</th>
             <th>명세서</th>
-            <th>생성일자</th>
-            <th>납기일</th>
-            <th>D-day</th>
           </tr>
         </thead>
         <tbody>
@@ -7018,14 +7068,14 @@ function renderSample(){
                 <span class="chip ${SMP_CLS[s.status]||''}" style="font-size:9.5px;cursor:pointer;user-select:none"
                   onclick="openSmpStatusDropdown(event,${s.id})" title="클릭하여 상태 변경">${s.status} ▾</span>
               </td>
+              <td style="font-size:10.5px;color:var(--t2);white-space:nowrap">${s.reqDate||'—'}</td>
+              <td style="font-size:11px;white-space:nowrap">${s.due||'—'}</td>
+              <td>${ddTag(s.due)}</td>
               <td style="font-size:11px;color:var(--t2)">${s.mat||'—'} / ${s.plating||'—'}</td>
               <td style="font-size:11px;color:var(--t2)">${s.sz1||'—'}${s.sz2?` (${s.sz2})`:''}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn bgo bs" onclick="openInvoice(${s.id})" style="font-size:10px;padding:3px 8px">🧾</button>
               </td>
-              <td style="font-size:10.5px;color:var(--t3);white-space:nowrap">${createdFmt}</td>
-              <td style="font-size:11px">${s.due||'—'}</td>
-              <td>${ddTag(s.due)}</td>
             </tr>`;
           }).join(''):
           `<tr><td colspan="12" style="text-align:center;padding:32px;color:var(--t3)">
@@ -7087,13 +7137,15 @@ function filteredSamples(){
   // 정렬
   const getCreated=s=>s.createdAt?new Date(s.createdAt):s.id?new Date(s.id):new Date(0);
   const sorters={
+    req_asc: (a,b)=>new Date(a.reqDate||'9999')-new Date(b.reqDate||'9999'),
+    req_desc:(a,b)=>new Date(b.reqDate||'0000')-new Date(a.reqDate||'0000'),
     due_asc: (a,b)=>new Date(a.due||'9999')-new Date(b.due||'9999'),
     due_desc:(a,b)=>new Date(b.due||'0000')-new Date(a.due||'0000'),
     created_asc: (a,b)=>getCreated(a)-getCreated(b),
     created_desc:(a,b)=>getCreated(b)-getCreated(a),
     name_asc:(a,b)=>(a.name||'').localeCompare(b.name||'','ko'),
   };
-  return [...list].sort(sorters[af.sort]||sorters.due_asc);
+  return [...list].sort(sorters[af.sort]||sorters.req_asc);
 }
 
 // ── 상태 변경 드롭다운 (클릭한 상태 칩 옆에 표시) ──
@@ -9121,7 +9173,7 @@ function renderDayView(sc){
   // Helper: render one category block
   function catBlock(cat,ap){
     const manualTasks=dayT.filter(t=>t.ap===ap&&t.cat===cat);
-    const autoItems=(cat==='발주출고'||cat==='샘플출고')?getAutoItems(ds,cat):[];
+    const autoItems=(cat==='발주출고'||cat==='샘플출고'||cat==='중국출고')?getAutoItems(ds,cat):[];
     const hasAny=autoItems.length||manualTasks.length;
     return`<div style="margin-bottom:10px;padding:7px 9px;border-radius:6px;background:${CAT_BG[cat]||'var(--s2)'};border:1px solid ${CAT_BG[cat]?'transparent':'var(--bdr)'}" data-date="${ds}" data-cat="${cat}" data-ap="${ap}" ondragover="taskDragOver(event,this)" ondragleave="taskDragLeave(this)" ondrop="taskDrop(event,this)">
       <div style="font-size:10px;color:${CAT_COL[cat]};font-weight:700;margin-bottom:${hasAny?'6px':'0'};display:flex;align-items:center;justify-content:space-between">
@@ -9231,6 +9283,31 @@ function getAutoItems(ds, cat){
         click: `calGoSample(${s.id})`
       });
     });
+  } else if(cat==='중국출고'){
+    // 샘플의 공장 출고일
+    samples.filter(s=>s.factShip===ds&&s.status!=='취소').forEach(s=>{
+      const cl=matchClient(s.manager);
+      items.push({
+        auto:true,
+        cont:'[샘플] '+s.name+(s.status==='확정'?' ✓':''),
+        badge: initBadge(cl, s.manager),
+        done:s.status==='확정',
+        id:'smpfs_'+s.id,
+        click: `calGoSample(${s.id})`
+      });
+    });
+    // 발주의 공장 출고일
+    orders.filter(o=>o.factShip===ds&&o.status!=='취소').forEach(o=>{
+      const cl=matchClient(o.vendor);
+      items.push({
+        auto:true,
+        cont:'[발주] '+o.vendor+' ('+(o.rows||[]).length+'개)'+(o.status==='출고완료'?' ✓':''),
+        badge: initBadge(cl, o.vendor),
+        done:o.status==='출고완료',
+        id:'ordfs_'+o.id,
+        click: `calGoOrder(${o.id})`
+      });
+    });
   }
   return items;
 }
@@ -9271,7 +9348,7 @@ function renderWeekView(sc){
         ${days.map(d=>{
           const ds=toLocalDateStr(d);
           const manualTasks=tasks.filter(t=>t.date===ds&&t.cat===cat);
-          const autoItems=(cat==='발주출고'||cat==='샘플출고')?getAutoItems(ds,cat):[];
+          const autoItems=(cat==='발주출고'||cat==='샘플출고'||cat==='중국출고')?getAutoItems(ds,cat):[];
           const hasFiles=manualTasks.some(t=>t.files&&t.files.length);
           return`<div class="wg-cell" style="background:${CAT_BG[cat]||'transparent'};min-height:38px" data-date="${ds}" data-cat="${cat}" ondragover="taskDragOver(event,this)" ondragleave="taskDragLeave(this)" ondrop="taskDrop(event,this)">
             ${autoItems.map(it=>`<div class="task-it" style="cursor:${it.click?'pointer':'default'}" ${it.click?`onclick="${it.click}"`:''} title="${it.cont.replace(/"/g,'&quot;')}">
@@ -9412,6 +9489,7 @@ function openSmpModal(idOrNull){
   if(saveBtn)saveBtn.textContent=s?'저장':'✓ 샘플 등록';
   sv('s_id',s?s.id:'');sv('s_name',s?s.name:'');setSelect('s_type',s?s.type:'');
   sv('s_manager',s?s.manager:'');sv('s_reqDate',s?s.reqDate:todayStr);sv('s_due',s?s.due:'');
+  sv('s_factShip',s?s.factShip||'':'');
   sv('s_qty',s?s.qty:'');sv('s_itemNo',s?s.itemNo:'');
   sv('s_sz1',s?s.sz1:'');sv('s_sz2',s?s.sz2:'');sv('s_sz3',s?s.sz3:'');sv('s_sz4',s?s.sz4:'');
   sv('s_mat',s?s.mat:'');setSelect('s_plating',s?s.plating:'');
@@ -9426,6 +9504,20 @@ function openSmpModal(idOrNull){
   document.getElementById('s_cfmBtn').style.display=(s&&s.status!=='확정'&&s.status!=='취소')?'':'none';
   document.getElementById('s_invBtn').style.display=s?'':'none';
   document.getElementById('smp_ai_badge').style.display=(s&&s.aiParsed)?'':'none';
+  // 생성일자 표시 (모달 안에서만)
+  var createdDispEl=document.getElementById('smp_created_disp');
+  if(createdDispEl){
+    if(s){
+      var cd=s.createdAt?new Date(s.createdAt):(s.id?new Date(+s.id):null);
+      if(cd && !isNaN(cd.getTime())){
+        createdDispEl.textContent='등록 '+cd.getFullYear()+'-'+String(cd.getMonth()+1).padStart(2,'0')+'-'+String(cd.getDate()).padStart(2,'0')+' '+String(cd.getHours()).padStart(2,'0')+':'+String(cd.getMinutes()).padStart(2,'0');
+      } else {
+        createdDispEl.textContent='';
+      }
+    } else {
+      createdDispEl.textContent='';
+    }
+  }
   sv('s_aiParsed', (s&&s.aiParsed)?'1':'0');
   sv('s_status',s?s.status:'의뢰');
   // 납기일 변경 이력 표시
@@ -9487,6 +9579,7 @@ function saveSmp(){
   const obj={
     name, type:gv('s_type'), manager:gv('s_manager'),
     reqDate:gv('s_reqDate'), due:gv('s_due'),
+    factShip:gv('s_factShip'),
     qty:gv('s_qty'), itemNo:gv('s_itemNo'),
     sz1:gv('s_sz1'), sz2:gv('s_sz2'), sz3:gv('s_sz3'), sz4:gv('s_sz4'),
     mat:gv('s_mat'), plating:gv('s_plating'), wt:gv('s_wt'),
@@ -9691,6 +9784,7 @@ function openOrdModal(idOrNull){
   renderOrdFilePrev();
   document.getElementById('mOrd_t').childNodes[0].textContent=o?'발주서 수정 ':'발주서 등록 ';
   sv('o_id',o?o.id:'');sv('o_vendor',o?o.vendor:'');sv('o_date',o?o.date:todayStr);sv('o_ship',o?o.ship:'');
+  sv('o_factShip',o?o.factShip||'':'');
   sv('o_manager',o?o.manager:'');sv('o_no',o?o.no:`ORD-${Date.now()}`);sv('o_memo',o?o.memo:'');
   // 메모 체크리스트 로드 (기존 memo 텍스트는 자동 항목화)
   ordMemoBuf = loadOrdMemos(o);
@@ -10097,7 +10191,7 @@ async function saveOrd(){
   const memoList = ordMemoBuf.map(n=>({text:String(n.text||'').trim(), checked:!!n.checked})).filter(n=>n.text);
   // 호환성 유지: memo plaintext는 체크리스트 텍스트의 줄바꿈 결합
   const memoText = memoList.map(n=>(n.checked?'[✓] ':'[ ] ')+n.text).join('\n');
-  const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),manager:gv('o_manager'),no:gv('o_no'),memo:memoText,memoList,rows:cleanRows,files:filesToSave};
+  const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),factShip:gv('o_factShip'),manager:gv('o_manager'),no:gv('o_no'),memo:memoText,memoList,rows:cleanRows,files:filesToSave};
   let ordId;
   let stockReceiveResult={matched:0,unmatched:0}; // 신규 입고로 인한 재고 증가 결과
   if(id){
