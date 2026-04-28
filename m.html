@@ -224,7 +224,7 @@ a{color:inherit;text-decoration:none}
 <body>
 
 <div class="topbar">
-  <div class="brand">EK <small>OEM Mobile</small></div>
+  <div class="brand" onclick="openNotionSettings()" style="cursor:pointer">EK <small>OEM Mobile</small></div>
   <button class="sync-btn" id="syncBtn" onclick="manualSync()"><span class="sync-dot"></span><span id="syncLabel">새로고침</span></button>
 </div>
 
@@ -385,6 +385,31 @@ a{color:inherit;text-decoration:none}
       </div>
       <button class="btn-primary" onclick="saveTask()">저장</button>
       <div id="taskDelWrap" style="display:none;margin-top:8px"><button class="btn-secondary" onclick="deleteTask()" style="color:var(--red)">삭제</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="notionModal">
+  <div class="modal-box">
+    <div class="modal-h">
+      <div class="t">⚙ Notion 동기화 설정</div>
+      <button onclick="closeNotionModal()">닫기</button>
+    </div>
+    <div class="modal-b">
+      <div style="background:var(--gold-bg);border:1px solid var(--gold-line);padding:10px 12px;border-radius:7px;margin-bottom:14px;font-size:11.5px;color:var(--gold-lt);line-height:1.55">
+        <b>📋 PC에서 설정 가져오는 법</b><br>
+        1. PC에서 F12 → Console 탭 열기<br>
+        2. 입력: <code style="background:#fff;padding:1px 5px;border-radius:3px;font-family:monospace">copy(localStorage.getItem('ek_notion_cfg'))</code><br>
+        3. 엔터 → 자동으로 클립보드에 복사됨<br>
+        4. 휴대폰으로 메시지 보내기 → 아래에 붙여넣기
+      </div>
+      <div class="form-r">
+        <label>설정 JSON 붙여넣기</label>
+        <textarea id="notionCfgInput" placeholder='{"workerUrl":"https://...","smpDb":"...","ordDb":"...",...}' style="min-height:120px;font-family:monospace;font-size:11.5px"></textarea>
+      </div>
+      <div id="notionCfgStatus" style="margin-bottom:10px;font-size:11.5px"></div>
+      <button class="btn-primary" onclick="saveNotionCfgFromInput()">저장 + 동기화</button>
+      <div style="margin-top:8px"><button class="btn-secondary" onclick="clearNotionCfg()">설정 삭제</button></div>
     </div>
   </div>
 </div>
@@ -1502,26 +1527,268 @@ function psSaveSafety(){
 }
 
 
+// ════════════════════════════════════════
+// Notion 동기화 (PC와 동일 구조로 데이터 받음)
+// ════════════════════════════════════════
 let isSyncing=false;
+
+// Notion property → JS 값 추출
+const np={
+  title:p=>p?.title?.map(t=>t.plain_text||t.text?.content||'').join('')||'',
+  text: p=>p?.rich_text?.map(t=>t.plain_text||t.text?.content||'').join('')||'',
+  select:p=>p?.select?.name||'',
+  number:p=>p?.number??0,
+  date:  p=>p?.date?.start||'',
+  check: p=>p?.checkbox||false,
+};
+
+// Notion 호출 (Worker 경유) — PC의 notionCall과 동일
+async function notionCall(method, path, body){
+  if(!notionCfg||!notionCfg.workerUrl)return null;
+  try{
+    const headers={'Content-Type':'application/json'};
+    if(notionCfg.token)headers['Authorization']='Bearer '+notionCfg.token;
+    const route=notionCfg.workerUrl.replace(/\/+$/,'')+(path.startsWith('/notion')?path:'/notion'+path);
+    const res=await fetch(route,{method,headers,body:body?JSON.stringify(body):undefined});
+    if(!res.ok)return null;
+    return await res.json();
+  }catch(e){
+    console.warn('notionCall 실패:',e);
+    return null;
+  }
+}
+
+// DB 전체 페이지 쿼리 (페이지네이션)
+async function nQueryAll(dbId){
+  if(!notionCfg||!notionCfg.workerUrl||!dbId)return [];
+  const results=[];
+  let cursor=undefined;
+  let safety=0;
+  do{
+    const body={page_size:100, archived:false};
+    if(cursor)body.start_cursor=cursor;
+    const data=await notionCall('POST', '/databases/'+dbId.replace(/-/g,'')+'/query', body);
+    if(!data||!data.results)break;
+    results.push(...data.results);
+    cursor=data.has_more?data.next_cursor:null;
+    safety++;
+  }while(cursor && safety<20);
+  return results;
+}
+
+// ─── 매퍼 (PC와 동일) ───
+function mapNotionSample(row){
+  const p=row.properties||{};
+  let dueHistory=[];
+  const histText=np.text(p['납기일변경이력']);
+  if(histText){
+    try{const parsed=JSON.parse(histText);if(Array.isArray(parsed))dueHistory=parsed}catch(e){}
+  }
+  const devText=np.text(p['개발사항'])||'';
+  let notes=[];
+  let legacyDevNote='';
+  if(devText.startsWith('JSON::')){
+    try{
+      const parsed=JSON.parse(devText.slice(6));
+      if(Array.isArray(parsed))notes=parsed.map(n=>({text:String(n.text||''),checked:!!n.checked}));
+    }catch(e){legacyDevNote=devText}
+  } else {
+    legacyDevNote=devText;
+  }
+  const parseFilesJson=(txt)=>{
+    if(!txt)return [];
+    try{const parsed=JSON.parse(txt);return Array.isArray(parsed)?parsed:[]}catch(e){return []}
+  };
+  const sourceDoc=parseFilesJson(np.text(p['작업지시서JSON']));
+  const imgs=parseFilesJson(np.text(p['예시이미지JSON']));
+  const cadFiles=parseFilesJson(np.text(p['CAD파일JSON']));
+  return{
+    _notionId:row.id,
+    id:row.id, // 모바일에서 id 사용
+    name:np.title(p['샘플명']),
+    itemCode:np.text(p['품번']),
+    manager:np.text(p['담당자_고객사']),
+    mat:np.text(p['소재']),
+    sz1:np.text(p['사이즈']),
+    sz2:np.text(p['호수']),
+    sz3:np.text(p['보조줄']),
+    sz4:np.text(p['장식']),
+    wt:np.text(p['중량']),
+    engr:np.text(p['각인위치']),
+    qty:np.text(p['발주량']),
+    desc:np.text(p['메모']),
+    devNote:legacyDevNote,
+    notes,
+    type:np.select(p['유형']),
+    plating:np.select(p['도금']),
+    status:np.select(p['상태'])||'의뢰',
+    reqDate:np.date(p['의뢰일']),
+    due:np.date(p['납기일']),
+    costPrice:np.number(p['입고원가']),
+    unitPrice:np.number(p['샘플단가']),
+    devCost:np.number(p['개발비']),
+    dueHistory,
+    createdAt:row.created_time||new Date().toISOString(),
+    imgs, sourceDoc, cadFiles,
+  };
+}
+
+function mapNotionOrder(row){
+  const p=row.properties||{};
+  let rows=[];
+  const rowsJson=np.text(p['품목상세JSON']);
+  if(rowsJson){
+    try{const parsed=JSON.parse(rowsJson);if(Array.isArray(parsed))rows=parsed}catch(e){}
+  }
+  if(!rows.length){
+    const itemStr=np.text(p['품목목록']);
+    if(itemStr){
+      rows=itemStr.split(',').map(s=>{
+        const m=s.trim().match(/^(.+?)\s*×\s*(\d+)$/);
+        return m?{name:m[1].trim(),qty:m[2],plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}:null;
+      }).filter(Boolean);
+    }
+  }
+  let files=[];
+  const filesJson=np.text(p['첨부파일JSON']);
+  if(filesJson){
+    try{const parsed=JSON.parse(filesJson);if(Array.isArray(parsed))files=parsed}catch(e){}
+  }
+  let shipHistory=[];
+  const shipHistText=np.text(p['출고일변경이력']);
+  if(shipHistText){
+    try{const parsed=JSON.parse(shipHistText);if(Array.isArray(parsed))shipHistory=parsed}catch(e){}
+  }
+  const memoText=np.text(p['메모'])||'';
+  let memoList=[];
+  let legacyMemo=memoText;
+  if(memoText.startsWith('JSON::')){
+    try{
+      const parsed=JSON.parse(memoText.slice(6));
+      if(Array.isArray(parsed)){
+        memoList=parsed.map(n=>({text:String(n.text||''),checked:!!n.checked}));
+        legacyMemo=memoList.map(n=>(n.checked?'[✓] ':'[ ] ')+n.text).join('\n');
+      }
+    }catch(e){}
+  }
+  return{
+    _notionId:row.id,
+    id:row.id,
+    no:np.title(p['발주번호']),
+    vendor:np.text(p['업체명']),
+    manager:np.text(p['담당자']),
+    memo:legacyMemo,
+    memoList,
+    date:np.date(p['발주일']),
+    ship:np.date(p['요청출고일']),
+    status:np.select(p['상태'])||'진행중',
+    rows, files, shipHistory,
+    createdAt:row.created_time||new Date().toISOString(),
+  };
+}
+
+function mapNotionTask(row){
+  const p=row.properties||{};
+  return{
+    _notionId:row.id,
+    id:row.id,
+    cont:np.title(p['업무내용']),
+    note:np.text(p['비고']),
+    done:np.check(p['완료']),
+    date:np.date(p['날짜']),
+    ap:np.select(p['오전오후'])||'오전',
+    cat:np.select(p['카테고리'])||'업무',
+    files:[],
+  };
+}
+
+function mapNotionProduct(row){
+  const p=row.properties||{};
+  return{
+    _notionId:row.id,
+    id:row.id,
+    code:np.title(p['품목코드']),
+    name:np.text(p['품목명']),
+    type:np.select(p['유형']),
+    mat:np.select(p['소재']),
+    plating:np.select(p['도금']),
+    size:np.text(p['규격']),
+    metal:np.text(p['금속종류']),
+    platingSpec:np.text(p['도금스펙']),
+    memo:np.text(p['메모']),
+    price:np.number(p['출고단가']),
+    costPrice:np.number(p['입고단가']),
+    stock:np.number(p['재고수량']),
+    weight:np.number(p['중량']),
+    createdDate:np.date(p['최초등록일']),
+    lastModified:np.date(p['최종수정일']),
+  };
+}
+
+function mapNotionInvoice(row){
+  const p=row.properties||{};
+  return{
+    _notionId:row.id,
+    id:row.id,
+    vendor:np.title(p['고객사']),
+    ordNo:np.text(p['발주번호']),
+    itemSummary:np.text(p['품목내역']),
+    memo:np.text(p['메모']),
+    supplyAmt:np.number(p['공급가액']),
+    tax:np.number(p['부가세']),
+    total:np.number(p['합계금액']),
+    customer:np.title(p['고객사']),
+    no:np.text(p['발주번호']),
+    date:np.date(p['발행일자']),
+    issuedAt:np.date(p['발행일자']),
+    shipDate:np.date(p['출고일자']),
+    status:np.select(p['상태'])||'발행완료',
+  };
+}
+
+function mapNotionClient(row){
+  const p=row.properties||{};
+  return{
+    _notionId:row.id,
+    id:row.id,
+    name:np.title(p['고객사명']),
+    initials:np.text(p['이니셜']),
+  };
+}
+
+// ─── 메인 풀 함수 ───
 async function pullFromNotion(){
   if(!notionCfg||!notionCfg.workerUrl)return false;
+  if(!notionCfg.smpDb && !notionCfg.ordDb && !notionCfg.taskDb && !notionCfg.productDb && !notionCfg.invDb){
+    showToast('⚠ Notion DB 설정 없음 — PC에서 먼저 동기화 설정해주세요','warn',3500);
+    return false;
+  }
   isSyncing=true;
   document.getElementById('syncBtn').classList.add('syncing');
   document.getElementById('syncLabel').textContent='동기화중...';
   try{
-    const url=notionCfg.workerUrl.replace(/\/+$/,'');
-    const res=await fetch(`${url}/notion/pull?type=tasks`,{method:'GET'});
-    if(res.ok){
-      const data=await res.json();
-      if(data&&Array.isArray(data.items)){
-        const map=new Map(tasks.map(t=>[String(t.id),t]));
-        data.items.forEach(rt=>{
-          if(rt.id)map.set(String(rt.id),{...map.get(String(rt.id)),...rt});
-        });
-        tasks=Array.from(map.values());
-        saveTasks();
-      }
+    const [smpRows,ordRows,taskRows,pdRows,invRows,cliRows]=await Promise.all([
+      notionCfg.smpDb     ? nQueryAll(notionCfg.smpDb)     : Promise.resolve([]),
+      notionCfg.ordDb     ? nQueryAll(notionCfg.ordDb)     : Promise.resolve([]),
+      notionCfg.taskDb    ? nQueryAll(notionCfg.taskDb)    : Promise.resolve([]),
+      notionCfg.productDb ? nQueryAll(notionCfg.productDb) : Promise.resolve([]),
+      notionCfg.invDb     ? nQueryAll(notionCfg.invDb)     : Promise.resolve([]),
+      notionCfg.clientDb  ? nQueryAll(notionCfg.clientDb)  : Promise.resolve([]),
+    ]);
+    // 변환 + 로컬에 저장
+    if(smpRows.length){samples=smpRows.map(mapNotionSample);try{localStorage.setItem(LS.smp,JSON.stringify(samples))}catch(e){}}
+    if(ordRows.length){orders=ordRows.map(mapNotionOrder);try{localStorage.setItem(LS.ord,JSON.stringify(orders))}catch(e){}}
+    if(taskRows.length){tasks=taskRows.map(mapNotionTask);saveTasks()}
+    if(pdRows.length){
+      products=pdRows.map(mapNotionProduct);
+      // 모바일에서 재고 수정 가능하도록 prodSourceKey 설정
+      try{localStorage.setItem('ek3_products',JSON.stringify(products));prodSourceKey='ek3_products'}catch(e){}
     }
+    if(invRows.length){
+      invoices=invRows.map(mapNotionInvoice);
+      try{localStorage.setItem('ek3_invoices',JSON.stringify(invoices));invSourceKey='ek3_invoices'}catch(e){}
+    }
+    if(cliRows.length){clients=cliRows.map(mapNotionClient);try{localStorage.setItem(LS.cli,JSON.stringify(clients))}catch(e){}}
     return true;
   }catch(e){
     console.warn('Notion pull 실패:',e);
@@ -1531,6 +1798,57 @@ async function pullFromNotion(){
     document.getElementById('syncBtn').classList.remove('syncing');
     document.getElementById('syncLabel').textContent='새로고침';
   }
+}
+
+// ─── Notion 설정 모달 ───
+function openNotionSettings(){
+  const cur=notionCfg||{};
+  const txt=Object.keys(cur).length?JSON.stringify(cur,null,2):'';
+  document.getElementById('notionCfgInput').value=txt;
+  const status=document.getElementById('notionCfgStatus');
+  if(notionCfg&&notionCfg.workerUrl){
+    const dbs=['smpDb','ordDb','taskDb','productDb','invDb','clientDb'].filter(k=>notionCfg[k]);
+    status.innerHTML=`<span style="color:var(--grn)">✓ 설정됨</span> · DB ${dbs.length}개 연결`;
+  } else {
+    status.innerHTML=`<span style="color:var(--org)">⚠ 설정 없음 — PC 설정을 가져오세요</span>`;
+  }
+  document.getElementById('notionModal').classList.add('open');
+}
+
+function closeNotionModal(){
+  document.getElementById('notionModal').classList.remove('open');
+}
+
+function saveNotionCfgFromInput(){
+  const raw=document.getElementById('notionCfgInput').value.trim();
+  if(!raw){showToast('설정 JSON을 붙여넣어주세요','warn');return}
+  try{
+    // PC가 클립보드에 복사한 형태는 따옴표로 감싸진 문자열일 수도 있음
+    let parsed;
+    if(raw.startsWith('"')&&raw.endsWith('"')){
+      // 이중 인코딩된 문자열 — 한 번 더 파싱
+      parsed=JSON.parse(JSON.parse(raw));
+    } else {
+      parsed=JSON.parse(raw);
+    }
+    if(typeof parsed!=='object'||!parsed)throw new Error('객체가 아님');
+    if(!parsed.workerUrl)throw new Error('workerUrl 필드 없음');
+    localStorage.setItem(LS.notion,JSON.stringify(parsed));
+    notionCfg=parsed;
+    closeNotionModal();
+    showToast('✓ 저장 완료 — 동기화 시작','success');
+    setTimeout(()=>manualSync(),300);
+  }catch(e){
+    showToast('⚠ JSON 형식 오류 — '+e.message,'error',3500);
+  }
+}
+
+function clearNotionCfg(){
+  if(!confirm('Notion 설정을 삭제할까요? 모바일에서 동기화가 중단됩니다.'))return;
+  localStorage.removeItem(LS.notion);
+  notionCfg=null;
+  closeNotionModal();
+  showToast('설정 삭제됨','warn');
 }
 
 async function manualSync(){
@@ -1549,7 +1867,14 @@ async function manualSync(){
 
 loadAll();
 renderDash();
-if(notionCfg&&notionCfg.workerUrl){setTimeout(()=>{manualSync()},300)}
+if(notionCfg&&notionCfg.workerUrl){
+  setTimeout(()=>{manualSync()},300);
+} else if(samples.length===0 && orders.length===0 && tasks.length===0){
+  // 데이터도 없고 설정도 없으면 자동으로 안내
+  setTimeout(()=>{
+    showToast('Notion 설정이 필요합니다 — EK 로고를 탭하세요','warn',4500);
+  },800);
+}
 
 window.addEventListener('storage',e=>{
   if(Object.values(LS).includes(e.key)||INV_KEYS.includes(e.key)||PROD_KEYS.includes(e.key)){
