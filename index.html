@@ -1166,7 +1166,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <label>🖼 제품 이미지</label>
     <div class="drop-zone" style="padding:10px 14px;min-height:unset;cursor:pointer" onclick="document.getElementById('pd_imgInput').click()" ondragover="dzOver(event,this)" ondragleave="dzOut(this)" ondrop="handlePdImgDrop(event)">
       <input type="file" id="pd_imgInput" accept="image/*" multiple style="display:none" onchange="handlePdImgs(event)">
-      <div style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">📷</span><span style="font-size:11.5px;color:var(--t3)">제품 이미지 드래그 또는 클릭 (복수 가능)</span></div>
+      <div style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">📷</span><span style="font-size:11.5px;color:var(--t3)">제품 이미지 드래그·클릭·붙여넣기 (Ctrl+V)</span></div>
     </div>
     <div id="pd_imgPrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
   </div>
@@ -2425,6 +2425,7 @@ function renderProducts(){
           <th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap;width:30px">
             <input type="checkbox" id="pdCheckAll" onchange="pdToggleAll(this.checked)" title="전체 선택">
           </th>
+          <th style="padding:8px 6px;width:46px"></th>
           <th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap">품목코드</th>
           <th style="padding:8px 10px;text-align:left;font-weight:600">품목명</th>
           <th style="padding:8px 10px;text-align:center;font-weight:600;white-space:nowrap">유형</th>
@@ -2445,11 +2446,21 @@ function renderProducts(){
           const isOut=stock<=0;
           const stkColor=isOut?'var(--red)':isLow?'var(--org)':'var(--grn)';
           const stkBg=isOut?'var(--red-bg)':isLow?'var(--org-bg)':'var(--grn-bg)';
+          // 첫 번째 이미지 추출 (string or {url})
+          let thumbUrl='';
+          if(Array.isArray(p.imgs)&&p.imgs.length){
+            const f=p.imgs[0];
+            thumbUrl=typeof f==='string'?f:(f&&f.url)||'';
+          }
+          const thumbCell=thumbUrl
+            ? `<img src="${thumbUrl}" loading="lazy" onclick="event.stopPropagation();openPrevList(${JSON.stringify(p.imgs).replace(/"/g,'&quot;')},0,false)" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--bdr);cursor:pointer;display:block">`
+            : `<div onclick="openProductModal(${p.id})" style="width:38px;height:38px;background:var(--s2);border:1px dashed var(--bdr);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--t3);cursor:pointer" title="사진 없음 — 클릭해서 추가">📷</div>`;
           return `
         <tr style="border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
           <td style="padding:7px 10px" onclick="event.stopPropagation()">
             <input type="checkbox" class="pd-chk" value="${p.id}" onchange="pdUpdateBulkBar()">
           </td>
+          <td style="padding:5px 6px" onclick="event.stopPropagation()">${thumbCell}</td>
           <td style="padding:7px 10px;font-family:monospace;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.code||'—'}</td>
           <td style="padding:7px 10px;font-weight:600;color:var(--t1)" onclick="openProductModal(${p.id})">${p.name}</td>
           <td style="padding:7px 10px;text-align:center" onclick="openProductModal(${p.id})">
@@ -2586,6 +2597,36 @@ function handlePdImgs(e){
 function handlePdImgDrop(e){
   e.preventDefault();dzOut(e.currentTarget);
   Array.from(e.dataTransfer.files).filter(f=>f.type.startsWith('image/')).forEach(f=>{const r=new FileReader();r.onload=ev=>{pdImgBuf.push({name:f.name,url:ev.target.result});renderPdImgPrev();};r.readAsDataURL(f);});
+}
+// 클립보드 붙여넣기 (제품DB 모달이 열려 있을 때만 작동)
+function _handlePdPaste(e){
+  const m=document.getElementById('mProduct');
+  if(!m||!m.classList.contains('open'))return; // 모달 닫혀 있으면 무시
+  const items=(e.clipboardData||e.originalEvent?.clipboardData||{}).items;
+  if(!items)return;
+  let pasted=0;
+  for(const item of items){
+    if(item.type&&item.type.startsWith('image/')){
+      const blob=item.getAsFile();
+      if(!blob)continue;
+      const r=new FileReader();
+      r.onload=ev=>{
+        pdImgBuf.push({name:blob.name||`paste_${Date.now()}.png`,url:ev.target.result});
+        renderPdImgPrev();
+      };
+      r.readAsDataURL(blob);
+      pasted++;
+    }
+  }
+  if(pasted>0){
+    e.preventDefault();
+    showToast(`📋 이미지 ${pasted}장 붙여넣음`,'var(--grn)',1800);
+  }
+}
+// 한 번만 등록 (전역)
+if(!window._pdPasteAttached){
+  document.addEventListener('paste',_handlePdPaste);
+  window._pdPasteAttached=true;
 }
 function renderPdImgPrev(){
   const el=document.getElementById('pd_imgPrev');if(!el)return;
@@ -5077,6 +5118,38 @@ function applyOrderShipToStock(o){
   return {matched, unmatched};
 }
 
+// 발주서의 AI 인식 이미지를 제품DB에 자동 동기화
+// 조건: 1) 품번 매칭됨  2) 발주 row에 r.img 있음  3) 제품DB 항목에 imgs가 비어있음
+function syncOrderImagesToProducts(o){
+  if(!o||!o.rows) return {synced:0, skipped:0};
+  let synced=0, skipped=0;
+  o.rows.forEach(r=>{
+    if(!r.img) return; // 발주 row에 이미지 없음 → 스킵
+    const p=findProductByOrderRow(r);
+    if(!p) return; // 제품DB 매칭 안 됨 → 스킵
+    const hasExistingImgs=Array.isArray(p.imgs)&&p.imgs.length>0;
+    if(hasExistingImgs){ skipped++; return; } // 이미 이미지 있음 → 보호
+    // r.img 형태 정규화: 문자열(url) 또는 객체({url,name})
+    let imgObj;
+    if(typeof r.img==='string'){
+      imgObj={url:r.img, name:(r.name||r.itemCode||'order_img')+'.png'};
+    } else if(r.img&&r.img.url){
+      imgObj={url:r.img.url, name:r.img.name||(r.name||r.itemCode||'order_img')+'.png'};
+    } else {
+      return;
+    }
+    // 추가
+    p.imgs=[imgObj];
+    p.lastModified=toLocalDateStr(new Date());
+    synced++;
+    // Notion에도 동기화 (있으면)
+    if(typeof syncProductToNotion==='function'&&p._notionId){
+      setTimeout(()=>syncProductToNotion(p, true), 200+synced*100);
+    }
+  });
+  return {synced, skipped};
+}
+
 // 발주서 출고 완료 되돌리기 시 재고 복원
 function revertOrderShipFromStock(o){
   if(!o||!o.rows) return;
@@ -7319,6 +7392,15 @@ function readImagesAsB64(files,tabType,resultEl){
 }
 
 function readPdfAsB64(pdfFile,tabType,resultEl,extraImgs){
+  // 큰 PDF 사전 경고 (Anthropic API 페이로드 한계 ~5MB)
+  if(pdfFile.size>5*1024*1024){
+    const sizeMB=(pdfFile.size/1024/1024).toFixed(1);
+    resultEl.innerHTML=`<div style="padding:10px;background:var(--org-bg);border:1px solid rgba(168,90,16,.3);border-radius:var(--r);color:var(--org);font-size:11.5px;line-height:1.6">
+      ⚠ <b>파일 크기가 큽니다 (${sizeMB} MB)</b><br>
+      AI 분석에 시간이 오래 걸리거나 실패할 수 있습니다. 5MB 이하로 압축해서 다시 시도하면 더 안정적입니다.<br>
+      그래도 분석을 시도하려면 잠시 기다려 주세요...
+    </div>`;
+  }
   const r=new FileReader();
   r.onload=ev=>{
     const b64=ev.target.result.split(',')[1];
@@ -7415,6 +7497,194 @@ async function extractExcelImages(arrayBuffer){
   }
 }
 
+// ════════════════════════════════════════
+// EK 오더 발주서 형식 직접 파싱 (AI 호출 불필요)
+// ════════════════════════════════════════
+// 감지: 시트에 "EK 오 더 발 주 서" 또는 "EK 오더 발주서" 헤더 + 표준 컬럼
+function detectEKOrderFormat(wb){
+  const sn=wb.SheetNames[0];
+  if(!sn)return null;
+  const ws=wb.Sheets[sn];
+  if(!ws)return null;
+  // 1행~10행을 보면서 EK 발주서 시그니처 찾기
+  const rng=XLSX.utils.decode_range(ws['!ref']||'A1:A1');
+  let titleRow=-1, headerRow=-1;
+  for(let R=rng.s.r; R<=Math.min(rng.s.r+12,rng.e.r); R++){
+    let rowText='';
+    for(let C=rng.s.c; C<=Math.min(rng.s.c+15,rng.e.c); C++){
+      const cell=ws[XLSX.utils.encode_cell({r:R,c:C})];
+      if(cell&&cell.v!=null) rowText+=String(cell.v)+' ';
+    }
+    rowText=rowText.replace(/\s+/g,' ').trim();
+    // 타이틀 시그니처
+    if(/EK\s*오\s*더\s*발\s*주\s*서/i.test(rowText)) titleRow=R;
+    // 헤더 시그니처: 품목코드 + 품목명 + 수량 + 도금 + 소재 등이 한 행에 있음
+    if(rowText.includes('품목코드')&&rowText.includes('품목명')&&rowText.includes('수량')&&(rowText.includes('도금')||rowText.includes('소재'))){
+      headerRow=R;
+    }
+  }
+  if(titleRow<0||headerRow<0)return null;
+  return {sheet:sn, titleRow, headerRow, ws};
+}
+
+// EK 형식의 엑셀에서 발주 정보 추출
+function parseEKOrderExcel(wb, detect){
+  const ws=detect.ws;
+  const rng=XLSX.utils.decode_range(ws['!ref']||'A1:A1');
+  // 헤더 컬럼 위치 매핑
+  const colMap={};
+  for(let C=rng.s.c; C<=rng.e.c; C++){
+    const cell=ws[XLSX.utils.encode_cell({r:detect.headerRow,c:C})];
+    if(!cell||cell.v==null)continue;
+    const v=String(cell.v).replace(/\s+/g,'');
+    if(v.includes('발주일자'))colMap.orderDate=C;
+    else if(v.includes('납기일자'))colMap.dueDate=C;
+    else if(v.includes('품목코드'))colMap.itemCode=C;
+    else if(v.includes('품목명'))colMap.name=C;
+    else if(v==='수량')colMap.qty=C;
+    else if(v.startsWith('이미지'))colMap.img=C;
+    else if(v.startsWith('단가'))colMap.unitPrice=C;
+    else if(v.startsWith('발주금액'))colMap.amount=C;
+    else if(v==='도금')colMap.plating=C;
+    else if(v==='소재')colMap.mat=C;
+    else if(v==='사이즈'||v==='규격')colMap.size=C;
+    else if(v==='적요'||v==='비고'||v==='메모')colMap.note=C;
+  }
+  // 헤더 위 영역에서 메타 정보 추출
+  const meta={};
+  for(let R=rng.s.r; R<detect.headerRow; R++){
+    for(let C=rng.s.c; C<=rng.e.c; C++){
+      const cell=ws[XLSX.utils.encode_cell({r:R,c:C})];
+      if(!cell||cell.v==null)continue;
+      const v=String(cell.v).trim();
+      if(v==='주문일자'){
+        // 다음 셀
+        const next=ws[XLSX.utils.encode_cell({r:R,c:C+1})];
+        if(next&&next.v!=null) meta.orderDate=excelToDateStr(next.v);
+      } else if(v==='주문처'||v==='업체명'||v==='상호'){
+        const next=ws[XLSX.utils.encode_cell({r:R,c:C+1})];
+        if(next&&next.v!=null&&String(next.v).trim()) meta.vendor=String(next.v).trim();
+      } else if(v==='담당자'){
+        const next=ws[XLSX.utils.encode_cell({r:R,c:C+1})];
+        if(next&&next.v!=null&&String(next.v).trim()) meta.manager=String(next.v).trim();
+      } else if(v==='발주번호'||v==='발주 번호'){
+        const next=ws[XLSX.utils.encode_cell({r:R,c:C+1})];
+        if(next&&next.v!=null&&String(next.v).trim()) meta.no=String(next.v).trim();
+      } else if(v==='납품예정'||v==='납품예정일'){
+        const next=ws[XLSX.utils.encode_cell({r:R,c:C+1})];
+        if(next&&next.v!=null) meta.shipDate=excelToDateStr(next.v);
+      }
+    }
+  }
+  // 품목 행 추출 (헤더 다음 행부터 끝까지)
+  const rows=[];
+  for(let R=detect.headerRow+1; R<=rng.e.r; R++){
+    const getC=(key)=>{
+      if(colMap[key]==null)return '';
+      const cell=ws[XLSX.utils.encode_cell({r:R,c:colMap[key]})];
+      return (cell&&cell.v!=null)?cell.v:'';
+    };
+    const name=String(getC('name')||'').trim();
+    if(!name)continue; // 품목명 없으면 스킵
+    // 품목명에 줄바꿈이 있으면 첫 줄을 메인 이름, 나머지는 부가설명으로
+    const nameLines=name.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    const mainName=nameLines[0]||name;
+    const subDesc=nameLines.slice(1).join(' / ');
+    // 수량 정규화 (100EA → 100)
+    let qty=String(getC('qty')||'').trim();
+    const qtyNum=qty.match(/(\d+)/);
+    if(qtyNum)qty=qtyNum[1];
+    // 도금 정규화
+    let plating=String(getC('plating')||'').trim();
+    if(/실버|silver|로듐|무도금/i.test(plating))plating='실버';
+    else if(/14k|14K\s*도금/i.test(plating))plating='14K';
+    else if(/18k|18K\s*도금/i.test(plating))plating='18K';
+    else if(/골드|gold/i.test(plating))plating='골드';
+    // 소재 그대로
+    let mat=String(getC('mat')||'').trim();
+    if(!mat)mat='브라스 (BRASS)';
+    // 비고 — 부가설명 + 적요 합치기
+    let note=String(getC('note')||'').trim();
+    if(subDesc) note=note?subDesc+' / '+note:subDesc;
+    // 이미지 컬럼은 #VALUE! 같은 오류일 가능성 높으므로 무시
+    rows.push({
+      name: mainName,
+      itemCode: String(getC('itemCode')||'').trim(),
+      qty: qty,
+      mat: mat,
+      plating: plating,
+      size: String(getC('size')||'').trim(),
+      note: note,
+      unitPrice: parseFloat(String(getC('unitPrice')||'0').replace(/[^\d.]/g,''))||0,
+      _wsRow: R, // 이미지 매칭 시 사용
+    });
+  }
+  return {meta, rows};
+}
+
+// 엑셀 직렬값을 YYYY-MM-DD로
+function excelToDateStr(v){
+  if(!v)return '';
+  if(v instanceof Date) return toLocalDateStr(v);
+  if(typeof v==='number'){
+    // Excel 직렬일자 (1900-01-01 = 1)
+    const utc_days=Math.floor(v-25569);
+    const utc_value=utc_days*86400;
+    const date=new Date(utc_value*1000);
+    return toLocalDateStr(date);
+  }
+  // 문자열 — Date 파싱 시도
+  const d=new Date(v);
+  if(!isNaN(d.getTime())) return toLocalDateStr(d);
+  return String(v);
+}
+
+// EK 형식으로 직접 파싱 → 발주 모달 채우기
+async function applyEKOrderToModal(parsed, fileName, originalFile){
+  const o=parsed.meta||{};
+  const rows=parsed.rows||[];
+  if(!rows.length){
+    showToast('⚠ 품목을 찾지 못했습니다','var(--org)');
+    return false;
+  }
+  ordRowsBuf=rows.map(r=>({
+    name:r.name||'', itemCode:r.itemCode||'', qty:r.qty||'',
+    mat:r.mat||'브라스 (BRASS)', plating:r.plating||'실버',
+    size:r.size||'', note:r.note||'',
+    unitPrice:+r.unitPrice||0,
+    rcvHistory:[]
+  }));
+
+  // 원본 엑셀 파일을 첨부로 추가
+  let origFiles=[];
+  if(originalFile){
+    try{
+      const dataUrl=await new Promise((res,rej)=>{
+        const fr=new FileReader();
+        fr.onload=e=>res(e.target.result);
+        fr.onerror=rej;
+        fr.readAsDataURL(originalFile);
+      });
+      origFiles=[{name:originalFile.name, type:originalFile.type, url:dataUrl}];
+    }catch(e){console.warn('원본 첨부 실패:',e)}
+  }
+
+  openOrdModal(null);
+  ordFileBuf=origFiles;
+  setTimeout(()=>{
+    if(o.vendor)sv('o_vendor',o.vendor);
+    if(o.orderDate)sv('o_date',o.orderDate);
+    if(o.shipDate)sv('o_ship',o.shipDate);
+    if(o.manager)sv('o_manager',o.manager);
+    if(o.no)sv('o_no',o.no);
+    document.getElementById('ord_ai_badge').style.display='';
+    document.getElementById('ord_ai_badge').textContent='✦ 엑셀 자동입력';
+    renderOrdRows();
+    renderOrdFilePrev();
+  },100);
+  return true;
+}
+
 function readExcelAsText(xlFile,tabType,resultEl){
   console.warn('⚡ [발주서AI] 엑셀 읽기 시작:', xlFile.name, 'size:', xlFile.size, 'tabType:', tabType);
   const r=new FileReader();
@@ -7426,6 +7696,26 @@ function readExcelAsText(xlFile,tabType,resultEl){
         text=ev.target.result;
       } else {
         const wb=XLSX.read(ev.target.result,{type:'binary'});
+        // ── EK 발주서 형식 자동 감지 → AI 호출 없이 직접 파싱 ──
+        if(tabType==='order'){
+          const detect=detectEKOrderFormat(wb);
+          if(detect){
+            console.warn('⚡ [발주서] EK 표준 발주서 형식 감지 — 직접 파싱 (AI 호출 불필요)');
+            try{
+              const parsed=parseEKOrderExcel(wb, detect);
+              if(parsed.rows&&parsed.rows.length){
+                resultEl.innerHTML=`<div style="padding:10px 14px;background:var(--grn-bg);border:1px solid rgba(46,139,44,.3);border-radius:var(--r);color:var(--grn);font-size:12px;font-weight:600">✓ EK 표준 발주서 인식 — ${parsed.rows.length}개 품목 자동 입력</div>`;
+                const ok=await applyEKOrderToModal(parsed, xlFile.name, xlFile);
+                if(ok){
+                  showToast(`✓ 발주서 ${parsed.rows.length}개 품목 자동 인식`,'var(--grn)',2500);
+                  return; // 직접 파싱 성공 → AI 호출 생략
+                }
+              }
+            }catch(e){
+              console.warn('EK 직접 파싱 실패, AI 경로로 폴백:',e);
+            }
+          }
+        }
         // Convert all sheets to text table
         wb.SheetNames.forEach(sn=>{
           const ws=wb.Sheets[sn];
@@ -8508,6 +8798,8 @@ function completeOrd(ordId){
       linkedProcs.forEach(p=>{ p.shipped=true; });
       // 재고 자동 차감 (제품DB와 매칭되는 품목만)
       const stockResult=applyOrderShipToStock(o);
+      // 발주 이미지 → 제품DB 자동 동기화 (품번 매칭 + 기존 사진 없는 경우만)
+      const imgResult=syncOrderImagesToProducts(o);
       save();
       // Notion 동기화 — 상태를 '출고완료'로
       setTimeout(()=>syncOrderToNotion(o, true), 50);
@@ -8515,13 +8807,16 @@ function completeOrd(ordId){
       linkedProcs.forEach(p=>{
         if(p._notionId) setTimeout(()=>syncProcToNotion(p, true), 100);
       });
-      // 토스트: 재고 차감 결과 포함
+      // 토스트: 재고 차감 + 이미지 동기화 결과 포함
       let msg=`✓ "${o.vendor||'발주서'}" 출고완료`;
       if(stockResult.matched){
         msg+=` · 재고 ${stockResult.matched}건 자동 차감`;
         if(stockResult.unmatched) msg+=` (제품DB 매칭 ${stockResult.unmatched}건 누락)`;
       }
-      showToast(msg,'var(--grn)',3000);
+      if(imgResult.synced){
+        msg+=` · 🖼 사진 ${imgResult.synced}건 제품DB 등록`;
+      }
+      showToast(msg,'var(--grn)',3500);
       renderTab(); updateBadges();
     },
     '출고 완료 처리',
