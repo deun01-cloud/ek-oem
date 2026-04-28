@@ -6107,6 +6107,34 @@ function renderCalWidget(){
       });
     });
 
+    // 3) 업무일지 항목 — 출고/입고 관련만 표시 (업무/커머스 제외)
+    const CAL_TASK_CATS=['발주출고','샘플출고','중국입고','중국출고'];
+    const TASK_CAT_CLS={
+      '발주출고':'ev-ord',
+      '샘플출고':'ev-smp',
+      '중국입고':'ev-ship',
+      '중국출고':'ev-ship'
+    };
+    const TASK_CAT_PREFIX={
+      '발주출고':'📦',
+      '샘플출고':'◉',
+      '중국입고':'🇨🇳←',
+      '중국출고':'🇨🇳→'
+    };
+    tasks.filter(t=>t.date===ds && CAL_TASK_CATS.includes(t.cat)).forEach(t=>{
+      const cls=TASK_CAT_CLS[t.cat]||'ev-task';
+      const prefix=TASK_CAT_PREFIX[t.cat]||'';
+      const cont=(t.cont||'').substring(0,12);
+      r.push({
+        cls,
+        done: !!t.done,
+        canceled: false,
+        t: `${prefix?`<span style="margin-right:3px">${prefix}</span>`:''}<span>${cont}</span>`,
+        click: `calGoTask('${ds}')`,
+        title: `[${t.cat}${t.ap?' · '+t.ap:''}] ${t.cont||''}${t.note?' — '+t.note:''}`
+      });
+    });
+
     return r;
   }
   return`<div class="cal-wrap">
@@ -6221,6 +6249,7 @@ function renderSample(){
         <div id="smpBulkBar" style="display:${window._smpChecked.size?'flex':'none'};align-items:center;gap:8px;padding:4px 12px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;font-size:11.5px">
           <span style="color:var(--gold-lt);font-weight:600">${window._smpChecked.size}건 선택됨</span>
           <button class="btn bp bs" onclick="openBulkInvoice()" style="background:var(--gold-lt);font-size:11px">🧾 선택 항목 명세서 발행</button>
+          <button class="btn bs" onclick="exportSelectedSamplesExcel()" style="font-size:11px;background:var(--grn);color:#fff;border:none;border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit">📊 엑셀</button>
           <button class="btn bs" onclick="deleteBulkSamples()" style="font-size:11px;background:var(--red);color:#fff;border:none;border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit">🗑 선택 삭제</button>
           <button class="btn bgo bs" onclick="window._smpChecked.clear();renderSample()" style="font-size:11px">해제</button>
         </div>
@@ -6360,17 +6389,17 @@ function renderSample(){
         <thead>
           <tr>
             <th style="width:32px"><input type="checkbox" id="smpChkAll" onchange="toggleAllSmpChk(this.checked)" title="전체선택"></th>
+            <th>작업지시서</th>
             <th>샘플명</th>
             <th>품번</th>
             <th>유형</th>
+            <th>상태</th>
             <th>소재 / 도금</th>
             <th>사이즈</th>
+            <th>명세서</th>
             <th>생성일자</th>
             <th>납기일</th>
             <th>D-day</th>
-            <th>상태</th>
-            <th>작업지시서</th>
-            <th>명세서</th>
           </tr>
         </thead>
         <tbody>
@@ -6391,6 +6420,13 @@ function renderSample(){
             return`<tr class="${rc}${isChk?' checked-row':''}" onclick="openSmpModal(${s.id})" style="${isChk?'background:rgba(139,105,20,.06)':''}">
               <td onclick="event.stopPropagation()" style="text-align:center">
                 <input type="checkbox" ${isChk?'checked':''} onchange="toggleSmpChk(${s.id},this.checked)">
+              </td>
+              <td onclick="event.stopPropagation()">
+                ${sourceDocs.length
+                  ?`<div style="display:flex;gap:3px">
+                      ${sourceDocs.slice(0,2).map((doc,i)=>`<div title="${(doc.name||'').replace(/"/g,'')}" style="width:32px;height:32px;border-radius:4px;overflow:hidden;border:1.5px solid var(--gold-line);cursor:pointer" onclick="openPrevList(window['${srcKey}'],${i},true)"><img src="${doc.url}" style="width:100%;height:100%;object-fit:cover;display:block"></div>`).join('')}
+                    </div>`
+                  :`<span style="font-size:10px;color:var(--t3)">없음</span>`}
               </td>
               <td>
                 <div style="display:flex;align-items:center;gap:6px">
@@ -6413,25 +6449,18 @@ function renderSample(){
               </td>
               <td style="font-size:10.5px;color:var(--gold-lt);font-weight:600;white-space:nowrap">${s.itemCode||'—'}</td>
               <td><span class="chip" style="font-size:9.5px">${s.type||'—'}</span></td>
-              <td style="font-size:11px;color:var(--t2)">${s.mat||'—'} / ${s.plating||'—'}</td>
-              <td style="font-size:11px;color:var(--t2)">${s.sz1||'—'}${s.sz2?` (${s.sz2})`:''}</td>
-              <td style="font-size:10.5px;color:var(--t3);white-space:nowrap">${createdFmt}</td>
-              <td style="font-size:11px">${s.due||'—'}</td>
-              <td>${ddTag(s.due)}</td>
               <td onclick="event.stopPropagation()" style="position:relative">
                 <span class="chip ${SMP_CLS[s.status]||''}" style="font-size:9.5px;cursor:pointer;user-select:none"
                   onclick="openSmpStatusDropdown(event,${s.id})" title="클릭하여 상태 변경">${s.status} ▾</span>
               </td>
-              <td onclick="event.stopPropagation()">
-                ${sourceDocs.length
-                  ?`<div style="display:flex;gap:3px">
-                      ${sourceDocs.slice(0,2).map((doc,i)=>`<div title="${(doc.name||'').replace(/"/g,'')}" style="width:32px;height:32px;border-radius:4px;overflow:hidden;border:1.5px solid var(--gold-line);cursor:pointer" onclick="openPrevList(window['${srcKey}'],${i},true)"><img src="${doc.url}" style="width:100%;height:100%;object-fit:cover;display:block"></div>`).join('')}
-                    </div>`
-                  :`<span style="font-size:10px;color:var(--t3)">없음</span>`}
-              </td>
+              <td style="font-size:11px;color:var(--t2)">${s.mat||'—'} / ${s.plating||'—'}</td>
+              <td style="font-size:11px;color:var(--t2)">${s.sz1||'—'}${s.sz2?` (${s.sz2})`:''}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn bgo bs" onclick="openInvoice(${s.id})" style="font-size:10px;padding:3px 8px">🧾</button>
               </td>
+              <td style="font-size:10.5px;color:var(--t3);white-space:nowrap">${createdFmt}</td>
+              <td style="font-size:11px">${s.due||'—'}</td>
+              <td>${ddTag(s.due)}</td>
             </tr>`;
           }).join(''):
           `<tr><td colspan="12" style="text-align:center;padding:32px;color:var(--t3)">
@@ -6591,6 +6620,74 @@ function deleteBulkSamples(){
     showToast(`✓ ${ids.length}개 삭제됨`,'var(--grn)');
   },'샘플 삭제','🗑');
 }
+// ── 샘플 의뢰 엑셀 일괄 다운로드 (의뢰일 빠른 순) ──
+function exportSelectedSamplesExcel(){
+  if(!window._smpChecked||!window._smpChecked.size){showToast('⚠ 항목을 선택해 주세요','var(--org)');return;}
+  const ids=[...window._smpChecked];
+  const selected=ids.map(id=>samples.find(s=>s.id==id)).filter(Boolean);
+  if(!selected.length){showToast('⚠ 선택된 샘플을 찾을 수 없습니다','var(--red)');return;}
+  // 의뢰일 빠른 순 (오래된 → 최근). 의뢰일 없는 건 맨 뒤로
+  selected.sort((a,b)=>{
+    const da=a.reqDate||'9999-12-31';
+    const db=b.reqDate||'9999-12-31';
+    return da.localeCompare(db);
+  });
+  const headers=[
+    'No.','샘플명\nSample Name','품번\nItem Code','유형\nType','담당자\nManager','상태\nStatus',
+    '의뢰일\nRequest Date','납기일\nDue Date','D-day','발주량\nQty',
+    '소재\nMaterial','도금\nPlating','사이즈1\nSize1','사이즈2\nSize2','사이즈3\nSize3','사이즈4\nSize4',
+    '중량\nWeight','각인\nEngraving','입고원가\nCost Price','샘플단가\nUnit Price','개발비\nDev Cost','합계\nTotal',
+    '체크리스트\nChecklist','생성일자\nCreated'
+  ];
+  const rows=selected.map((s,i)=>{
+    const cost=+s.costPrice||0,unit=+s.unitPrice||0,dev=+s.devCost||0;
+    const total=cost+unit+dev;
+    let dd='';
+    if(s.due){
+      const td=new Date();td.setHours(0,0,0,0);
+      const dt=new Date(s.due);dt.setHours(0,0,0,0);
+      const d=Math.round((dt-td)/(1000*60*60*24));
+      dd=d<0?`D+${-d}`:d===0?'D-0':`D-${d}`;
+    }
+    const checklist=Array.isArray(s.notes)
+      ? s.notes.map(n=>typeof n==='object'?(n.checked?'[✓] ':'[ ] ')+n.text:n).join(' / ')
+      : '';
+    let createdFmt='';
+    if(s.id){const d=new Date(+s.id);if(!isNaN(d))createdFmt=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+    return[
+      i+1,s.name||'',s.itemCode||'',s.type||'',s.manager||'',s.status||'',
+      s.reqDate||'',s.due||'',dd,s.qty||'',
+      s.mat||'',s.plating||'',s.sz1||'',s.sz2||'',s.sz3||'',s.sz4||'',
+      s.wt||'',s.engr||'',cost||'',unit||'',dev||'',total||'',
+      checklist,createdFmt
+    ];
+  });
+  const aoa=[headers,...rows];
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[
+    {wch:5},{wch:24},{wch:14},{wch:11},{wch:11},{wch:10},
+    {wch:13},{wch:13},{wch:9},{wch:9},
+    {wch:18},{wch:13},{wch:14},{wch:14},{wch:14},{wch:14},
+    {wch:11},{wch:13},{wch:12},{wch:12},{wch:12},{wch:12},
+    {wch:40},{wch:13}
+  ];
+  ws['!rows']=[{hpt:34}];
+  ws['!freeze']={xSplit:0,ySplit:1};
+  // 숫자 포맷
+  for(let r=1;r<aoa.length;r++){
+    [18,19,20,21].forEach(col=>{
+      const addr=XLSX.utils.encode_cell({r,c:col});
+      if(ws[addr]&&typeof ws[addr].v==='number')ws[addr].z='#,##0';
+    });
+  }
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'샘플의뢰');
+  const today=toLocalDateStr(new Date());
+  const fname=`샘플의뢰_${today}_${selected.length}건.xlsx`;
+  XLSX.writeFile(wb,fname);
+  showToast(`✓ ${fname} 다운로드`,'var(--grn)',3500);
+}
+
 function openBulkInvoice(){
   if(!window._smpChecked||!window._smpChecked.size){showToast('⚠ 항목을 선택해 주세요','var(--org)');return;}
   const ids=[...window._smpChecked];
@@ -7329,6 +7426,125 @@ function showToast(msg, bg, duration){
 let ordSubTab = 'inprogress';
 function setOrdSubTab(v){ ordSubTab=v; renderOrder(); }
 
+// ── 발주 체크박스 토글 ──
+function toggleOrdChk(id,chk){
+  if(!window._ordChecked) window._ordChecked=new Set();
+  if(chk) window._ordChecked.add(id);
+  else window._ordChecked.delete(id);
+  const bar=document.getElementById('ordBulkBar');
+  if(bar){
+    bar.style.display=window._ordChecked.size?'flex':'none';
+    const lbl=bar.querySelector('span');
+    if(lbl) lbl.textContent=window._ordChecked.size+'건 선택됨';
+  }
+}
+
+// ── 단일 발주 엑셀 다운로드 ──
+function exportOrderExcel(ordId){
+  const o=orders.find(x=>x.id==ordId);
+  if(!o){ showToast('⚠ 발주서를 찾을 수 없습니다','var(--red)'); return; }
+  buildOrderExcel([o]);
+}
+
+// ── 선택한 발주서들 일괄 엑셀 다운로드 ──
+function exportSelectedOrdersExcel(){
+  if(!window._ordChecked||!window._ordChecked.size){
+    showToast('⚠ 발주서를 선택해 주세요','var(--org)');
+    return;
+  }
+  const ids=[...window._ordChecked];
+  const selected=ids.map(id=>orders.find(o=>o.id==id)).filter(Boolean);
+  if(!selected.length){
+    showToast('⚠ 선택된 발주서를 찾을 수 없습니다','var(--red)');
+    return;
+  }
+  buildOrderExcel(selected);
+}
+
+// ── 발주서 엑셀 빌더 — 모든 품목 한 시트에 펼침 (한국어/영문 헤더) ──
+function buildOrderExcel(orderList){
+  if(!orderList||!orderList.length) return;
+
+  // 주문일자 빠른 순 (오래된 → 최근). 주문일 없는 건 맨 뒤로
+  orderList=[...orderList].sort((a,b)=>{
+    const da=a.date||'9999-12-31';
+    const db=b.date||'9999-12-31';
+    return da.localeCompare(db);
+  });
+
+  const headers=[
+    'No.','발주번호\nP/O No.','업체명\nVendor','담당자\nManager','발주일\nOrder Date',
+    '요청 출고일\nShip Date','진행 상태\nStatus','품번\nItem Code','품목명\nItem Name',
+    '소재\nMaterial','도금\nPlating','규격\nSize','발주 수량\nOrder Qty',
+    '입고 수량\nReceived','잔량\nRemaining','진행률\nProgress',
+    '단가 (원)\nUnit Price','금액 (원)\nAmount','비고\nNote','발주 메모\nMemo'
+  ];
+
+  const dataRows=[];
+  let no=0;
+  orderList.forEach(o=>{
+    const status=o.status||'진행중';
+    const memoText = Array.isArray(o.memoList)&&o.memoList.length
+      ? o.memoList.map(n=>(n.checked?'[✓] ':'[ ] ')+n.text).join(' / ')
+      : (o.memo||'');
+    const rows=(o.rows&&o.rows.length)?o.rows:[{}];
+    rows.forEach(r=>{
+      no++;
+      const ordQty=parseOrdQty(r.qty);
+      const rcvTotal=(r.rcvHistory||[]).reduce((s,h)=>s+(+h.qty||0),0);
+      const remain=Math.max(ordQty-rcvTotal,0);
+      const pct=ordQty>0?rcvTotal/ordQty:'';
+      const unitPrice=+r.unitPrice||0;
+      const amount=unitPrice*ordQty;
+      dataRows.push([
+        no,o.no||'',o.vendor||'',o.manager||'',o.date||'',
+        o.ship||'',status,r.itemCode||'',r.name||'',
+        r.mat||'',r.plating||'',r.size||'',
+        ordQty||(r.qty?r.qty:''),rcvTotal,remain,pct,
+        unitPrice||'',amount||'',r.note||'',memoText
+      ]);
+    });
+  });
+
+  const aoa=[headers,...dataRows];
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[
+    {wch:5},{wch:18},{wch:22},{wch:11},{wch:13},
+    {wch:15},{wch:11},{wch:14},{wch:30},
+    {wch:18},{wch:13},{wch:13},{wch:12},
+    {wch:12},{wch:12},{wch:10},
+    {wch:12},{wch:14},{wch:24},{wch:30}
+  ];
+  ws['!rows']=[{hpt:34}];
+  ws['!freeze']={xSplit:0,ySplit:1};
+  for(let r=1;r<aoa.length;r++){
+    [12,13,14].forEach(col=>{
+      const addr=XLSX.utils.encode_cell({r,c:col});
+      if(ws[addr]&&typeof ws[addr].v==='number')ws[addr].z='#,##0';
+    });
+    const pAddr=XLSX.utils.encode_cell({r,c:15});
+    if(ws[pAddr]&&typeof ws[pAddr].v==='number')ws[pAddr].z='0%';
+    [16,17].forEach(col=>{
+      const addr=XLSX.utils.encode_cell({r,c:col});
+      if(ws[addr]&&typeof ws[addr].v==='number')ws[addr].z='#,##0';
+    });
+  }
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'발주 품목');
+  const today=toLocalDateStr(new Date());
+  let fname;
+  if(orderList.length===1){
+    const o=orderList[0];
+    const safeNo=(o.no||'').replace(/[\\/:*?"<>|]/g,'_');
+    const safeVendor=(o.vendor||'').replace(/[\\/:*?"<>|]/g,'_').substring(0,12);
+    fname=`발주서_${safeVendor}_${safeNo||today}.xlsx`;
+  } else {
+    fname=`발주서_${today}_${orderList.length}건.xlsx`;
+  }
+  XLSX.writeFile(wb,fname);
+  showToast(`✓ ${fname} 다운로드 (${orderList.length}건 발주 · ${dataRows.length}개 품목)`,'var(--grn)',3500);
+}
+
 function renderOrder(){
   const c=document.getElementById('content');
   let list=[...orders];
@@ -7437,8 +7653,15 @@ function renderOrder(){
   <div id="ordTabParseResult"></div>
 
   <div class="card">
-    <div class="ch">
-      <div class="ch-t">발주 · 공정 현황 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${orders.length}건)</span></div>
+    <div class="ch" style="flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+        <div class="ch-t">발주 · 공정 현황 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${orders.length}건)</span></div>
+        <div id="ordBulkBar" style="display:${window._ordChecked&&window._ordChecked.size?'flex':'none'};align-items:center;gap:8px;padding:4px 12px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;font-size:11.5px">
+          <span style="color:var(--gold-lt);font-weight:600">${window._ordChecked?window._ordChecked.size:0}건 선택됨</span>
+          <button class="btn bs" onclick="exportSelectedOrdersExcel()" style="font-size:11px;background:var(--grn);color:#fff;border:none;border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit">📊 엑셀 일괄 다운로드</button>
+          <button class="btn bgo bs" onclick="window._ordChecked.clear();renderOrder()" style="font-size:11px">해제</button>
+        </div>
+      </div>
       <button class="btn bp bs" onclick="ordRowsBuf=[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];openOrdModal(null)">+ 발주서 등록</button>
     </div>
     <div class="frow">
@@ -7667,11 +7890,34 @@ function renderOrder(){
         ? '<span style="font-size:9.5px;background:rgba(192,48,48,.12);color:var(--red);border:1px solid rgba(192,48,48,.3);padding:1px 7px;border-radius:10px;font-weight:700">취소</span>'
         : '<span style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700">진행중</span>';
 
-      return`<div style="border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden;${urg&&!isOrdDone?'border-color:rgba(192,48,48,.4)':warn&&!isOrdDone?'border-color:rgba(168,90,16,.35)':isOrdDone?'border-color:rgba(46,139,44,.3)':''}margin-bottom:0;${isOrdDone||isOrdCanceled?'opacity:.75':''}">
-        <div style="display:flex;align-items:stretch;padding:10px 14px;gap:12px;cursor:pointer;background:${isOrdDone?'rgba(46,139,44,.04)':isOrdCanceled?'rgba(192,48,48,.04)':urg?'rgba(192,48,48,.04)':warn?'rgba(168,90,16,.04)':'var(--s1)'}" onclick="ordRowsBuf=[...(orders.find(x=>x.id===${o.id})?.rows||[])].map(r=>({...r}));openOrdModal(${o.id})">
+      const isOrdChecked=window._ordChecked&&window._ordChecked.has(o.id);
+      return`<div style="border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden;${isOrdChecked?'border-color:var(--gold);box-shadow:0 0 0 1px var(--gold-line)':urg&&!isOrdDone?'border-color:rgba(192,48,48,.4)':warn&&!isOrdDone?'border-color:rgba(168,90,16,.35)':isOrdDone?'border-color:rgba(46,139,44,.3)':''}margin-bottom:0;${isOrdDone||isOrdCanceled?'opacity:.75':''}">
+        <div style="display:flex;align-items:stretch;padding:10px 14px;gap:12px;cursor:pointer;background:${isOrdChecked?'rgba(139,105,20,.06)':isOrdDone?'rgba(46,139,44,.04)':isOrdCanceled?'rgba(192,48,48,.04)':urg?'rgba(192,48,48,.04)':warn?'rgba(168,90,16,.04)':'var(--s1)'}" onclick="ordRowsBuf=[...(orders.find(x=>x.id===${o.id})?.rows||[])].map(r=>({...r}));openOrdModal(${o.id})">
+          <div onclick="event.stopPropagation()" style="display:flex;align-items:flex-start;padding-top:2px;flex-shrink:0">
+            <input type="checkbox" ${isOrdChecked?'checked':''} onchange="toggleOrdChk(${o.id},this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:var(--gold)">
+          </div>
           <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:0">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               ${vendorInitHtml(o.vendor, true)}
+              ${(()=>{
+                const nm=(o.vendor||'').trim();
+                let init='';
+                if(nm){
+                  const cl=clients.find(c=>(c.name||'').trim()===nm||(c.initials||'').trim().toUpperCase()===nm.toUpperCase());
+                  if(cl && cl.initials){init=cl.initials.trim().toUpperCase();}
+                  else{
+                    const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
+                    const words=clean.split(/\s+/);
+                    if(words.length>=2)init=(words[0][0]+(words[1][0]||'')).toUpperCase();
+                    else init=clean.slice(0,2).toUpperCase();
+                  }
+                }
+                let mmdd='';
+                if(o.date){const m=o.date.match(/^\d{4}-(\d{2})-(\d{2})/);if(m)mmdd=`${m[1]}/${m[2]}`;}
+                if(!init && !mmdd)return '';
+                const label=[init, mmdd].filter(Boolean).join(' ');
+                return `<span style="font-size:11px;font-weight:700;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:2px 8px;border-radius:4px;font-family:monospace;letter-spacing:.3px;white-space:nowrap" title="${nm} · 발주일 ${o.date||'—'}">${label}</span>`;
+              })()}
               <span style="font-size:13px;font-weight:700;${isOrdDone||isOrdCanceled?'text-decoration:line-through;color:var(--t3)':''}">${o.vendor||'—'}</span>
               <span style="font-size:10.5px;color:var(--t3);font-family:monospace">${o.no||''}</span>
               ${o.manager?`<span style="font-size:10.5px;color:var(--t2)">${o.manager}</span>`:''}
@@ -7683,9 +7929,9 @@ function renderOrder(){
               <span style="font-size:10.5px;color:var(--t3)">등록 ${createdFmt}</span>
               ${o.completedAt?`<span style="font-size:10.5px;color:var(--grn)">완료 ${fmt(o.completedAt.split('T')[0])}</span>`:''}
             </div>
-            <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px">
-              ${rows.map(r=>`<span style="display:inline-flex;align-items:center;gap:4px;font-size:10.5px;padding:2px 8px 2px ${r.img?'2px':'8px'};border-radius:4px;background:var(--s2);border:1px solid var(--bdr)">
-                ${r.img?`<img src="${r.img}" style="width:18px;height:18px;object-fit:cover;border-radius:3px;border:1px solid var(--bdr);flex-shrink:0">`:''}
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+              ${rows.map(r=>`<span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:3px 9px 3px ${r.img?'3px':'9px'};border-radius:5px;background:var(--s2);border:1px solid var(--bdr)">
+                ${r.img?`<img src="${r.img}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\'").replace(/"/g,'&quot;')}'}],0,false)" title="클릭하여 크게 보기">`:''}
                 <span>${r.name||''}${r.qty?`<span style="color:var(--t3)"> ×${r.qty}</span>`:''}</span>
               </span>`).join('')}
             </div>
@@ -7698,6 +7944,7 @@ function renderOrder(){
               ${isOrdDone
                 ? `<button onclick="revertOrdComplete(${o.id})" title="완료 취소" style="padding:3px 7px;font-size:10px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--t2);font-family:inherit;white-space:nowrap">↺ 되돌리기</button>`
                 : `<button onclick="completeOrd(${o.id})" title="출고 완료 처리" style="padding:3px 9px;font-size:10px;background:var(--grn);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;white-space:nowrap;font-weight:600">✓ 완료</button>`}
+              <button onclick="exportOrderExcel(${o.id})" title="중국 공장 송부용 엑셀 다운로드" style="padding:3px 7px;font-size:10px;background:rgba(46,139,44,.1);border:1px solid rgba(46,139,44,.35);border-radius:4px;cursor:pointer;color:var(--grn);font-family:inherit;white-space:nowrap;font-weight:600">📊 엑셀</button>
               <button onclick="openOrdDeliveryNote(${o.id})" style="padding:3px 7px;font-size:10px;background:var(--blu-bg);border:1px solid rgba(26,109,181,.3);border-radius:4px;cursor:pointer;color:var(--blu);font-family:inherit;white-space:nowrap">📋 출하지시서</button>
               <button onclick="openOrdTaxInvoice(${o.id})" style="padding:3px 7px;font-size:10px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;cursor:pointer;color:var(--gold-lt);font-family:inherit;white-space:nowrap">🧾 거래명세서</button>
             </div>
