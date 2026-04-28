@@ -5982,8 +5982,94 @@ function renderDash(){
 
   ${renderCalWidget()}
 
+  ${renderTodayTasksPanel()}
+
   ${renderWeekSchedulePanel()}
   `;
+}
+
+// ── 오늘 업무 체크리스트 패널 (대시보드용) ──
+function renderTodayTasksPanel(){
+  const todayStr=toLocalDateStr(new Date());
+  const todayTasks=tasks.filter(t=>t.date===todayStr);
+  // 카테고리별 정렬: 업무 → 커머스 → 발주출고 → 샘플출고 → 중국입고 → 중국출고
+  const catOrd={'업무':1,'커머스':2,'발주출고':3,'샘플출고':4,'중국입고':5,'중국출고':6};
+  todayTasks.sort((a,b)=>{
+    const ca=catOrd[a.cat]||9,cb=catOrd[b.cat]||9;
+    if(ca!==cb)return ca-cb;
+    const apa=a.ap||'',apb=b.ap||'';
+    if(apa!==apb)return apa.localeCompare(apb);
+    // 미완료를 위로
+    if(!!a.done!==!!b.done)return a.done?1:-1;
+    return (a.id||0)-(b.id||0);
+  });
+
+  const total=todayTasks.length;
+  const done=todayTasks.filter(t=>t.done).length;
+  const pct=total>0?Math.round(done/total*100):0;
+
+  if(!total){
+    return `<div class="card">
+      <div class="ch">
+        <div><div class="ch-t">오늘의 업무</div><div class="ch-s">${todayStr}</div></div>
+        <button class="btn bgo bs" onclick="switchTab('schedule',document.querySelectorAll('.tab-btn')[4])">업무일지 →</button>
+      </div>
+      <div style="padding:24px;text-align:center;color:var(--t3);font-size:12px">
+        오늘 등록된 업무가 없습니다 — <span style="color:var(--gold-lt);cursor:pointer;text-decoration:underline" onclick="switchTab('schedule',document.querySelectorAll('.tab-btn')[4])">업무일지에서 추가</span>
+      </div>
+    </div>`;
+  }
+
+  // 카테고리별 클래스/배경 매핑
+  const CAT_BG={
+    '업무':'rgba(80,64,160,.06)',
+    '커머스':'rgba(46,139,44,.06)',
+    '발주출고':'rgba(168,90,16,.06)',
+    '샘플출고':'rgba(26,109,181,.06)',
+    '중국입고':'rgba(192,48,48,.06)',
+    '중국출고':'rgba(192,48,48,.06)'
+  };
+  const CAT_CLR={
+    '업무':'var(--prp)',
+    '커머스':'var(--grn)',
+    '발주출고':'var(--org)',
+    '샘플출고':'var(--blu)',
+    '중국입고':'var(--red)',
+    '중국출고':'var(--red)'
+  };
+
+  const rows=todayTasks.map(t=>{
+    const bg=CAT_BG[t.cat]||'var(--s2)';
+    const clr=CAT_CLR[t.cat]||'var(--t2)';
+    const escCont=String(t.cont||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const escNote=String(t.note||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return `<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-bottom:1px solid var(--bdr-lt);background:${t.done?'var(--s2)':'transparent'};transition:background .15s">
+      <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask(${t.id})" style="width:17px;height:17px;cursor:pointer;accent-color:var(--gold);flex-shrink:0;margin-top:2px">
+      <div style="flex:1;min-width:0;cursor:pointer" onclick="switchTab('schedule',document.querySelectorAll('.tab-btn')[4])">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap">
+          <span style="font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:3px;background:${bg};color:${clr};letter-spacing:.2px">${t.cat||''}</span>
+          ${t.ap?`<span style="font-size:9.5px;color:var(--t3);font-weight:600">${t.ap}</span>`:''}
+          ${t.assignee||t.ap2?`<span style="font-size:10px;color:var(--t3)">${t.assignee||t.ap2||''}</span>`:''}
+        </div>
+        <div style="font-size:12.5px;font-weight:500;${t.done?'text-decoration:line-through;color:var(--t3)':'color:var(--t1)'};word-break:break-word">${escCont}</div>
+        ${t.note?`<div style="font-size:10.5px;color:var(--t3);margin-top:2px">${escNote}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<div class="card">
+    <div class="ch">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div><div class="ch-t">오늘의 업무</div><div class="ch-s">${todayStr} · ${done}/${total} 완료</div></div>
+        ${total>0?`<div style="display:flex;align-items:center;gap:6px;background:var(--gold-bg);padding:3px 9px;border-radius:11px;border:1px solid var(--gold-line)">
+          <div style="width:60px;height:5px;background:var(--s3);border-radius:3px;overflow:hidden"><div style="width:${pct}%;height:100%;background:var(--gold-lt);transition:width .3s"></div></div>
+          <span style="font-size:10.5px;font-weight:700;color:var(--gold-lt);font-family:'Cormorant Garamond',serif">${pct}%</span>
+        </div>`:''}
+      </div>
+      <button class="btn bgo bs" onclick="switchTab('schedule',document.querySelectorAll('.tab-btn')[4])">업무일지 →</button>
+    </div>
+    <div>${rows}</div>
+  </div>`;
 }
 
 function processUploadFilesTo(files,resultEl){
