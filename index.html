@@ -6859,12 +6859,12 @@ function renderSample(){
     <div class="ch" style="flex-wrap:wrap;gap:8px">
       <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
         <div class="ch-t">샘플 의뢰 현황 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${list.length}건)</span></div>
-        <div id="smpBulkBar" style="display:${window._smpChecked.size?'flex':'none'};align-items:center;gap:8px;padding:4px 12px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;font-size:11.5px">
-          <span style="color:var(--gold-lt);font-weight:600">${window._smpChecked.size}건 선택됨</span>
-          <button class="btn bp bs" onclick="openBulkInvoice()" style="background:var(--gold-lt);font-size:11px">🧾 선택 항목 명세서 발행</button>
-          <button class="btn bs" onclick="exportSelectedSamplesExcel()" style="font-size:11px;background:var(--grn);color:#fff;border:none;border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit">📊 엑셀</button>
-          <button class="btn bs" onclick="deleteBulkSamples()" style="font-size:11px;background:var(--red);color:#fff;border:none;border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit">🗑 선택 삭제</button>
-          <button class="btn bgo bs" onclick="window._smpChecked.clear();renderSample()" style="font-size:11px">해제</button>
+        <div id="smpBulkBar" style="display:flex;align-items:center;gap:6px;padding:4px 12px;background:${window._smpChecked.size?'var(--gold-bg)':'var(--s2)'};border:1px solid ${window._smpChecked.size?'var(--gold-line)':'var(--bdr)'};border-radius:6px;font-size:11.5px;transition:all .15s">
+          <span style="color:${window._smpChecked.size?'var(--gold-lt)':'var(--t3)'};font-weight:600">${window._smpChecked.size?window._smpChecked.size+'건 선택됨':'샘플 선택'}</span>
+          <button class="btn bs" onclick="exportSelectedSamplesExcel()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--grn)':'var(--s3)'};color:${window._smpChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📊 엑셀</button>
+          <button class="btn bs" onclick="openBulkInvoice()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--gold-bg)':'var(--s3)'};color:${window._smpChecked.size?'var(--gold-lt)':'var(--t3)'};border:1px solid ${window._smpChecked.size?'var(--gold-line)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">🧾 명세서 발행</button>
+          <button class="btn bs" onclick="deleteBulkSamples()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--red)':'var(--s3)'};color:${window._smpChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">🗑 선택 삭제</button>
+          ${window._smpChecked.size?`<button class="btn bgo bs" onclick="window._smpChecked.clear();renderSample()" style="font-size:11px">해제</button>`:''}
         </div>
       </div>
       <button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 직접 등록</button>
@@ -7208,13 +7208,8 @@ function changeSmpStatus(sid, newStatus){
 function toggleSmpChk(id,chk){
   if(!window._smpChecked)window._smpChecked=new Set();
   if(chk)window._smpChecked.add(id);else window._smpChecked.delete(id);
-  // update bulk bar without full re-render
-  const bar=document.getElementById('smpBulkBar');
-  if(bar){
-    bar.style.display=window._smpChecked.size?'flex':'none';
-    const lbl=bar.querySelector('span');
-    if(lbl)lbl.textContent=window._smpChecked.size+'건 선택됨';
-  }
+  // 발주서와 동일하게 전체 재렌더 — 색상·비활성 상태 정확히 반영
+  renderSample();
 }
 function toggleAllSmpChk(chk){
   if(!window._smpChecked)window._smpChecked=new Set();
