@@ -284,12 +284,13 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 .g2e{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .col{display:flex;flex-direction:column;gap:12px}
 /* ── Monthly bar chart ── */
-.bar-chart{display:flex;align-items:flex-end;gap:6px;height:120px;padding:0 4px}
-.bar-col{display:flex;flex-direction:column;align-items:center;flex:1;gap:3px}
+.bar-chart{display:flex;align-items:stretch;gap:6px;height:120px;padding:0 4px}
+.bar-col{display:flex;flex-direction:column;align-items:center;flex:1;height:100%;gap:3px}
+.bar-area{flex:1;width:100%;display:flex;flex-direction:column;justify-content:flex-end;min-height:0}
 .bar{width:100%;border-radius:4px 4px 0 0;transition:height .4s;cursor:pointer;min-height:2px}
 .bar:hover{opacity:.8}
-.bar-lbl{font-size:9.5px;color:var(--t3);white-space:nowrap}
-.bar-val{font-size:9px;color:var(--t2)}
+.bar-lbl{font-size:9.5px;color:var(--t3);white-space:nowrap;flex-shrink:0}
+.bar-val{font-size:9px;color:var(--t2);flex-shrink:0;height:12px;line-height:12px}
 /* ── Product DB ── */
 .prod-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;padding:14px}
 .prod-card{background:var(--s1);border:1px solid var(--bdr);border-radius:8px;overflow:hidden;cursor:pointer;transition:.15s}
@@ -361,14 +362,14 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 <div class="topnav">
   <div class="logo">EK</div>
   <div class="tab-nav">
-    <button class="tab-btn on" onclick="switchTab('dash',this)">◈ 대시보드</button>
-    <button class="tab-btn" onclick="switchTab('sales',this)">📊 영업관리</button>
-    <button class="tab-btn" onclick="switchTab('sample',this)">◉ 샘플의뢰 <span class="tb-badge" id="bdgS" style="display:none">0</span></button>
-    <button class="tab-btn" onclick="switchTab('order',this)">▦ 발주·공정 <span class="tb-badge" id="bdgO" style="display:none">0</span><span class="tb-badge" id="bdgP" style="display:none">0</span></button>
-    <button class="tab-btn" onclick="switchTab('schedule',this)">☰ 업무일지</button>
-    <button class="tab-btn" onclick="switchTab('as',this)">🔧 AS관리 <span class="tb-badge" id="bdgAS" style="display:none">0</span></button>
-    <button class="tab-btn" onclick="switchTab('products',this)">📦 제품DB</button>
-    <button class="tab-btn" onclick="switchTab('invoices',this)">🧾 거래명세서</button>
+    <button class="tab-btn on" onclick="switchTab('dash',this)" data-tab="dash">◈ 대시보드</button>
+    <button class="tab-btn" onclick="switchTab('schedule',this)" data-tab="schedule">☰ 업무일지</button>
+    <button class="tab-btn" onclick="switchTab('sample',this)" data-tab="sample">◉ 샘플의뢰 <span class="tb-badge" id="bdgS" style="display:none">0</span></button>
+    <button class="tab-btn" onclick="switchTab('order',this)" data-tab="order">▦ 생산관리 <span class="tb-badge" id="bdgO" style="display:none">0</span><span class="tb-badge" id="bdgP" style="display:none">0</span></button>
+    <button class="tab-btn" onclick="switchTab('as',this)" data-tab="as">🔧 AS관리 <span class="tb-badge" id="bdgAS" style="display:none">0</span></button>
+    <button class="tab-btn" onclick="switchTab('products',this)" data-tab="products">📦 제품DB</button>
+    <button class="tab-btn" onclick="switchTab('sales',this)" data-tab="sales">📊 영업관리</button>
+    <button class="tab-btn" onclick="switchTab('invoices',this)" data-tab="invoices">🧾 거래명세서</button>
   </div>
   <div class="nav-r">
     <div class="date-pill" id="topDate"></div>
@@ -2190,11 +2191,8 @@ function renderAS(){
   const getVendorInit=(name)=>{
     const nm=(name||'').trim();
     if(!nm) return '';
-    // 1) 고객사 DB에 등록된 업체면 해당 이니셜 사용
-    const cl=clients.find(c=>
-      (c.name||'').trim()===nm ||
-      (c.initials||'').trim().toUpperCase()===nm.toUpperCase()
-    );
+    // 1) 고객사 DB에 등록된 업체면 해당 이니셜 사용 (관대한 매칭)
+    const cl=findClientByVendor(nm);
     if(cl && cl.initials) return cl.initials.trim().toUpperCase();
     // 2) 자동 이니셜 생성 (공백 제거, 법인 표기 제거)
     const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
@@ -3185,8 +3183,12 @@ function renderInvoiceHistory(){
   if(invFilter.month||invFilter.vendor||(st&&st!=='전체')){
     h+='<button onclick="resetInvFilter()" style="padding:4px 10px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--bdr);color:var(--t3)">× 초기화</button>';
   }
-  // 엑셀 다운로드 버튼 (현재 필터된 결과 기준)
-  h+='<div style="margin-left:auto"><button onclick="openSalesExcelExport()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--grn);background:var(--grn-bg);color:var(--grn);font-weight:600">📊 매출내역 엑셀 다운로드</button></div>';
+  // 엑셀 다운로드 버튼 (현재 필터된 결과 기준) + Notion 좀비 정리
+  h+='<div style="margin-left:auto;display:flex;gap:6px">';
+  if(notionCfg.workerUrl && notionCfg.invDb){
+    h+='<button onclick="cleanupNotionInvoiceZombies()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);font-weight:600" title="Notion에만 남아있는 좀비 페이지를 모두 archive — 로컬에 없는 페이지만 정리">🧹 Notion 좀비 정리</button>';
+  }
+  h+='<button onclick="openSalesExcelExport()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--grn);background:var(--grn-bg);color:var(--grn);font-weight:600">📊 매출내역 엑셀 다운로드</button></div>';
   h+='</div>';
 
   // 테이블
@@ -3231,7 +3233,7 @@ function renderInvoiceHistory(){
     h+='<div style="padding:48px;text-align:center;color:var(--t3)">';
     h+='<div style="font-size:36px;margin-bottom:12px">🧾</div>';
     h+='<div>'+(invoiceHistory.length?'조건에 맞는 명세서가 없습니다':'발행된 거래명세서가 없습니다')+'</div>';
-    h+='<div style="font-size:11.5px;margin-top:6px">발주·공정 탭 → 발주서 카드 → 거래명세서 버튼으로 발행하세요</div></div>';
+    h+='<div style="font-size:11.5px;margin-top:6px">생산관리 탭 → 발주서 카드 → 거래명세서 버튼으로 발행하세요</div></div>';
   }
   h+='</div>';
   c.innerHTML=h;
@@ -3303,11 +3305,20 @@ function updateInvStatus(id,status){
 
 function deleteInvRecord(id){
   var v=invoiceHistory.find(function(x){return x.id==id;});
-  showConfirm((v&&v.vendor||'명세서')+' 이력을 삭제합니다.\n(Notion에서도 함께 삭제됩니다)',function(){
-    // 1) Notion에서 archive (다시 동기화 시 부활하지 않도록)
-    if(v && v._notionId){
-      nDelete(v._notionId).catch(function(e){
-        console.warn('Notion 삭제 실패:', e);
+  showConfirm((v&&v.vendor||'명세서')+' 이력을 삭제합니다.\n(Notion에서 같은 발주번호의 모든 페이지가 함께 삭제됩니다)',function(){
+    // 1) Notion에서 같은 발주번호/고객사/발행일을 가진 모든 페이지 archive
+    //    (중복으로 생성된 좀비 페이지까지 함께 정리)
+    if(v && notionCfg.workerUrl && notionCfg.invDb){
+      archiveAllMatchingInvoices(v.ordNo, v.vendor, v.issuedAt).then(function(res){
+        if(res.archived>1){
+          showToast('🧹 Notion 페이지 '+res.archived+'개 정리됨 (중복 좀비 포함)','var(--grn)',3000);
+        } else if(res.errors){
+          showToast('⚠ Notion 일부 삭제 실패 — 콘솔 확인','var(--org)',3000);
+        }
+      }).catch(function(e){
+        console.warn('Notion 일괄 삭제 실패:', e);
+        // 실패하면 fallback으로 _notionId만이라도 archive
+        if(v._notionId) nDelete(v._notionId).catch(function(){});
         showToast('⚠ Notion 삭제 실패 — 로컬만 삭제됨','var(--org)',3000);
       });
     }
@@ -3316,6 +3327,62 @@ function deleteInvRecord(id){
     save();renderInvoiceHistory();
     showToast('✓ 삭제됨','var(--grn)');
   },'이력 삭제','🗑');
+}
+
+// ── Notion 좀비 청소: 로컬에 없는데 Notion에만 살아있는 거래명세서 페이지를 모두 archive ──
+async function cleanupNotionInvoiceZombies(){
+  if(!notionCfg.workerUrl||!notionCfg.invDb){
+    showToast('⚠ Notion 설정이 없습니다','var(--red)');
+    return;
+  }
+  showToast('🔍 Notion 검사 중...','var(--blu)',2000);
+  let rows;
+  try{
+    rows=await nQueryAll(notionCfg.invDb);
+  }catch(e){
+    console.error('Notion 조회 실패:',e);
+    showToast('⚠ Notion 조회 실패 — 콘솔 확인','var(--red)',3000);
+    return;
+  }
+  // 로컬에 등록된 _notionId 집합
+  const localIds=new Set(invoiceHistory.map(v=>v._notionId).filter(Boolean));
+  // 로컬 발주번호+고객사 키 집합 (보조 매칭 — _notionId 없이 발행된 케이스 보호)
+  const localKeys=new Set(invoiceHistory.map(v=>(v.ordNo||'')+'|'+(v.vendor||'')).filter(k=>k!=='|'));
+  // 좀비 = Notion에 있는데 로컬에 매칭되는 게 없는 페이지
+  const zombies=rows.filter(r=>{
+    if(localIds.has(r.id)) return false;
+    const p=r.properties||{};
+    const key=(np.text(p['발주번호'])||'')+'|'+(np.title(p['고객사'])||'');
+    if(key!=='|' && localKeys.has(key)) return false;
+    return true;
+  });
+  if(!zombies.length){
+    showToast('✓ 좀비 페이지 없음 — Notion이 깨끗합니다','var(--grn)',2500);
+    return;
+  }
+  // 사용자 확인 (좀비 목록 미리보기)
+  const preview=zombies.slice(0,10).map(r=>{
+    const p=r.properties||{};
+    const v=np.title(p['고객사'])||'(고객사 없음)';
+    const o=np.text(p['발주번호'])||'(발주번호 없음)';
+    const d=np.date(p['발행일자'])||'';
+    return '• '+v+' — '+o+(d?' ('+d+')':'');
+  }).join('\n');
+  const more=zombies.length>10?'\n\n... 외 '+(zombies.length-10)+'건 더':'';
+  showConfirm(
+    'Notion에서 '+zombies.length+'개의 좀비 페이지를 archive 합니다.\n(로컬 거래명세서 이력에 없는 Notion 페이지들)\n\n'+preview+more+'\n\n계속하시겠습니까?',
+    async function(){
+      let ok=0,fail=0;
+      showToast('🧹 청소 중... ('+zombies.length+'건)','var(--blu)',3000);
+      for(const r of zombies){
+        try{ await nDelete(r.id); ok++; }
+        catch(e){ console.warn('archive 실패:',r.id,e); fail++; }
+      }
+      showToast('✓ '+ok+'건 청소 완료'+(fail?' ('+fail+'건 실패)':''), fail?'var(--org)':'var(--grn)', 4000);
+      renderInvoiceHistory();
+    },
+    'Notion 좀비 청소','🧹'
+  );
 }
 
 // ════════════════════════════════
@@ -3576,7 +3643,10 @@ function selectVendorFromModal(name,contact){
   sv('o_vendor',name);
   if(contact&&!gv('o_manager'))sv('o_manager',contact);
   closeM('mVendorSearch');
-  showToast(`✓ "${name}" 선택됨`,'var(--gold-lt)');
+  // 매칭된 고객사의 이니셜을 토스트에 함께 노출 — 사용자가 칩이 어떻게 표시될지 미리 확인 가능
+  const cl=findClientByVendor(name);
+  const initBadge=cl&&cl.initials?` [${cl.initials.toUpperCase()}]`:'';
+  showToast(`✓ "${name}"${initBadge} 선택됨`,'var(--gold-lt)');
 }
 
 // Worker URL: Cloudflare Worker 프록시
@@ -3829,6 +3899,34 @@ async function nUpdate(pageId,props){ return notionCall('PATCH','/pages/'+pageId
 async function nDelete(pageId){
   if(!notionCfg.workerUrl||!pageId) return;
   return notionCall('PATCH','/pages/'+pageId,{archived:true});
+}
+
+// ── 거래명세서 중복/좀비 청소: 같은 식별자로 매칭되는 Notion 페이지를 모두 archive ──
+// 매칭 키: 발주번호(ordNo) + 고객사(vendor) + 발행일(issuedAt)
+// 셋 다 일치하는 페이지는 같은 거래명세서로 간주하고 모두 archive
+async function archiveAllMatchingInvoices(ordNo, vendor, issuedAt){
+  if(!notionCfg.workerUrl||!notionCfg.invDb) return {archived:0, errors:0};
+  let archived=0, errors=0;
+  try{
+    const rows=await nQueryAll(notionCfg.invDb);
+    const matches=rows.filter(r=>{
+      const p=r.properties||{};
+      const rowOrdNo=np.text(p['발주번호']);
+      const rowVendor=np.title(p['고객사']);
+      const rowIssued=np.date(p['발행일자']);
+      // ordNo가 있으면 ordNo 우선 매칭, 없으면 vendor+issuedAt
+      if(ordNo && rowOrdNo) return rowOrdNo===ordNo;
+      return rowVendor===vendor && rowIssued===issuedAt;
+    });
+    for(const r of matches){
+      try{ await nDelete(r.id); archived++; }
+      catch(e){ console.warn('Notion 페이지 archive 실패:', r.id, e); errors++; }
+    }
+  }catch(e){
+    console.warn('Notion 거래명세서 검색 실패:', e);
+    errors++;
+  }
+  return {archived, errors};
 }
 
 // ════════════════════════════════
@@ -4978,8 +5076,31 @@ async function syncInvoiceToNotion(inv, update){
   if(inv.issuedAt) p["발행일자"]={"date":{"start":inv.issuedAt}};
   if(inv.shipDate) p["출고일자"]={"date":{"start":inv.shipDate}};
   if(inv.status)   p["상태"]={"select":{"name":inv.status}};
-  if(inv._notionId){ await nUpdate(inv._notionId,p); }
-  else{ const r=await nCreate(notionCfg.invDb,p); if(r?.id){ inv._notionId=r.id; save(); } }
+  if(inv._notionId){
+    await nUpdate(inv._notionId,p);
+    return;
+  }
+  // 중복 생성 방지: 같은 발주번호로 이미 Notion에 페이지가 있으면 그것을 update
+  // (race condition으로 _notionId가 누락된 채 재호출되어 중복 페이지가 생기는 문제 차단)
+  if(inv.ordNo){
+    try{
+      const rows=await nQueryAll(notionCfg.invDb);
+      const existing=rows.find(r=>{
+        const rp=r.properties||{};
+        const rowOrdNo=np.text(rp['발주번호']);
+        const rowVendor=np.title(rp['고객사']);
+        return rowOrdNo===inv.ordNo && rowVendor===(inv.vendor||'');
+      });
+      if(existing){
+        inv._notionId=existing.id;
+        save();
+        await nUpdate(existing.id,p);
+        return;
+      }
+    }catch(e){ console.warn('중복 검사 실패, 신규 생성으로 진행:',e); }
+  }
+  const r=await nCreate(notionCfg.invDb,p);
+  if(r?.id){ inv._notionId=r.id; save(); }
 }
 
 // ── Sales data (declared early to avoid TDZ) ──
@@ -6382,7 +6503,12 @@ function openOrdWithImgs(imgs){
 // ════════════════════════════════
 // TAB NAVIGATION
 // ════════════════════════════════
-const TAB_TITLES={dash:'대시보드',sample:'샘플 의뢰 관리',order:'발주·공정 관리',schedule:'업무 일지',sales:'영업 관리',as:'AS 관리',products:'제품 DB',invoices:'거래명세서'};
+const TAB_TITLES={dash:'대시보드',sample:'샘플 의뢰 관리',order:'생산관리',schedule:'업무 일지',sales:'영업 관리',as:'AS 관리',products:'제품 DB',invoices:'거래명세서'};
+// 탭 이름(data-tab)으로 버튼 엘리먼트 찾기 — 탭 순서 변경에 견고
+function getTabBtn(tabName){
+  return document.querySelector('.tab-btn[data-tab="'+tabName+'"]');
+}
+
 function switchTab(tab,el){
   currentTab=tab;
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('on'));
@@ -6420,12 +6546,18 @@ function renderTab(){
   {const sm=document.getElementById('salesModalArea');if(sm)sm.style.display='none';const dp=document.getElementById('slDp');if(dp)dp.style.display='none';}
 }
 function updateBadges(){
-  const urgP=procItems.filter(p=>!p.shipped&&dday(p.due)!==null&&dday(p.due)<=1).length;
-  setBdg('bdgP',urgP);
-  const urgS=samples.filter(s=>s.status!=='확정'&&s.status!=='취소'&&s.due&&dday(s.due)<=3).length;
-  setBdg('bdgS',urgS);
-  const urgO=orders.filter(o=>o.ship&&dday(o.ship)<=3&&dday(o.ship)>=0).length;
-  setBdg('bdgO',urgO);
+  // 진행중 샘플: 확정·취소가 아닌 모든 의뢰 (대시보드와 동일 정의)
+  const activeSmp=samples.filter(s=>s.status!=='확정'&&s.status!=='취소').length;
+  setBdg('bdgS',activeSmp);
+  // 진행중 발주: 출고완료·취소가 아닌 모든 발주 (기본값 '진행중'은 진행중으로 간주)
+  const activeOrd=orders.filter(o=>{
+    const st=o.status||'진행중';
+    return st!=='출고완료' && st!=='취소';
+  }).length;
+  setBdg('bdgO',activeOrd);
+  // 공정 배지는 사용 안 함 (발주 배지로 통합 표시)
+  setBdg('bdgP',0);
+  // AS는 그대로 — 미완료 건수
   const urgAS=asItems.filter(a=>a.status!=='완료'&&a.status!=='반송').length;
   setBdg('bdgAS',urgAS);
 }
@@ -6448,11 +6580,11 @@ function renderDash(){
 
   c.innerHTML=`
   <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
-    <div class="kpi k-r" onclick="switchTab('order',document.querySelectorAll('.tab-btn')[2])"><div class="kpi-l">오늘 출고</div><div class="kpi-v">${todayShip}</div><div class="kpi-d">건</div></div>
-    <div class="kpi k-o" onclick="switchTab('order',document.querySelectorAll('.tab-btn')[2])"><div class="kpi-l">납기임박 D-3</div><div class="kpi-v">${urgP}</div><div class="kpi-d">공정</div></div>
-    <div class="kpi k-b" onclick="switchTab('sample',document.querySelectorAll('.tab-btn')[1])"><div class="kpi-l">샘플 진행중</div><div class="kpi-v">${activeSmp}</div><div class="kpi-d">건</div></div>
-    <div class="kpi k-g" onclick="switchTab('order',document.querySelectorAll('.tab-btn')[2])"><div class="kpi-l">발주 진행중</div><div class="kpi-v">${activeOrd}</div><div class="kpi-d">건</div></div>
-    <div class="kpi k-p" onclick="switchTab('schedule',document.querySelectorAll('.tab-btn')[3])"><div class="kpi-l">오늘 업무</div><div class="kpi-v">${todayT}</div><div class="kpi-d">건</div></div>
+    <div class="kpi k-r" onclick="switchTab('order',getTabBtn('order'))"><div class="kpi-l">오늘 출고</div><div class="kpi-v">${todayShip}</div><div class="kpi-d">건</div></div>
+    <div class="kpi k-o" onclick="switchTab('order',getTabBtn('order'))"><div class="kpi-l">납기임박 D-3</div><div class="kpi-v">${urgP}</div><div class="kpi-d">공정</div></div>
+    <div class="kpi k-b" onclick="switchTab('sample',getTabBtn('sample'))"><div class="kpi-l">샘플 진행중</div><div class="kpi-v">${activeSmp}</div><div class="kpi-d">건</div></div>
+    <div class="kpi k-g" onclick="switchTab('order',getTabBtn('order'))"><div class="kpi-l">발주 진행중</div><div class="kpi-v">${activeOrd}</div><div class="kpi-d">건</div></div>
+    <div class="kpi k-p" onclick="switchTab('schedule',getTabBtn('schedule'))"><div class="kpi-l">오늘 업무</div><div class="kpi-v">${todayT}</div><div class="kpi-d">건</div></div>
   </div>
 
   ${todayShip?`<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:var(--r);font-size:12px"><span style="color:var(--red);font-weight:700;flex-shrink:0">🚨 오늘 출고</span><span>${procItems.filter(p=>!p.shipped&&p.due===todayStr).map(p=>`<b>${p.name}</b>`).join(' · ')}</span></div>`:''}
@@ -6462,7 +6594,7 @@ function renderDash(){
     if(!low.length)return '';
     const top=low.slice(0,5);
     const rest=low.length>5?` 외 ${low.length-5}건`:'';
-    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--org-bg);border:1px solid rgba(168,90,16,.3);border-radius:var(--r);font-size:12px;cursor:pointer" onclick="switchTab('product',document.querySelectorAll('.tab-btn')[5]);setTimeout(()=>{pdLowOnly=true;renderProducts()},100)">
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--org-bg);border:1px solid rgba(168,90,16,.3);border-radius:var(--r);font-size:12px;cursor:pointer" onclick="switchTab('products',getTabBtn('products'));setTimeout(()=>{pdLowOnly=true;renderProducts()},100)">
       <span style="color:var(--org);font-weight:700;flex-shrink:0">⚠ 재고 부족 (${low.length})</span>
       <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${top.map(p=>`<b>${p.name}</b> <span style="color:var(--t3)">${(+p.stock||0)}/${(+p.safetyStock||0)}</span>`).join(' · ')}${rest}</span>
       <span style="margin-left:auto;color:var(--org);font-size:11px;flex-shrink:0">제품DB →</span>
@@ -6501,10 +6633,10 @@ function renderTodayTasksPanel(){
     return `<div class="card">
       <div class="ch">
         <div><div class="ch-t">오늘의 업무</div><div class="ch-s">${todayStr}</div></div>
-        <button class="btn bgo bs" onclick="switchTab('schedule',document.querySelectorAll('.tab-btn')[4])">업무일지 →</button>
+        <button class="btn bgo bs" onclick="switchTab('schedule',getTabBtn('schedule'))">업무일지 →</button>
       </div>
       <div style="padding:24px;text-align:center;color:var(--t3);font-size:12px">
-        오늘 등록된 업무가 없습니다 — <span style="color:var(--gold-lt);cursor:pointer;text-decoration:underline" onclick="switchTab('schedule',document.querySelectorAll('.tab-btn')[4])">업무일지에서 추가</span>
+        오늘 등록된 업무가 없습니다 — <span style="color:var(--gold-lt);cursor:pointer;text-decoration:underline" onclick="switchTab('schedule',getTabBtn('schedule'))">업무일지에서 추가</span>
       </div>
     </div>`;
   }
@@ -6534,7 +6666,7 @@ function renderTodayTasksPanel(){
     const escNote=String(t.note||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     return `<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-bottom:1px solid var(--bdr-lt);background:${t.done?'var(--s2)':'transparent'};transition:background .15s">
       <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask(${t.id})" style="width:17px;height:17px;cursor:pointer;accent-color:var(--gold);flex-shrink:0;margin-top:2px">
-      <div style="flex:1;min-width:0;cursor:pointer" onclick="switchTab('schedule',document.querySelectorAll('.tab-btn')[4])">
+      <div style="flex:1;min-width:0;cursor:pointer" onclick="switchTab('schedule',getTabBtn('schedule'))">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap">
           <span style="font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:3px;background:${bg};color:${clr};letter-spacing:.2px">${t.cat||''}</span>
           ${t.ap?`<span style="font-size:9.5px;color:var(--t3);font-weight:600">${t.ap}</span>`:''}
@@ -6555,7 +6687,7 @@ function renderTodayTasksPanel(){
           <span style="font-size:10.5px;font-weight:700;color:var(--gold-lt);font-family:'Cormorant Garamond',serif">${pct}%</span>
         </div>`:''}
       </div>
-      <button class="btn bgo bs" onclick="switchTab('schedule',document.querySelectorAll('.tab-btn')[4])">업무일지 →</button>
+      <button class="btn bgo bs" onclick="switchTab('schedule',getTabBtn('schedule'))">업무일지 →</button>
     </div>
     <div>${rows}</div>
   </div>`;
@@ -6645,7 +6777,7 @@ function renderWeekSchedulePanel(){
   return`<div class="card">
     <div class="ch">
       <div><div class="ch-t">이번 주 출고 · 납기 일정</div><div class="ch-s">오늘부터 7일</div></div>
-      <button class="btn bgo bs" onclick="switchTab('schedule',document.querySelectorAll('.tab-btn')[4])">업무일지 →</button>
+      <button class="btn bgo bs" onclick="switchTab('schedule',getTabBtn('schedule'))">업무일지 →</button>
     </div>
     <div style="display:flex;overflow-x:auto">${cols}</div>
   </div>`;
@@ -6783,7 +6915,7 @@ function renderCalWidget(){
 }
 // 달력 이벤트 클릭 네비게이션
 function calGoOrder(ordId){
-  switchTab('order',document.querySelectorAll('.tab-btn')[2]);
+  switchTab('order',getTabBtn('order'));
   setTimeout(()=>{
     const o=orders.find(x=>x.id===ordId);
     if(o){
@@ -6796,14 +6928,14 @@ function calGoOrder(ordId){
 }
 function calGoProc(procId){
   // 공정 단독(발주와 연결 안 됨) — 발주 탭으로 이동
-  switchTab('order',document.querySelectorAll('.tab-btn')[2]);
+  switchTab('order',getTabBtn('order'));
   setTimeout(()=>{
     const p=procItems.find(x=>x.id===procId);
     if(p){ showToast(`공정 "${p.name}" — ${p.vendor||''}`,'var(--blu)',3000); }
   },120);
 }
 function calGoSample(smpId){
-  switchTab('sample',document.querySelectorAll('.tab-btn')[1]);
+  switchTab('sample',getTabBtn('sample'));
   setTimeout(()=>{
     const s=samples.find(x=>x.id===smpId);
     if(s){ openSmpModal(smpId); }
@@ -6814,9 +6946,9 @@ function calGoTask(ds){
   schedView='day';
   const d=new Date(ds);
   schedWOff=Math.round((d-TODAY)/86400000);
-  switchTab('schedule',document.querySelectorAll('.tab-btn')[3]);
+  switchTab('schedule',getTabBtn('schedule'));
 }
-function calClick(ds){schedView='week';const d=new Date(ds);schedWOff=Math.round((d-TODAY)/86400000);switchTab('schedule',document.querySelectorAll('.tab-btn')[4]);}
+function calClick(ds){schedView='week';const d=new Date(ds);schedWOff=Math.round((d-TODAY)/86400000);switchTab('schedule',getTabBtn('schedule'));}
 
 // ════════════════════════════════
 // SAMPLE TAB — LIST VIEW
@@ -6888,11 +7020,8 @@ function renderSample(){
         if(!ACTIVE_STATUS.includes(s.status)) return;
         const m=(s.manager||'').trim(); if(!m) return;
         if(!tally[m]){
-          // manager로 clients DB 매칭
-          const cl=clients.find(c=>
-            (c.initials||'').trim().toUpperCase()===m.toUpperCase() ||
-            (c.name||'').trim()===m
-          );
+          // manager로 clients DB 매칭 (관대한 매칭 — 표기 변형 흡수)
+          const cl=findClientByVendor(m);
           tally[m]={count:0, client:cl||null, managerRaw:m};
         }
         tally[m].count++;
@@ -7054,11 +7183,8 @@ function renderSample(){
                   ${(()=>{
                     const m=(s.manager||'').trim();
                     if(!m) return '';
-                    // 이니셜 또는 고객사명으로 매칭
-                    const cl=clients.find(c=>
-                      (c.initials||'').trim().toUpperCase()===m.toUpperCase() ||
-                      (c.name||'').trim()===m
-                    );
+                    // 이니셜 또는 고객사명으로 매칭 (관대한 매칭)
+                    const cl=findClientByVendor(m);
                     if(cl) return clInitHtml(cl, true);
                     // 고객사 DB에 없으면 manager 값 자체를 뱃지로 (최대 2자) + 문자열 해시 색상
                     const badge=m.replace(/^\(.*?\)/,'').trim().slice(0,2).toUpperCase();
@@ -8594,10 +8720,7 @@ function renderOrder(){
         if(!isInProgress) return;
         const v=(o.vendor||'').trim(); if(!v) return;
         if(!tally[v]){
-          const cl=clients.find(c=>
-            (c.initials||'').trim().toUpperCase()===v.toUpperCase() ||
-            (c.name||'').trim()===v
-          );
+          const cl=findClientByVendor(v);
           tally[v]={count:0, client:cl||null, vendorRaw:v};
         }
         tally[v].count++;
@@ -11163,18 +11286,53 @@ function vMonthly(c){
   const maxOrdAmt=Math.max(...mOrdAmt.map(m=>m.amt),1);
   const maxSmpCnt=Math.max(...mSmpCnt,1);
 
-  // ── 고객사별 발주 집계 ──
+  // ── 고객사별 발주 집계 (최근 6개월 + 예상매출) ──
+  // 기준일: 발주일 6개월 전 ~ 오늘
+  const ord6mStart=new Date(thisY,thisM-5,1);  // 6개월 전 1일
+  const ord6mStartStr=`${ord6mStart.getFullYear()}-${String(ord6mStart.getMonth()+1).padStart(2,'0')}-01`;
+  // "확정매출" = 출고완료된 발주의 금액 / "예상매출" = 진행중(출고완료·취소 제외) 발주의 금액
+  // 6개월 누적은 발주일 기준으로 필터, 예상매출은 진행중 상태의 모든 발주 (날짜 무관)
   const clientOrdMap={};
   orders.forEach(o=>{
-    const key=o.vendor||'기타';
-    if(!clientOrdMap[key])clientOrdMap[key]={name:key,amt:0,cnt:0};
-    clientOrdMap[key].amt+=ordAmt(o);
-    clientOrdMap[key].cnt++;
+    const key=(o.vendor||'기타').trim();
+    if(!clientOrdMap[key])clientOrdMap[key]={name:key,doneAmt:0,doneCnt:0,pendAmt:0,pendCnt:0};
+    const st=o.status||'진행중';
+    const a=ordAmt(o);
+    const inWindow=o.date && o.date>=ord6mStartStr;
+    if(st==='출고완료' && inWindow){
+      clientOrdMap[key].doneAmt+=a;
+      clientOrdMap[key].doneCnt++;
+    } else if(st!=='출고완료' && st!=='취소'){
+      // 진행중 = 예상매출 (기간 무관 — 진행중 발주는 모두 곧 매출이 될 것)
+      clientOrdMap[key].pendAmt+=a;
+      clientOrdMap[key].pendCnt++;
+    }
   });
-  const clientOrdList=Object.values(clientOrdMap).sort((a,b)=>b.amt-a.amt);
+  const clientOrdList=Object.values(clientOrdMap)
+    .filter(x=>x.doneAmt>0||x.pendAmt>0)
+    .map(x=>({...x,totalAmt:x.doneAmt+x.pendAmt,totalCnt:x.doneCnt+x.pendCnt}))
+    .sort((a,b)=>b.totalAmt-a.totalAmt);
+  const totalDoneAmt=clientOrdList.reduce((s,x)=>s+x.doneAmt,0);
+  const totalPendAmt=clientOrdList.reduce((s,x)=>s+x.pendAmt,0);
 
-  // 잔여 샘플 목록 (최근 납기순)
-  const pendingSmpSorted=[...pendingSmp].sort((a,b)=>new Date(a.due||'9999')-new Date(b.due||'9999'));
+  // ── 고객사별 샘플 의뢰 집계 (최근 3개월) ──
+  const smp3mStart=new Date(thisY,thisM-2,1);  // 3개월 전 1일 (이번달 포함)
+  const smp3mStartStr=`${smp3mStart.getFullYear()}-${String(smp3mStart.getMonth()+1).padStart(2,'0')}-01`;
+  const clientSmpMap={};
+  samples.forEach(s=>{
+    if(!s.reqDate || s.reqDate<smp3mStartStr) return;
+    if(s.status==='취소') return;
+    const key=(s.manager||'기타').trim();
+    if(!clientSmpMap[key])clientSmpMap[key]={name:key,doneCnt:0,pendCnt:0};
+    if(s.status==='확정') clientSmpMap[key].doneCnt++;
+    else clientSmpMap[key].pendCnt++;
+  });
+  const clientSmpList=Object.values(clientSmpMap)
+    .map(x=>({...x,total:x.doneCnt+x.pendCnt}))
+    .filter(x=>x.total>0)
+    .sort((a,b)=>b.total-a.total);
+  const totalSmpDone=clientSmpList.reduce((s,x)=>s+x.doneCnt,0);
+  const totalSmpPend=clientSmpList.reduce((s,x)=>s+x.pendCnt,0);
 
   c.innerHTML=`
   <!-- ① 핵심 현황 — 잔여 집계 -->
@@ -11230,7 +11388,9 @@ function vMonthly(c){
             const h=Math.max(Math.round(m.cnt/(Math.max(...mOrdAmt.map(x=>x.cnt),1))*100),m.cnt>0?8:0);
             return`<div class="bar-col">
               <div class="bar-val">${m.cnt||''}</div>
-              <div class="bar" style="height:${h}%;background:${i===5?'var(--t1)':'var(--s3)'};border:1px solid ${i===5?'var(--t1)':'var(--bdr)'}"></div>
+              <div class="bar-area">
+                <div class="bar" style="height:${h}%;background:${i===5?'var(--t1)':'var(--s3)'};border:1px solid ${i===5?'var(--t1)':'var(--bdr)'}"></div>
+              </div>
               <div class="bar-lbl" style="${i===5?'font-weight:700;color:var(--t1)':''}">${mLabels[i]}</div>
             </div>`;
           }).join('')}
@@ -11249,8 +11409,8 @@ function vMonthly(c){
             const done=mSmpDone[i];
             return`<div class="bar-col">
               <div class="bar-val">${cnt||''}</div>
-              <div style="position:relative;width:100%;height:${h}%;display:flex;flex-direction:column;justify-content:flex-end">
-                <div class="bar" style="height:100%;background:${i===5?'var(--blu)':'var(--blu-bg)'};border:1px solid var(--blu);position:relative">
+              <div class="bar-area">
+                <div class="bar" style="height:${h}%;background:${i===5?'var(--blu)':'var(--blu-bg)'};border:1px solid var(--blu);position:relative">
                   ${done>0?`<div style="position:absolute;bottom:0;left:0;right:0;height:${Math.round(done/cnt*100)}%;background:var(--grn);opacity:.7"></div>`:''}
                 </div>
               </div>
@@ -11275,43 +11435,82 @@ function vMonthly(c){
     </div>
   </div>
 
-  <!-- ④ 잔여 샘플 목록 + 고객사별 발주 -->
+  <!-- ④ 고객사별 샘플 의뢰 (3개월) + 고객사별 발주·매출 (6개월) -->
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <!-- 좌: 고객사별 샘플 의뢰 (3개월) -->
     <div class="card">
-      <div class="ch"><div class="ch-t">⏳ 잔여 샘플 개발 목록</div><div class="ch-s">${pendingSmpCnt}건 진행 중</div></div>
-      <div style="max-height:260px;overflow-y:auto">
-        ${pendingSmpSorted.length?pendingSmpSorted.map(s=>{
-          const dl=dday(s.due);
-          const urg=dl!==null&&dl<=3;
-          return`<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--bdr);${urg?'background:var(--red-bg)':''}">
-            <div style="flex:1;min-width:0">
-              <div style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div>
-              <div style="font-size:10.5px;color:var(--t2);margin-top:1px;display:flex;align-items:center;gap:4px">${(()=>{const _cl=clients.find(c=>c.name===s.manager);return _cl&&_cl.initials?`<span class="cl-init cl-init-sm" style="background:${clInitColor(_cl)}">${_cl.initials}</span>`:'';})()}${s.manager||'—'} · <span class="chip ${({의뢰:'chip',제작중:'cb',수정중:'co'})[s.status]||'chip'}" style="font-size:9px">${s.status}</span></div>
-            </div>
-            <div style="text-align:right;flex-shrink:0">
-              ${s.due?`<div style="font-size:10.5px;color:var(--t3)">${s.due}</div>`:''}
-              ${ddTag(s.due)}
-            </div>
-          </div>`;
-        }).join(''):`<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">진행 중인 샘플 없음 🎉</div>`}
+      <div class="ch">
+        <div><div class="ch-t">⏳ 고객사별 샘플 의뢰</div><div class="ch-s">최근 3개월 · 의뢰일 기준</div></div>
+        <div style="text-align:right;font-size:10.5px;color:var(--t3)">
+          확정 <b style="color:var(--grn)">${totalSmpDone}</b> · 진행 <b style="color:var(--blu)">${totalSmpPend}</b> · 합계 <b style="color:var(--t1)">${totalSmpDone+totalSmpPend}건</b>
+        </div>
+      </div>
+      <div style="padding:12px 14px;max-height:260px;overflow-y:auto">
+        ${clientSmpList.length?(()=>{
+          const maxTotal=clientSmpList[0].total||1;
+          return clientSmpList.map((x,i)=>{
+            const _cl=findClientByVendor(x.name);
+            const initBadge=_cl&&_cl.initials?`<span class="cl-init cl-init-sm" style="background:${clInitColor(_cl)}">${_cl.initials}</span>`:'';
+            const dispName=_cl?_cl.name:x.name;
+            const totalPct=Math.round(x.total/maxTotal*100);
+            const donePct=x.total?Math.round(x.doneCnt/x.total*100):0;
+            return`<div style="margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:8px">
+                <span style="font-size:12px;font-weight:${i<3?600:400};display:inline-flex;align-items:center;gap:5px;min-width:0;overflow:hidden">${initBadge}<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${dispName}">${dispName}</span></span>
+                <span style="font-size:11px;color:var(--t2);flex-shrink:0;white-space:nowrap">
+                  ${x.doneCnt>0?`<span style="color:var(--grn);font-weight:600">${x.doneCnt}확정</span>`:''}${x.doneCnt>0&&x.pendCnt>0?' · ':''}${x.pendCnt>0?`<span style="color:var(--blu)">${x.pendCnt}진행</span>`:''}
+                  <span style="margin-left:6px;color:var(--t1);font-weight:700">${x.total}건</span>
+                </span>
+              </div>
+              <div class="prog" style="display:flex;width:${totalPct}%;min-width:2%;height:8px;border-radius:4px;overflow:hidden;background:var(--s2)">
+                ${x.doneCnt>0?`<div style="width:${donePct}%;background:var(--grn);opacity:.85"></div>`:''}
+                ${x.pendCnt>0?`<div style="flex:1;background:var(--blu);opacity:.7"></div>`:''}
+              </div>
+            </div>`;
+          }).join('');
+        })():`<div style="color:var(--t3);font-size:12px;padding:20px;text-align:center">최근 3개월 의뢰 없음</div>`}
       </div>
     </div>
+
+    <!-- 우: 고객사별 발주·매출 (6개월) -->
     <div class="card">
-      <div class="ch"><div class="ch-t">🏢 고객사별 발주 현황</div><div class="ch-s">전체 누적</div></div>
+      <div class="ch">
+        <div><div class="ch-t">💰 고객사별 발주·매출</div><div class="ch-s">최근 6개월 · 확정 출고 + 진행중 예상</div></div>
+        <div style="text-align:right;font-size:10.5px;color:var(--t3)">
+          확정 <b style="color:var(--grn)">${totalDoneAmt.toLocaleString()}원</b><br>
+          예상 <b style="color:var(--gold-lt)">${totalPendAmt.toLocaleString()}원</b>
+        </div>
+      </div>
       <div style="padding:12px 14px;max-height:260px;overflow-y:auto">
-        ${clientOrdList.length?clientOrdList.map((x,i)=>{
-          const maxA=clientOrdList[0].amt||1;
-          return`<div style="margin-bottom:10px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-              <span style="font-size:12px;font-weight:${i<3?600:400}" class="cl-lbl">${(()=>{const _cl=clients.find(c=>c.name===x.name);return _cl&&_cl.initials?`<span class="cl-init cl-init-sm" style="background:${clInitColor(_cl)}">${_cl.initials}</span>`:""})()}${x.name}</span>
-              <div style="text-align:right">
-                <span style="font-size:11.5px;color:var(--gold-lt);font-weight:600">${x.cnt}건</span>
-                ${x.amt>0?`<span style="font-size:10px;color:var(--t3);margin-left:6px">${x.amt.toLocaleString()}원</span>`:''}
+        ${clientOrdList.length?(()=>{
+          const maxAmt=clientOrdList[0].totalAmt||1;
+          return clientOrdList.map((x,i)=>{
+            const _cl=findClientByVendor(x.name);
+            const initBadge=_cl&&_cl.initials?`<span class="cl-init cl-init-sm" style="background:${clInitColor(_cl)}">${_cl.initials}</span>`:'';
+            const dispName=_cl?_cl.name:x.name;
+            const totalPct=Math.round(x.totalAmt/maxAmt*100);
+            const donePct=x.totalAmt?Math.round(x.doneAmt/x.totalAmt*100):0;
+            return`<div style="margin-bottom:11px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:8px">
+                <span style="font-size:12px;font-weight:${i<3?600:400};display:inline-flex;align-items:center;gap:5px;min-width:0;overflow:hidden">${initBadge}<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${dispName}">${dispName}</span></span>
+                <span style="font-size:11px;color:var(--t1);flex-shrink:0;font-weight:700;white-space:nowrap">${x.totalAmt.toLocaleString()}원</span>
               </div>
-            </div>
-            <div class="prog"><div class="pf" style="width:${(x.cnt/Math.max(...clientOrdList.map(y=>y.cnt),1)*100).toFixed(0)}%;background:${i===0?'var(--gold)':'var(--gold-bg)'};border:1px solid var(--gold-line)"></div></div>
-          </div>`;
-        }).join(''):`<div style="color:var(--t3);font-size:12px;padding:20px;text-align:center">발주 데이터 없음</div>`}
+              <div class="prog" style="display:flex;width:${totalPct}%;min-width:2%;height:8px;border-radius:4px;overflow:hidden;background:var(--s2);margin-bottom:3px">
+                ${x.doneAmt>0?`<div style="width:${donePct}%;background:var(--grn);opacity:.85"></div>`:''}
+                ${x.pendAmt>0?`<div style="flex:1;background:var(--gold);opacity:.7"></div>`:''}
+              </div>
+              <div style="font-size:10px;color:var(--t3);display:flex;gap:8px;flex-wrap:wrap">
+                ${x.doneAmt>0?`<span><span style="color:var(--grn)">●</span> 확정 ${x.doneAmt.toLocaleString()}원 (${x.doneCnt}건)</span>`:''}
+                ${x.pendAmt>0?`<span><span style="color:var(--gold-lt)">●</span> 예상 ${x.pendAmt.toLocaleString()}원 (${x.pendCnt}건)</span>`:''}
+              </div>
+            </div>`;
+          }).join('');
+        })():`<div style="color:var(--t3);font-size:12px;padding:20px;text-align:center">발주 데이터 없음</div>`}
+        <!-- 범례 -->
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bdr);display:flex;gap:14px;font-size:10px;color:var(--t3);flex-wrap:wrap">
+          <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:9px;height:9px;background:var(--grn);opacity:.85;border-radius:1px"></span>확정매출 (출고완료)</span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:9px;height:9px;background:var(--gold);opacity:.7;border-radius:1px"></span>예상매출 (진행중)</span>
+        </div>
       </div>
     </div>
   </div>`;
@@ -11328,6 +11527,8 @@ function vClients(c){
 // 📬 고객사 문의 관리
 // ════════════════════════════════
 let _inqFilter='all';
+let _inqImgBuf=[];
+let _inqFileBuf=[];
 function setInqFilter(v){ _inqFilter=v; renderSalesSubTab(); }
 
 function vInquiry(c){
@@ -11375,7 +11576,7 @@ function vInquiry(c){
         return `<tr style="cursor:pointer;${isDone?'opacity:.65':''}" onclick="openInqModal(${q.id})">
           <td style="font-size:11px;color:var(--t3);white-space:nowrap">${q.receivedAt||''}</td>
           <td><span class="cl-lbl">${vendorInitHtml(q.vendor,true)}<span class="cn">${q.vendor||'-'}</span></span></td>
-          <td style="font-size:12px">${(q.content||'').slice(0,80)}${(q.content||'').length>80?'…':''}</td>
+          <td style="font-size:12px">${(q.content||'').slice(0,80)}${(q.content||'').length>80?'…':''}${(()=>{const n=((q.imgs||[]).length+(q.files||[]).length);return n?` <span style="font-size:10px;color:var(--gold-lt);margin-left:4px">📎${n}</span>`:''})()}</td>
           <td><span class="chip" style="font-size:10px">${q.category||'일반'}</span></td>
           <td style="font-size:11.5px;color:var(--t2)">${q.manager||'-'}</td>
           <td><span class="chip" style="font-size:10.5px;background:${stColor}15;border-color:${stColor}40;color:${stColor};font-weight:600">${q.status||'접수'}</span></td>
@@ -11392,6 +11593,9 @@ function vInquiry(c){
 
 function openInqModal(id){
   const q = id ? inquiries.find(x=>x.id==id) : null;
+  // 기존 첨부 파일 로드
+  _inqImgBuf = q ? [...(q.imgs||[])] : [];
+  _inqFileBuf = q ? [...(q.files||[])] : [];
   const todayS = toLocalDateStr(new Date());
   const vendorOpts = clients.map(cl=>`<option value="${(cl.name||'').replace(/"/g,'&quot;')}">${cl.name}</option>`).join('');
   const html = `
@@ -11422,9 +11626,23 @@ function openInqModal(id){
     <div class="fg"><label>답변/처리 메모</label>
       <textarea class="fi" id="inq_reply" rows="3" placeholder="답변 또는 처리 내용 메모">${q?q.reply||'':''}</textarea>
     </div>
+    <div class="fg"><label>📎 파일 첨부 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(이미지·PDF·문서 등 · 여러 개 가능)</span></label>
+      <div class="drop-zone" id="inqDropZone" style="padding:14px 16px;cursor:pointer;min-height:unset" onclick="document.getElementById('inqFileInput').click()" ondragover="dzOver(event,this)" ondragleave="dzOut(this)" ondrop="handleInqDropAll(event)">
+        <input type="file" id="inqFileInput" multiple style="display:none" onchange="handleInqFilesAll(event)">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:22px">📎</span>
+          <div>
+            <div style="font-size:12px;color:var(--t2);font-weight:600">드래그 · 클릭 · Ctrl+V로 파일 추가</div>
+            <div style="font-size:10.5px;color:var(--t3);margin-top:2px">이미지는 썸네일로, 그 외(PDF/문서 등)는 첨부파일로 자동 분류</div>
+          </div>
+        </div>
+      </div>
+      <div id="inqImgPrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div>
+      <div id="inqFilePrev" style="display:flex;flex-direction:column;gap:4px;margin-top:6px"></div>
+    </div>
     <input type="hidden" id="inq_id" value="${q?q.id:''}">
     <div class="ma">
-      <button class="btn bgo" onclick="closeM('mInquiry')">취소</button>
+      <button class="btn bgo" onclick="closeM('mInquiry');_inqPasteCleanup()">취소</button>
       ${id?'<button class="btn bp-red" onclick="deleteInq('+id+')">삭제</button>':''}
       <button class="btn bp" onclick="saveInq()">저장</button>
     </div>`;
@@ -11438,18 +11656,123 @@ function openInqModal(id){
   }
   m.querySelector('.modal').innerHTML = html;
   openM('mInquiry');
+  setTimeout(()=>{ renderInqImgPrev(); renderInqFilePrev(); }, 50);
+  // Ctrl+V paste handler
+  _inqPasteSetup();
 }
 
-function saveInq(){
+// ── 문의 모달용 파일 첨부 헬퍼 ──
+let _inqPasteHandler=null;
+function _inqPasteSetup(){
+  _inqPasteCleanup();
+  _inqPasteHandler = (e)=>{
+    // 모달이 열려 있을 때만 처리
+    const m = document.getElementById('mInquiry');
+    if(!m || !m.classList.contains('open')) return;
+    const items = e.clipboardData && e.clipboardData.items;
+    if(!items) return;
+    for(let i=0;i<items.length;i++){
+      const it = items[i];
+      if(it.kind==='file'){
+        const f = it.getAsFile();
+        if(!f) continue;
+        const r = new FileReader();
+        r.onload = ev => {
+          const ext=(f.name||'').split('.').pop()||'png';
+          const name=f.name && f.name!=='image.png' ? f.name : `paste_${toLocalDateStr(new Date())}_${Date.now()}.${ext}`;
+          if((f.type||'').startsWith('image/')){
+            _inqImgBuf.push({name, type:f.type, url:ev.target.result, size:f.size});
+            renderInqImgPrev();
+          } else {
+            _inqFileBuf.push({name, type:f.type||'application/octet-stream', url:ev.target.result, size:f.size});
+            renderInqFilePrev();
+          }
+        };
+        r.readAsDataURL(f);
+      }
+    }
+  };
+  document.addEventListener('paste', _inqPasteHandler);
+}
+function _inqPasteCleanup(){
+  if(_inqPasteHandler){
+    document.removeEventListener('paste', _inqPasteHandler);
+    _inqPasteHandler=null;
+  }
+}
+function _inqClassifyFile(f){
+  const r = new FileReader();
+  r.onload = ev => {
+    const item = {name:f.name, type:f.type||'application/octet-stream', url:ev.target.result, size:f.size};
+    if((f.type||'').startsWith('image/')){
+      _inqImgBuf.push(item);
+      renderInqImgPrev();
+    } else {
+      _inqFileBuf.push(item);
+      renderInqFilePrev();
+    }
+  };
+  r.readAsDataURL(f);
+}
+function handleInqFilesAll(e){
+  Array.from(e.target.files||[]).forEach(_inqClassifyFile);
+  e.target.value='';
+}
+function handleInqDropAll(e){
+  e.preventDefault();
+  const dz=document.getElementById('inqDropZone'); if(dz) dz.classList.remove('dz-over');
+  Array.from(e.dataTransfer.files||[]).forEach(_inqClassifyFile);
+}
+function renderInqImgPrev(){
+  const el = document.getElementById('inqImgPrev');
+  if(!el) return;
+  el.innerHTML = _inqImgBuf.map((im,i)=>`
+    <div style="position:relative;width:80px;height:80px;border-radius:6px;overflow:hidden;border:1px solid var(--bdr)">
+      <img src="${im.url}" style="width:100%;height:100%;object-fit:cover;cursor:pointer" onclick="openFilePreviewList(_inqImgBuf,${i})">
+      <button onclick="_inqImgBuf.splice(${i},1);renderInqImgPrev()" style="position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;border:none;background:rgba(0,0,0,.6);color:#fff;cursor:pointer;font-size:11px;line-height:1;padding:0">×</button>
+    </div>`).join('');
+}
+function renderInqFilePrev(){
+  const el = document.getElementById('inqFilePrev');
+  if(!el) return;
+  el.innerHTML = _inqFileBuf.map((f,i)=>{
+    const icon = /pdf/i.test(f.type)?'📄':/sheet|excel|xlsx?/i.test(f.type+f.name)?'📊':/cad|dxf|step|stp|iges|igs/i.test(f.name)?'🔧':/zip|rar|7z/i.test(f.type+f.name)?'🗜':/doc|word/i.test(f.type+f.name)?'📝':'📎';
+    const sizeKB = f.size ? Math.round(f.size/1024)+'KB' : '';
+    const stored = f.url && !String(f.url).startsWith('data:') ? '<span style="font-size:9px;color:var(--grn);margin-left:4px">☁</span>' : '<span style="font-size:9px;color:var(--t3);margin-left:4px">💾</span>';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--bdr);border-radius:5px;background:var(--s1)">
+      <span style="font-size:16px">${icon}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:11.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.name}${stored}</div>
+        ${sizeKB?`<div style="font-size:9.5px;color:var(--t3)">${sizeKB}</div>`:''}
+      </div>
+      <button onclick="openFilePreviewList(_inqFileBuf,${i})" style="padding:2px 7px;font-size:10px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">보기</button>
+      <button onclick="_inqFileBuf.splice(${i},1);renderInqFilePrev()" style="padding:2px 7px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--red);font-family:inherit">×</button>
+    </div>`;
+  }).join('');
+}
+
+async function saveInq(){
   const vendor = gv('inq_vendor').trim();
   const content = gv('inq_content').trim();
   if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
   if(!content){ showToast('⚠ 문의 내용을 입력해 주세요','var(--red)'); return; }
+  // 첨부 파일 — base64인 것은 R2 업로드 (Worker 설정된 경우)
+  let imgs = [..._inqImgBuf];
+  let files = [..._inqFileBuf];
+  if(notionCfg.workerUrl){
+    const needUpload = imgs.some(im=>im.url&&String(im.url).startsWith('data:')) || files.some(f=>f.url&&String(f.url).startsWith('data:'));
+    if(needUpload){
+      showToast('🔄 파일 업로드 중...','var(--blu)',2500);
+      try{ imgs = await uploadImagesToR2(imgs); }catch(e){ console.warn('이미지 R2 업로드 실패:',e); }
+      try{ files = await uploadImagesToR2(files); }catch(e){ console.warn('파일 R2 업로드 실패:',e); }
+    }
+  }
   const id = gv('inq_id');
   const obj = {
     vendor, receivedAt: gv('inq_date'), manager: gv('inq_manager'),
     category: gv('inq_category'), status: gv('inq_status'),
-    content, reply: gv('inq_reply')
+    content, reply: gv('inq_reply'),
+    imgs, files
   };
   if(id){
     const i = inquiries.findIndex(x=>x.id==id);
@@ -11458,6 +11781,7 @@ function saveInq(){
     inquiries.unshift({id:Date.now(), createdAt:new Date().toISOString(), ...obj});
   }
   slSave();
+  _inqPasteCleanup();
   closeM('mInquiry');
   showToast('✓ 문의 저장됨','var(--grn)');
   renderSalesSubTab();
@@ -11468,6 +11792,7 @@ function deleteInq(id){
   showConfirm(`"${q?.vendor||'문의'}" 항목을 삭제합니다.`, ()=>{
     inquiries = inquiries.filter(x=>x.id!=id);
     slSave();
+    _inqPasteCleanup();
     closeM('mInquiry');
     renderSalesSubTab();
     showToast('✓ 삭제됨','var(--grn)');
@@ -12054,16 +12379,47 @@ function clInitHtml(cl, small){
   return`<span class="${sz}" style="background:${color}" title="${cl.name}">${init}</span>`;
 }
 
+// ─────────────────────────────────────────────────────
+// 업체명 정규화 + 관대한 고객사 매칭 (한글 fallback 깜빡임 방지)
+// "주식회사제이스바이브" ↔ "(주)제이스바이브" ↔ "제이스바이브" 같은 표기 변형 통합
+// ─────────────────────────────────────────────────────
+function normalizeVendorName(s){
+  return String(s||'')
+    .replace(/^\(.*?\)/,'')        // 맨 앞 (...)  제거 — (주), (유) 등
+    .replace(/주식회사|㈜|\(주\)|\(유\)|유한회사/g,'')
+    .replace(/\s+/g,'')              // 모든 공백 제거
+    .trim()
+    .toLowerCase();
+}
+function findClientByVendor(vendorName){
+  const raw=String(vendorName||'').trim();
+  if(!raw) return null;
+  const norm=normalizeVendorName(raw);
+  const upper=raw.toUpperCase();
+  // 1순위: 이니셜 정확 일치 (영문 2글자)
+  let cl=clients.find(c=>(c.initials||'').trim().toUpperCase()===upper);
+  if(cl) return cl;
+  // 2순위: 정규화된 이름 일치 (표기 변형 흡수)
+  cl=clients.find(c=>normalizeVendorName(c.name)===norm);
+  if(cl) return cl;
+  // 3순위: 한쪽이 다른 쪽을 포함 (부분 일치 — "제이스바이브" ⊂ "제이스바이브주얼리")
+  if(norm.length>=2){
+    cl=clients.find(c=>{
+      const cn=normalizeVendorName(c.name);
+      return cn && (cn.includes(norm)||norm.includes(cn));
+    });
+    if(cl) return cl;
+  }
+  return null;
+}
+
 // 업체명(문자열)으로 이니셜 배지 생성 — 등록된 고객사 있으면 사용, 없으면 이름 기반 자동 생성
 // 발주·공정·샘플 등 어디서나 쓸 수 있는 범용 헬퍼
 function vendorInitHtml(vendorName, small){
   const name=(vendorName||'').trim();
   if(!name) return '';
-  // 1) 고객사 DB 등록된 업체면 해당 이니셜/색상 사용
-  const cl=clients.find(c=>
-    (c.name||'').trim()===name ||
-    (c.initials||'').trim().toUpperCase()===name.toUpperCase()
-  );
+  // 1) 고객사 DB 등록된 업체면 해당 이니셜/색상 사용 (관대한 매칭)
+  const cl=findClientByVendor(name);
   if(cl) return clInitHtml(cl, small);
   // 2) 등록 안 됨 → 이름에서 이니셜 자동 생성 + 문자열 해시 색상
   const nm=name.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
