@@ -7159,6 +7159,7 @@ function renderSample(){
             <th>유형</th>
             <th>상태</th>
             <th>의뢰일</th>
+            <th>공장출고일</th>
             <th>납기일</th>
             <th>D-day</th>
             <th>소재 / 도금</th>
@@ -7217,6 +7218,7 @@ function renderSample(){
                   onclick="openSmpStatusDropdown(event,${s.id})" title="클릭하여 상태 변경">${s.status} ▾</span>
               </td>
               <td style="font-size:10.5px;color:var(--t2);white-space:nowrap">${s.reqDate||'—'}</td>
+              <td style="font-size:10.5px;white-space:nowrap;${s.factShip?'color:var(--t2)':missFs?'color:var(--red);font-weight:600':'color:var(--t3)'}">${s.factShip||'—'}</td>
               <td style="font-size:11px;white-space:nowrap">${s.due||'—'}${(()=>{
                 if(!s.reqDate||!s.due)return '';
                 const d1=new Date(s.reqDate), d2=new Date(s.due);
@@ -8854,92 +8856,99 @@ function renderOrder(){
       </div>`;
     })():''}
 
-    ${list.length ? list.map(o=>{
-      const dl=dday(o.ship);
-      const urg=dl!==null&&dl<=1;
-      const warn=dl!==null&&dl<=3&&dl>1;
-      const rows=o.rows||[];
-      const created=o.createdAt?new Date(o.createdAt):o.id?new Date(o.id):null;
-      const createdFmt=created?`${created.getMonth()+1}/${created.getDate()}`:'—';
-      // Find proc items strictly linked to this order
-      const ordProcs=procItems.filter(p=>p.orderId===o.id);
-
-      const ordStatus = o.status || '진행중';
-      const isOrdDone = ordStatus === '출고완료';
-      const isOrdCanceled = ordStatus === '취소';
-      const statusBadge = isOrdDone
-        ? '<span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700">✓ 출고완료</span>'
-        : isOrdCanceled
-        ? '<span style="font-size:9.5px;background:rgba(192,48,48,.12);color:var(--red);border:1px solid rgba(192,48,48,.3);padding:1px 7px;border-radius:10px;font-weight:700">취소</span>'
-        : '<span style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700">진행중</span>';
-
-      const isOrdChecked=window._ordChecked&&window._ordChecked.has(o.id);
-      // 공장출고일 미입력 (출고완료/취소 아닌 진행중 발주만) — 빨간 테두리로 강조
-      const missFs=!isOrdDone&&!isOrdCanceled&&!o.factShip;
-      return`<div class="${missFs?'card-miss-fs':''}" style="position:relative;border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden;${isOrdChecked?'border-color:var(--gold);box-shadow:0 0 0 1px var(--gold-line)':missFs?'':urg&&!isOrdDone?'border-color:rgba(192,48,48,.4)':warn&&!isOrdDone?'border-color:rgba(168,90,16,.35)':isOrdDone?'border-color:rgba(46,139,44,.3)':''}margin-bottom:0;${isOrdDone||isOrdCanceled?'opacity:.75':''}">
-        <div style="display:flex;align-items:stretch;padding:10px 14px;gap:12px;cursor:pointer;background:${isOrdChecked?'rgba(139,105,20,.06)':isOrdDone?'rgba(46,139,44,.04)':isOrdCanceled?'rgba(192,48,48,.04)':urg?'rgba(192,48,48,.04)':warn?'rgba(168,90,16,.04)':'var(--s1)'}" onclick="ordRowsBuf=[...(orders.find(x=>x.id===${o.id})?.rows||[])].map(r=>({...r}));openOrdModal(${o.id})">
-          <div onclick="event.stopPropagation()" style="display:flex;align-items:flex-start;padding-top:2px;flex-shrink:0">
-            <input type="checkbox" ${isOrdChecked?'checked':''} onchange="toggleOrdChk(${o.id},this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:var(--gold)">
-          </div>
-          <div style="display:flex;flex-direction:column;gap:4px;flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              ${vendorInitHtml(o.vendor, true)}
-              ${(()=>{
-                const nm=(o.vendor||'').trim();
-                let init='';
-                if(nm){
-                  const cl=clients.find(c=>(c.name||'').trim()===nm||(c.initials||'').trim().toUpperCase()===nm.toUpperCase());
-                  if(cl && cl.initials){init=cl.initials.trim().toUpperCase();}
-                  else{
-                    const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
-                    const words=clean.split(/\s+/);
-                    if(words.length>=2)init=(words[0][0]+(words[1][0]||'')).toUpperCase();
-                    else init=clean.slice(0,2).toUpperCase();
-                  }
-                }
-                let mmdd='';
-                if(o.date){const m=o.date.match(/^\d{4}-(\d{2})-(\d{2})/);if(m)mmdd=`${m[1]}/${m[2]}`;}
-                if(!init && !mmdd)return '';
-                const label=[init, mmdd].filter(Boolean).join(' ');
-                return `<span style="font-size:11px;font-weight:700;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:2px 8px;border-radius:4px;font-family:monospace;letter-spacing:.3px;white-space:nowrap" title="${nm} · 발주일 ${o.date||'—'}">${label}</span>`;
-              })()}
-              <span style="font-size:13px;font-weight:700;${isOrdDone||isOrdCanceled?'text-decoration:line-through;color:var(--t3)':''}">${o.vendor||'—'}</span>
-              <span style="font-size:10.5px;color:var(--t3);font-family:monospace">${o.no||''}</span>
-              ${o.manager?`<span style="font-size:10.5px;color:var(--t2)">${o.manager}</span>`:''}
-              ${statusBadge}
-              ${!isOrdDone&&!isOrdCanceled?ddTag(o.ship):''}
-              <span style="font-size:10.5px;color:var(--t3);margin-left:4px">📅 발주 ${fmt(o.date)} → 출고 <b style="color:var(--t1)">${o.ship||'미정'}</b></span>
-              ${(()=>{
+    ${list.length ? `
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px">${(()=>{
+              const filtered=list||[];
+              const checked=filtered.length>0 && filtered.every(o=>window._ordChecked&&window._ordChecked.has(o.id));
+              return `<input type="checkbox" onchange="toggleAllOrdChk()" ${checked?'checked':''} title="전체선택/해제 토글">`;
+            })()}</th>
+            <th>업체</th>
+            <th>발주번호</th>
+            <th>발주일</th>
+            <th>공장출고일</th>
+            <th>요청출고일</th>
+            <th>D-day</th>
+            <th>상태</th>
+            <th>품목 내역</th>
+            <th>첨부</th>
+            <th style="text-align:right">액션</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(o=>{
+            const dl=dday(o.ship);
+            const urg=dl!==null&&dl<=1;
+            const warn=dl!==null&&dl<=3&&dl>1;
+            const rows=o.rows||[];
+            const ordStatus = o.status || '진행중';
+            const isOrdDone = ordStatus === '출고완료';
+            const isOrdCanceled = ordStatus === '취소';
+            const isOrdChecked=window._ordChecked&&window._ordChecked.has(o.id);
+            const missFs=!isOrdDone&&!isOrdCanceled&&!o.factShip;
+            const rowCls=[
+              urg&&!isOrdDone&&!isOrdCanceled?'row-u':warn&&!isOrdDone&&!isOrdCanceled?'row-w':'',
+              missFs?'row-miss-fs':'',
+              isOrdChecked?'checked-row':''
+            ].filter(Boolean).join(' ');
+            const rowStyle = (isOrdDone||isOrdCanceled) ? 'opacity:.65' : '';
+            const statusBadge = isOrdDone
+              ? '<span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">✓ 출고완료</span>'
+              : isOrdCanceled
+              ? '<span style="font-size:9.5px;background:rgba(192,48,48,.12);color:var(--red);border:1px solid rgba(192,48,48,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">취소</span>'
+              : '<span style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">진행중</span>';
+            // 가로형 품목 칩: 작은 이미지 옆에 이름·수량 (한 줄, 컴팩트)
+            const itemChips = rows.map(r=>`<span style="display:inline-flex;flex-direction:row;align-items:center;gap:6px;font-size:11px;padding:3px 9px 3px ${r.img?'3px':'9px'};border-radius:5px;background:var(--s2);border:1px solid var(--bdr);flex-shrink:0;white-space:nowrap">
+              ${r.img?`<img src="${r.img}" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\'").replace(/"/g,'&quot;')}'}],0,false)" title="클릭하여 크게 보기">`:''}
+              <span>${r.name||''}${r.qty?`<span style="color:var(--t3)"> ×${r.qty}</span>`:''}</span>
+            </span>`).join('');
+            return `<tr class="${rowCls}" style="${rowStyle};cursor:pointer" onclick="ordRowsBuf=[...(orders.find(x=>x.id===${o.id})?.rows||[])].map(r=>({...r}));openOrdModal(${o.id})">
+              <td onclick="event.stopPropagation()" style="text-align:center;vertical-align:middle">
+                <input type="checkbox" ${isOrdChecked?'checked':''} onchange="toggleOrdChk(${o.id},this.checked)" style="width:14px;height:14px;cursor:pointer;accent-color:var(--gold)">
+              </td>
+              <td style="white-space:nowrap;vertical-align:middle">
+                <div style="display:flex;align-items:center;gap:6px">
+                  ${vendorInitHtml(o.vendor, true)}
+                  <span style="font-size:12px;font-weight:600;${isOrdDone||isOrdCanceled?'text-decoration:line-through;color:var(--t3)':''}">${o.vendor||'—'}</span>
+                </div>
+                ${o.manager?`<div style="font-size:10px;color:var(--t3);margin-top:2px;margin-left:26px">${o.manager}</div>`:''}
+              </td>
+              <td style="font-size:10.5px;color:var(--t3);font-family:monospace;white-space:nowrap;vertical-align:middle">${o.no||'—'}</td>
+              <td style="font-size:10.5px;color:var(--t2);white-space:nowrap;vertical-align:middle">${fmt(o.date)||'—'}</td>
+              <td style="font-size:10.5px;white-space:nowrap;vertical-align:middle;${o.factShip?'color:var(--t2)':missFs?'color:var(--red);font-weight:600':'color:var(--t3)'}">${o.factShip||'—'}</td>
+              <td style="font-size:11px;white-space:nowrap;font-weight:600;vertical-align:middle">${o.ship||'미정'}${(()=>{
                 if(!o.date||!o.ship)return '';
                 const d1=new Date(o.date), d2=new Date(o.ship);
                 if(isNaN(d1.getTime())||isNaN(d2.getTime()))return '';
                 const diff=Math.round((d2-d1)/(1000*60*60*24));
                 if(diff<0)return '';
-                return `<span style="font-size:10.5px;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 7px;border-radius:4px;font-weight:600" title="발주일부터 출고일까지 소요 기간">⏱ ${diff}일</span>`;
-              })()}
-              <span style="font-size:10.5px;color:var(--t3)">등록 ${createdFmt}</span>
-              ${o.completedAt?`<span style="font-size:10.5px;color:var(--grn)">완료 ${fmt(o.completedAt.split('T')[0])}</span>`:''}
-            </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
-              ${rows.map(r=>`<span style="display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:3px 9px 3px ${r.img?'3px':'9px'};border-radius:5px;background:var(--s2);border:1px solid var(--bdr)">
-                ${r.img?`<img src="${r.img}" style="width:32px;height:32px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\'").replace(/"/g,'&quot;')}'}],0,false)" title="클릭하여 크게 보기">`:''}
-                <span>${r.name||''}${r.qty?`<span style="color:var(--t3)"> ×${r.qty}</span>`:''}</span>
-              </span>`).join('')}
-            </div>
-          </div>
-          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0">
-            <span style="font-size:10px;color:var(--t3)">${rows.length}개 품목</span>
-            ${(o.files&&o.files.length)?`<span style="font-size:10px;color:var(--blu);cursor:pointer" onclick="event.stopPropagation();showOrdFiles(${o.id})">📎 ${o.files.length}개 첨부</span>`:''}
-            ${o.memo?`<span style="font-size:10px;color:var(--t3);max-width:120px;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.memo}</span>`:''}
-            <div style="display:flex;gap:4px;margin-top:2px;flex-wrap:wrap;justify-content:flex-end" onclick="event.stopPropagation()">
-              ${isOrdDone
-                ? `<button onclick="revertOrdComplete(${o.id})" title="완료 취소" style="padding:3px 7px;font-size:10px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--t2);font-family:inherit;white-space:nowrap">↺ 되돌리기</button>`
-                : `<button onclick="completeOrd(${o.id})" title="출고 완료 처리" style="padding:3px 9px;font-size:10px;background:var(--grn);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;white-space:nowrap;font-weight:600">✓ 완료</button>`}
-            </div>
-          </div>
-        </div>
-      </div>`;
-    }).join('<div style="height:8px"></div>') : `
+                return `<br><span style="font-size:9px;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 4px;border-radius:3px;font-weight:600;display:inline-block;margin-top:1px" title="발주일~출고일 소요">⏱ ${diff}일</span>`;
+              })()}</td>
+              <td style="vertical-align:middle">${!isOrdDone&&!isOrdCanceled?ddTag(o.ship):'—'}</td>
+              <td style="vertical-align:middle">${statusBadge}</td>
+              <td style="min-width:300px;vertical-align:middle">
+                <div style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px;overflow:hidden;max-width:100%">
+                  ${itemChips}
+                  <span style="font-size:9.5px;color:var(--t3);margin-left:4px;white-space:nowrap;flex-shrink:0">총 ${rows.length}개</span>
+                </div>
+                ${o.memo?`<div style="font-size:10px;color:var(--t3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📝 ${String(o.memo).replace(/\n/g,' ')}</div>`:''}
+              </td>
+              <td style="text-align:center;white-space:nowrap;vertical-align:middle" onclick="event.stopPropagation()">
+                ${(o.files&&o.files.length)?`<span style="font-size:10.5px;color:var(--blu);cursor:pointer" onclick="showOrdFiles(${o.id})" title="첨부파일 보기">📎 ${o.files.length}</span>`:'<span style="font-size:10.5px;color:var(--t3)">—</span>'}
+              </td>
+              <td style="text-align:right;white-space:nowrap;vertical-align:middle" onclick="event.stopPropagation()">
+                ${isOrdDone
+                  ? `<button onclick="revertOrdComplete(${o.id})" title="완료 취소" style="padding:3px 7px;font-size:10px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--t2);font-family:inherit;white-space:nowrap">↺ 되돌리기</button>`
+                  : `<button onclick="completeOrd(${o.id})" title="출고 완료 처리" style="padding:3px 9px;font-size:10px;background:var(--grn);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;white-space:nowrap;font-weight:600">✓ 완료</button>`}
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>` : `
       <div style="padding:32px;text-align:center;color:var(--t3);font-size:12.5px">
         ${(()=>{
           // 현재 서브탭 기준 전체 개수 (고급 필터 미적용)
