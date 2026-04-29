@@ -508,6 +508,10 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="fg" style="margin-top:6px">
     <button class="btn bgo" style="width:100%;font-size:12px" onclick="testR2Btn()">📁 R2 파일 저장소 테스트</button>
   </div>
+  <div class="fg" style="margin-top:6px">
+    <button class="btn bgo" style="width:100%;font-size:12px;color:var(--org);border-color:var(--org)" onclick="forceFullSyncNow()" title="모든 DB의 동기화 시각을 초기화하고 전체 데이터를 다시 받아옵니다">🔄 전체 다시 동기화 (느림)</button>
+    <div style="font-size:10px;color:var(--t3);margin-top:3px;line-height:1.4">평소엔 <b>증분 동기화</b>로 변경분만 받아 빠릅니다. 데이터 누락이 의심될 때만 사용하세요.</div>
+  </div>
   <div id="notionTestResult" style="margin-top:8px;font-size:11.5px;min-height:20px"></div>
   <div class="ma">
     <button class="btn bgo" onclick="closeM('mNotion')">닫기</button>
@@ -3992,7 +3996,8 @@ async function archiveAllMatchingInvoices(ordNo, vendor, issuedAt){
 // ════════════════════════════════
 
 // Notion DB에서 모든 페이지를 쿼리 (페이지네이션 자동 처리, archived 제외)
-async function nQueryAll(dbId){
+// sinceISO가 주어지면 last_edited_time > sinceISO인 페이지만 받음 (증분 동기화)
+async function nQueryAll(dbId, sinceISO){
   if(!notionCfg.workerUrl||!dbId) return [];
   const results=[];
   let cursor=undefined;
@@ -4000,6 +4005,11 @@ async function nQueryAll(dbId){
   do {
     const body={page_size:100, archived:false};
     if(cursor) body.start_cursor=cursor;
+    if(sinceISO){
+      // 증분: 마지막 동기화 이후 수정된 것만, 시간 오름차순 정렬 (cursor 안정성)
+      body.filter={timestamp:'last_edited_time', last_edited_time:{after: sinceISO}};
+      body.sorts=[{timestamp:'last_edited_time', direction:'ascending'}];
+    }
     const data=await notionCall('POST', '/databases/'+dbId.replace(/-/g,'')+'/query', body);
     if(!data||!data.results){break;}
     results.push(...data.results);
@@ -4012,6 +4022,57 @@ async function nQueryAll(dbId){
     try{ if(typeof showToast==='function') showToast('⚠ 노션 데이터가 20,000건을 초과합니다. 일부만 동기화되었습니다.','var(--red)',8000); }catch(e){}
   }
   return results;
+}
+
+// ── 증분 동기화: DB별 마지막 동기화 시각 관리 ──
+// localStorage에 DB ID별로 마지막 last_edited_time을 저장하여,
+// 다음 동기화 때 그 이후 수정된 페이지만 받도록 함 (전체 5,616건 → 변경분 N건)
+const DB_SYNC_TIMES_KEY='ek_db_sync_times_v1';
+let _dbSyncTimes={};
+try{
+  const raw=localStorage.getItem(DB_SYNC_TIMES_KEY);
+  if(raw) _dbSyncTimes=JSON.parse(raw)||{};
+}catch(e){ _dbSyncTimes={}; }
+
+function getDbSyncTime(dbId){
+  if(!dbId) return null;
+  return _dbSyncTimes[dbId]||null;
+}
+function setDbSyncTime(dbId, isoTime){
+  if(!dbId||!isoTime) return;
+  _dbSyncTimes[dbId]=isoTime;
+  try{ localStorage.setItem(DB_SYNC_TIMES_KEY, JSON.stringify(_dbSyncTimes)); }catch(e){}
+}
+function clearAllDbSyncTimes(){
+  _dbSyncTimes={};
+  try{ localStorage.removeItem(DB_SYNC_TIMES_KEY); }catch(e){}
+  console.log('[sync] 모든 DB 동기화 시각 초기화 — 다음 pull은 풀 동기화');
+}
+
+// rows 배열에서 가장 최신 last_edited_time 추출
+function maxEditedTime(rows){
+  let max=null;
+  for(const r of rows){
+    const t=r&&r.last_edited_time;
+    if(t && (!max||t>max)) max=t;
+  }
+  return max;
+}
+
+// 풀 동기화 강제 조건:
+// - 처음 동기화 (lastSync 없음)
+// - 24시간마다 1회 (삭제분 따라잡기 위해)
+const FULL_SYNC_INTERVAL_MS = 24*60*60*1000;
+const FULL_SYNC_AT_KEY='ek_last_full_sync_v1';
+function shouldFullSync(){
+  try{
+    const last=parseInt(localStorage.getItem(FULL_SYNC_AT_KEY)||'0',10);
+    if(!last) return true;
+    return (Date.now()-last) > FULL_SYNC_INTERVAL_MS;
+  }catch(e){ return true; }
+}
+function markFullSyncDone(){
+  try{ localStorage.setItem(FULL_SYNC_AT_KEY, String(Date.now())); }catch(e){}
 }
 
 // Notion property 값을 평범한 JS 값으로 추출
@@ -4325,18 +4386,25 @@ async function pullFromNotion(opts){
   if(!silent) setSyncState('Notion 동기화 중...','var(--org)');
 
   try{
-    // 9개 DB를 병렬 쿼리
+    // 증분 동기화 결정: 풀 동기화 강제 시점이거나 처음이면 since=null (전체)
+    const useIncremental = !shouldFullSync();
+    const sinceFor = (dbId)=> (useIncremental && dbId) ? getDbSyncTime(dbId) : null;
+    if(!silent){
+      console.log(`[pull] 모드: ${useIncremental?'증분 (since 기준)':'풀 (전체)'}`);
+    }
+
+    // 9개 DB를 병렬 쿼리 (증분 모드면 since 이후만 받음)
     const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows]=await Promise.all([
-      notionCfg.smpDb   ? nQueryAll(notionCfg.smpDb)   : Promise.resolve([]),
-      notionCfg.ordDb   ? nQueryAll(notionCfg.ordDb)   : Promise.resolve([]),
-      notionCfg.procDb  ? nQueryAll(notionCfg.procDb)  : Promise.resolve([]),
-      notionCfg.propDb  ? nQueryAll(notionCfg.propDb)  : Promise.resolve([]),
-      notionCfg.clientDb? nQueryAll(notionCfg.clientDb): Promise.resolve([]),
-      notionCfg.taskDb  ? nQueryAll(notionCfg.taskDb)  : Promise.resolve([]),
-      notionCfg.asDb    ? nQueryAll(notionCfg.asDb)    : Promise.resolve([]),
-      notionCfg.productDb ? nQueryAll(notionCfg.productDb) : Promise.resolve([]),
-      notionCfg.invDb   ? nQueryAll(notionCfg.invDb)   : Promise.resolve([]),
-      notionCfg.inqDb   ? nQueryAll(notionCfg.inqDb)   : Promise.resolve([]),
+      notionCfg.smpDb   ? nQueryAll(notionCfg.smpDb,    sinceFor(notionCfg.smpDb))    : Promise.resolve([]),
+      notionCfg.ordDb   ? nQueryAll(notionCfg.ordDb,    sinceFor(notionCfg.ordDb))    : Promise.resolve([]),
+      notionCfg.procDb  ? nQueryAll(notionCfg.procDb,   sinceFor(notionCfg.procDb))   : Promise.resolve([]),
+      notionCfg.propDb  ? nQueryAll(notionCfg.propDb,   sinceFor(notionCfg.propDb))   : Promise.resolve([]),
+      notionCfg.clientDb? nQueryAll(notionCfg.clientDb, sinceFor(notionCfg.clientDb)) : Promise.resolve([]),
+      notionCfg.taskDb  ? nQueryAll(notionCfg.taskDb,   sinceFor(notionCfg.taskDb))   : Promise.resolve([]),
+      notionCfg.asDb    ? nQueryAll(notionCfg.asDb,     sinceFor(notionCfg.asDb))     : Promise.resolve([]),
+      notionCfg.productDb ? nQueryAll(notionCfg.productDb, sinceFor(notionCfg.productDb)) : Promise.resolve([]),
+      notionCfg.invDb   ? nQueryAll(notionCfg.invDb,    sinceFor(notionCfg.invDb))    : Promise.resolve([]),
+      notionCfg.inqDb   ? nQueryAll(notionCfg.inqDb,    sinceFor(notionCfg.inqDb))    : Promise.resolve([]),
     ]);
 
     // pull 도중 회로차단기가 열린 경우 → Worker가 응답 실패 상태
@@ -4445,42 +4513,84 @@ async function pullFromNotion(opts){
       return true; // 로컬도 비어있으면 그냥 통과 (아무 변화 없음)
     }
 
+    // ── 증분 모드용 upsert 머지 ──
+    // remote는 "변경된 row만"이므로, 받지 못한 로컬은 그대로 두고 받은 것만 추가/갱신
+    function upsertMerge(remote, local, idFields){
+      if(!remote.length) return local; // 변경 없음
+      const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map((x,i)=>[x._notionId,{x,i}]));
+      const out=local.slice();
+      for(const r of remote){
+        const hit=byNotionId[r._notionId];
+        if(hit){
+          // 기존 항목 갱신: 로컬 보존 필드 유지
+          const prev=hit.x;
+          const merged={...r, id:prev.id};
+          idFields.forEach(f=>{
+            const isArr=Array.isArray(prev[f])||Array.isArray(merged[f]);
+            if(isArr){
+              const prevArr=Array.isArray(prev[f])?prev[f]:[];
+              const remoteArr=Array.isArray(merged[f])?merged[f]:[];
+              merged[f]=prevArr.length>=remoteArr.length?prevArr:remoteArr;
+            } else if(prev[f]!==undefined){
+              merged[f]=prev[f];
+            }
+          });
+          out[hit.i]=merged;
+        } else {
+          // 신규 항목 추가
+          out.push({id:Date.now()+Math.random(), ...r});
+        }
+      }
+      return out;
+    }
+
+    // ── 디스패치 헬퍼: 증분 모드면 upsertMerge, 풀 모드면 기존 mergeLocalAttachments ──
+    function mergeRows(remoteRows, localArr, mapper, idFields, label, dbId){
+      // 증분 모드: remote가 비어있으면 변경 없음 → 그대로 두고 sync time만 그대로 유지
+      if(useIncremental){
+        if(!remoteRows.length){
+          // 변경 없음 — DB sync time은 그대로 유지 (현재 시각으로 갱신해도 무방하나, 안전을 위해 유지)
+          return localArr;
+        }
+        const mapped=remoteRows.map(mapper);
+        const next=upsertMerge(mapped, localArr, idFields);
+        // 받은 row 중 가장 최신 last_edited_time을 sync time으로 저장
+        const maxT=maxEditedTime(remoteRows);
+        if(maxT && dbId) setDbSyncTime(dbId, maxT);
+        console.log(`[pull/inc] ${label}: ${remoteRows.length}건 변경 반영`);
+        return next;
+      }
+      // 풀 모드: 기존 안전장치 + 전체 머지
+      if(isSafePull(remoteRows, localArr, label) && (remoteRows.length || localArr.some(x=>x._notionId))){
+        const mapped=remoteRows.map(mapper);
+        const next=mergeLocalAttachments(mapped, localArr, idFields);
+        // 풀 동기화에서도 sync time 기록 (이후 증분 시작점)
+        const maxT=maxEditedTime(remoteRows);
+        if(maxT && dbId) setDbSyncTime(dbId, maxT);
+        else if(dbId){
+          // 받은 게 0건이어도 현재 시각을 기록 (이후 증분의 시작점)
+          setDbSyncTime(dbId, new Date().toISOString());
+        }
+        return next;
+      }
+      return localArr;
+    }
+
     // 각 테이블 매핑
-    if(isSafePull(smpRows,samples,'샘플') && (smpRows.length || samples.some(x=>x._notionId))){
-      samples=mergeLocalAttachments(smpRows.map(mapNotionSample), samples,
-        ['imgs','sourceDoc','cadFiles','refs','aiParsed','itemNo','sz2','sz3','sz4','wt','engr','card','devNote','caution','qty','invNo','factShip']);
-    }
-    if(isSafePull(ordRows,orders,'발주') && (ordRows.length || orders.some(x=>x._notionId))){
-      orders=mergeLocalAttachments(ordRows.map(mapNotionOrder), orders,
-        ['files','rows','aiParsed','factShip']);
-    }
-    if(isSafePull(procRows,procItems,'공정') && (procRows.length || procItems.some(x=>x._notionId))){
-      procItems=mergeLocalAttachments(procRows.map(mapNotionProc), procItems, ['orderId']);
-    }
-    if(isSafePull(propRows,proposals,'영업제안') && (propRows.length || proposals.some(x=>x._notionId))){
-      proposals=mergeLocalAttachments(propRows.map(mapNotionProposal), proposals,
-        ['images','memo','productId']);
-    }
-    if(isSafePull(cliRows,clients,'고객사') && (cliRows.length || clients.some(x=>x._notionId))){
-      clients=mergeLocalAttachments(cliRows.map(mapNotionClient), clients, []);
-    }
-    if(isSafePull(taskRows,tasks,'업무일지') && (taskRows.length || tasks.some(x=>x._notionId))){
-      tasks=mergeLocalAttachments(taskRows.map(mapNotionTask), tasks, ['files']);
-    }
-    if(isSafePull(asRows,asItems,'AS') && (asRows.length || asItems.some(x=>x._notionId))){
-      asItems=mergeLocalAttachments(asRows.map(mapNotionAS), asItems, []);
-    }
-    if(isSafePull(pdRows,productDB,'제품DB') && (pdRows.length || productDB.some(x=>x._notionId))){
-      // 제품DB는 이미지(imgs)와 업로드 출처(importSource)는 로컬 보존
-      productDB=mergeLocalAttachments(pdRows.map(mapNotionProduct), productDB, ['imgs','importSource','createdAt']);
-    }
-    if(isSafePull(invRows,invoiceHistory,'청구이력') && (invRows.length || invoiceHistory.some(x=>x._notionId))){
-      // 청구이력은 items 배열(상세 품목)과 ordId 로컬 보존
-      invoiceHistory=mergeLocalAttachments(invRows.map(mapNotionInvoice), invoiceHistory, ['items','ordId']);
-    }
-    if(isSafePull(inqRows,inquiries,'고객사문의') && (inqRows.length || inquiries.some(x=>x._notionId))){
-      // 고객사 문의: 첨부 이미지/파일은 로컬 보존 (R2 URL 또는 base64)
-      inquiries=mergeLocalAttachments(inqRows.map(mapNotionInquiry), inquiries, ['imgs','files']);
+    samples       = mergeRows(smpRows,  samples,        mapNotionSample,    ['imgs','sourceDoc','cadFiles','refs','aiParsed','itemNo','sz2','sz3','sz4','wt','engr','card','devNote','caution','qty','invNo','factShip'], '샘플',     notionCfg.smpDb);
+    orders        = mergeRows(ordRows,  orders,         mapNotionOrder,     ['files','rows','aiParsed','factShip'], '발주',     notionCfg.ordDb);
+    procItems     = mergeRows(procRows, procItems,      mapNotionProc,      ['orderId'], '공정',     notionCfg.procDb);
+    proposals     = mergeRows(propRows, proposals,      mapNotionProposal,  ['images','memo','productId'], '영업제안', notionCfg.propDb);
+    clients       = mergeRows(cliRows,  clients,        mapNotionClient,    [], '고객사',   notionCfg.clientDb);
+    tasks         = mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
+    asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        [], 'AS',       notionCfg.asDb);
+    productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['imgs','importSource','createdAt'], '제품DB',   notionCfg.productDb);
+    invoiceHistory= mergeRows(invRows,  invoiceHistory, mapNotionInvoice,   ['items','ordId'], '청구이력', notionCfg.invDb);
+    inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
+
+    // 풀 모드를 성공적으로 마쳤다면 마지막 풀 동기화 시각 기록
+    if(!useIncremental){
+      markFullSyncDone();
     }
 
     save(); slSave();
@@ -4494,7 +4604,8 @@ async function pullFromNotion(opts){
     if(!silent){
       const total=smpRows.length+ordRows.length+procRows.length+propRows.length+cliRows.length+taskRows.length+asRows.length+pdRows.length+invRows.length+inqRows.length;
       setSyncState('Notion 🟢','var(--grn)');
-      showToast(`✓ Notion 동기화 완료 (${total}건)`,'var(--grn)',2200);
+      const modeLabel = useIncremental ? '증분' : '전체';
+      showToast(`✓ Notion ${modeLabel} 동기화 완료 (${total}건)`,'var(--grn)',2200);
     } else {
       setSyncState('Notion 🟢','var(--grn)');
     }
@@ -4509,13 +4620,26 @@ async function pullFromNotion(opts){
   }
 }
 
-// 수동 새로고침 버튼용
+// 수동 새로고침 버튼용 (기본: 증분 우선, 24시간마다 1회 풀)
 function manualSyncNow(){
   if(!notionCfg.workerUrl){
     showToast('⚠ Notion 연동이 설정되지 않았습니다. 상단 🔄 버튼을 클릭하여 설정해 주세요.','var(--org)',3500);
     openNotionSettings();
     return;
   }
+  pullFromNotion({silent:false});
+}
+
+// 전체 다시 동기화: 모든 DB sync time을 초기화한 뒤 풀 동기화 강제 실행
+// (데이터 누락이 의심되거나, 노션에서 수동으로 archive한 항목이 로컬에 남아있을 때 사용)
+function forceFullSyncNow(){
+  if(!notionCfg.workerUrl){
+    showToast('⚠ Notion 연동이 설정되지 않았습니다.','var(--org)',3500);
+    return;
+  }
+  if(!confirm('전체 데이터를 Notion에서 다시 받아옵니다.\n시간이 좀 걸릴 수 있어요 (5,000건당 약 20초).\n\n계속할까요?')) return;
+  clearAllDbSyncTimes();
+  try{ localStorage.removeItem(FULL_SYNC_AT_KEY); }catch(e){}
   pullFromNotion({silent:false});
 }
 
