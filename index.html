@@ -4030,6 +4030,7 @@ function mapNotionSample(row){
     status:   np.select(p['상태'])||'의뢰',
     reqDate:  np.date(p['의뢰일']),
     due:      np.date(p['납기일']),
+    factShip: np.date(p['공장출고일']),
     costPrice:np.number(p['입고원가']),
     unitPrice:np.number(p['샘플단가']),
     devCost:  np.number(p['개발비']),
@@ -4099,6 +4100,7 @@ function mapNotionOrder(row){
     memoList,
     date:    np.date(p['발주일']),
     ship:    np.date(p['요청출고일']),
+    factShip:np.date(p['공장출고일']),
     status:  np.select(p['상태']) || '진행중',
     rows,
     files,
@@ -4639,6 +4641,8 @@ async function syncSampleToNotion(s, update){
   if(s.status)  p["상태"]={"select":{"name":s.status}};
   if(s.reqDate) p["의뢰일"]={"date":{"start":s.reqDate}};
   if(s.due)     p["납기일"]={"date":{"start":s.due}};
+  if(s.factShip) p["공장출고일"]={"date":{"start":s.factShip}};
+  else           p["공장출고일"]={"date":null};
   if(s.costPrice) p["입고원가"]={"number":+s.costPrice};
   if(s.unitPrice) p["샘플단가"]={"number":+s.unitPrice};
   if(s.devCost)   p["개발비"]={"number":+s.devCost};
@@ -4704,6 +4708,8 @@ async function syncOrderToNotion(o, update){
   };
   if(o.date) p["발주일"]={"date":{"start":o.date}};
   if(o.ship) p["요청출고일"]={"date":{"start":o.ship}};
+  if(o.factShip) p["공장출고일"]={"date":{"start":o.factShip}};
+  else           p["공장출고일"]={"date":null};
   // 출고일 변경 이력 (JSON 문자열)
   if(Array.isArray(o.shipHistory) && o.shipHistory.length){
     const histJson = JSON.stringify(o.shipHistory);
@@ -8727,13 +8733,11 @@ function renderOrder(){
       </div>
     </div>
     ${(()=>{
-      // 업체별 진행중(출고 완료 안 된) 발주 집계
+      // 업체별 진행중 발주 집계 (status 기반 — 서브탭 카운트와 동일 기준)
       const tally={};
       orders.forEach(o=>{
-        // 진행중 판단: 연결된 공정 중 shipped 안 된 게 하나라도 있거나, 공정 자체가 없는 경우
-        const ps=procItems.filter(p=>p.orderId==o.id);
-        const isInProgress = !ps.length || ps.some(p=>!p.shipped);
-        if(!isInProgress) return;
+        const st=o.status||'진행중';
+        if(st==='출고완료' || st==='취소') return;
         const v=(o.vendor||'').trim(); if(!v) return;
         if(!tally[v]){
           const cl=findClientByVendor(v);
@@ -8936,9 +8940,20 @@ function renderOrder(){
       </div>`;
     }).join('<div style="height:8px"></div>') : `
       <div style="padding:32px;text-align:center;color:var(--t3);font-size:12.5px">
-        ${ordSubTab==='done' ? '✓ 출고완료된 발주서가 없습니다' :
-          ordSubTab==='inprogress' ? '🔄 진행중인 발주서가 없습니다 — 위 드롭존에 발주서 파일을 올려주세요' :
-          '등록된 발주서가 없습니다 — 위 드롭존에 발주서 파일을 올려주세요'}
+        ${(()=>{
+          // 현재 서브탭 기준 전체 개수 (고급 필터 미적용)
+          const subTabTotal = ordSubTab==='done' ? doneOrd
+            : ordSubTab==='inprogress' ? activeOrd
+            : orders.length;
+          // 필터가 활성화되어 있는데 결과가 0이면 안내 메시지 차별화
+          const hasActiveFilter = !!(af.vendor || af.dday || af.status || af.stage!=='' || af.shipFrom || af.shipTo || af.dateFrom || af.dateTo) || !!ordSearch;
+          if(hasActiveFilter && subTabTotal>0){
+            return `🔍 필터에 맞는 발주서가 없습니다 (${ordSubTab==='done'?'출고완료':ordSubTab==='inprogress'?'진행중':'전체'} ${subTabTotal}건 중 0건)<br><span style="font-size:11px;display:inline-block;margin-top:6px">필터를 해제하면 전체 발주서를 볼 수 있습니다</span>`;
+          }
+          return ordSubTab==='done' ? '✓ 출고완료된 발주서가 없습니다'
+            : ordSubTab==='inprogress' ? '🔄 진행중인 발주서가 없습니다 — 위 드롭존에 발주서 파일을 올려주세요'
+            : '등록된 발주서가 없습니다 — 위 드롭존에 발주서 파일을 올려주세요';
+        })()}
       </div>`}
   </div>`;
 }
@@ -12432,10 +12447,15 @@ function findClientByVendor(vendorName){
   cl=clients.find(c=>normalizeVendorName(c.name)===norm);
   if(cl) return cl;
   // 3순위: 한쪽이 다른 쪽을 포함 (부분 일치 — "제이스바이브" ⊂ "제이스바이브주얼리")
-  if(norm.length>=2){
+  // 짧은 이름 오매칭 방지: 양쪽 모두 3자 이상 + 짧은 쪽이 긴 쪽의 60% 이상이어야 매칭
+  if(norm.length>=3){
     cl=clients.find(c=>{
       const cn=normalizeVendorName(c.name);
-      return cn && (cn.includes(norm)||norm.includes(cn));
+      if(!cn || cn.length<3) return false;
+      if(!(cn.includes(norm)||norm.includes(cn))) return false;
+      const shorter=Math.min(cn.length, norm.length);
+      const longer=Math.max(cn.length, norm.length);
+      return shorter/longer >= 0.6;
     });
     if(cl) return cl;
   }
