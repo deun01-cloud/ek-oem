@@ -4396,6 +4396,8 @@ async function pullFromNotion(opts){
 
     // 현재 탭 다시 그리기
     if(typeof renderTab==='function') try{renderTab();updateBadges();}catch(e){}
+    // 안전장치: 비동기 흐름으로 stale DOM이 남는 케이스 방지 (100ms 후 한 번 더)
+    setTimeout(()=>{ if(typeof renderTab==='function') try{renderTab();}catch(e){} }, 100);
 
     if(!silent){
       const total=smpRows.length+ordRows.length+procRows.length+propRows.length+cliRows.length+taskRows.length+asRows.length+pdRows.length+invRows.length;
@@ -6592,9 +6594,8 @@ function renderDash(){
   const todayT=tasks.filter(t=>t.date===todayStr&&!t.done).length;
 
   c.innerHTML=`
-  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
     <div class="kpi k-r" onclick="switchTab('order',getTabBtn('order'))"><div class="kpi-l">오늘 출고</div><div class="kpi-v">${todayShip}</div><div class="kpi-d">건</div></div>
-    <div class="kpi k-o" onclick="switchTab('order',getTabBtn('order'))"><div class="kpi-l">납기임박 D-3</div><div class="kpi-v">${urgP}</div><div class="kpi-d">공정</div></div>
     <div class="kpi k-b" onclick="switchTab('sample',getTabBtn('sample'))"><div class="kpi-l">샘플 진행중</div><div class="kpi-v">${activeSmp}</div><div class="kpi-d">건</div></div>
     <div class="kpi k-g" onclick="switchTab('order',getTabBtn('order'))"><div class="kpi-l">발주 진행중</div><div class="kpi-v">${activeOrd}</div><div class="kpi-d">건</div></div>
     <div class="kpi k-p" onclick="switchTab('schedule',getTabBtn('schedule'))"><div class="kpi-l">오늘 업무</div><div class="kpi-v">${todayT}</div><div class="kpi-d">건</div></div>
@@ -12470,16 +12471,20 @@ function vendorInitHtml(vendorName, small){
   // 1) 고객사 DB 등록된 업체면 해당 이니셜/색상 사용 (관대한 매칭)
   const cl=findClientByVendor(name);
   if(cl) return clInitHtml(cl, small);
-  // 2) 등록 안 됨 → 이름에서 이니셜 자동 생성 + 문자열 해시 색상
+  // 2) 등록 안 됨 → 영문 이니셜 추출 시도 (한글 깜빡임 방지)
+  //    이름에 영문/숫자가 있으면 그것만 모아 첫 2글자 사용. 없으면 빈 배지(─)로 둠.
+  //    → clients가 노션에서 로드된 후 재렌더링 시 진짜 이니셜로 채워지므로,
+  //      한글 폴백이 잠깐 보이고 영문으로 바뀌는 깜빡임을 방지함.
   const nm=name.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
-  const words=nm.split(/\s+/);
-  let init;
-  if(words.length>=2){
-    init=(words[0][0]+(words[1][0]||'')).toUpperCase();
+  const ascii=nm.replace(/[^A-Za-z0-9]/g,'');
+  let init='';
+  if(ascii.length>=2){
+    init=ascii.slice(0,2).toUpperCase();
+  } else if(ascii.length===1){
+    init=ascii.toUpperCase()+'·';
   } else {
-    init=nm.slice(0,2).toUpperCase();
+    init='─'; // 한글 전용 이름 — clients 로드 전까지는 중립 표시
   }
-  if(!init) return '';
   const sz=small?'cl-init cl-init-sm':'cl-init';
   return`<span class="${sz}" style="background:${strToColor(name)}" title="${name}">${init}</span>`;
 }
