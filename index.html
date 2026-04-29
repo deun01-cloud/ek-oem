@@ -2383,7 +2383,24 @@ function renderAS(){
 // ════════════════════════════════
 let pdImgBuf=[], _importRows=[];
 let pdSearch='', pdFilterType='전체', pdFilterMat='전체', pdPage=1, pdLowOnly=false;
+let pdSortKey=null, pdSortDir='asc'; // 정렬 상태: key=null이면 기본순서, dir='asc'(오름)/'desc'(내림)
 const PD_PAGE_SIZE=20;
+
+// 헤더 클릭 시 정렬 토글: 1번 클릭 → 정렬 시작, 2번 클릭 → 역순, 3번 클릭 → 원래 순서
+function pdToggleSort(key){
+  if(pdSortKey!==key){
+    pdSortKey=key;
+    // 재고는 처음 클릭 시 '많은 순'(내림차순)이 기본, 나머지는 가나다순
+    pdSortDir = (key==='stock') ? 'desc' : 'asc';
+  } else if(pdSortDir==='asc'){
+    pdSortDir='desc';
+  } else if(pdSortDir==='desc'){
+    // 3번째 클릭 → 정렬 해제 (원래 순서)
+    pdSortKey=null; pdSortDir='asc';
+  }
+  pdPage=1;
+  renderProducts();
+}
 
 // ── 제품 목록 렌더 ──
 function renderProducts(){
@@ -2400,6 +2417,27 @@ function renderProducts(){
     list=list.filter(p=>{
       const stock=+p.stock||0,safety=+p.safetyStock||0;
       return safety>0&&stock<=safety;
+    });
+  }
+
+  // ── 헤더 클릭 정렬 ──
+  if(pdSortKey){
+    list=[...list].sort((a,b)=>{
+      let va,vb;
+      if(pdSortKey==='stock'){
+        va=+a.stock||0; vb=+b.stock||0;
+        return pdSortDir==='asc' ? va-vb : vb-va;
+      } else {
+        // 문자열 정렬 (유형/소재/도금)
+        va=(a[pdSortKey]||'').toString();
+        vb=(b[pdSortKey]||'').toString();
+        // 빈 값은 항상 뒤로
+        if(!va && vb) return 1;
+        if(va && !vb) return -1;
+        if(!va && !vb) return 0;
+        const cmp=va.localeCompare(vb,'ko');
+        return pdSortDir==='asc' ? cmp : -cmp;
+      }
     });
   }
 
@@ -2442,10 +2480,10 @@ function renderProducts(){
           <th style="padding:8px 6px;width:46px"></th>
           <th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap">품목코드</th>
           <th style="padding:8px 10px;text-align:left;font-weight:600">품목명</th>
-          <th style="padding:8px 10px;text-align:center;font-weight:600;white-space:nowrap">유형</th>
-          <th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap">소재</th>
-          <th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap">도금</th>
-          <th style="padding:8px 10px;text-align:center;font-weight:600;white-space:nowrap">재고</th>
+          <th style="padding:8px 10px;text-align:center;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" onclick="pdToggleSort('type')" title="클릭하여 정렬">유형${pdSortKey==='type'?(pdSortDir==='asc'?' ▲':' ▼'):" <span style='color:var(--t3);opacity:.4'>⇅</span>"}</th>
+          <th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" onclick="pdToggleSort('mat')" title="클릭하여 정렬">소재${pdSortKey==='mat'?(pdSortDir==='asc'?' ▲':' ▼'):" <span style='color:var(--t3);opacity:.4'>⇅</span>"}</th>
+          <th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" onclick="pdToggleSort('plating')" title="클릭하여 정렬">도금${pdSortKey==='plating'?(pdSortDir==='asc'?' ▲':' ▼'):" <span style='color:var(--t3);opacity:.4'>⇅</span>"}</th>
+          <th style="padding:8px 10px;text-align:center;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" onclick="pdToggleSort('stock')" title="클릭하여 정렬 (처음 클릭 = 많은 순)">재고${pdSortKey==='stock'?(pdSortDir==='asc'?' ▲':' ▼'):" <span style='color:var(--t3);opacity:.4'>⇅</span>"}</th>
           <th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">출고단가</th>
           <th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">입고원가</th>
           <th style="padding:8px 10px;text-align:center;font-weight:600;white-space:nowrap">최종수정일</th>
@@ -3967,7 +4005,12 @@ async function nQueryAll(dbId){
     results.push(...data.results);
     cursor=data.has_more?data.next_cursor:null;
     safetyCounter++;
-  } while(cursor && safetyCounter<20); // 최대 2000건
+  } while(cursor && safetyCounter<200); // 최대 20,000건
+  // 한계 도달 경고: 더 받을 게 있는데도 멈춘 경우
+  if(cursor){
+    console.error(`[nQueryAll] ⚠ DB(${dbId.slice(0,8)}...) 페이지네이션 한계(20,000건) 도달! 더 많은 데이터 존재함`);
+    try{ if(typeof showToast==='function') showToast('⚠ 노션 데이터가 20,000건을 초과합니다. 일부만 동기화되었습니다.','var(--red)',8000); }catch(e){}
+  }
   return results;
 }
 
@@ -4382,7 +4425,18 @@ async function pullFromNotion(opts){
     // 안전장치: remote가 비어있는데 로컬에 _notionId가 있는 항목이 있으면
     // 네트워크/권한 오류로 조회 실패한 것으로 간주하여 pull 스킵 (데이터 보호)
     function isSafePull(remoteRows, localArr, label){
-      if(remoteRows.length>0) return true; // remote 있으면 정상 pull
+      if(remoteRows.length>0){
+        // 🛡 데이터 급감 감지: remote가 local의 80% 미만이면 의심 상황
+        const localCount = localArr.length;
+        const remoteCount = remoteRows.length;
+        if(localCount >= 50 && remoteCount < localCount * 0.8){
+          const msg = `⚠ ${label}: 노션 ${remoteCount}건 / 로컬 ${localCount}건 — 데이터 급감 감지! 안전을 위해 동기화 스킵 (페이지네이션 한계나 권한 문제 의심)`;
+          console.error('[pull]', msg);
+          try{ if(typeof showToast==='function') showToast(msg,'var(--red)',10000); }catch(e){}
+          return false;
+        }
+        return true; // 정상 pull
+      }
       const hasSyncedLocal=localArr.some(x=>x._notionId);
       if(hasSyncedLocal){
         console.warn(`[pull] ${label} skip: remote 0건이나 로컬에 동기화된 데이터 존재 (의심 상황, 보존)`);
@@ -13054,7 +13108,7 @@ function renderPropPreviews(){
 }
 
 // ── 영업제안 이미지 업로드 핸들러 (이전에 누락되어 에러 발생하던 함수) ──
-let propImgFiles = (typeof propImgFiles !== 'undefined' && propImgFiles) || [];
+var propImgFiles = (typeof propImgFiles !== 'undefined' && propImgFiles) || [];
 function handlePropImages(ev){
   const files = Array.from(ev.target.files || []);
   if(!files.length) return;
