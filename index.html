@@ -4279,6 +4279,7 @@ async function pullFromNotion(opts){
       const dupKey=(item)=>{
         if(!item) return null;
         if(item.no) return 'no:'+item.no; // 발주
+        if(item.ordNo && item.issuedAt) return 'inv:'+item.ordNo+'_'+item.issuedAt+'_'+(item.vendor||''); // 거래명세서
         if(item.name && item.reqDate) return 'smp:'+item.name+'_'+item.reqDate;
         if(item.initials) return 'cli:'+item.initials;
         if(item.title && item.date) return 'as:'+item.title+'_'+item.date;
@@ -8341,8 +8342,15 @@ async function quickRegOrder(){
     applyParseToOrd(parsed);
     return;
   }
+  // ── 미완성 차단: 유효한 품목이 없으면 폼 열어서 사용자가 채우게 함
+  var validRows=(o.rows||[]).filter(r=>String(r.name||'').trim());
+  if(validRows.length===0){
+    showToast('⚠ 품목 인식 실패 — 폼에서 직접 입력해 주세요','var(--org)');
+    applyParseToOrd(parsed);
+    return;
+  }
   var now=new Date().toISOString();
-  var rows=o.rows&&o.rows.length?o.rows:[{name:'',qty:'',plating:'',mat:'',size:'',note:''}];
+  var rows=validRows;
 
   // 품목 이미지 R2 업로드 (base64 → R2 URL)
   var hasRowImgs=rows.some(r=>r.img && String(r.img).startsWith('data:'));
@@ -10272,6 +10280,17 @@ function applyItemToRow(smpId){
 async function saveOrd(){
   const vendor=gv('o_vendor');if(!vendor)return showToast('⚠ 업체명을 입력해 주세요','var(--red)');
   const id=gv('o_id');const isNew=!id;
+  // ── 미완성 발주 차단 (신규 등록 시에만, 수정은 허용)
+  if(isNew){
+    const validRows=ordRowsBuf.filter(r=>String(r.name||'').trim());
+    if(validRows.length===0){
+      return showToast('⚠ 품목을 1개 이상 입력해 주세요','var(--red)');
+    }
+    const date=gv('o_date');
+    if(!date){
+      return showToast('⚠ 발주일을 입력해 주세요','var(--red)');
+    }
+  }
   const now=new Date().toISOString();
   // UI 전용 플래그(_expanded) 제거 후 저장
   let cleanRows=ordRowsBuf.map(r=>{const {_expanded,...rest}=r;return rest;});
