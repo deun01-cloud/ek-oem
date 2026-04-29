@@ -3345,7 +3345,11 @@ function openInvDetail(id){
   if(rb){
     rb.onclick=function(){
       closeM('mInvDetail');
-      if(v.ordId){var o=orders.find(function(x){return x.id==v.ordId;});if(o){openOrdTaxInvoice(v.ordId);return;}}
+      // 발주 매칭: ordId(로컬) 우선 → 발주번호(ordNo)로 폴백 (다른 컴퓨터 동기화 대응)
+      var o=null;
+      if(v.ordId) o=orders.find(function(x){return x.id==v.ordId;});
+      if(!o && v.ordNo) o=orders.find(function(x){return x.no===v.ordNo;});
+      if(o){ openOrdTaxInvoice(o.id); return; }
       showToast('원본 발주서를 찾을 수 없습니다','var(--org)');
     };
   }
@@ -4062,10 +4066,24 @@ function maxEditedTime(rows){
 // 풀 동기화 강제 조건:
 // - 처음 동기화 (lastSync 없음)
 // - 24시간마다 1회 (삭제분 따라잡기 위해)
+// - 로컬 데이터가 거의 비어있을 때 (다른 컴퓨터/브라우저에서 처음 접속한 경우)
 const FULL_SYNC_INTERVAL_MS = 24*60*60*1000;
 const FULL_SYNC_AT_KEY='ek_last_full_sync_v1';
 function shouldFullSync(){
   try{
+    // 로컬 데이터가 거의 없으면 → 풀 모드 강제
+    // (새 브라우저/시크릿모드/다른 컴퓨터에서 처음 접속한 케이스 대응)
+    // _dbSyncTimes는 살아있는데 실제 데이터는 없는 상황을 방지
+    const totalLocal = (typeof clients!=='undefined'?clients.length:0)
+                     + (typeof samples!=='undefined'?samples.length:0)
+                     + (typeof orders!=='undefined'?orders.length:0)
+                     + (typeof inquiries!=='undefined'?inquiries.length:0)
+                     + (typeof proposals!=='undefined'?proposals.length:0)
+                     + (typeof productDB!=='undefined'?productDB.length:0);
+    if(totalLocal < 5){
+      console.log('[shouldFullSync] 로컬 데이터 부족('+totalLocal+'건) → 풀 모드 강제');
+      return true;
+    }
     const last=parseInt(localStorage.getItem(FULL_SYNC_AT_KEY)||'0',10);
     if(!last) return true;
     return (Date.now()-last) > FULL_SYNC_INTERVAL_MS;
@@ -4424,6 +4442,12 @@ async function pullFromNotion(opts){
         if(!item) return null;
         if(item.no) return 'no:'+item.no; // 발주
         if(item.ordNo && item.issuedAt) return 'inv:'+item.ordNo+'_'+item.issuedAt+'_'+(item.vendor||''); // 거래명세서
+        // 제품DB: 품목코드(code)가 unique key. code가 있으면 무조건 그것으로만 식별.
+        // (제품DB 항목은 reqDate/initials/title 등이 없으므로 name까지 가면 안됨 — 동명이품 보호)
+        if(item.code !== undefined && (item.price !== undefined || item.stock !== undefined || item.metal !== undefined)){
+          // code가 빈 문자열이어도 _notionId로는 식별되므로 null 반환 (dupKey 매칭 스킵)
+          return item.code ? 'pd:'+item.code : null;
+        }
         if(item.name && item.reqDate) return 'smp:'+item.name+'_'+item.reqDate;
         if(item.initials) return 'cli:'+item.initials;
         if(item.title && item.date) return 'as:'+item.title+'_'+item.date;
@@ -11696,7 +11720,12 @@ function vMonthly(c){
   // 발주서 금액: 발행된 거래명세서 있으면 그 합계, 없으면 품목 단가×수량
   function ordAmt(o){
     // 1) 이 발주서에 대해 발행된 거래명세서가 있으면 그 공급가액 합계 사용
-    const invs=invoiceHistory.filter(v=>v.ordId===o.id);
+    //    매칭: ordId(로컬 ID) 우선 → 실패 시 발주번호로 폴백
+    //    (다른 컴퓨터에서 동기화하면 ordId가 깨질 수 있어 발주번호로도 매칭)
+    const invs=invoiceHistory.filter(v=>
+      (v.ordId && v.ordId===o.id) ||
+      (o.no && v.ordNo && v.ordNo===o.no)
+    );
     if(invs.length){
       return invs.reduce((s,v)=>s+(+v.supplyAmt||0),0);
     }
@@ -11718,8 +11747,12 @@ function vMonthly(c){
     return st!=='출고완료' && st!=='취소';
   });
   // 거래명세서 미발행 발주만 골라서 "예상 금액" 합산
+  // 매칭: ordId(로컬) 우선, 발주번호(ordNo)로 폴백 — 다른 컴퓨터 동기화 대응
   const pendingOrdersNotInvoiced=pendingOrders.filter(o=>
-    !invoiceHistory.some(v=>v.ordId===o.id)
+    !invoiceHistory.some(v=>
+      (v.ordId && v.ordId===o.id) ||
+      (o.no && v.ordNo && v.ordNo===o.no)
+    )
   );
   const pendingOrdAmt=pendingOrdersNotInvoiced.reduce((s,o)=>s+ordAmt(o),0);
   const pendingOrdCnt=pendingOrders.length;
@@ -11739,8 +11772,14 @@ function vMonthly(c){
   // 기준일: 발주일 6개월 전 ~ 오늘
   const ord6mStart=new Date(thisY,thisM-5,1);  // 6개월 전 1일
   const ord6mStartStr=`${ord6mStart.getFullYear()}-${String(ord6mStart.getMonth()+1).padStart(2,'0')}-01`;
-  // "확정매출" = 출고완료된 발주의 금액 / "예상매출" = 진행중(출고완료·취소 제외) 발주의 금액
-  // 6개월 누적은 발주일 기준으로 필터, 예상매출은 진행중 상태의 모든 발주 (날짜 무관)
+  // "확정매출" = 출고완료된 발주 또는 거래명세서 발행된 발주의 금액
+  // "예상매출" = 진행중(출고완료·취소 제외, 명세서 미발행) 발주의 금액
+  // 6개월 누적은 발주일 기준으로 필터
+  // 헬퍼: 해당 발주에 거래명세서가 발행되었는지 (ordId 우선, ordNo 폴백)
+  const hasInvoiceFor = (o) => invoiceHistory.some(v=>
+    (v.ordId && v.ordId===o.id) ||
+    (o.no && v.ordNo && v.ordNo===o.no)
+  );
   const clientOrdMap={};
   orders.forEach(o=>{
     const key=(o.vendor||'기타').trim();
@@ -11748,7 +11787,9 @@ function vMonthly(c){
     const st=o.status||'진행중';
     const a=ordAmt(o);
     const inWindow=o.date && o.date>=ord6mStartStr;
-    if(st==='출고완료' && inWindow){
+    // 명세서 발행됐거나 출고완료면 확정매출로 분류 (상태가 진행중이라도 명세서 있으면 사실상 확정)
+    const isConfirmed = (st==='출고완료') || hasInvoiceFor(o);
+    if(isConfirmed && inWindow){
       clientOrdMap[key].doneAmt+=a;
       clientOrdMap[key].doneCnt++;
     } else if(st!=='출고완료' && st!=='취소'){
@@ -11758,9 +11799,9 @@ function vMonthly(c){
     }
   });
   const clientOrdList=Object.values(clientOrdMap)
-    .filter(x=>x.doneAmt>0||x.pendAmt>0)
+    .filter(x=>x.doneCnt>0||x.pendCnt>0)  // 건수 기준으로 변경 (단가 0인 발주도 포함)
     .map(x=>({...x,totalAmt:x.doneAmt+x.pendAmt,totalCnt:x.doneCnt+x.pendCnt}))
-    .sort((a,b)=>b.totalAmt-a.totalAmt);
+    .sort((a,b)=>(b.totalAmt-a.totalAmt) || (b.totalCnt-a.totalCnt));  // 금액 같으면 건수로 정렬
   const totalDoneAmt=clientOrdList.reduce((s,x)=>s+x.doneAmt,0);
   const totalPendAmt=clientOrdList.reduce((s,x)=>s+x.pendAmt,0);
 
