@@ -817,7 +817,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="fr3">
     <div class="fg"><label>공장 출고일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(중국 출고 일정)</span></label><input class="fi" type="date" id="o_factShip"></div>
     <div class="fg"><label>담당자</label><input class="fi" id="o_manager" placeholder="담당자명"></div>
-    <div class="fg"><label>발주번호</label><input class="fi" id="o_no" placeholder="자동생성"></div>
+    <div class="fg"><label>발주번호 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(빈칸이면 자동생성: 이니셜+MMDD)</span></label><input class="fi" id="o_no" placeholder="예: VT0414 (자동생성)"></div>
   </div>
 
   <div class="form-sec">품목 내역</div>
@@ -1448,7 +1448,7 @@ let ordAdvFilter={
   stage:'',        // 전체/0~4 (주물/도금/검품/포장/출고)
   shipFrom:'', shipTo:'',     // 출고일 범위
   dateFrom:'', dateTo:'',     // 발주일 범위
-  sort:'ship_asc', // ship_asc/ship_desc/date_desc/date_asc/vendor_asc
+  sort:'date_asc', // ship_asc/ship_desc/date_desc/date_asc/vendor_asc
   panelOpen:false,
 };
 function ordAdvActiveCount(){
@@ -1459,11 +1459,11 @@ function ordAdvActiveCount(){
   if(ordAdvFilter.stage!=='')n++; // stage=0('주물')도 활성
   if(ordAdvFilter.shipFrom||ordAdvFilter.shipTo)n++;
   if(ordAdvFilter.dateFrom||ordAdvFilter.dateTo)n++;
-  if(ordAdvFilter.sort&&ordAdvFilter.sort!=='ship_asc')n++;
+  if(ordAdvFilter.sort&&ordAdvFilter.sort!=='date_asc')n++;
   return n;
 }
 function resetOrdAdvFilter(){
-  ordAdvFilter={vendor:'',dday:'',status:'',stage:'',shipFrom:'',shipTo:'',dateFrom:'',dateTo:'',sort:'ship_asc',panelOpen:ordAdvFilter.panelOpen};
+  ordAdvFilter={vendor:'',dday:'',status:'',stage:'',shipFrom:'',shipTo:'',dateFrom:'',dateTo:'',sort:'date_asc',panelOpen:ordAdvFilter.panelOpen};
   renderOrder();
 }
 
@@ -8599,7 +8599,7 @@ async function quickRegOrder(){
     id:ordId,createdAt:now,aiParsed:true,
     vendor:o.vendor,date:o.date||todayStr,
     ship:o.shipDate||'',manager:o.manager||'',
-    no:'ORD-'+ordId,memo:'',rows:rows,
+    no:genOrderNo(o.vendor, o.date||todayStr),memo:'',rows:rows,
     files:origFiles
   };
   orders.push(newOrd);
@@ -8864,7 +8864,7 @@ function renderOrder(){
     created_desc:(a,b)=>getCreated(b)-getCreated(a),
     vendor_asc:(a,b)=>(a.vendor||'').localeCompare(b.vendor||'','ko'),
   };
-  list=list.sort(sorters[af.sort]||sorters.ship_asc);
+  list=list.sort(sorters[af.sort]||sorters.date_asc);
 
   // KPI summary row
   const todayShip=procItems.filter(p=>!p.shipped&&p.due===todayStr).length;
@@ -9024,10 +9024,10 @@ function renderOrder(){
           <div>
             <label style="font-size:10px;color:var(--t3);font-weight:700;display:block;margin-bottom:3px">정렬</label>
             <select class="fs" style="width:100%;font-size:11.5px;padding:5px 7px" onchange="ordAdvFilter.sort=this.value;renderOrder()">
+              <option value="date_asc" ${af.sort==='date_asc'?'selected':''}>발주일 ↑ (오래된순) ⭐</option>
+              <option value="date_desc" ${af.sort==='date_desc'?'selected':''}>발주일 ↓ (최근순)</option>
               <option value="ship_asc" ${af.sort==='ship_asc'?'selected':''}>출고일 ↑ (빠른순)</option>
               <option value="ship_desc" ${af.sort==='ship_desc'?'selected':''}>출고일 ↓ (늦은순)</option>
-              <option value="date_desc" ${af.sort==='date_desc'?'selected':''}>발주일 ↓ (최근)</option>
-              <option value="date_asc" ${af.sort==='date_asc'?'selected':''}>발주일 ↑ (오래된)</option>
               <option value="created_desc" ${af.sort==='created_desc'?'selected':''}>최근 등록순</option>
               <option value="vendor_asc" ${af.sort==='vendor_asc'?'selected':''}>업체명 (가나다)</option>
             </select>
@@ -10062,7 +10062,7 @@ function deleteProc(){
 }function confirmSmp(){
   const id=gv('s_id');const s=samples.find(x=>x.id==id);if(!s)return;
   s.status='확정';
-  const ord={id:Date.now(),vendor:s.manager||'',date:todayStr,ship:s.due||'',no:`ORD-${Date.now()}`,manager:'',memo:`샘플 확정 자동전환: ${s.name}`,rows:[{name:s.name,qty:s.qty||'',plating:s.plating||'',mat:s.mat||'',size:s.sz1||'',note:''}]};
+  const ord={id:Date.now(),vendor:s.manager||'',date:todayStr,ship:s.due||'',no:genOrderNo(s.manager||'', todayStr),manager:'',memo:`샘플 확정 자동전환: ${s.name}`,rows:[{name:s.name,qty:s.qty||'',plating:s.plating||'',mat:s.mat||'',size:s.sz1||'',note:''}]};
   orders.push(ord);
   if(s.due)procItems.push({id:Date.now()+1,name:s.name,vendor:(s.manager||'').substring(0,8),qty:s.qty||'',due:s.due,stageIdx:0,note:`확정: ${s.name}`,shipped:false});
   save();closeM('mSmp');showToast(`✓ "${s.name}" 확정 완료 — 발주서 자동 생성`);renderTab();updateBadges();
@@ -10139,7 +10139,7 @@ function openOrdModal(idOrNull){
   document.getElementById('mOrd_t').childNodes[0].textContent=o?'발주서 수정 ':'발주서 등록 ';
   sv('o_id',o?o.id:'');sv('o_vendor',o?o.vendor:'');sv('o_date',o?o.date:todayStr);sv('o_ship',o?o.ship:'');
   sv('o_factShip',o?o.factShip||'':'');
-  sv('o_manager',o?o.manager:'');sv('o_no',o?o.no:`ORD-${Date.now()}`);sv('o_memo',o?o.memo:'');
+  sv('o_manager',o?o.manager:'');sv('o_no',o?o.no||'':'');sv('o_memo',o?o.memo:'');
   // 메모 체크리스트 로드 (기존 memo 텍스트는 자동 항목화)
   ordMemoBuf = loadOrdMemos(o);
   renderOrdMemos();
@@ -10556,7 +10556,13 @@ async function saveOrd(){
   const memoList = ordMemoBuf.map(n=>({text:String(n.text||'').trim(), checked:!!n.checked})).filter(n=>n.text);
   // 호환성 유지: memo plaintext는 체크리스트 텍스트의 줄바꿈 결합
   const memoText = memoList.map(n=>(n.checked?'[✓] ':'[ ] ')+n.text).join('\n');
-  const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),factShip:gv('o_factShip'),manager:gv('o_manager'),no:gv('o_no'),memo:memoText,memoList,rows:cleanRows,files:filesToSave};
+  // 발주번호가 비어있거나 옛 ORD-타임스탬프 형식이면 새 형식({이니셜}{MMDD})으로 자동생성
+  let ordNoVal = gv('o_no').trim();
+  const isLegacyOrdNo = /^ORD-\d{10,}$/.test(ordNoVal);
+  if(!ordNoVal || isLegacyOrdNo){
+    ordNoVal = genOrderNo(vendor, gv('o_date')||todayStr);
+  }
+  const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),factShip:gv('o_factShip'),manager:gv('o_manager'),no:ordNoVal,memo:memoText,memoList,rows:cleanRows,files:filesToSave};
   let ordId;
   let stockReceiveResult={matched:0,unmatched:0}; // 신규 입고로 인한 재고 증가 결과
   if(id){
@@ -12687,6 +12693,74 @@ function findClientByVendor(vendorName){
   }
   return null;
 }
+
+// ── 발주번호 자동생성 헬퍼: {이니셜2자}{MMDD} (예: VT0414) ──
+// 같은 날 같은 업체에 발주가 여러 건이면 끝에 -2, -3 자동 부여
+function genOrderNo(vendorName, dateStr){
+  // 이니셜 추출
+  const cl = findClientByVendor(vendorName);
+  let init = (cl && cl.initials) ? cl.initials.trim().toUpperCase().slice(0,2) : '';
+  if(!init){
+    // 고객사 미등록이면 업체명에서 영문/한글 첫글자로 임시 이니셜 생성
+    const nm = String(vendorName||'').replace(/^\(.*?\)/,'').trim();
+    if(/^[A-Za-z]/.test(nm)){
+      init = nm.replace(/[^A-Za-z]/g,'').slice(0,2).toUpperCase();
+    } else {
+      init = nm.slice(0,2).toUpperCase();
+    }
+    if(!init) init = 'XX';
+  }
+  // MMDD
+  const d = dateStr ? new Date(dateStr) : new Date();
+  if(isNaN(d.getTime())) return init + 'XXXX';
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  const base = init + mm + dd;
+  // 같은 base 발주가 이미 있으면 -2, -3 부여
+  const existing = (typeof orders!=='undefined'?orders:[])
+    .filter(o=>o.no && (o.no===base || o.no.startsWith(base+'-')));
+  if(existing.length===0) return base;
+  return base + '-' + (existing.length+1);
+}
+
+// 기존 ORD-타임스탬프 형식 발주번호를 새 형식({이니셜}{MMDD})으로 일괄 변환
+// 콘솔에서 migrateOrderNumbers() 입력하여 실행
+window.migrateOrderNumbers = function(){
+  if(!confirm('기존 ORD-... 형식 발주번호를 새 형식(예: VT0414)으로 일괄 변환합니다.\n계속하시겠습니까?')) return;
+  let changed = 0;
+  // 발주일 순으로 정렬 후 같은 날 같은 업체 카운트 누적
+  const sorted = [...orders].sort((a,b)=> new Date(a.date||0) - new Date(b.date||0));
+  // 임시로 orders를 비워서 genOrderNo 카운트가 정확히 작동하도록
+  const original = orders;
+  orders = [];
+  sorted.forEach(o=>{
+    const isLegacy = !o.no || /^ORD-\d{10,}$/.test(String(o.no));
+    if(isLegacy && o.vendor){
+      const newNo = genOrderNo(o.vendor, o.date);
+      console.log(`  ${o.no||'(없음)'} → ${newNo} | ${o.vendor} ${o.date||''}`);
+      o.no = newNo;
+      changed++;
+    }
+    orders.push(o); // 누적 카운트용
+  });
+  orders = original;
+  // 정렬 보존을 위해 원본에 변경 적용된 객체들이 그대로 들어있음
+  if(changed > 0){
+    save();
+    if(typeof renderTab==='function') renderTab();
+    // 노션에도 업데이트 푸시
+    if(notionCfg.workerUrl && notionCfg.ordDb){
+      console.log('%c노션에 변경된 발주번호 푸시 중...','color:#A85A10');
+      orders.forEach(o=>{
+        if(o._notionId) debouncedSync('order', o, true);
+      });
+    }
+    console.log(`%c✓ ${changed}건 변환 완료`,'color:#2E8B2C;font-weight:bold');
+  } else {
+    console.log('변환할 발주번호가 없습니다.');
+  }
+  return changed;
+};
 
 // 업체명(문자열)으로 이니셜 배지 생성 — 등록된 고객사 있으면 사용, 없으면 이름 기반 자동 생성
 // 발주·공정·샘플 등 어디서나 쓸 수 있는 범용 헬퍼
