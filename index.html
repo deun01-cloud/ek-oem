@@ -8924,6 +8924,12 @@ function renderOrder(){
           ${window._ordChecked&&window._ordChecked.size?`<button class="btn bgo bs" onclick="window._ordChecked.clear();renderOrder()" style="font-size:11px">해제</button>`:''}
         </div>
       </div>
+      ${(()=>{
+        // 옛 ORD-타임스탬프 형식 발주번호 개수 — 있으면 일괄 변환 버튼 노출
+        const legacyCount = orders.filter(o=>!o.no || /^ORD-\d{10,}$/.test(String(o.no))).length;
+        if(legacyCount === 0) return '';
+        return `<button class="btn bs" onclick="migrateOrderNumbers()" title="옛 ORD-... 형식 발주번호를 새 형식(예: VT0414)으로 일괄 변환" style="font-size:11px;background:var(--org-bg);color:var(--org);border:1px solid rgba(168,90,16,.35);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">🔄 발주번호 정리 (${legacyCount}건)</button>`;
+      })()}
       <button class="btn bp bs" onclick="ordRowsBuf=[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];openOrdModal(null)">+ 발주서 등록</button>
     </div>
     <div class="frow">
@@ -9119,10 +9125,10 @@ function renderOrder(){
                 </div>
                 ${o.manager?`<div style="font-size:10px;color:var(--t3);margin-top:2px;margin-left:26px">${o.manager}</div>`:''}
               </td>
-              <td style="font-size:10.5px;color:var(--t3);font-family:monospace;white-space:nowrap;vertical-align:middle;border-bottom:none">${o.no||'—'}</td>
-              <td style="font-size:10.5px;color:var(--t2);white-space:nowrap;vertical-align:middle;border-bottom:none">${fmt(o.date)||'—'}</td>
-              <td style="font-size:10.5px;white-space:nowrap;vertical-align:middle;border-bottom:none;${o.factShip?'color:var(--t2)':missFs?'color:var(--red);font-weight:600':'color:var(--t3)'}">${o.factShip||'—'}</td>
-              <td style="font-size:11px;white-space:nowrap;font-weight:600;vertical-align:middle;border-bottom:none">${o.ship||'미정'}${(()=>{
+              <td style="font-size:12px;color:var(--t1);font-family:monospace;font-weight:700;white-space:nowrap;vertical-align:middle;border-bottom:none">${o.no||'—'}</td>
+              <td style="font-size:12px;color:var(--t1);font-weight:700;white-space:nowrap;vertical-align:middle;border-bottom:none">${fmt(o.date)||'—'}</td>
+              <td style="font-size:12px;font-weight:700;white-space:nowrap;vertical-align:middle;border-bottom:none;${o.factShip?'color:var(--t1)':missFs?'color:var(--red)':'color:var(--t3)'}">${o.factShip||'—'}</td>
+              <td style="font-size:12px;white-space:nowrap;font-weight:700;color:var(--t1);vertical-align:middle;border-bottom:none">${o.ship||'미정'}${(()=>{
                 if(!o.date||!o.ship)return '';
                 const d1=new Date(o.date), d2=new Date(o.ship);
                 if(isNaN(d1.getTime())||isNaN(d2.getTime()))return '';
@@ -12724,42 +12730,54 @@ function genOrderNo(vendorName, dateStr){
 }
 
 // 기존 ORD-타임스탬프 형식 발주번호를 새 형식({이니셜}{MMDD})으로 일괄 변환
-// 콘솔에서 migrateOrderNumbers() 입력하여 실행
+// 콘솔에서 migrateOrderNumbers() 입력하거나 발주관리 화면 상단 버튼으로 실행
 window.migrateOrderNumbers = function(){
-  if(!confirm('기존 ORD-... 형식 발주번호를 새 형식(예: VT0414)으로 일괄 변환합니다.\n계속하시겠습니까?')) return;
-  let changed = 0;
-  // 발주일 순으로 정렬 후 같은 날 같은 업체 카운트 누적
-  const sorted = [...orders].sort((a,b)=> new Date(a.date||0) - new Date(b.date||0));
-  // 임시로 orders를 비워서 genOrderNo 카운트가 정확히 작동하도록
-  const original = orders;
-  orders = [];
-  sorted.forEach(o=>{
-    const isLegacy = !o.no || /^ORD-\d{10,}$/.test(String(o.no));
-    if(isLegacy && o.vendor){
-      const newNo = genOrderNo(o.vendor, o.date);
-      console.log(`  ${o.no||'(없음)'} → ${newNo} | ${o.vendor} ${o.date||''}`);
-      o.no = newNo;
-      changed++;
-    }
-    orders.push(o); // 누적 카운트용
-  });
-  orders = original;
-  // 정렬 보존을 위해 원본에 변경 적용된 객체들이 그대로 들어있음
-  if(changed > 0){
-    save();
-    if(typeof renderTab==='function') renderTab();
-    // 노션에도 업데이트 푸시
-    if(notionCfg.workerUrl && notionCfg.ordDb){
-      console.log('%c노션에 변경된 발주번호 푸시 중...','color:#A85A10');
-      orders.forEach(o=>{
-        if(o._notionId) debouncedSync('order', o, true);
-      });
-    }
-    console.log(`%c✓ ${changed}건 변환 완료`,'color:#2E8B2C;font-weight:bold');
-  } else {
-    console.log('변환할 발주번호가 없습니다.');
+  const legacy = orders.filter(o=>!o.no || /^ORD-\d{10,}$/.test(String(o.no)));
+  if(legacy.length === 0){
+    showToast('✓ 모든 발주번호가 이미 새 형식입니다','var(--grn)',2500);
+    return 0;
   }
-  return changed;
+  showConfirm(
+    `옛 발주번호 ${legacy.length}건을 새 형식(예: VT0414)으로 일괄 변환합니다.\n\n` +
+    `· 발주일 순으로 정렬한 뒤 이니셜+MMDD로 부여\n` +
+    `· 같은 날 같은 업체는 -2, -3 자동 부여\n` +
+    `· 노션 DB도 자동 업데이트됩니다`,
+    ()=>{
+      let changed = 0;
+      // 발주일 순으로 정렬 후 같은 날 같은 업체 카운트 누적
+      const sorted = [...orders].sort((a,b)=> new Date(a.date||0) - new Date(b.date||0));
+      // 임시로 orders를 비워서 genOrderNo 카운트가 정확히 작동하도록
+      const original = orders;
+      orders = [];
+      sorted.forEach(o=>{
+        const isLegacy = !o.no || /^ORD-\d{10,}$/.test(String(o.no));
+        if(isLegacy && o.vendor){
+          const newNo = genOrderNo(o.vendor, o.date);
+          console.log(`  ${o.no||'(없음)'} → ${newNo} | ${o.vendor} ${o.date||''}`);
+          o.no = newNo;
+          changed++;
+        }
+        orders.push(o); // 누적 카운트용
+      });
+      // 원본 배열에 결과 반영 (이미 같은 객체 참조라 자동 반영됨)
+      orders = original;
+      if(changed > 0){
+        save();
+        if(typeof renderTab==='function') renderTab();
+        // 노션에도 업데이트 푸시 (디바운싱으로 부드럽게)
+        if(notionCfg.workerUrl && notionCfg.ordDb){
+          orders.forEach(o=>{
+            if(o._notionId) debouncedSync('order', o, true);
+          });
+        }
+        showToast(`✓ 발주번호 ${changed}건 변환 완료 — 노션에도 자동 반영됩니다`,'var(--grn)',3500);
+      }
+    },
+    '발주번호 일괄 변환',
+    '🔄',
+    '변환 시작',
+    'var(--gold)'
+  );
 };
 
 // 업체명(문자열)으로 이니셜 배지 생성 — 등록된 고객사 있으면 사용, 없으면 이름 기반 자동 생성
