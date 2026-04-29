@@ -61,6 +61,12 @@ tr.row-u td{background:rgba(192,48,48,.04)!important}
 tr.row-u:hover td{background:rgba(192,48,48,.09)!important}
 tr.row-w td{background:rgba(168,90,16,.04)!important}
 tr.row-w:hover td{background:rgba(168,90,16,.08)!important}
+/* ── Missing factShip (공장출고일 미입력) — 진행중 건만 빨간 테두리 ── */
+tr.row-miss-fs > td:first-child{box-shadow:inset 4px 0 0 var(--red)}
+tr.row-miss-fs td{background:rgba(192,48,48,.06)!important;border-top:1px solid rgba(192,48,48,.35);border-bottom:1px solid rgba(192,48,48,.35)}
+tr.row-miss-fs:hover td{background:rgba(192,48,48,.11)!important}
+.card-miss-fs{box-shadow:inset 4px 0 0 var(--red), 0 0 0 1px rgba(192,48,48,.35);border-radius:var(--r)}
+.card-miss-fs::before{content:'⚠ 공장출고일 미입력';position:absolute;top:6px;right:8px;font-size:9.5px;color:var(--red);font-weight:700;background:rgba(192,48,48,.08);padding:1px 6px;border-radius:8px;pointer-events:none;z-index:2}
 
 /* ── KPI base (values refined below) ── */
 .kpi{background:var(--s1);border:1px solid var(--bdr);border-radius:var(--r);padding:12px 14px;position:relative;overflow:hidden;cursor:pointer}
@@ -7157,7 +7163,9 @@ function renderSample(){
             const dl=dday(s.due);
             const urg=s.status!=='확정'&&s.status!=='취소'&&dl!==null&&dl<=1;
             const warn=s.status!=='확정'&&s.status!=='취소'&&dl!==null&&dl<=3&&dl>1;
-            const rc=urg?'row-u':warn?'row-w':'';
+            // 공장출고일 미입력 (진행중인 건만) — 빨간 테두리로 강조
+            const missFs=s.status!=='확정'&&s.status!=='취소'&&!s.factShip;
+            const rc=[urg?'row-u':warn?'row-w':'', missFs?'row-miss-fs':''].filter(Boolean).join(' ');
             const imgs=s.imgs||[];
             const sourceDocs=s.sourceDoc||[];
             const created=s.createdAt?new Date(s.createdAt):s.id?new Date(s.id):null;
@@ -8853,7 +8861,9 @@ function renderOrder(){
         : '<span style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700">진행중</span>';
 
       const isOrdChecked=window._ordChecked&&window._ordChecked.has(o.id);
-      return`<div style="border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden;${isOrdChecked?'border-color:var(--gold);box-shadow:0 0 0 1px var(--gold-line)':urg&&!isOrdDone?'border-color:rgba(192,48,48,.4)':warn&&!isOrdDone?'border-color:rgba(168,90,16,.35)':isOrdDone?'border-color:rgba(46,139,44,.3)':''}margin-bottom:0;${isOrdDone||isOrdCanceled?'opacity:.75':''}">
+      // 공장출고일 미입력 (출고완료/취소 아닌 진행중 발주만) — 빨간 테두리로 강조
+      const missFs=!isOrdDone&&!isOrdCanceled&&!o.factShip;
+      return`<div class="${missFs?'card-miss-fs':''}" style="position:relative;border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden;${isOrdChecked?'border-color:var(--gold);box-shadow:0 0 0 1px var(--gold-line)':missFs?'':urg&&!isOrdDone?'border-color:rgba(192,48,48,.4)':warn&&!isOrdDone?'border-color:rgba(168,90,16,.35)':isOrdDone?'border-color:rgba(46,139,44,.3)':''}margin-bottom:0;${isOrdDone||isOrdCanceled?'opacity:.75':''}">
         <div style="display:flex;align-items:stretch;padding:10px 14px;gap:12px;cursor:pointer;background:${isOrdChecked?'rgba(139,105,20,.06)':isOrdDone?'rgba(46,139,44,.04)':isOrdCanceled?'rgba(192,48,48,.04)':urg?'rgba(192,48,48,.04)':warn?'rgba(168,90,16,.04)':'var(--s1)'}" onclick="ordRowsBuf=[...(orders.find(x=>x.id===${o.id})?.rows||[])].map(r=>({...r}));openOrdModal(${o.id})">
           <div onclick="event.stopPropagation()" style="display:flex;align-items:flex-start;padding-top:2px;flex-shrink:0">
             <input type="checkbox" ${isOrdChecked?'checked':''} onchange="toggleOrdChk(${o.id},this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:var(--gold)">
