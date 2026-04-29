@@ -67,6 +67,12 @@ tr.row-miss-fs td{background:rgba(192,48,48,.06)!important;border-top:1px solid 
 tr.row-miss-fs:hover td{background:rgba(192,48,48,.11)!important}
 .card-miss-fs{box-shadow:inset 4px 0 0 var(--red), 0 0 0 1px rgba(192,48,48,.35);border-radius:var(--r)}
 .card-miss-fs::before{content:'⚠ 공장출고일 미입력';position:absolute;top:6px;right:8px;font-size:9.5px;color:var(--red);font-weight:700;background:rgba(192,48,48,.08);padding:1px 6px;border-radius:8px;pointer-events:none;z-index:2}
+/* ── 발주 2행 묶음: 1행(메타) + 2행(품목) 시각적 그루핑 ── */
+tr.ord-row-top td{padding-bottom:4px}
+tr.ord-row-bottom td{padding-top:0;border-top:none}
+/* row-miss-fs가 적용될 때, 묶음의 위/아래 빨간 테두리만 살리고 가운데는 제거 */
+tr.ord-row-top.row-miss-fs td{border-bottom:none!important}
+tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 
 /* ── KPI base (values refined below) ── */
 .kpi{background:var(--s1);border:1px solid var(--bdr);border-radius:var(--r);padding:12px 14px;position:relative;overflow:hidden;cursor:pointer}
@@ -486,13 +492,15 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>🧾 거래명세서 DB ID</label><input class="fi" id="notion_inv_db" placeholder="c6f0c23a17e24996..."></div>
     <div class="fg"><label>📦 제품DB ID <span style="font-size:9.5px;color:var(--t3)">(신규)</span></label><input class="fi" id="notion_product_db" placeholder="Notion에서 DB 생성 후 ID 입력"></div>
   </div>
+  <div class="fg"><label>📬 고객사 문의 DB ID</label><input class="fi" id="notion_inq_db" placeholder="28ad79cef0bc4895..."></div>
   <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;padding:10px 13px;margin-top:10px;font-size:11px;color:var(--gold-lt)">
     <b>📌 미리 생성된 Notion DB (모두 자동 연결됨)</b><br>
     • 📋 샘플의뢰 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">dad8448577d74ea8bbbcb52f4419be3b</code><br>
     • 📦 발주서 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">97ff79daa2c04b309df42a7a1a2c7b89</code><br>
     • 📊 영업제안 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">ec27bf5f4cbc4de3b2ed9aafabae4e9c</code><br>
     • 🧾 거래명세서 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">c6f0c23a17e24996b8bb9b4e51800213</code><br>
-    • 📦 제품DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">1ae024e2addf455a90cc57488ede7772</code>
+    • 📦 제품DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">1ae024e2addf455a90cc57488ede7772</code><br>
+    • 📬 고객사 문의 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">28ad79cef0bc4895a4815827f3cb7da2</code>
   </div>
   <div class="fg" style="margin-top:10px">
     <button class="btn bgo" style="width:100%;font-size:12px" onclick="testNotionConnection()">🧪 Notion 연결 테스트</button>
@@ -2047,7 +2055,7 @@ function saveAS(){
     defectType:gv('as_defectType'),
     billing:gv('as_billing'),status:gv('as_status')
   };
-  if(id){const i=asItems.findIndex(x=>x.id==id);if(i>=0){asItems[i]={...asItems[i],...obj};syncASToNotion(asItems[i],true);}}
+  if(id){const i=asItems.findIndex(x=>x.id==id);if(i>=0){asItems[i]={...asItems[i],...obj};debouncedSync('as',asItems[i],true);}}
   else{const na={id:Date.now(),createdAt:new Date().toISOString(),...obj};asItems.push(na);setTimeout(()=>syncASToNotion(na,false),50);}
   save();_asAIPasteCleanup();closeM('mAS');renderTab();updateBadges();
   showToast('✓ AS 저장됨','var(--grn)');
@@ -2176,7 +2184,7 @@ function updateASField(id, field, value, ev){
   save();
   // Notion 동기화 (백그라운드)
   if(notionCfg.workerUrl && notionCfg.asDb){
-    syncASToNotion(asItems[i], true).catch(e=>console.warn('AS sync 실패:',e));
+    debouncedSync('as', asItems[i], true);
   }
   renderAS();
   updateBadges();
@@ -2706,8 +2714,11 @@ function saveProduct(){
     save();closeM('mProduct');renderTab();
     showToast('✓ 제품 저장됨','var(--grn)');
     if(typeof syncSels==='function') syncSels();
-    // Notion 동기화
-    if(savedProduct) setTimeout(()=>syncProductToNotion(savedProduct, !!id), 50);
+    // Notion 동기화 — 수정은 디바운싱, 신규는 즉시 (ID 받기)
+    if(savedProduct){
+      if(id) debouncedSync('product', savedProduct, true);
+      else setTimeout(()=>syncProductToNotion(savedProduct, false), 50);
+    }
   };
   if(notionCfg.workerUrl && pdImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
     showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
@@ -3082,9 +3093,9 @@ function confirmOrdDoc(){
       o.completedAt=new Date().toISOString();
       procItems.filter(p=>p.orderId===o.id).forEach(p=>{
         p.shipped=true;
-        if(p._notionId) setTimeout(()=>syncProcToNotion(p, true), 150);
+        if(p._notionId) debouncedSync('proc', p, true);
       });
-      setTimeout(()=>syncOrderToNotion(o, true), 100);
+      debouncedSync('order', o, true);
     }
     save();
     // Notion 거래명세서 이력 저장 (syncInvoiceToNotion으로 통일)
@@ -3775,6 +3786,7 @@ let notionCfg = {
   invDb:   'c6f0c23a17e24996b8bb9b4e51800213', // 거래명세서 이력
   productDb: '1ae024e2addf455a90cc57488ede7772', // 제품DB
   ndDb:    '201b2b17b3924161b636134229f532ee', // 신규 디자인 제안
+  inqDb:   '28ad79cef0bc4895a4815827f3cb7da2', // 고객사 문의
 };
 
 function loadNotionCfg(){
@@ -3794,6 +3806,7 @@ function saveNotionSettings(){
     asDb:    notionCfg.asDb,
     invDb:   document.getElementById('notion_inv_db')?.value.trim()||notionCfg.invDb,
     productDb:document.getElementById('notion_product_db')?.value.trim()||notionCfg.productDb,
+    inqDb:   document.getElementById('notion_inq_db')?.value.trim()||notionCfg.inqDb,
   };
   try{ localStorage.setItem(NOTION_CFG_KEY, JSON.stringify(notionCfg)); }catch(e){}
   closeM('mNotion'); updateNotionNavLabel();
@@ -3816,13 +3829,14 @@ function openNotionSettings(){
   if(g('notion_prop_db'))g('notion_prop_db').value=notionCfg.propDb||'';
   if(g('notion_inv_db')) g('notion_inv_db').value=notionCfg.invDb||'';
   if(g('notion_product_db')) g('notion_product_db').value=notionCfg.productDb||'';
+  if(g('notion_inq_db')) g('notion_inq_db').value=notionCfg.inqDb||'';
   const res=document.getElementById('notionTestResult'); if(res) res.textContent='';
   updateNotionMode(); openM('mNotion');
 }
 function updateNotionMode(){
   const worker=(document.getElementById('notion_worker')?.value||'').trim();
   const el=document.getElementById('notionModeInfo'); if(!el) return;
-  if(worker) el.innerHTML=`<span style="color:var(--grn)">🟢 Worker 모드</span> — Notion 9개 DB 실시간 동기화 + R2 파일 저장 활성화`;
+  if(worker) el.innerHTML=`<span style="color:var(--grn)">🟢 Worker 모드</span> — Notion 10개 DB 실시간 동기화 + R2 파일 저장 활성화`;
   else el.innerHTML=`<span style="color:var(--org)">⚠️ Worker URL 없음</span> — Cloudflare Worker를 설정하면 실시간 동기화와 파일 저장이 활성화됩니다.`;
 }
 function updateNotionNavLabel(){
@@ -4189,6 +4203,22 @@ function mapNotionAS(row){
     billing: np.select(p['청구상태'])||'미청구',
   };
 }
+function mapNotionInquiry(row){
+  const p=row.properties||{};
+  const parseFiles=(s)=>{ try{ const v=JSON.parse(s||'[]'); return Array.isArray(v)?v:[]; }catch(e){ return []; } };
+  return{
+    _notionId:row.id,
+    vendor:    np.title(p['고객사']),
+    manager:   np.text(p['담당자']),
+    category:  np.select(p['카테고리'])||'일반',
+    status:    np.select(p['상태'])||'접수',
+    receivedAt:np.date(p['접수일']),
+    content:   np.text(p['문의내용']),
+    reply:     np.text(p['답변메모']),
+    imgs:      parseFiles(np.text(p['이미지JSON'])),
+    files:     parseFiles(np.text(p['파일JSON'])),
+  };
+}
 function mapNotionProduct(row){
   const p=row.properties||{};
   return{
@@ -4253,7 +4283,7 @@ async function pullFromNotion(opts){
 
   try{
     // 9개 DB를 병렬 쿼리
-    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows]=await Promise.all([
+    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows]=await Promise.all([
       notionCfg.smpDb   ? nQueryAll(notionCfg.smpDb)   : Promise.resolve([]),
       notionCfg.ordDb   ? nQueryAll(notionCfg.ordDb)   : Promise.resolve([]),
       notionCfg.procDb  ? nQueryAll(notionCfg.procDb)  : Promise.resolve([]),
@@ -4263,6 +4293,7 @@ async function pullFromNotion(opts){
       notionCfg.asDb    ? nQueryAll(notionCfg.asDb)    : Promise.resolve([]),
       notionCfg.productDb ? nQueryAll(notionCfg.productDb) : Promise.resolve([]),
       notionCfg.invDb   ? nQueryAll(notionCfg.invDb)   : Promise.resolve([]),
+      notionCfg.inqDb   ? nQueryAll(notionCfg.inqDb)   : Promise.resolve([]),
     ]);
 
     // pull 도중 회로차단기가 열린 경우 → Worker가 응답 실패 상태
@@ -4286,6 +4317,9 @@ async function pullFromNotion(opts){
         if(item.initials) return 'cli:'+item.initials;
         if(item.title && item.date) return 'as:'+item.title+'_'+item.date;
         if(item.cont && item.date) return 'task:'+item.cont+'_'+item.date+'_'+(item.ap||''); // 업무일지
+        if(item.vendor && item.receivedAt && item.content!==undefined){ // 고객사 문의
+          return 'inq:'+item.vendor+'_'+item.receivedAt+'_'+(String(item.content||'').slice(0,40));
+        }
         if(item.name) return 'name:'+item.name+'_'+(item.createdAt||'');
         return null;
       };
@@ -4390,6 +4424,10 @@ async function pullFromNotion(opts){
       // 청구이력은 items 배열(상세 품목)과 ordId 로컬 보존
       invoiceHistory=mergeLocalAttachments(invRows.map(mapNotionInvoice), invoiceHistory, ['items','ordId']);
     }
+    if(isSafePull(inqRows,inquiries,'고객사문의') && (inqRows.length || inquiries.some(x=>x._notionId))){
+      // 고객사 문의: 첨부 이미지/파일은 로컬 보존 (R2 URL 또는 base64)
+      inquiries=mergeLocalAttachments(inqRows.map(mapNotionInquiry), inquiries, ['imgs','files']);
+    }
 
     save(); slSave();
     _lastSyncAt=Date.now();
@@ -4400,7 +4438,7 @@ async function pullFromNotion(opts){
     setTimeout(()=>{ if(typeof renderTab==='function') try{renderTab();}catch(e){} }, 100);
 
     if(!silent){
-      const total=smpRows.length+ordRows.length+procRows.length+propRows.length+cliRows.length+taskRows.length+asRows.length+pdRows.length+invRows.length;
+      const total=smpRows.length+ordRows.length+procRows.length+propRows.length+cliRows.length+taskRows.length+asRows.length+pdRows.length+invRows.length+inqRows.length;
       setSyncState('Notion 🟢','var(--grn)');
       showToast(`✓ Notion 동기화 완료 (${total}건)`,'var(--grn)',2200);
     } else {
@@ -4611,6 +4649,78 @@ function saveNotionId(arr, id, notionId, storageKey){
   const idx=arr.findIndex(x=>x.id==id);
   if(idx>=0){ arr[idx]._notionId=notionId; try{localStorage.setItem(storageKey,JSON.stringify(arr));}catch(e){} }
 }
+
+// ══════════════════════════════════════════════════════════════
+// 🔄 노션 동기화 디바운서 (성능 최적화)
+// ──────────────────────────────────────────────────────────────
+// 연속된 변경(인라인 편집 등)이 발생할 때 마지막 변경 후 일정 시간 대기 후
+// 한 번만 노션에 전송한다. 같은 객체에 새 변경이 들어오면 타이머를 리셋.
+// - 디바운스 시간: 800ms (사용자 입력 안정화 기준)
+// - 삭제는 디바운스하지 않고 즉시 실행
+// - 페이지 닫기/언로드 시 대기 중인 항목 즉시 flush
+// ══════════════════════════════════════════════════════════════
+const SYNC_DEBOUNCE_MS = 800;
+const _syncDebounceTimers = new Map(); // key: 'type:id' → { timer, latest: {obj, isUpdate} }
+const _syncFnMap = {
+  sample:    (o,u)=>syncSampleToNotion(o,u),
+  order:     (o,u)=>syncOrderToNotion(o,u),
+  proc:      (o,u)=>syncProcToNotion(o,u),
+  proposal:  (o,u)=>syncProposalToNotion(o,u),
+  client:    (o,u)=>syncClientToNotion(o,u),
+  task:      (o,u)=>syncTaskToNotion(o,u),
+  as:        (o,u)=>syncASToNotion(o,u),
+  product:   (o,u)=>syncProductToNotion(o,u),
+  inquiry:   (o,u)=>syncInqToNotion(o,u),
+  invoice:   (o,u)=>syncInvoiceToNotion(o,u),
+};
+
+function debouncedSync(type, obj, isUpdate){
+  if(!notionCfg.workerUrl) return;
+  if(!obj || obj.id==null) return;
+  const fn = _syncFnMap[type];
+  if(!fn){ console.warn('debouncedSync: unknown type', type); return; }
+  const key = type+':'+obj.id;
+  const existing = _syncDebounceTimers.get(key);
+  if(existing && existing.timer) clearTimeout(existing.timer);
+  // 항상 최신 obj 참조 + isUpdate는 OR (한 번이라도 update면 update로 처리)
+  const merged = {
+    obj,
+    isUpdate: !!(existing?.latest?.isUpdate || isUpdate)
+  };
+  const timer = setTimeout(()=>{
+    _syncDebounceTimers.delete(key);
+    Promise.resolve(fn(merged.obj, merged.isUpdate)).catch(e=>{
+      console.warn('[debouncedSync] '+type+' 실패:', e);
+    });
+  }, SYNC_DEBOUNCE_MS);
+  _syncDebounceTimers.set(key, { timer, latest: merged });
+}
+
+// 페이지 닫힘 시 — 대기 중 sync 모두 즉시 실행 (데이터 유실 방지)
+function flushPendingSyncs(){
+  if(_syncDebounceTimers.size===0) return;
+  _syncDebounceTimers.forEach((entry, key)=>{
+    if(entry.timer) clearTimeout(entry.timer);
+    const [type] = key.split(':');
+    const fn = _syncFnMap[type];
+    if(fn && entry.latest){
+      try{ fn(entry.latest.obj, entry.latest.isUpdate); }catch(e){}
+    }
+  });
+  _syncDebounceTimers.clear();
+}
+window.addEventListener('beforeunload', flushPendingSyncs);
+// 탭이 백그라운드로 갈 때도 flush (모바일에서 'beforeunload' 미발화 케이스 대비)
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flushPendingSyncs(); });
+
+// 디버그용 — 콘솔에서 대기 중인 sync 확인
+window.pendingSyncs = ()=>{
+  const arr=[];
+  _syncDebounceTimers.forEach((v,k)=>arr.push({key:k, isUpdate:v.latest.isUpdate}));
+  console.table(arr);
+  console.log('대기 중: '+arr.length+'건 (각각 '+SYNC_DEBOUNCE_MS+'ms 후 발송)');
+  return arr;
+};
 
 // ══════════════════════════════════
 // 1. 샘플의뢰 ↔ Notion
@@ -4954,6 +5064,35 @@ async function deleteASFromNotion(a){
 }
 
 // ══════════════════════════════════
+// 8.5 고객사 문의 ↔ Notion
+// ══════════════════════════════════
+async function syncInqToNotion(q, update){
+  if(!notionCfg.workerUrl||!notionCfg.inqDb) return;
+  const safeJson=(arr)=>{
+    try{
+      const lite=(arr||[]).map(x=>({name:x.name||'',url:x.url||'',type:x.type||'',size:x.size||0}));
+      return JSON.stringify(lite).slice(0,1900);
+    }catch(e){ return '[]'; }
+  };
+  const p={
+    "고객사":{"title":[{"text":{"content":q.vendor||''}}]},
+    "담당자":{"rich_text":[{"text":{"content":q.manager||''}}]},
+    "문의내용":{"rich_text":[{"text":{"content":(q.content||'').slice(0,2000)}}]},
+    "답변메모":{"rich_text":[{"text":{"content":(q.reply||'').slice(0,2000)}}]},
+    "이미지JSON":{"rich_text":[{"text":{"content":safeJson(q.imgs)}}]},
+    "파일JSON":{"rich_text":[{"text":{"content":safeJson(q.files)}}]},
+  };
+  if(q.receivedAt) p["접수일"]={"date":{"start":q.receivedAt}};
+  if(q.category)   p["카테고리"]={"select":{"name":q.category}};
+  if(q.status)     p["상태"]={"select":{"name":q.status}};
+  if(q._notionId){ await nUpdate(q._notionId,p); }
+  else{ const r=await nCreate(notionCfg.inqDb,p); if(r?.id){ q._notionId=r.id; try{ slSave(); }catch(e){} } }
+}
+async function deleteInqFromNotion(q){
+  if(q && q._notionId) await nDelete(q._notionId);
+}
+
+// ══════════════════════════════════
 // 8. 제품DB ↔ Notion
 // ══════════════════════════════════
 async function syncProductToNotion(pd, update){
@@ -5288,9 +5427,9 @@ function syncOrderImagesToProducts(o){
     p.imgs=[imgObj];
     p.lastModified=toLocalDateStr(new Date());
     synced++;
-    // Notion에도 동기화 (있으면)
-    if(typeof syncProductToNotion==='function'&&p._notionId){
-      setTimeout(()=>syncProductToNotion(p, true), 200+synced*100);
+    // Notion에도 동기화 (있으면) — 디바운싱으로 묶음 전송
+    if(p._notionId){
+      debouncedSync('product', p, true);
     }
   });
   return {synced, skipped};
@@ -5827,6 +5966,64 @@ function saveComp(){
 function dday(d){if(!d)return null;const dt=new Date(d);dt.setHours(0,0,0,0);return Math.round((dt-TODAY)/86400000);}
 function fmt(d){if(!d)return '—';const dt=new Date(d);return `${dt.getMonth()+1}/${dt.getDate()}`;}
 function ddTag(d){const n=dday(d);if(n===null)return '';if(n<0)return `<span class="dd dd-r">${Math.abs(n)}일 초과</span>`;if(n===0)return `<span class="dd dd-r">D-0 오늘</span>`;if(n<=3)return `<span class="dd dd-o">D-${n}</span>`;return `<span class="dd dd-g">D-${n}</span>`;}
+
+// === 진단 도구: 빨간 테두리 원인 찾기 ===
+// 콘솔에서 diagSamples() 입력하여 사용
+window.diagSamples=function(){
+  console.log('%c=== 샘플 factShip 진단 ===','color:#8B6914;font-weight:bold;font-size:13px');
+  console.table(samples.map(s=>({
+    샘플명: s.name||'',
+    상태: s.status||'',
+    factShip값: JSON.stringify(s.factShip),
+    타입: typeof s.factShip,
+    truthy여부: !!s.factShip,
+    빨간테두리적용: s.status!=='확정'&&s.status!=='취소'&&!s.factShip
+  })));
+  const problematic=samples.filter(s=>s.status!=='확정'&&s.status!=='취소'&&!s.factShip);
+  console.log(`%c⚠ 빨간 테두리 적용 대상: ${problematic.length}건`,'color:#C03030;font-weight:bold');
+  if(problematic.length){
+    console.log('이 샘플들의 factShip이 비어있습니다. 데이터 확인 필요:');
+    problematic.forEach(s=>{
+      console.log(`  - ${s.name} | factShip=`,s.factShip,`| 키목록:`,Object.keys(s).filter(k=>k.toLowerCase().includes('ship')||k.toLowerCase().includes('fact')));
+    });
+  }
+  return problematic;
+};
+// 자동 복구: factShip이 다른 키에 잘못 들어있는 경우 마이그레이션
+window.fixFactShip=function(){
+  let fixed=0;
+  samples.forEach(s=>{
+    if(!s.factShip){
+      // 가능성 있는 옛 키들 탐색
+      const altKeys=['factShipDate','factory_ship','fShip','factoryShip','공장출고일','factShipping'];
+      for(const k of altKeys){
+        if(s[k]){
+          s.factShip=String(s[k]).slice(0,10); // YYYY-MM-DD만 추출
+          delete s[k];
+          fixed++;
+          console.log(`✓ ${s.name}: ${k} → factShip 마이그레이션`);
+          break;
+        }
+      }
+    } else if(typeof s.factShip==='object' && s.factShip.start){
+      // Notion date 객체 형식으로 잘못 저장됐을 경우
+      s.factShip=s.factShip.start;
+      fixed++;
+    } else if(typeof s.factShip==='string' && s.factShip.length>10){
+      // ISO 시간 포함된 경우 → YYYY-MM-DD로 정리
+      s.factShip=s.factShip.slice(0,10);
+      fixed++;
+    }
+  });
+  if(fixed>0){
+    save();
+    if(typeof renderTab==='function')renderTab();
+    console.log(`%c✓ ${fixed}건 복구 완료. 화면이 갱신됩니다.`,'color:#2E8B2C;font-weight:bold');
+  } else {
+    console.log('복구할 항목이 없습니다.');
+  }
+  return fixed;
+};
 function closeM(id){document.getElementById(id)?.classList.remove('open');}
 function openM(id){document.getElementById(id)?.classList.add('open');}
 
@@ -7173,7 +7370,11 @@ function renderSample(){
             const urg=s.status!=='확정'&&s.status!=='취소'&&dl!==null&&dl<=1;
             const warn=s.status!=='확정'&&s.status!=='취소'&&dl!==null&&dl<=3&&dl>1;
             // 공장출고일 미입력 (진행중인 건만) — 빨간 테두리로 강조
-            const missFs=s.status!=='확정'&&s.status!=='취소'&&!s.factShip;
+            // 공백·null·Date객체·ISO 문자열 모두 안전하게 검사
+            const fsRaw=s.factShip;
+            const fsStr=fsRaw==null?'':String(fsRaw).trim();
+            const hasFs=fsStr!=='' && fsStr!=='null' && fsStr!=='undefined';
+            const missFs=s.status!=='확정'&&s.status!=='취소'&&!hasFs;
             const rc=[urg?'row-u':warn?'row-w':'', missFs?'row-miss-fs':''].filter(Boolean).join(' ');
             const imgs=s.imgs||[];
             const sourceDocs=s.sourceDoc||[];
@@ -7357,7 +7558,7 @@ function changeSmpStatus(sid, newStatus){
   samples[i].status=newStatus;
   save();
   // 노션 동기화
-  if(samples[i]._notionId) syncSampleToNotion(samples[i], true);
+  if(samples[i]._notionId) debouncedSync('sample', samples[i], true);
   const dd=document.getElementById('smpStatusDropdown');if(dd)dd.remove();
   showToast(`✓ 상태 변경: ${newStatus}`,'var(--grn)',1500);
   renderSample();
@@ -8873,7 +9074,6 @@ function renderOrder(){
             <th>요청출고일</th>
             <th>D-day</th>
             <th>상태</th>
-            <th>품목 내역</th>
             <th>첨부</th>
             <th style="text-align:right">액션</th>
           </tr>
@@ -8905,21 +9105,24 @@ function renderOrder(){
               ${r.img?`<img src="${r.img}" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\'").replace(/"/g,'&quot;')}'}],0,false)" title="클릭하여 크게 보기">`:''}
               <span>${r.name||''}${r.qty?`<span style="color:var(--t3)"> ×${r.qty}</span>`:''}</span>
             </span>`).join('');
-            return `<tr class="${rowCls}" style="${rowStyle};cursor:pointer" onclick="ordRowsBuf=[...(orders.find(x=>x.id===${o.id})?.rows||[])].map(r=>({...r}));openOrdModal(${o.id})">
-              <td onclick="event.stopPropagation()" style="text-align:center;vertical-align:middle">
+            // 한 발주를 2행으로 표시: 1행 메타정보 + 2행 품목내역(전체 너비)
+            // border-bottom 처리로 시각적으로 묶음 표현
+            const openModal = `ordRowsBuf=[...(orders.find(x=>x.id===${o.id})?.rows||[])].map(r=>({...r}));openOrdModal(${o.id})`;
+            return `<tr class="${rowCls} ord-row-top" style="${rowStyle};cursor:pointer" onclick="${openModal}">
+              <td onclick="event.stopPropagation()" style="text-align:center;vertical-align:middle;border-bottom:none">
                 <input type="checkbox" ${isOrdChecked?'checked':''} onchange="toggleOrdChk(${o.id},this.checked)" style="width:14px;height:14px;cursor:pointer;accent-color:var(--gold)">
               </td>
-              <td style="white-space:nowrap;vertical-align:middle">
+              <td style="white-space:nowrap;vertical-align:middle;border-bottom:none">
                 <div style="display:flex;align-items:center;gap:6px">
                   ${vendorInitHtml(o.vendor, true)}
                   <span style="font-size:12px;font-weight:600;${isOrdDone||isOrdCanceled?'text-decoration:line-through;color:var(--t3)':''}">${o.vendor||'—'}</span>
                 </div>
                 ${o.manager?`<div style="font-size:10px;color:var(--t3);margin-top:2px;margin-left:26px">${o.manager}</div>`:''}
               </td>
-              <td style="font-size:10.5px;color:var(--t3);font-family:monospace;white-space:nowrap;vertical-align:middle">${o.no||'—'}</td>
-              <td style="font-size:10.5px;color:var(--t2);white-space:nowrap;vertical-align:middle">${fmt(o.date)||'—'}</td>
-              <td style="font-size:10.5px;white-space:nowrap;vertical-align:middle;${o.factShip?'color:var(--t2)':missFs?'color:var(--red);font-weight:600':'color:var(--t3)'}">${o.factShip||'—'}</td>
-              <td style="font-size:11px;white-space:nowrap;font-weight:600;vertical-align:middle">${o.ship||'미정'}${(()=>{
+              <td style="font-size:10.5px;color:var(--t3);font-family:monospace;white-space:nowrap;vertical-align:middle;border-bottom:none">${o.no||'—'}</td>
+              <td style="font-size:10.5px;color:var(--t2);white-space:nowrap;vertical-align:middle;border-bottom:none">${fmt(o.date)||'—'}</td>
+              <td style="font-size:10.5px;white-space:nowrap;vertical-align:middle;border-bottom:none;${o.factShip?'color:var(--t2)':missFs?'color:var(--red);font-weight:600':'color:var(--t3)'}">${o.factShip||'—'}</td>
+              <td style="font-size:11px;white-space:nowrap;font-weight:600;vertical-align:middle;border-bottom:none">${o.ship||'미정'}${(()=>{
                 if(!o.date||!o.ship)return '';
                 const d1=new Date(o.date), d2=new Date(o.ship);
                 if(isNaN(d1.getTime())||isNaN(d2.getTime()))return '';
@@ -8927,22 +9130,23 @@ function renderOrder(){
                 if(diff<0)return '';
                 return `<br><span style="font-size:9px;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 4px;border-radius:3px;font-weight:600;display:inline-block;margin-top:1px" title="발주일~출고일 소요">⏱ ${diff}일</span>`;
               })()}</td>
-              <td style="vertical-align:middle">${!isOrdDone&&!isOrdCanceled?ddTag(o.ship):'—'}</td>
-              <td style="vertical-align:middle">${statusBadge}</td>
-              <td style="min-width:300px;vertical-align:middle">
-                <div style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px;overflow:hidden;max-width:100%">
-                  ${itemChips}
-                  <span style="font-size:9.5px;color:var(--t3);margin-left:4px;white-space:nowrap;flex-shrink:0">총 ${rows.length}개</span>
-                </div>
-                ${o.memo?`<div style="font-size:10px;color:var(--t3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📝 ${String(o.memo).replace(/\n/g,' ')}</div>`:''}
-              </td>
-              <td style="text-align:center;white-space:nowrap;vertical-align:middle" onclick="event.stopPropagation()">
+              <td style="vertical-align:middle;border-bottom:none">${!isOrdDone&&!isOrdCanceled?ddTag(o.ship):'—'}</td>
+              <td style="vertical-align:middle;border-bottom:none">${statusBadge}</td>
+              <td style="text-align:center;white-space:nowrap;vertical-align:middle;border-bottom:none" onclick="event.stopPropagation()">
                 ${(o.files&&o.files.length)?`<span style="font-size:10.5px;color:var(--blu);cursor:pointer" onclick="showOrdFiles(${o.id})" title="첨부파일 보기">📎 ${o.files.length}</span>`:'<span style="font-size:10.5px;color:var(--t3)">—</span>'}
               </td>
-              <td style="text-align:right;white-space:nowrap;vertical-align:middle" onclick="event.stopPropagation()">
+              <td style="text-align:right;white-space:nowrap;vertical-align:middle;border-bottom:none" onclick="event.stopPropagation()">
                 ${isOrdDone
                   ? `<button onclick="revertOrdComplete(${o.id})" title="완료 취소" style="padding:3px 7px;font-size:10px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--t2);font-family:inherit;white-space:nowrap">↺ 되돌리기</button>`
                   : `<button onclick="completeOrd(${o.id})" title="출고 완료 처리" style="padding:3px 9px;font-size:10px;background:var(--grn);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;white-space:nowrap;font-weight:600">✓ 완료</button>`}
+              </td>
+            </tr>
+            <tr class="${rowCls} ord-row-bottom" style="${rowStyle};cursor:pointer" onclick="${openModal}">
+              <td colspan="10" style="padding:4px 12px 10px 12px;vertical-align:top">
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">
+                  <span style="font-size:9.5px;color:var(--t3);font-weight:700;letter-spacing:.3px;margin-right:2px">품목 ${rows.length}건</span>
+                  ${itemChips}
+                </div>
               </td>
             </tr>`;
           }).join('')}
@@ -9004,10 +9208,10 @@ function completeOrd(ordId){
       const imgResult=syncOrderImagesToProducts(o);
       save();
       // Notion 동기화 — 상태를 '출고완료'로
-      setTimeout(()=>syncOrderToNotion(o, true), 50);
+      debouncedSync('order', o, true);
       // 연결된 공정도 노션 업데이트
       linkedProcs.forEach(p=>{
-        if(p._notionId) setTimeout(()=>syncProcToNotion(p, true), 100);
+        if(p._notionId) debouncedSync('proc', p, true);
       });
       // 토스트: 재고 차감 + 이미지 동기화 결과 포함
       let msg=`✓ "${o.vendor||'발주서'}" 출고완료`;
@@ -9040,12 +9244,12 @@ function revertOrdComplete(ordId){
       // 연결된 공정의 shipped도 해제
       procItems.filter(p=>p.orderId===ordId).forEach(p=>{
         p.shipped=false;
-        if(p._notionId) setTimeout(()=>syncProcToNotion(p, true), 100);
+        if(p._notionId) debouncedSync('proc', p, true);
       });
       // 재고 차감 복원
       revertOrderShipFromStock(o);
       save();
-      setTimeout(()=>syncOrderToNotion(o, true), 50);
+      debouncedSync('order', o, true);
       showToast(`↺ "${o.vendor||'발주서'}" 진행중으로 되돌림`,'var(--blu)',2500);
       renderTab(); updateBadges();
     },
@@ -9295,7 +9499,7 @@ function taskDrop(e, el){
   save();
   // Notion 동기화
   if(typeof syncTaskToNotion === 'function'){
-    syncTaskToNotion(t, true);
+    debouncedSync('task', t, true);
   }
   renderSchedContent();
   showToast('✓ 업무 이동됨','var(--grn)',1500);
@@ -9766,7 +9970,7 @@ function saveSmp(){
     }
     save();closeM('mSmp');renderTab();updateBadges();
     if(!id){showRegToast(finalObj.name,'sample');setTimeout(()=>{const ns=samples[samples.length-1];syncSampleToNotion(ns||finalObj,false);},50);}
-    else{const us=samples.find(x=>x.id==id);syncSampleToNotion(us||finalObj,true);}
+    else{const us=samples.find(x=>x.id==id);debouncedSync('sample', us||finalObj, true);}
   };
   // 모든 파일(예시이미지/작업지시서/CAD)에 base64 데이터가 있으면 R2에 업로드
   const hasAnyLocalFile =
@@ -10415,11 +10619,12 @@ async function saveOrd(){
     }
   }
   save();
-  // 저장된 최신 order를 _notionId 포함해서 정확히 찾아서 sync (이전에는 obj.id가 undefined라서 항상 create됨)
-  setTimeout(()=>{
-    const so=orders.find(x=>x.id===ordId);
-    if(so) syncOrderToNotion(so, !isNew);
-  },50);
+  // 저장된 최신 order를 _notionId 포함해서 정확히 찾아서 sync — 수정은 디바운싱, 신규는 즉시
+  const so=orders.find(x=>x.id===ordId);
+  if(so){
+    if(isNew) setTimeout(()=>syncOrderToNotion(so, false), 50);
+    else debouncedSync('order', so, true);
+  }
   // 입고로 인한 재고 자동 증가 알림
   if(stockReceiveResult.matched){
     let msg=`📦 재고 ${stockReceiveResult.matched}건 자동 입고`;
@@ -10448,7 +10653,7 @@ function saveProc(){
   const ordId=gv('p_ordId')||null;
   const obj={name,vendor:gv('p_vendor'),qty:gv('p_qty'),due:gv('p_due'),stageIdx:+gv('p_stage')||0,note:gv('p_note'),orderId:ordId?+ordId:null,
     ordQty:+gv('p_ordQty')||0, rcvQty:+gv('p_rcvQty')||0};
-  if(id){const i=procItems.findIndex(x=>x.id==id);if(i>=0){procItems[i]={...procItems[i],...obj};syncProcToNotion(procItems[i],true);}}
+  if(id){const i=procItems.findIndex(x=>x.id==id);if(i>=0){procItems[i]={...procItems[i],...obj};debouncedSync('proc',procItems[i],true);}}
   else{const np={id:Date.now(),...obj,shipped:false};procItems.push(np);setTimeout(()=>syncProcToNotion(np,false),50);}
   save();closeM('mProc');renderTab();updateBadges();
 }
@@ -10530,7 +10735,7 @@ async function saveTask(){
   }
 
   const obj={cont,date:gv('t_date'),ap:gv('t_ap'),cat:gv('t_cat'),note:gv('t_note'),files:filesToSave};
-  if(id){const i=tasks.findIndex(x=>x.id==id);if(i>=0){tasks[i]={...tasks[i],...obj};syncTaskToNotion(tasks[i],true);}}
+  if(id){const i=tasks.findIndex(x=>x.id==id);if(i>=0){tasks[i]={...tasks[i],...obj};debouncedSync('task',tasks[i],true);}}
   else{const nt={id:Date.now(),done:false,...obj};tasks.push(nt);setTimeout(()=>syncTaskToNotion(nt,false),50);}
   save();closeM('mTask');
   if(currentTab==='schedule')renderSchedContent();
@@ -10546,7 +10751,7 @@ function deleteTask(){
     if(currentTab==='dash')renderDash();
   },'업무 삭제','🗑');
 }
-function toggleTask(id){const t=tasks.find(x=>x.id==id);if(!t)return;t.done=!t.done;syncTaskToNotion(t,true);save();if(currentTab==='schedule')renderSchedContent();if(currentTab==='dash')renderDash();}
+function toggleTask(id){const t=tasks.find(x=>x.id==id);if(!t)return;t.done=!t.done;debouncedSync('task',t,true);save();if(currentTab==='schedule')renderSchedContent();if(currentTab==='dash')renderDash();}
 
 // ════════════════════════════════
 // PASTE SUPPORT (Ctrl+V / Cmd+V)
@@ -11104,7 +11309,7 @@ function saveCl(){
     const i=clients.findIndex(c=>c.id==id);
     if(i>=0){ clients[i]={...clients[i],...obj}; }
     slSave();
-    setTimeout(()=>{const uc=clients.find(c=>c.id==id);if(uc)syncClientToNotion(uc,true);},50);
+    const uc=clients.find(c=>c.id==id);if(uc) debouncedSync('client', uc, true);
     showToast('✓ 고객사 수정됨','var(--grn)');
   } else {
     const nc={id:Date.now(),...obj};
@@ -11828,13 +12033,20 @@ async function saveInq(){
     content, reply: gv('inq_reply'),
     imgs, files
   };
+  let target;
   if(id){
     const i = inquiries.findIndex(x=>x.id==id);
-    if(i>=0) inquiries[i] = {...inquiries[i], ...obj};
+    if(i>=0){ inquiries[i] = {...inquiries[i], ...obj}; target = inquiries[i]; }
   } else {
-    inquiries.unshift({id:Date.now(), createdAt:new Date().toISOString(), ...obj});
+    target = {id:Date.now(), createdAt:new Date().toISOString(), ...obj};
+    inquiries.unshift(target);
   }
   slSave();
+  // Notion 동기화 (백그라운드) — 신규는 즉시(ID 받기), 업데이트는 디바운싱
+  if(target && notionCfg.workerUrl && notionCfg.inqDb){
+    if(id) debouncedSync('inquiry', target, true);
+    else syncInqToNotion(target, false).catch(e=>console.warn('문의 sync 실패:',e));
+  }
   _inqPasteCleanup();
   closeM('mInquiry');
   showToast('✓ 문의 저장됨','var(--grn)');
@@ -11844,6 +12056,10 @@ async function saveInq(){
 function deleteInq(id){
   const q = inquiries.find(x=>x.id==id);
   showConfirm(`"${q?.vendor||'문의'}" 항목을 삭제합니다.`, ()=>{
+    // Notion에서 먼저 삭제 (백그라운드)
+    if(q && q._notionId && notionCfg.workerUrl){
+      deleteInqFromNotion(q).catch(e=>console.warn('Notion 문의 삭제 실패:',e));
+    }
     inquiries = inquiries.filter(x=>x.id!=id);
     slSave();
     _inqPasteCleanup();
@@ -12712,7 +12928,13 @@ function saveProp(){
   else proposals.push({id:Date.now(),...obj});
   slSave();
   propImgFiles=[];
-  setTimeout(()=>{const sp=proposals.find(p=>p.id==(existId?+existId:proposals[proposals.length-1]?.id));syncProposalToNotion(sp||obj,!!existId);},50);
+  // 신규 등록은 즉시 (ID 받기), 수정은 디바운싱
+  if(existId){
+    const sp=proposals.find(p=>p.id==existId);
+    if(sp) debouncedSync('proposal', sp, true);
+  } else {
+    setTimeout(()=>{const sp=proposals[proposals.length-1];if(sp)syncProposalToNotion(sp,false);},50);
+  }
   document.getElementById('mProp').classList.remove('open');
   renderSalesSubTab();
   showToast('✓ 영업 등록 완료','var(--grn)');
@@ -12737,6 +12959,27 @@ function renderPropPreviews(){
       <img src="${ph.dataUrl}" alt="${ph.name}">
       <button class="rm" onclick="propImgFiles.splice(${i},1);renderPropPreviews()">×</button>
     </div>`).join('');
+}
+
+// ── 영업제안 이미지 업로드 핸들러 (이전에 누락되어 에러 발생하던 함수) ──
+let propImgFiles = (typeof propImgFiles !== 'undefined' && propImgFiles) || [];
+function handlePropImages(ev){
+  const files = Array.from(ev.target.files || []);
+  if(!files.length) return;
+  let pending = files.length;
+  files.forEach(file=>{
+    if(!file.type.startsWith('image/')){ pending--; return; }
+    const reader = new FileReader();
+    reader.onload = e=>{
+      propImgFiles.push({ name:file.name||'image', dataUrl:e.target.result, type:file.type, size:file.size||0 });
+      pending--;
+      if(pending<=0) renderPropPreviews();
+    };
+    reader.onerror = ()=>{ pending--; if(pending<=0) renderPropPreviews(); };
+    reader.readAsDataURL(file);
+  });
+  // input 초기화 — 같은 파일 재선택 가능하게
+  try{ ev.target.value=''; }catch(e){}
 }
 </script>
 </body>
