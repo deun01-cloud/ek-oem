@@ -1331,6 +1331,113 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
 </div></div>
 
+<!-- ════════════════════════════════════════════════════════════════
+     샘플의뢰서 자동 작성 모달 (mSmpReq)
+     - 좌측: A4 미리보기 (실제 의뢰서 양식과 동일)
+     - 우측: 입력 필드들
+     - AI 분석 / 인쇄 / PDF / PNG 다운로드 / 샘플로 등록
+==================================================================== -->
+<div class="ov" id="mSmpReq"><div class="modal wide" style="max-width:1280px;max-height:95vh">
+  <div class="mt" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <span>📋 샘플의뢰서 작성 <span style="font-size:10.5px;color:var(--t3);font-weight:400;margin-left:6px">사진과 스펙을 입력하면 의뢰서가 자동으로 그려집니다</span></span>
+    <span style="font-size:11px;color:var(--t3);font-weight:400">실시간 미리보기 ↔ 인쇄/PDF/PNG/샘플등록</span>
+  </div>
+  <div style="display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:14px;align-items:start">
+    <!-- 좌측: A4 미리보기 -->
+    <div style="background:var(--s1);padding:16px;border-radius:8px;overflow:auto;max-height:calc(95vh - 160px)">
+      <div id="smpReqPreview" class="smp-req-doc">
+        <!-- renderSmpReqPreview()에서 채움 -->
+      </div>
+    </div>
+    <!-- 우측: 입력 폼 -->
+    <div style="max-height:calc(95vh - 160px);overflow-y:auto;padding-right:4px">
+      <div style="background:linear-gradient(135deg,#FFF9E6,#FFFEF8);border:1px solid var(--gold-line);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:11.5px;color:var(--t2);line-height:1.6">
+        💡 입력하면 좌측 미리보기에 즉시 반영됩니다.
+      </div>
+
+      <!-- AI 분석 버튼 -->
+      <button id="smpReqAiBtn" type="button" onclick="aiAnalyzeSmpReqImages()" style="width:100%;padding:10px;background:#fff;border:1.5px solid var(--gold);color:var(--gold);border-radius:8px;font-weight:600;font-size:12px;cursor:pointer;font-family:inherit;margin-bottom:14px">
+        ✨ AI 사진 분석 — 소재·도금·아이템 추측
+      </button>
+      <div id="smpReqAiResult" style="display:none;margin-bottom:14px;padding:10px 12px;background:#FAFAFC;border:1px solid var(--bdr);border-radius:6px;font-size:11px;line-height:1.6"></div>
+
+      <div class="form-sec">기본 정보</div>
+      <div class="fg"><label>샘플명 *</label><input class="fi" id="sr_name" placeholder="예: 슬래시 반지" oninput="renderSmpReqPreview()"></div>
+      <div class="fr2">
+        <div class="fg"><label>아이템</label>
+          <input class="fi" id="sr_type" list="srTypeList" placeholder="반지 / 목걸이 / 귀걸이..." oninput="renderSmpReqPreview()">
+          <datalist id="srTypeList"><option value="반지"><option value="목걸이"><option value="귀걸이"><option value="팔찌"><option value="브로치"><option value="펜던트"><option value="발찌"></datalist>
+        </div>
+        <div class="fg"><label>발주량</label><input class="fi" id="sr_qty" placeholder="1EA" oninput="renderSmpReqPreview()"></div>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label>담당자</label><input class="fi" id="sr_manager" placeholder="이니셜 또는 이름" oninput="renderSmpReqPreview()"></div>
+        <div class="fg"><label>의뢰일</label><input class="fi" type="date" id="sr_reqDate" oninput="renderSmpReqPreview()"></div>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label>납기일</label><input class="fi" type="date" id="sr_due" oninput="renderSmpReqPreview()"></div>
+        <div class="fg"><label>샘플종류</label><input class="fi" id="sr_kind" placeholder="예: 슬래시 반지" oninput="renderSmpReqPreview()"></div>
+      </div>
+
+      <div class="form-sec">소재 / 도금 / 사이즈</div>
+      <div class="fg"><label>소재</label>
+        <input class="fi" id="sr_mat" list="srMatList" placeholder="예: 신주 / 925실버 / 써지컬" oninput="renderSmpReqPreview()">
+        <datalist id="srMatList"><option value="신주"><option value="925실버"><option value="브라스 (BRASS)"><option value="써지컬"><option value="14K 골드"><option value="18K 골드"><option value="아연합금"><option value="스테인리스"><option value="기타"></datalist>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label>도금</label>
+          <input class="fi" id="sr_plating" list="srPlatingList" placeholder="예: 실버 버니쉬 도금" oninput="renderSmpReqPreview()">
+          <datalist id="srPlatingList"><option value="골드"><option value="실버"><option value="실버 버니쉬"><option value="로즈골드"><option value="건메탈"><option value="무도금"><option value="기타"></datalist>
+        </div>
+        <div class="fg"><label>중량</label><input class="fi" id="sr_weight" placeholder="g 또는 비워둠" oninput="renderSmpReqPreview()"></div>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label>사이즈 / 호수</label><input class="fi" id="sr_size" placeholder="예: 13호, 17호" oninput="renderSmpReqPreview()"></div>
+        <div class="fg"><label>길이/호수 표시</label><input class="fi" id="sr_sizeLine" placeholder="표 사이즈 칸에 들어갈 값" oninput="renderSmpReqPreview()"></div>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label>보조줄</label><input class="fi" id="sr_sub" oninput="renderSmpReqPreview()"></div>
+        <div class="fg"><label>장식</label><input class="fi" id="sr_deco" oninput="renderSmpReqPreview()"></div>
+      </div>
+
+      <div class="form-sec">상세 / 디자인 노트</div>
+      <div class="fg"><label>본문 내용 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(상단 빨간색 영역에 표시)</span></label>
+        <textarea class="fi" id="sr_body" rows="5" style="resize:vertical;font-family:inherit" placeholder="예:
+1사이즈 13호 내경18mm 손가락 둘레 56mm
+2사이즈 17호 내경19mm 손가락 둘레 60mm (샘플 제작 사이즈)
+오픈링 (세로:5mm 두께:1mm)" oninput="renderSmpReqPreview()"></textarea>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label>각인 위치</label><input class="fi" id="sr_engr" placeholder="예: 반지 안쪽" oninput="renderSmpReqPreview()"></div>
+        <div class="fg"><label>각인 내용</label><input class="fi" id="sr_engrTxt" placeholder="예: 925" oninput="renderSmpReqPreview()"></div>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label>클러치</label><input class="fi" id="sr_clutch" oninput="renderSmpReqPreview()"></div>
+        <div class="fg"><label>캐드파일/원본</label><input class="fi" id="sr_card" placeholder="유 / 무" oninput="renderSmpReqPreview()"></div>
+      </div>
+      <div class="fr2">
+        <div class="fg"><label>스톤</label><input class="fi" id="sr_stone" oninput="renderSmpReqPreview()"></div>
+        <div class="fg"><label>금속종류</label><input class="fi" id="sr_metal" oninput="renderSmpReqPreview()"></div>
+      </div>
+      <div class="fg"><label>개발 관련 사항</label><input class="fi" id="sr_devNote" placeholder="예: 캐드 파일 있음, 실 샘플 있음 등" oninput="renderSmpReqPreview()"></div>
+      <div class="fg"><label>주의사항 <span style="font-size:9.5px;color:#D90B0B;font-weight:400">(빨간색으로 강조)</span></label>
+        <textarea class="fi" id="sr_warn" rows="2" style="resize:vertical;font-family:inherit" placeholder="예: 광마감, 예상 작업물 이미지와 가장 비슷하게" oninput="renderSmpReqPreview()"></textarea>
+      </div>
+
+      <div class="form-sec">사진</div>
+      <div id="sr_imgManager" style="font-size:11px;color:var(--t2)"></div>
+      <button type="button" onclick="document.getElementById('sr_addImgInput').click()" style="margin-top:8px;width:100%;padding:8px;background:#fff;border:1px dashed var(--bdr);border-radius:6px;font-size:11.5px;color:var(--t2);cursor:pointer;font-family:inherit">+ 사진 추가</button>
+      <input type="file" id="sr_addImgInput" accept="image/*" multiple style="display:none" onchange="handleSmpReqAddImg(event)">
+    </div>
+  </div>
+  <div class="ma" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end">
+    <button class="btn bgo" onclick="closeM('mSmpReq')">취소</button>
+    <button class="btn bgo" onclick="printSmpReq()" title="브라우저 인쇄 (PDF 저장도 여기서)">🖨 인쇄 / PDF</button>
+    <button class="btn bgo" onclick="downloadSmpReqPng()" title="이미지(PNG)로 저장">🖼 PNG</button>
+    <button class="btn bp" onclick="confirmSmpReqAsSample()" title="이 의뢰서를 정식 샘플로 등록">✓ 확정 → 샘플 등록</button>
+  </div>
+</div></div>
+
 <script>
 // ════════════════════════════════
 // CONSTANTS & STATE
@@ -6914,6 +7021,474 @@ function openOrdWithImgs(imgs){
   closeM('mUpload');
 }
 
+// ════════════════════════════════════════════════════════════════
+// AI 샘플의뢰서 자동 작성 — 사진 업로드 → 의뢰서 양식 생성
+// ════════════════════════════════════════════════════════════════
+
+// 사진 버퍼 (data URL 배열)
+let smpReqImgs = [];
+
+// 드롭존: 드래그 처리
+function handleSmpReqDrop(e){
+  e.preventDefault(); e.stopPropagation();
+  const dz=e.currentTarget; if(dz) dz.classList.remove('dz-over');
+  const files=[...(e.dataTransfer?.files||[])].filter(f=>f.type.startsWith('image/'));
+  if(!files.length){ showToast('이미지 파일을 올려주세요','var(--org)'); return; }
+  loadSmpReqFiles(files);
+}
+function handleSmpReqInput(e){
+  const files=[...(e.target.files||[])];
+  loadSmpReqFiles(files);
+  e.target.value=''; // 다시 같은 파일 올릴 수 있게
+}
+function loadSmpReqFiles(files){
+  let done=0;
+  files.forEach(f=>{
+    const r=new FileReader();
+    r.onload=ev=>{
+      smpReqImgs.push({url:ev.target.result, name:f.name});
+      done++;
+      if(done===files.length) renderSmpReqDzThumbs();
+    };
+    r.readAsDataURL(f);
+  });
+}
+function renderSmpReqDzThumbs(){
+  const wrap=document.getElementById('smpReqThumbs');
+  const btn=document.getElementById('smpReqOpenBtn');
+  if(!wrap||!btn) return;
+  if(!smpReqImgs.length){
+    wrap.style.display='none'; btn.style.display='none';
+    return;
+  }
+  wrap.style.display='flex';
+  btn.style.display='inline-block';
+  wrap.innerHTML = smpReqImgs.map((im,i)=>`
+    <div style="position:relative;width:64px;height:64px;border-radius:6px;overflow:hidden;border:1px solid var(--bdr);background:#fff">
+      <img src="${im.url}" style="width:100%;height:100%;object-fit:cover">
+      <button onclick="event.stopPropagation();smpReqImgs.splice(${i},1);renderSmpReqDzThumbs()" style="position:absolute;top:1px;right:1px;width:18px;height:18px;border-radius:50%;border:none;background:rgba(0,0,0,.6);color:#fff;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;padding:0">×</button>
+    </div>
+  `).join('');
+}
+
+// 붙여넣기(Ctrl+V)도 지원 — 샘플 탭에 있을 때만
+function _smpReqPasteHandler(e){
+  if(currentTab!=='sample') return;
+  // 모달이 이미 열려있으면 모달 내부에서 처리 (입력 폼 충돌 방지)
+  const modalOpen=document.getElementById('mSmpReq')?.classList.contains('on');
+  const items=[...(e.clipboardData?.items||[])].filter(it=>it.type.startsWith('image/'));
+  if(!items.length) return;
+  // 입력 필드 안에서 붙여넣기 중이면 무시
+  const tgt=e.target;
+  if(tgt && (tgt.tagName==='INPUT'||tgt.tagName==='TEXTAREA')) return;
+  e.preventDefault();
+  const files=items.map(it=>it.getAsFile()).filter(Boolean);
+  if(!files.length) return;
+  loadSmpReqFiles(files);
+  if(modalOpen){
+    setTimeout(()=>{
+      // 모달 안 사진 영역에도 갱신
+      renderSmpReqImgManager();
+      renderSmpReqPreview();
+    }, 200);
+  } else {
+    showToast('✓ 사진 '+files.length+'장 추가됨','var(--grn)',1800);
+  }
+}
+window.addEventListener('paste', _smpReqPasteHandler);
+
+// 의뢰서 작성 모달 열기
+function openSmpReqEditor(){
+  if(!smpReqImgs.length){ showToast('먼저 사진을 올려주세요','var(--org)'); return; }
+  // 폼 초기화
+  ['sr_name','sr_type','sr_qty','sr_manager','sr_kind','sr_mat','sr_plating','sr_weight',
+   'sr_size','sr_sizeLine','sr_sub','sr_deco','sr_body','sr_engr','sr_engrTxt','sr_clutch',
+   'sr_card','sr_stone','sr_metal','sr_devNote','sr_warn']
+   .forEach(id=>{const e=document.getElementById(id); if(e) e.value='';});
+  const today=todayStr;
+  const due=new Date(); due.setDate(due.getDate()+30);
+  const dueStr=toLocalDateStr(due);
+  document.getElementById('sr_reqDate').value=today;
+  document.getElementById('sr_due').value=dueStr;
+  // AI 결과 영역 초기화
+  const aiR=document.getElementById('smpReqAiResult'); if(aiR){ aiR.style.display='none'; aiR.innerHTML=''; }
+  renderSmpReqImgManager();
+  renderSmpReqPreview();
+  openM('mSmpReq');
+}
+
+// 모달 내부 사진 관리자
+function renderSmpReqImgManager(){
+  const wrap=document.getElementById('sr_imgManager');
+  if(!wrap) return;
+  if(!smpReqImgs.length){ wrap.innerHTML='<div style="color:var(--t3);font-size:11px;padding:6px 0">사진이 없습니다</div>'; return; }
+  wrap.innerHTML = smpReqImgs.map((im,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bdr)">
+      <img src="${im.url}" style="width:42px;height:42px;border-radius:4px;border:1px solid var(--bdr);object-fit:cover">
+      <span style="flex:1;font-size:11px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${im.name||'(이미지 '+(i+1)+')'}</span>
+      <button type="button" onclick="smpReqImgs.splice(${i},1);renderSmpReqImgManager();renderSmpReqPreview()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:2px 6px">×</button>
+    </div>
+  `).join('');
+}
+function handleSmpReqAddImg(e){
+  const files=[...(e.target.files||[])];
+  if(!files.length) return;
+  let done=0;
+  files.forEach(f=>{
+    const r=new FileReader();
+    r.onload=ev=>{
+      smpReqImgs.push({url:ev.target.result, name:f.name});
+      done++;
+      if(done===files.length){
+        renderSmpReqImgManager();
+        renderSmpReqPreview();
+      }
+    };
+    r.readAsDataURL(f);
+  });
+  e.target.value='';
+}
+
+// 의뢰서 미리보기 렌더링 (실시간)
+function renderSmpReqPreview(){
+  const v=(id)=>document.getElementById(id)?.value||'';
+  const data={
+    name:v('sr_name'), type:v('sr_type'), qty:v('sr_qty'),
+    manager:v('sr_manager'), reqDate:v('sr_reqDate'), due:v('sr_due'),
+    kind:v('sr_kind'), mat:v('sr_mat'), plating:v('sr_plating'),
+    weight:v('sr_weight'), size:v('sr_size'), sizeLine:v('sr_sizeLine'),
+    sub:v('sr_sub'), deco:v('sr_deco'), body:v('sr_body'),
+    engr:v('sr_engr'), engrTxt:v('sr_engrTxt'), clutch:v('sr_clutch'),
+    card:v('sr_card'), stone:v('sr_stone'), metal:v('sr_metal'),
+    devNote:v('sr_devNote'), warn:v('sr_warn')
+  };
+  const el=document.getElementById('smpReqPreview');
+  if(!el) return;
+  el.innerHTML = buildSmpReqHtml(data, smpReqImgs);
+}
+
+// 의뢰서 HTML 빌더 (인쇄/PNG에서도 재사용)
+function buildSmpReqHtml(d, imgs){
+  const esc=(s)=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // body는 줄바꿈을 <br>로 + 빨간색 강조 라인 자동 처리 (괄호로 감싼 부분 또는 "샘플 제작 사이즈" 같은 키워드)
+  const bodyHtml = esc(d.body).replace(/\n/g,'<br>')
+    .replace(/(\([^)]*샘플\s*제작[^)]*\))/g,'<span style="color:#D90B0B;font-weight:600">$1</span>');
+  const warnHtml = esc(d.warn).replace(/\n/g,'<br>');
+  const imgsHtml = (imgs||[]).map((im,i)=>{
+    const cap = i===0?'예상 이미지':(i===1?'착용 예시':(i===2?'도면':'참고 이미지'));
+    return `<div class="sr-img-box"><img src="${im.url}"><div class="sr-img-cap">${cap}</div></div>`;
+  }).join('');
+
+  return `
+<div class="sr-page">
+  <div class="sr-title">E K  샘 플 의 뢰 서</div>
+  <table class="sr-tbl sr-head">
+    <tr>
+      <th>샘플명</th><td>${esc(d.kind||d.name)}</td>
+      <th>담당자</th><td>${esc(d.manager)}</td>
+      <th>아이템</th><td>${esc(d.type)}</td>
+    </tr>
+    <tr>
+      <th>의뢰일</th><td>${esc(d.reqDate)}</td>
+      <th>납기일</th><td>${esc(d.due)}</td>
+      <th>발주량</th><td>${esc(d.qty)}</td>
+    </tr>
+  </table>
+  <div class="sr-body-area">
+    <div class="sr-body-text">
+      ${d.mat?`<div><b>소재:</b> <span style="color:#0033A0">${esc(d.mat)}</span></div>`:''}
+      ${d.plating?`<div><b>도금:</b> ${esc(d.plating)}</div>`:''}
+      ${bodyHtml?`<div style="margin-top:6px">${bodyHtml}</div>`:''}
+    </div>
+    <div class="sr-body-imgs">${imgsHtml||'<div style="color:#999;text-align:center;padding:30px 0;font-size:11px">사진을 추가하면 여기에 표시됩니다</div>'}</div>
+  </div>
+  <table class="sr-tbl sr-spec">
+    <tr>
+      <th rowspan="2" class="sr-th-narrow">사이즈</th>
+      <th>길이/호수</th><th>보조줄</th><th>장식</th>
+      <th rowspan="2" class="sr-th-narrow">금속</th>
+      <th>종류</th><th>도금</th><th>중량</th><th>중량</th>
+    </tr>
+    <tr>
+      <td>${esc(d.sizeLine||d.size)}</td>
+      <td>${esc(d.sub)}</td>
+      <td>${esc(d.deco)}</td>
+      <td>${esc(d.mat)}</td>
+      <td>${esc(d.plating)}</td>
+      <td>${esc(d.weight)}</td>
+      <td></td>
+    </tr>
+  </table>
+  <table class="sr-tbl sr-spec">
+    <tr>
+      <th class="sr-th-narrow">스톤</th><td>${esc(d.stone)}</td>
+      <th>각인 위치</th><td>${esc(d.engr)}</td>
+      <th>클러치</th><td>${esc(d.clutch)}</td>
+      <th>캐드파일</th><td>${esc(d.card)}</td>
+      <th>원본 유무</th><td></td>
+    </tr>
+    <tr>
+      <th class="sr-th-narrow">각인</th><td colspan="9">${esc(d.engrTxt)}</td>
+    </tr>
+  </table>
+  <table class="sr-tbl sr-foot">
+    <tr>
+      <th style="width:50%">개발 관련 사항</th>
+      <th style="width:50%">주의사항</th>
+    </tr>
+    <tr>
+      <td class="sr-cell-tall">${esc(d.devNote)}</td>
+      <td class="sr-cell-tall sr-warn">${warnHtml}</td>
+    </tr>
+  </table>
+</div>`;
+}
+
+// AI 사진 분석 (Claude API 호출)
+async function aiAnalyzeSmpReqImages(){
+  if(!smpReqImgs.length){ showToast('사진을 먼저 추가하세요','var(--org)'); return; }
+  const btn=document.getElementById('smpReqAiBtn');
+  const out=document.getElementById('smpReqAiResult');
+  if(!out) return;
+  btn.disabled=true; btn.textContent='⏳ 분석 중...';
+  out.style.display='block';
+  out.innerHTML='<div style="color:var(--t2)">AI가 사진을 분석하는 중입니다...</div>';
+  try{
+    // anthropicCall 또는 callAnthropicVision 같은 기존 함수가 있는지 확인
+    const apiKey = (typeof apiKeyClaude!=='undefined'&&apiKeyClaude) ? apiKeyClaude
+                 : (typeof claudeApiKey!=='undefined'&&claudeApiKey) ? claudeApiKey
+                 : (localStorage.getItem('ek_claude_api_key')||localStorage.getItem('anthropic_api_key')||'');
+    if(!apiKey){
+      out.innerHTML='<div style="color:var(--red)">⚠ Claude API 키가 설정되어 있지 않습니다. 설정에서 등록해 주세요. (수동 입력으로 진행 가능)</div>';
+      return;
+    }
+    // 이미지를 base64로 변환 (이미 data URL이니까 prefix 떼면 됨)
+    const imgBlocks = smpReqImgs.slice(0,4).map(im=>{
+      const m = im.url.match(/^data:(image\/[^;]+);base64,(.+)$/);
+      if(!m) return null;
+      return { type:'image', source:{ type:'base64', media_type:m[1], data:m[2] } };
+    }).filter(Boolean);
+    if(!imgBlocks.length){ out.innerHTML='<div style="color:var(--red)">이미지 변환 실패</div>'; return; }
+
+    const prompt = `당신은 주얼리 OEM 제조 전문가입니다. 첨부한 제품 사진을 보고 샘플의뢰서 작성에 필요한 정보를 추측해주세요.
+
+다음 JSON 형식으로만 답변해주세요. 모르는 항목은 빈 문자열("")로 두세요:
+{
+  "type": "반지 / 목걸이 / 귀걸이 / 팔찌 / 브로치 / 펜던트 중 하나",
+  "name": "제품을 잘 표현하는 짧은 이름 (예: 슬래시 반지, 발바닥 양각 반지)",
+  "mat": "추측되는 소재 (예: 925실버, 신주, 써지컬, 14K 골드)",
+  "plating": "추측되는 도금 (예: 실버, 골드, 실버 버니쉬, 무도금)",
+  "features": "디자인의 특징을 2~3문장으로",
+  "warning": "제작 시 주의해야 할 점 (예: 광마감, 두께 유지 등)"
+}
+
+주의: 사진만으로 정확한 정보를 알 수 없으므로 보이는 것만 답변하고, 추측이라는 점을 인지하세요.`;
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'x-api-key':apiKey,
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true'
+      },
+      body: JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:600,
+        messages:[{ role:'user', content:[...imgBlocks, {type:'text', text:prompt}] }]
+      })
+    });
+    if(!resp.ok){
+      const t=await resp.text();
+      out.innerHTML=`<div style="color:var(--red)">AI 호출 실패 (${resp.status})</div><div style="font-size:10px;color:var(--t3);margin-top:4px">${t.slice(0,200)}</div>`;
+      return;
+    }
+    const data = await resp.json();
+    const text = (data.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('').trim();
+    // JSON 추출
+    let parsed=null;
+    const m = text.match(/\{[\s\S]*\}/);
+    if(m){ try{ parsed=JSON.parse(m[0]); }catch(e){} }
+    if(!parsed){
+      out.innerHTML=`<div style="color:var(--org)">AI 응답을 파싱하지 못했습니다.</div><div style="margin-top:6px;color:var(--t2);font-size:10.5px">${text.slice(0,300)}</div>`;
+      return;
+    }
+    // UI 표시 + 적용 버튼
+    const fields = [
+      { key:'type', label:'아이템', target:'sr_type' },
+      { key:'name', label:'샘플명', target:'sr_name' },
+      { key:'mat', label:'소재', target:'sr_mat' },
+      { key:'plating', label:'도금', target:'sr_plating' },
+      { key:'features', label:'특징 → 본문에 추가', target:'sr_body' },
+      { key:'warning', label:'주의사항', target:'sr_warn' }
+    ];
+    let html='<div style="font-weight:600;margin-bottom:6px">✦ AI 추측 결과 — 채택할 항목을 클릭하세요:</div>';
+    fields.forEach(f=>{
+      const val=parsed[f.key];
+      if(!val) return;
+      const safe=String(val).replace(/'/g,"&#39;").replace(/"/g,'&quot;');
+      html += `<div style="display:flex;gap:6px;align-items:center;padding:4px 0;border-bottom:1px dotted var(--bdr)">
+        <span style="min-width:90px;color:var(--t3);font-size:10.5px">${f.label}:</span>
+        <span style="flex:1;color:var(--t2);overflow:hidden;text-overflow:ellipsis">${String(val).replace(/</g,'&lt;')}</span>
+        <button onclick="document.getElementById('${f.target}').value=${f.key==='features'?`(document.getElementById('${f.target}').value?document.getElementById('${f.target}').value+'\\n':'')+'${safe}'`:`'${safe}'`};renderSmpReqPreview()" style="background:var(--grn);color:#fff;border:none;padding:3px 8px;border-radius:4px;font-size:10.5px;cursor:pointer;font-family:inherit">채택</button>
+      </div>`;
+    });
+    html += '<button onclick="aiApplyAllSmpReq('+JSON.stringify(parsed).replace(/"/g,'&quot;')+')" style="margin-top:8px;width:100%;padding:6px;background:var(--gold);color:#fff;border:none;border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit">전부 채택</button>';
+    out.innerHTML=html;
+  }catch(e){
+    out.innerHTML='<div style="color:var(--red)">오류: '+(e.message||e)+'</div>';
+  }finally{
+    btn.disabled=false; btn.textContent='✨ AI 사진 분석 — 소재·도금·아이템 추측';
+  }
+}
+function aiApplyAllSmpReq(parsed){
+  const map={type:'sr_type',name:'sr_name',mat:'sr_mat',plating:'sr_plating',warning:'sr_warn'};
+  Object.entries(map).forEach(([k,id])=>{
+    if(parsed[k]){ const e=document.getElementById(id); if(e) e.value=parsed[k]; }
+  });
+  if(parsed.features){
+    const e=document.getElementById('sr_body');
+    if(e) e.value=(e.value?e.value+'\n':'')+parsed.features;
+  }
+  renderSmpReqPreview();
+  showToast('✓ AI 추측 결과 적용됨','var(--grn)');
+}
+
+// 인쇄 (PDF 저장도 인쇄 대화상자에서 가능)
+function printSmpReq(){
+  const html = document.getElementById('smpReqPreview')?.innerHTML;
+  if(!html) return;
+  const win = window.open('', '_blank', 'width=900,height=1200');
+  if(!win){ showToast('팝업이 차단되었습니다','var(--red)'); return; }
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>샘플의뢰서</title>
+<style>${SMP_REQ_PRINT_CSS}</style>
+</head><body>${html}
+<script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script>
+</body></html>`);
+  win.document.close();
+}
+
+// PNG로 저장 (html2canvas 동적 로드)
+async function downloadSmpReqPng(){
+  const target = document.getElementById('smpReqPreview');
+  if(!target){ showToast('미리보기가 없습니다','var(--org)'); return; }
+  showToast('🖼 이미지 변환 중...','var(--blu)',1500);
+  try{
+    if(typeof html2canvas==='undefined'){
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+        s.onload=res; s.onerror=rej;
+        document.head.appendChild(s);
+      });
+    }
+    const canvas = await html2canvas(target, {scale:2, backgroundColor:'#fff', useCORS:true});
+    const url = canvas.toDataURL('image/png');
+    const a=document.createElement('a');
+    const name=(document.getElementById('sr_name')?.value||'샘플의뢰서').replace(/[\\\/:*?"<>|]/g,'_');
+    a.download=`${name}_${todayStr}.png`;
+    a.href=url; a.click();
+    showToast('✓ PNG 저장됨','var(--grn)');
+  }catch(e){
+    showToast('PNG 저장 실패: '+(e.message||e),'var(--red)');
+  }
+}
+
+// 확정 → 정식 샘플로 등록 (기존 openSmpModal에 데이터 채워서 열기)
+function confirmSmpReqAsSample(){
+  const v=(id)=>document.getElementById(id)?.value||'';
+  const name=v('sr_name')||v('sr_kind');
+  if(!name){ showToast('샘플명을 입력해 주세요','var(--red)'); return; }
+  // 사진을 smpImgBuf 형식으로 옮김
+  smpImgBuf = smpReqImgs.map(im=>({url:im.url, name:im.name}));
+  smpCadBuf = [];
+  smpSrcBuf = [];
+  closeM('mSmpReq');
+  openSmpModal(null);
+  // 폼 채우기
+  setTimeout(()=>{
+    const set=(id,val)=>{const e=document.getElementById(id); if(e&&val) e.value=val;};
+    set('s_name', name);
+    set('s_type', v('sr_type'));
+    set('s_qty', v('sr_qty'));
+    set('s_manager', v('sr_manager'));
+    set('s_reqDate', v('sr_reqDate'));
+    set('s_due', v('sr_due'));
+    set('s_mat', v('sr_mat'));
+    set('s_plating', v('sr_plating'));
+    set('s_wt', v('sr_weight'));
+    // 사이즈는 외경(s_sz1) 또는 호수(s_sz2)에 들어감
+    const sz=v('sr_sizeLine')||v('sr_size');
+    if(sz){
+      if(/호/.test(sz)) set('s_sz2', sz); else set('s_sz1', sz);
+    }
+    set('s_sz3', v('sr_sub'));
+    set('s_sz4', v('sr_deco'));
+    set('s_engr', v('sr_engr'));
+    set('s_card', v('sr_card'));
+    // 메모/주의사항을 디자인설명/개발사항에 합쳐 저장
+    const memoEl=document.getElementById('s_memo')||document.getElementById('s_design');
+    if(memoEl){
+      const lines=[];
+      if(v('sr_body')) lines.push(v('sr_body'));
+      if(v('sr_devNote')) lines.push('개발사항: '+v('sr_devNote'));
+      if(v('sr_warn')) lines.push('주의사항: '+v('sr_warn'));
+      if(v('sr_engrTxt')) lines.push('각인: '+v('sr_engrTxt'));
+      if(v('sr_stone')) lines.push('스톤: '+v('sr_stone'));
+      if(v('sr_metal')) lines.push('금속종류: '+v('sr_metal'));
+      if(v('sr_clutch')) lines.push('클러치: '+v('sr_clutch'));
+      memoEl.value=lines.join('\n');
+    }
+    if(typeof renderSmpPrev==='function') renderSmpPrev();
+    showToast('✓ 의뢰서 내용이 샘플 등록 폼에 채워졌습니다 — 확인 후 저장하세요','var(--grn)',3500);
+  }, 100);
+  // 사진 버퍼 초기화 (드롭존)
+  smpReqImgs = [];
+  renderSmpReqDzThumbs();
+}
+
+// 의뢰서 인쇄/PNG용 CSS (한 곳에서 관리)
+const SMP_REQ_PRINT_CSS = `
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Malgun Gothic','맑은 고딕',sans-serif}
+body{background:#fff;padding:14px}
+.sr-page{width:680px;margin:0 auto;background:#fff;color:#222;padding:6px}
+.sr-title{text-align:center;font-size:16px;font-weight:700;letter-spacing:6px;border:2px solid #333;padding:8px;margin-bottom:0}
+.sr-tbl{width:100%;border-collapse:collapse;font-size:11px}
+.sr-tbl th,.sr-tbl td{border:1px solid #888;padding:6px 8px;vertical-align:middle}
+.sr-tbl th{background:#F4F4F4;font-weight:500;color:#222;text-align:center}
+.sr-tbl td{text-align:left;background:#fff}
+.sr-head th{width:14%}
+.sr-head td{width:19%}
+.sr-th-narrow{width:8% !important}
+.sr-spec th{font-size:10.5px}
+.sr-spec td{font-size:10.5px;text-align:center}
+.sr-foot th{text-align:center;padding:6px}
+.sr-foot td{text-align:center;font-size:11px}
+.sr-cell-tall{height:48px;vertical-align:middle}
+.sr-warn{color:#D90B0B;font-weight:600}
+.sr-body-area{display:grid;grid-template-columns:1fr 280px;gap:12px;border:1px solid #888;border-top:none;padding:12px;background:#fff;min-height:240px}
+.sr-body-text{font-size:12px;line-height:1.7;color:#222}
+.sr-body-text b{color:#0033A0}
+.sr-body-imgs{display:flex;flex-direction:column;gap:8px;align-items:center}
+.sr-img-box{width:100%;max-width:260px;text-align:center}
+.sr-img-box img{width:100%;max-height:180px;object-fit:contain;border:1px solid #DDD;border-radius:4px;background:#fff}
+.sr-img-cap{font-size:9.5px;color:#666;margin-top:2px}
+@media print{
+  body{padding:0;margin:0}
+  .sr-page{width:100%;max-width:100%;padding:0}
+  @page{size:A4 portrait;margin:10mm}
+}
+`;
+
+// 미리보기 영역 스타일도 동일하게 (모달 안에서 보이는 부분)
+(function(){
+  if(document.getElementById('smpReqInlineStyle')) return;
+  const st=document.createElement('style');
+  st.id='smpReqInlineStyle';
+  st.textContent='.smp-req-doc{font-family:\'Malgun Gothic\',\'맑은 고딕\',sans-serif;color:#222;background:#fff;padding:10px;border-radius:4px}'+SMP_REQ_PRINT_CSS;
+  document.head.appendChild(st);
+})();
+
 // ════════════════════════════════
 // TAB NAVIGATION
 // ════════════════════════════════
@@ -7375,6 +7950,30 @@ function renderSample(){
   if(!window._smpChecked)window._smpChecked=new Set();
 
   c.innerHTML=`
+  <div class="card">
+    <div class="ch">
+      <div><div class="ch-t">✨ AI 샘플의뢰서 작성 <span style="font-size:10px;color:var(--t3);font-weight:400;margin-left:6px">사진 업로드 → 의뢰서 자동 생성</span></div><div class="ch-s">제품 사진과 착용샷을 올리고 스펙을 입력하면 의뢰서가 만들어집니다</div></div>
+    </div>
+    <div style="padding:12px 14px">
+      <div class="drop-zone" id="smpReqDz" style="padding:18px 20px;outline:none;border-color:var(--gold-line);background:linear-gradient(135deg, #FFF9E6 0%, #FFFEF8 100%)" tabindex="0"
+        ondragover="dzOver(event,this)" ondragleave="dzOut(this)"
+        ondrop="handleSmpReqDrop(event)"
+        onclick="if(event.target===this||event.target.classList.contains('dz-title')||event.target.classList.contains('dz-sub')||event.target.classList.contains('dz-icon'))this.querySelector('input').click()">
+        <input type="file" accept="image/*" multiple onchange="handleSmpReqInput(event)" style="display:none">
+        <div class="dz-icon" style="font-size:26px">📸</div>
+        <div class="dz-title">제품 사진 · 착용샷을 여기에 올려주세요</div>
+        <div class="dz-sub">드래그 · 클릭 · Ctrl+V 붙여넣기 모두 가능 (여러 장)</div>
+        <div class="dz-types" style="margin-top:8px">
+          <span class="dz-type" style="background:#FFF3D9;color:#7A4F00">🖼 제품사진</span>
+          <span class="dz-type" style="background:#FFF3D9;color:#7A4F00">💍 착용샷</span>
+          <span class="dz-type" style="background:#FFF3D9;color:#7A4F00">📐 도면</span>
+        </div>
+        <div id="smpReqThumbs" style="display:none;margin-top:14px;flex-wrap:wrap;gap:8px;justify-content:center"></div>
+        <button type="button" id="smpReqOpenBtn" onclick="event.stopPropagation();openSmpReqEditor()" style="display:none;margin-top:14px;background:var(--gold);color:#fff;border:none;padding:10px 22px;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer;font-family:inherit">📋 의뢰서 작성하기 →</button>
+      </div>
+    </div>
+  </div>
+
   <div class="card">
     <div class="ch">
       <div><div class="ch-t">📁 샘플의뢰서 업로드 — AI 자동 인식</div><div class="ch-s">이미지 · PDF · 엑셀 파일을 드래그하거나 클릭</div></div>
