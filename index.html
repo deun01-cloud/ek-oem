@@ -1085,7 +1085,8 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div id="mInvDetail_body"></div>
   <div class="ma">
     <button class="btn bgo" onclick="closeM('mInvDetail')">닫기</button>
-    <button class="btn bp" id="mInvDetail_reprint">🖨 재출력</button>
+    <button class="btn bp" id="mInvDetail_copy" title="발행했던 명세서 양식 그대로 보기">📄 명세서 카피</button>
+    <button class="btn bp" id="mInvDetail_reprint" title="원본 발주서를 불러와서 새로 재발행">🖨 재발행</button>
   </div>
 </div></div>
 
@@ -1345,6 +1346,9 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div style="display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:14px;align-items:start">
     <!-- 좌측: A4 미리보기 -->
     <div style="background:var(--s1);padding:18px;border-radius:8px;overflow:auto;max-height:calc(96vh - 160px)">
+      <div style="background:#FFF9E6;border:1px solid #E8D89A;border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:11px;color:#7A4F00;line-height:1.55">
+        ✏️ <b>아래 미리보기에서 직접 편집하세요</b> — 칸을 클릭해서 입력 · 사진 위에 마우스를 올리면 ↑↓ ＋－ ⟳ ✂ × 도구가 나옴 · 사진 영역에 드래그/Ctrl+V로 추가 가능
+      </div>
       <div id="smpReqPreview" class="smp-req-doc">
         <!-- renderSmpReqPreview()에서 채움 -->
       </div>
@@ -1356,10 +1360,11 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       </div>
 
       <!-- AI 분석 버튼 -->
-      <button id="smpReqAiBtn" type="button" onclick="aiAnalyzeSmpReqImages()" style="width:100%;padding:10px;background:#fff;border:1.5px solid var(--gold);color:var(--gold);border-radius:8px;font-weight:600;font-size:12px;cursor:pointer;font-family:inherit;margin-bottom:14px">
-        ✨ AI 사진 분석 — 소재·도금·아이템 추측
+      <button id="smpReqAiBtn" type="button" onclick="aiAnalyzeSmpReqImages()" style="width:100%;padding:10px;background:#fff;border:1.5px solid var(--gold);color:var(--gold);border-radius:8px;font-weight:600;font-size:12px;cursor:pointer;font-family:inherit;margin-bottom:6px">
+        ✨ AI 사진 분석 — 소재·도금·아이템·스톤·사이즈
       </button>
-      <div id="smpReqAiResult" style="display:none;margin-bottom:14px;padding:10px 12px;background:#FAFAFC;border:1px solid var(--bdr);border-radius:6px;font-size:11px;line-height:1.6"></div>
+      <div style="font-size:10px;color:var(--t3);text-align:center;margin-bottom:14px;line-height:1.4">사진을 보고 AI가 빈 칸만 자동으로 채워줍니다 (이미 입력된 칸은 보존)</div>
+      <div id="smpReqAiResult" style="display:none;margin-bottom:14px;padding:0;font-size:11px;line-height:1.6"></div>
 
       <div class="form-sec">기본 정보</div>
       <div class="fg"><label>샘플명 *</label><input class="fi" id="sr_name" placeholder="예: 슬래시 반지" oninput="renderSmpReqPreview()"></div>
@@ -3372,7 +3377,7 @@ function renderInvoiceHistory(){
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">부가세</th>';
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">합계금액</th>';
     h+='<th style="padding:8px 10px;text-align:center;font-weight:600">상태</th>';
-    h+='<th style="padding:8px 10px;width:32px"></th>';
+    h+='<th style="padding:8px 4px;width:64px"></th>';
     h+='</tr></thead><tbody>';
     list.forEach(function(v){
       var sc={'발행완료':'var(--grn)','청구완료':'var(--blu)','미수':'var(--red)'}[v.status]||'var(--t2)';
@@ -3390,8 +3395,9 @@ function renderInvoiceHistory(){
       h+='<option value="청구완료"'+(v.status==='청구완료'?' selected':'')+'>청구완료</option>';
       h+='<option value="미수"'+(v.status==='미수'?' selected':'')+'>미수</option>';
       h+='</select></td>';
-      h+='<td onclick="event.stopPropagation()" style="padding:8px 6px;text-align:center">';
-      h+='<button onclick="deleteInvRecord('+v.id+')" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button></td>';
+      h+='<td onclick="event.stopPropagation()" style="padding:8px 4px;text-align:center;white-space:nowrap">';
+      h+='<button onclick="showInvoiceCopy('+v.id+')" title="명세서 카피 보기" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--gold-lt)\'" onmouseout="this.style.color=\'var(--t3)\'">📄</button>';
+      h+='<button onclick="deleteInvRecord('+v.id+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button></td>';
       h+='</tr>';
     });
     h+='</tbody></table></div>';
@@ -3403,6 +3409,127 @@ function renderInvoiceHistory(){
   }
   h+='</div>';
   c.innerHTML=h;
+}
+
+// ── 발행했던 거래명세서 양식 그대로 카피 렌더링 ──
+// invoiceHistory에 저장된 데이터를 기준으로 발행 시점의 양식을 재현
+// 발주서가 살아있으면(o) 거기서 mat/plating/size/manager/memo를 보강
+function renderInvoiceCopyHtml(v){
+  if(!v) return '';
+  // 회사 정보 (현재 설정값)
+  var co = (typeof company!=='undefined' && company) || {name:'이케이아이엔티'};
+  // 원본 발주서 매칭 (소재/도금/규격/담당자/메모 보강용)
+  var o = null;
+  if(v.ordId) o = orders.find(function(x){return x.id==v.ordId;});
+  if(!o && v.ordNo) o = orders.find(function(x){return x.no===v.ordNo;});
+  // 발주서의 행을 코드/이름 기준으로 매칭해서 부가정보 가져옴
+  function lookupOrdRow(item){
+    if(!o || !o.rows) return null;
+    return o.rows.find(function(r){
+      if(item.code && r.itemCode && r.itemCode===item.code) return true;
+      if(item.name && r.name && r.name===item.name) return true;
+      return false;
+    });
+  }
+  // 품목 행 HTML
+  var items = v.items || [];
+  var rowsHtml = items.map(function(r,i){
+    var ordRow = lookupOrdRow(r);
+    var mat = (ordRow && ordRow.mat) || r.mat || '';
+    var plating = (ordRow && ordRow.plating) || r.plating || '';
+    var size = (ordRow && ordRow.size) || r.size || '';
+    var unit = +r.unit || 0;
+    var amt = +r.amt || (+r.qty||0)*unit;
+    return '<tr>' +
+      '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd">'+(i+1)+'</td>' +
+      '<td style="padding:7px 8px;border:1px solid #ddd;font-family:monospace;font-size:9pt">'+(r.code||'')+'</td>' +
+      '<td style="padding:7px 8px;border:1px solid #ddd">'+(r.name||'')+'</td>' +
+      '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd">'+mat+'</td>' +
+      '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd">'+plating+'</td>' +
+      '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd">'+size+'</td>' +
+      '<td style="text-align:right;padding:7px 8px;border:1px solid #ddd;font-weight:700">'+(r.qty?Number(r.qty).toLocaleString():'')+'</td>' +
+      '<td style="text-align:right;padding:7px 8px;border:1px solid #ddd">'+(unit?unit.toLocaleString():'')+'</td>' +
+      '<td style="text-align:right;padding:7px 8px;border:1px solid #ddd;font-weight:600">'+(amt?amt.toLocaleString():'')+'</td>' +
+    '</tr>';
+  }).join('');
+  // 빈 행 채우기 (양식 미관용)
+  var minRows = 5;
+  var blankCount = Math.max(0, minRows - items.length);
+  for(var bi=0; bi<blankCount; bi++){
+    rowsHtml += '<tr>' +
+      '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd;color:#ccc">&nbsp;</td>' +
+      '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
+      '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
+      '<td style="padding:7px 6px;border:1px solid #ddd">&nbsp;</td>' +
+      '<td style="padding:7px 6px;border:1px solid #ddd">&nbsp;</td>' +
+      '<td style="padding:7px 6px;border:1px solid #ddd">&nbsp;</td>' +
+      '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
+      '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
+      '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
+    '</tr>';
+  }
+
+  var manager = (o && o.manager) || '';
+  var memo = (o && o.memo) || v.memo || '';
+
+  return '<div style="font-family:\'Noto Sans KR\',sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#222">' +
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #8B6914">' +
+      '<div><div style="font-size:22pt;font-weight:700;color:#8B6914;letter-spacing:2px">거 래 명 세 서</div>' +
+      '<div style="font-size:10pt;color:#888;margin-top:4px">TRANSACTION STATEMENT' +
+      '<span style="margin-left:10px;padding:2px 8px;background:#F4E9D0;color:#8B6914;border-radius:10px;font-size:9pt;font-weight:600">CO P Y · 발행이력 카피본</span></div></div>' +
+      '<div style="text-align:right;font-size:10pt"><div style="font-weight:700;font-size:12pt">'+(co.name||'이케이아이엔티')+'</div>' +
+      (co.ceo?'<div>대표자: '+co.ceo+'</div>':'') +
+      (co.brn?'<div>사업자번호: '+co.brn+'</div>':'') +
+      (co.tel?'<div>Tel: '+co.tel+'</div>':'') +
+      (co.bank?'<div>계좌: '+co.bank+'</div>':'') +
+      '</div>' +
+    '</div>' +
+    '<table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:10pt">' +
+      '<tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">공급받는자</td>' +
+      '<td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:11pt">'+(v.vendor||'')+'</td>' +
+      '<td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">발주번호</td>' +
+      '<td style="padding:7px 10px;border:1px solid #ddd;font-family:monospace">'+(v.ordNo||'')+'</td></tr>' +
+      '<tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">담당자</td>' +
+      '<td style="padding:7px 10px;border:1px solid #ddd">'+manager+'</td>' +
+      '<td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">출고일자</td>' +
+      '<td style="padding:7px 10px;border:1px solid #ddd;font-weight:700">'+(v.shipDate||'')+'</td></tr>' +
+      '<tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">발행일자</td>' +
+      '<td style="padding:7px 10px;border:1px solid #ddd">'+(v.issuedAt||'')+'</td>' +
+      '<td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600;color:#c03030">합계금액</td>' +
+      '<td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:12pt;color:#c03030">'+(v.total?'₩'+v.total.toLocaleString():'-')+'</td></tr>' +
+    '</table>' +
+    '<table style="width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:16px">' +
+      '<thead><tr style="background:#8B6914;color:#fff">' +
+        '<th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th>' +
+        '<th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">품목코드</th>' +
+        '<th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th>' +
+        '<th style="padding:8px 6px;border:1px solid #6B4E0A;width:70px">소재</th>' +
+        '<th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th>' +
+        '<th style="padding:8px 6px;border:1px solid #6B4E0A;width:65px">규격</th>' +
+        '<th style="padding:8px 8px;border:1px solid #6B4E0A;width:65px;text-align:right">수량</th>' +
+        '<th style="padding:8px 8px;border:1px solid #6B4E0A;width:80px;text-align:right">단가</th>' +
+        '<th style="padding:8px 8px;border:1px solid #6B4E0A;width:90px;text-align:right">금액</th>' +
+      '</tr></thead><tbody>'+rowsHtml+'</tbody>' +
+    '</table>' +
+    '<table style="width:300px;margin-left:auto;border-collapse:collapse;font-size:10pt;margin-bottom:20px">' +
+      '<tr><td style="padding:7px 12px;border:1px solid #ddd;background:#f7f3eb;font-weight:600">공급가액</td>' +
+      '<td style="padding:7px 12px;border:1px solid #ddd;text-align:right">'+(v.supplyAmt?'₩'+v.supplyAmt.toLocaleString():'-')+'</td></tr>' +
+      '<tr><td style="padding:7px 12px;border:1px solid #ddd;background:#f7f3eb;font-weight:600">부가세 (10%)</td>' +
+      '<td style="padding:7px 12px;border:1px solid #ddd;text-align:right">'+(v.tax?'₩'+v.tax.toLocaleString():'-')+'</td></tr>' +
+      '<tr style="background:#8B6914;color:#fff"><td style="padding:9px 12px;border:1px solid #6B4E0A;font-weight:700;font-size:11pt">합 계</td>' +
+      '<td style="padding:9px 12px;border:1px solid #6B4E0A;text-align:right;font-weight:700;font-size:11pt">'+(v.total?'₩'+v.total.toLocaleString():'-')+'</td></tr>' +
+    '</table>' +
+    (memo?'<div style="background:#f9f7f2;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:10pt;color:#555"><b>메모:</b> '+memo+'</div>':'') +
+    (!o?'<div style="margin-top:14px;padding:8px 12px;background:#FFF8E6;border:1px solid #E8D89A;border-radius:6px;font-size:9.5pt;color:#7A4F00">📌 원본 발주서를 찾을 수 없어 일부 정보(소재/도금/규격/담당자/메모)는 빈 칸일 수 있습니다.</div>':'') +
+  '</div>';
+}
+
+// 명세서 카피 보기 — 인쇄 미리보기 모달로 띄움
+function showInvoiceCopy(id){
+  var v = invoiceHistory.find(function(x){return x.id==id;});
+  if(!v){ showToast('명세서를 찾을 수 없습니다','var(--red)'); return; }
+  var html = renderInvoiceCopyHtml(v);
+  showPrintPreview('🧾 거래명세서 카피 — '+v.vendor+' / '+v.issuedAt, html);
 }
 
 function openInvDetail(id){
@@ -3448,6 +3575,14 @@ function openInvDetail(id){
   });
   b+='</div><span style="font-size:11px;color:'+sc+';font-weight:600">'+v.status+'</span></div>';
   document.getElementById('mInvDetail_body').innerHTML=b;
+  // 명세서 카피 버튼
+  var cb=document.getElementById('mInvDetail_copy');
+  if(cb){
+    cb.onclick=function(){
+      closeM('mInvDetail');
+      showInvoiceCopy(v.id);
+    };
+  }
   var rb=document.getElementById('mInvDetail_reprint');
   if(rb){
     rb.onclick=function(){
@@ -7042,13 +7177,37 @@ function handleSmpReqInput(e){
   e.target.value=''; // 다시 같은 파일 올릴 수 있게
 }
 function loadSmpReqFiles(files){
-  let done=0;
+  let done=0, ok=0, bad=0;
+  const total=files.length;
   files.forEach(f=>{
     const r=new FileReader();
     r.onload=ev=>{
-      smpReqImgs.push({url:ev.target.result, name:f.name});
-      done++;
-      if(done===files.length) renderSmpReqDzThumbs();
+      // 데이터 URL이 유효한 이미지인지 사전 검증
+      const probe=new Image();
+      probe.onload=()=>{
+        smpReqImgs.push({url:ev.target.result, name:f.name});
+        ok++; done++;
+        if(done===total){
+          renderSmpReqDzThumbs();
+          if(bad>0) showToast(bad+'장은 손상되어 제외됨','var(--org)',2500);
+        }
+      };
+      probe.onerror=()=>{
+        bad++; done++;
+        console.warn('손상된 이미지 제외:',f.name);
+        if(done===total){
+          renderSmpReqDzThumbs();
+          if(bad>0) showToast(bad+'장은 손상되어 제외됨','var(--org)',2500);
+        }
+      };
+      probe.src=ev.target.result;
+    };
+    r.onerror=()=>{
+      bad++; done++;
+      if(done===total){
+        renderSmpReqDzThumbs();
+        if(bad>0) showToast(bad+'장은 읽기에 실패','var(--org)',2500);
+      }
     };
     r.readAsDataURL(f);
   });
@@ -7395,7 +7554,7 @@ function renderSmpComposeView(){
   <div class="card" style="padding:0;margin-bottom:10px">
     <div style="display:flex;border-bottom:1px solid var(--bdr)">
       <div onclick="window._smpSubTab='list';renderSample()" style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--t3);border-bottom:3px solid transparent">📋 샘플 목록 <span style="font-size:11px;color:var(--t3);font-weight:400;margin-left:4px">${samples.length}건</span></div>
-      <div style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--gold);border-bottom:3px solid var(--gold);background:linear-gradient(180deg,transparent,rgba(167,131,57,.04))">✨ AI 의뢰서 작성 <span style="font-size:11px;color:var(--t3);font-weight:400;margin-left:4px">사진 → 의뢰서</span></div>
+      <div style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--gold);border-bottom:3px solid var(--gold);background:linear-gradient(180deg,transparent,rgba(167,131,57,.04))">✨ AI 의뢰서 작성</div>
     </div>
   </div>
 
@@ -7570,42 +7729,463 @@ function renderSmpReqPreview(){
   const el=document.getElementById('smpReqPreview');
   if(!el) return;
   el.innerHTML = buildSmpReqHtml(data, smpReqImgs);
+  bindSmpReqInlineEdits(el);
+  bindSmpReqImgInteractions(el);
 }
 
-// 의뢰서 HTML 빌더 (인쇄/PNG에서도 재사용)
+// ════════════════════════════════════════════════════════════════
+// 미리보기 인라인 편집 — contenteditable 셀과 우측 폼 input 양방향 동기화
+// ════════════════════════════════════════════════════════════════
+
+// 이벤트 바인딩 중복 방지 플래그
+let _srEditsBound = false;
+
+function bindSmpReqInlineEdits(rootEl){
+  // 미리보기 컨테이너에 한 번만 위임 이벤트 등록
+  // (renderSmpReqPreview 호출 시마다 innerHTML이 새로 그려지므로 컨테이너에 위임)
+  if(_srEditsBound) return;
+  _srEditsBound = true;
+  const container = document.getElementById('smpReqPreview');
+  if(!container) return;
+
+  // blur/Enter 시 → 우측 input에 값 반영
+  container.addEventListener('focusout', (e)=>{
+    const t = e.target;
+    if(!t || !t.classList || !t.classList.contains('sr-edit')) return;
+    handleSmpReqEditCommit(t);
+  });
+
+  // Enter 키 → multi가 아니면 blur, multi면 Shift+Enter만 줄바꿈 허용
+  container.addEventListener('keydown', (e)=>{
+    const t = e.target;
+    if(!t || !t.classList || !t.classList.contains('sr-edit')) return;
+    if(e.key === 'Enter'){
+      const multi = t.dataset.multi === '1';
+      if(!multi){
+        e.preventDefault();
+        t.blur();
+      } else if(!e.shiftKey){
+        // multi인데 Shift 없이 Enter → 그냥 줄바꿈은 기본동작이지만, contenteditable에서 <div>가 생성되는 걸 방지
+        e.preventDefault();
+        document.execCommand('insertLineBreak');
+      }
+    } else if(e.key === 'Escape'){
+      t.blur();
+    }
+  });
+
+  // 붙여넣기 → 서식 제거. 이미지가 있으면 사진 영역으로 자동 라우팅
+  container.addEventListener('paste', (e)=>{
+    const t = e.target;
+    if(!t || !t.classList || !t.classList.contains('sr-edit')) return;
+    const items = [...(e.clipboardData?.items||[])];
+    const imgItems = items.filter(it=>it.type.startsWith('image/'));
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if(imgItems.length){
+      // 이미지가 클립보드에 있음 → 사진 영역으로 추가, 텍스트는 무시 (사진+텍스트 동시일 때는 이미지 우선)
+      e.preventDefault();
+      const files = imgItems.map(it=>it.getAsFile()).filter(Boolean);
+      if(files.length){
+        loadSmpReqFiles(files);
+        setTimeout(()=>{ renderSmpReqImgManager(); renderSmpReqPreview(); }, 200);
+        showToast('✓ 사진 '+files.length+'장 추가됨 (사진 영역으로)','var(--grn)',1800);
+      }
+      return;
+    }
+    // 일반 텍스트만 → 서식 제거하고 삽입
+    if(text){
+      e.preventDefault();
+      document.execCommand('insertText', false, text);
+    }
+  });
+}
+
+// 편집 커밋: 셀 값을 우측 input/textarea로 반영
+function handleSmpReqEditCommit(cell){
+  const field = cell.dataset.field;
+  if(!field) return;
+
+  // 사진 캡션 (img_cap_N)
+  const capMatch = field.match(/^img_cap_(\d+)$/);
+  if(capMatch){
+    const idx = parseInt(capMatch[1], 10);
+    if(smpReqImgs[idx]) smpReqImgs[idx].cap = cell.textContent.trim();
+    return;
+  }
+
+  // 미러 필드 (sr_mat__mirror, sr_plating__mirror) — 원본 필드와 동기
+  const mirrorMatch = field.match(/^(sr_\w+)__mirror$/);
+  const realField = mirrorMatch ? mirrorMatch[1] : field;
+  const inputEl = document.getElementById(realField);
+  if(!inputEl) return;
+
+  const multi = cell.dataset.multi === '1';
+  let newVal;
+  if(multi){
+    // <br> → \n으로 변환
+    const html = cell.innerHTML
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<div[^>]*>/gi, '\n')
+      .replace(/<\/div>/gi, '')
+      .replace(/&nbsp;/g, ' ');
+    // HTML 태그 제거 (안전)
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    newVal = (tmp.textContent || '').replace(/^\n+/, '').replace(/\n+$/, '');
+  } else {
+    newVal = cell.textContent.trim();
+  }
+
+  if(inputEl.value === newVal) return; // 변경 없음
+  inputEl.value = newVal;
+  // input 이벤트 발생시켜 다른 리스너(미리보기 재렌더링 등)가 반응하도록
+  inputEl.dispatchEvent(new Event('input', {bubbles:true}));
+  // 미러 필드인 경우 미리보기 재렌더링 (다른 셀에 반영되도록)
+  if(mirrorMatch){
+    renderSmpReqPreview();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// 사진 인터랙션 — 드래그 순서 변경, 붙여넣기/드롭, 툴바 동작
+// ════════════════════════════════════════════════════════════════
+
+let _srImgsBound = false;
+function bindSmpReqImgInteractions(rootEl){
+  // 1) 드래그앤드롭 순서 변경 (각 sr-img-box) — 매 렌더 시 새로 바인딩 (요소가 새로 생성되므로)
+  const boxes = rootEl.querySelectorAll('.sr-img-box');
+  boxes.forEach(box=>{
+    box.addEventListener('dragstart', srBoxDragStart);
+    box.addEventListener('dragover', srBoxDragOver);
+    box.addEventListener('dragleave', srBoxDragLeave);
+    box.addEventListener('drop', srBoxDrop);
+    box.addEventListener('dragend', srBoxDragEnd);
+  });
+
+  // 2) 사진 영역 전체 드롭존(빈 공간 포함) — 외부 파일/이미지 드롭으로 추가
+  const imgArea = rootEl.querySelector('.sr-body-imgs');
+  if(imgArea){
+    imgArea.addEventListener('dragover', (e)=>{
+      // 외부 파일 드래그(types에 'Files' 포함)일 때만 활성화
+      if(e.dataTransfer && [...e.dataTransfer.types].includes('Files')){
+        e.preventDefault();
+        imgArea.classList.add('sr-drop-active');
+      }
+    });
+    imgArea.addEventListener('dragleave', (e)=>{
+      // 영역 밖으로 나갈 때만 해제 (자식으로 들어가는 경우 제외)
+      if(!imgArea.contains(e.relatedTarget)){
+        imgArea.classList.remove('sr-drop-active');
+      }
+    });
+    imgArea.addEventListener('drop', (e)=>{
+      const files = [...(e.dataTransfer?.files||[])].filter(f=>f.type.startsWith('image/'));
+      if(!files.length) return;
+      e.preventDefault();
+      imgArea.classList.remove('sr-drop-active');
+      loadSmpReqFiles(files);
+      setTimeout(()=>{ renderSmpReqImgManager(); renderSmpReqPreview(); }, 200);
+      showToast('✓ 사진 '+files.length+'장 추가됨','var(--grn)',1500);
+    });
+  }
+
+  // 빈 슬롯 클릭 → 파일 선택 (이미 onclick으로 처리됨)
+  // 미리보기 영역 paste는 기존 _smpReqPasteHandler가 처리함 (이미 모달 열려있을 때 동작)
+}
+
+// ── 드래그 순서 변경 핸들러 ──
+let _srDragIdx = null;
+function srBoxDragStart(e){
+  // contenteditable 요소에서 드래그 시작은 무시 (텍스트 드래그 보호)
+  if(e.target.classList.contains('sr-edit')) { e.preventDefault(); return; }
+  const box = e.currentTarget;
+  _srDragIdx = parseInt(box.dataset.idx, 10);
+  box.classList.add('sr-dragging');
+  if(e.dataTransfer){ e.dataTransfer.effectAllowed='move'; try{e.dataTransfer.setData('text/plain', String(_srDragIdx));}catch(_){} }
+}
+function srBoxDragOver(e){
+  // 외부 파일 드래그면 무시 (영역 단위에서 처리)
+  if(e.dataTransfer && [...e.dataTransfer.types].includes('Files')) return;
+  if(_srDragIdx===null) return;
+  e.preventDefault();
+  e.currentTarget.classList.add('sr-drag-over');
+}
+function srBoxDragLeave(e){ e.currentTarget.classList.remove('sr-drag-over'); }
+function srBoxDrop(e){
+  if(e.dataTransfer && [...e.dataTransfer.types].includes('Files')) return; // 영역 핸들러에 위임
+  if(_srDragIdx===null) return;
+  e.preventDefault();
+  const targetIdx = parseInt(e.currentTarget.dataset.idx, 10);
+  e.currentTarget.classList.remove('sr-drag-over');
+  if(_srDragIdx===targetIdx) return;
+  // 배열에서 이동
+  const moved = smpReqImgs.splice(_srDragIdx, 1)[0];
+  smpReqImgs.splice(targetIdx, 0, moved);
+  _srDragIdx = null;
+  renderSmpReqImgManager();
+  renderSmpReqPreview();
+}
+function srBoxDragEnd(e){
+  e.currentTarget.classList.remove('sr-dragging');
+  document.querySelectorAll('.sr-img-box.sr-drag-over').forEach(b=>b.classList.remove('sr-drag-over'));
+  _srDragIdx = null;
+}
+
+// ── 사진 툴바 동작 ──
+function srMoveImg(idx, dir){
+  const ni = idx + dir;
+  if(ni < 0 || ni >= smpReqImgs.length) return;
+  const tmp = smpReqImgs[idx]; smpReqImgs[idx] = smpReqImgs[ni]; smpReqImgs[ni] = tmp;
+  renderSmpReqImgManager();
+  renderSmpReqPreview();
+}
+function srResizeImg(idx, size){
+  if(!smpReqImgs[idx]) return;
+  // 토글: 같은 크기 다시 누르면 md로 복귀
+  if(smpReqImgs[idx].size === size){ smpReqImgs[idx].size = 'md'; }
+  else { smpReqImgs[idx].size = size; }
+  renderSmpReqPreview();
+}
+function srRotateImg(idx){
+  if(!smpReqImgs[idx]) return;
+  const cur = Number(smpReqImgs[idx].rotate||0);
+  smpReqImgs[idx].rotate = (cur + 90) % 360;
+  renderSmpReqPreview();
+}
+function srRemoveImg(idx){
+  smpReqImgs.splice(idx, 1);
+  renderSmpReqImgManager();
+  renderSmpReqPreview();
+}
+
+// ── 자르기 모달 ──
+function srCropImg(idx){
+  if(!smpReqImgs[idx] || !smpReqImgs[idx].url) return;
+  const url = smpReqImgs[idx].url;
+  const rotate = Number(smpReqImgs[idx].rotate||0);
+  // 회전이 적용된 상태의 이미지로 자르도록, 먼저 회전을 데이터에 굽힘 (있으면)
+  if(rotate){
+    bakeImgRotation(url, rotate).then(newUrl=>{
+      smpReqImgs[idx].url = newUrl;
+      smpReqImgs[idx].rotate = 0;
+      openSrCropOverlay(idx);
+    });
+  } else {
+    openSrCropOverlay(idx);
+  }
+}
+
+function openSrCropOverlay(idx){
+  const im = smpReqImgs[idx]; if(!im) return;
+  // 이미 떠있으면 닫기
+  document.getElementById('srCropOv')?.remove();
+  const ov = document.createElement('div');
+  ov.id = 'srCropOv';
+  ov.className = 'sr-crop-overlay';
+  ov.innerHTML = `
+    <div class="sr-crop-box">
+      <div style="font-weight:600;font-size:14px;color:#333;display:flex;justify-content:space-between;align-items:center">
+        <span>✂ 사진 자르기</span>
+        <span style="font-size:11px;color:#999;font-weight:400">사각형을 드래그해 영역 조정</span>
+      </div>
+      <div class="sr-crop-stage" id="srCropStage">
+        <img id="srCropImg" src="${im.url}" alt="">
+        <div class="sr-crop-rect" id="srCropRect">
+          <div class="sr-crop-handle nw"></div>
+          <div class="sr-crop-handle ne"></div>
+          <div class="sr-crop-handle sw"></div>
+          <div class="sr-crop-handle se"></div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button type="button" onclick="document.getElementById('srCropOv').remove()" style="background:#fff;border:1px solid #DDD;color:#444;padding:8px 16px;border-radius:6px;font-family:inherit;cursor:pointer">취소</button>
+        <button type="button" onclick="srApplyCrop(${idx})" style="background:var(--gold,#A88732);color:#fff;border:none;padding:8px 18px;border-radius:6px;font-family:inherit;cursor:pointer;font-weight:600">자르기 적용</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  // 이미지 로드 후 사각형 초기 위치 설정
+  const img = ov.querySelector('#srCropImg');
+  img.onload = ()=>{
+    const stage = ov.querySelector('#srCropStage');
+    const w = img.clientWidth, h = img.clientHeight;
+    const rect = ov.querySelector('#srCropRect');
+    // 가운데 60% 박스
+    const rw = Math.round(w*0.6), rh = Math.round(h*0.6);
+    const rx = Math.round((w-rw)/2), ry = Math.round((h-rh)/2);
+    rect.style.left = rx+'px'; rect.style.top = ry+'px';
+    rect.style.width = rw+'px'; rect.style.height = rh+'px';
+    enableCropDrag(stage, rect);
+  };
+  // 배경 클릭 시 닫기
+  ov.addEventListener('click', (e)=>{ if(e.target===ov) ov.remove(); });
+}
+
+function enableCropDrag(stage, rect){
+  let mode=null, startX=0, startY=0, sLeft=0, sTop=0, sW=0, sH=0;
+  const onDown = (e)=>{
+    const t = e.target;
+    if(t.classList.contains('sr-crop-handle')){
+      mode = 'resize-' + (t.classList.contains('nw')?'nw':t.classList.contains('ne')?'ne':t.classList.contains('sw')?'sw':'se');
+    } else if(t === rect){
+      mode = 'move';
+    } else { return; }
+    e.preventDefault();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    startX = clientX; startY = clientY;
+    sLeft = rect.offsetLeft; sTop = rect.offsetTop;
+    sW = rect.offsetWidth; sH = rect.offsetHeight;
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    document.addEventListener('touchmove', onMove, {passive:false});
+    document.addEventListener('touchend', onUp);
+  };
+  const onMove = (e)=>{
+    if(!mode) return;
+    if(e.touches) e.preventDefault();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const dx = clientX - startX, dy = clientY - startY;
+    const stageW = stage.clientWidth, stageH = stage.clientHeight;
+    let nL=sLeft, nT=sTop, nW=sW, nH=sH;
+    if(mode==='move'){ nL = Math.max(0, Math.min(stageW-sW, sLeft+dx)); nT = Math.max(0, Math.min(stageH-sH, sTop+dy)); }
+    else if(mode==='resize-se'){ nW = Math.max(20, Math.min(stageW-sLeft, sW+dx)); nH = Math.max(20, Math.min(stageH-sTop, sH+dy)); }
+    else if(mode==='resize-sw'){ nW = Math.max(20, sW-dx); nL = sLeft+(sW-nW); nH = Math.max(20, Math.min(stageH-sTop, sH+dy)); if(nL<0){nW+=nL; nL=0;} }
+    else if(mode==='resize-ne'){ nW = Math.max(20, Math.min(stageW-sLeft, sW+dx)); nH = Math.max(20, sH-dy); nT = sTop+(sH-nH); if(nT<0){nH+=nT; nT=0;} }
+    else if(mode==='resize-nw'){ nW = Math.max(20, sW-dx); nL = sLeft+(sW-nW); nH = Math.max(20, sH-dy); nT = sTop+(sH-nH); if(nL<0){nW+=nL; nL=0;} if(nT<0){nH+=nT; nT=0;} }
+    rect.style.left=nL+'px'; rect.style.top=nT+'px'; rect.style.width=nW+'px'; rect.style.height=nH+'px';
+  };
+  const onUp = ()=>{
+    mode = null;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('touchend', onUp);
+  };
+  rect.addEventListener('mousedown', onDown);
+  rect.addEventListener('touchstart', onDown, {passive:false});
+}
+
+function srApplyCrop(idx){
+  const ov = document.getElementById('srCropOv'); if(!ov) return;
+  const img = ov.querySelector('#srCropImg');
+  const rect = ov.querySelector('#srCropRect');
+  const dispW = img.clientWidth, dispH = img.clientHeight;
+  const realW = img.naturalWidth, realH = img.naturalHeight;
+  const sx = Math.round(rect.offsetLeft * realW / dispW);
+  const sy = Math.round(rect.offsetTop * realH / dispH);
+  const sw = Math.round(rect.offsetWidth * realW / dispW);
+  const sh = Math.round(rect.offsetHeight * realH / dispH);
+  // canvas로 자르기
+  const cv = document.createElement('canvas');
+  cv.width = sw; cv.height = sh;
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  // png로 저장 (원본 형식 유지가 어려우므로 png)
+  const newUrl = cv.toDataURL('image/png');
+  smpReqImgs[idx].url = newUrl;
+  ov.remove();
+  renderSmpReqImgManager();
+  renderSmpReqPreview();
+  showToast('✓ 잘라내기 적용됨','var(--grn)',1500);
+}
+
+// 회전을 이미지 데이터에 굽힘 (자르기 직전에 호출)
+function bakeImgRotation(url, deg){
+  return new Promise((resolve)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const cv = document.createElement('canvas');
+      const w = img.naturalWidth, h = img.naturalHeight;
+      const rad = deg * Math.PI / 180;
+      const swap = (deg % 180) !== 0;
+      cv.width = swap ? h : w;
+      cv.height = swap ? w : h;
+      const ctx = cv.getContext('2d');
+      ctx.translate(cv.width/2, cv.height/2);
+      ctx.rotate(rad);
+      ctx.drawImage(img, -w/2, -h/2);
+      resolve(cv.toDataURL('image/png'));
+    };
+    img.onerror = ()=>resolve(url);
+    img.src = url;
+  });
+}
+
+// 의뢰서 HTML 빌더 — 모든 셀이 미리보기에서 직접 편집 가능
+// 인쇄/PNG 시에는 contenteditable 속성과 툴바가 무시됨
 function buildSmpReqHtml(d, imgs){
   const esc=(s)=>String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  // body는 줄바꿈을 <br>로 + 빨간색 강조 라인 자동 처리 (괄호로 감싼 부분 또는 "샘플 제작 사이즈" 같은 키워드)
+  // body는 줄바꿈을 <br>로 + 빨간색 강조 라인 자동 처리
   const bodyHtml = esc(d.body).replace(/\n/g,'<br>')
     .replace(/(\([^)]*샘플\s*제작[^)]*\))/g,'<span style="color:#D90B0B;font-weight:600">$1</span>');
   const warnHtml = esc(d.warn).replace(/\n/g,'<br>');
-  const imgsHtml = (imgs||[]).map((im,i)=>{
+
+  // 편집 가능한 셀 헬퍼 (data-field로 우측 input과 양방향 연결)
+  // multi=true면 줄바꿈 허용 (Shift+Enter로 줄바꿈), false면 Enter로 blur
+  const ed = (field, val, opts) => {
+    opts = opts || {};
+    const ph = opts.placeholder ? ' data-placeholder="'+esc(opts.placeholder)+'"' : '';
+    const ml = opts.multi ? ' data-multi="1"' : '';
+    return `<span class="sr-edit" contenteditable="true" data-field="${field}"${ph}${ml}>${esc(val)}</span>`;
+  };
+  const edBlock = (field, html, opts) => {
+    opts = opts || {};
+    const ph = opts.placeholder ? ' data-placeholder="'+esc(opts.placeholder)+'"' : '';
+    return `<div class="sr-edit" contenteditable="true" data-field="${field}" data-multi="1"${ph} style="min-height:1.4em">${html}</div>`;
+  };
+
+  // 사진 영역 (개별 박스 + 빈 슬롯)
+  const validImgs = (imgs||[]).filter(im=>im && im.url);
+  const imgsHtml = validImgs.map((im,i)=>{
     const cap = i===0?'예상 이미지':(i===1?'착용 예시':(i===2?'도면':'참고 이미지'));
-    return `<div class="sr-img-box"><img src="${im.url}"><div class="sr-img-cap">${cap}</div></div>`;
+    const size = im.size || 'md';
+    const rotate = Number(im.rotate||0);
+    return `<div class="sr-img-box" data-idx="${i}" data-size="${size}" draggable="true">
+      <div class="sr-img-tools">
+        <button type="button" title="위로" onclick="srMoveImg(${i},-1)">↑</button>
+        <button type="button" title="아래로" onclick="srMoveImg(${i},1)">↓</button>
+        <button type="button" title="크게" onclick="srResizeImg(${i},'lg')">＋</button>
+        <button type="button" title="작게" onclick="srResizeImg(${i},'sm')">－</button>
+        <button type="button" title="회전" onclick="srRotateImg(${i})">⟳</button>
+        <button type="button" title="자르기" onclick="srCropImg(${i})">✂</button>
+        <button type="button" class="danger" title="삭제" onclick="srRemoveImg(${i})">×</button>
+      </div>
+      <img src="${esc(im.url)}" style="transform:rotate(${rotate}deg)" onerror="this.style.display='none';this.parentElement.querySelector('.sr-img-fallback').style.display='flex';" alt="">
+      <div class="sr-img-fallback" style="display:none;width:100%;aspect-ratio:1/1;align-items:center;justify-content:center;background:#F4F4F4;color:#999;font-size:10px;border:1px dashed #DDD;border-radius:4px">이미지를 불러올 수 없습니다</div>
+      <div class="sr-img-cap sr-edit" contenteditable="true" data-field="img_cap_${i}" data-placeholder="캡션">${esc(im.cap||cap)}</div>
+    </div>`;
   }).join('');
+  const dropZone = `<div class="sr-img-empty" onclick="document.getElementById('sr_addImgInput').click()" data-droparea="1">
+    <div style="font-size:24px;margin-bottom:4px">📸</div>
+    <div>여기에 사진 드래그<br>또는 클릭해서 추가<br><span style="color:#BBB;font-size:10px">(Ctrl+V 붙여넣기도 가능)</span></div>
+  </div>`;
 
   return `
 <div class="sr-page">
   <div class="sr-title">E K  샘 플 의 뢰 서</div>
   <table class="sr-tbl sr-head">
     <tr>
-      <th>샘플명</th><td>${esc(d.kind||d.name)}</td>
-      <th>담당자</th><td>${esc(d.manager)}</td>
-      <th>아이템</th><td>${esc(d.type)}</td>
+      <th>샘플명</th><td>${ed('sr_kind', d.kind||d.name, {placeholder:'샘플명'})}</td>
+      <th>담당자</th><td>${ed('sr_manager', d.manager, {placeholder:'담당자'})}</td>
+      <th>아이템</th><td>${ed('sr_type', d.type, {placeholder:'반지/목걸이...'})}</td>
     </tr>
     <tr>
-      <th>의뢰일</th><td>${esc(d.reqDate)}</td>
-      <th>납기일</th><td>${esc(d.due)}</td>
-      <th>발주량</th><td>${esc(d.qty)}</td>
+      <th>의뢰일</th><td>${ed('sr_reqDate', d.reqDate, {placeholder:'YYYY-MM-DD'})}</td>
+      <th>납기일</th><td>${ed('sr_due', d.due, {placeholder:'YYYY-MM-DD'})}</td>
+      <th>발주량</th><td>${ed('sr_qty', d.qty, {placeholder:'1EA'})}</td>
     </tr>
   </table>
   <div class="sr-body-area">
     <div class="sr-body-text">
-      ${d.mat?`<div><b>소재:</b> <span style="color:#0033A0">${esc(d.mat)}</span></div>`:''}
-      ${d.plating?`<div><b>도금:</b> ${esc(d.plating)}</div>`:''}
-      ${bodyHtml?`<div style="margin-top:6px">${bodyHtml}</div>`:''}
+      <div><b>소재:</b> <span style="color:#0033A0">${ed('sr_mat', d.mat, {placeholder:'소재'})}</span></div>
+      <div><b>도금:</b> ${ed('sr_plating', d.plating, {placeholder:'도금'})}</div>
+      <div style="margin-top:6px">${edBlock('sr_body', bodyHtml, {placeholder:'본문 — 디자인 설명, 제작 사이즈 등 (Shift+Enter로 줄바꿈)'})}</div>
     </div>
-    <div class="sr-body-imgs">${imgsHtml||'<div style="color:#999;text-align:center;padding:30px 0;font-size:11px">사진을 추가하면 여기에 표시됩니다</div>'}</div>
+    <div class="sr-body-imgs" data-droparea="1">
+      ${imgsHtml}
+      ${dropZone}
+    </div>
   </div>
   <table class="sr-tbl sr-spec">
     <tr>
@@ -7615,25 +8195,25 @@ function buildSmpReqHtml(d, imgs){
       <th>종류</th><th>도금</th><th>중량</th><th>중량</th>
     </tr>
     <tr>
-      <td>${esc(d.sizeLine||d.size)}</td>
-      <td>${esc(d.sub)}</td>
-      <td>${esc(d.deco)}</td>
-      <td>${esc(d.mat)}</td>
-      <td>${esc(d.plating)}</td>
-      <td>${esc(d.weight)}</td>
-      <td></td>
+      <td>${ed('sr_sizeLine', d.sizeLine||d.size)}</td>
+      <td>${ed('sr_sub', d.sub)}</td>
+      <td>${ed('sr_deco', d.deco)}</td>
+      <td>${ed('sr_mat__mirror', d.mat)}</td>
+      <td>${ed('sr_plating__mirror', d.plating)}</td>
+      <td>${ed('sr_weight', d.weight, {placeholder:'g'})}</td>
+      <td>${ed('sr_weight2', d.weight2)}</td>
     </tr>
   </table>
   <table class="sr-tbl sr-spec">
     <tr>
-      <th class="sr-th-narrow">스톤</th><td>${esc(d.stone)}</td>
-      <th>각인 위치</th><td>${esc(d.engr)}</td>
-      <th>클러치</th><td>${esc(d.clutch)}</td>
-      <th>캐드파일</th><td>${esc(d.card)}</td>
-      <th>원본 유무</th><td></td>
+      <th class="sr-th-narrow">스톤</th><td>${ed('sr_stone', d.stone)}</td>
+      <th>각인 위치</th><td>${ed('sr_engr', d.engr)}</td>
+      <th>클러치</th><td>${ed('sr_clutch', d.clutch)}</td>
+      <th>캐드파일</th><td>${ed('sr_card', d.card)}</td>
+      <th>원본 유무</th><td>${ed('sr_origin', d.origin)}</td>
     </tr>
     <tr>
-      <th class="sr-th-narrow">각인</th><td colspan="9">${esc(d.engrTxt)}</td>
+      <th class="sr-th-narrow">각인</th><td colspan="9">${ed('sr_engrTxt', d.engrTxt)}</td>
     </tr>
   </table>
   <table class="sr-tbl sr-foot">
@@ -7642,8 +8222,8 @@ function buildSmpReqHtml(d, imgs){
       <th style="width:50%">주의사항</th>
     </tr>
     <tr>
-      <td class="sr-cell-tall">${esc(d.devNote)}</td>
-      <td class="sr-cell-tall sr-warn">${warnHtml}</td>
+      <td class="sr-cell-tall">${edBlock('sr_devNote', esc(d.devNote).replace(/\n/g,'<br>'), {placeholder:'예: 캐드 파일 있음 / 실 샘플 있음'})}</td>
+      <td class="sr-cell-tall sr-warn">${edBlock('sr_warn', warnHtml, {placeholder:'예: 광마감 / 두께 유지'})}</td>
     </tr>
   </table>
 </div>`;
@@ -7657,95 +8237,240 @@ async function aiAnalyzeSmpReqImages(){
   if(!out) return;
   btn.disabled=true; btn.textContent='⏳ 분석 중...';
   out.style.display='block';
-  out.innerHTML='<div style="color:var(--t2)">AI가 사진을 분석하는 중입니다...</div>';
+  out.innerHTML='<div style="color:var(--t2);padding:8px 12px;background:#F4F8FB;border-radius:6px">🔍 AI가 사진을 분석하는 중입니다... (5~10초)</div>';
   try{
     // 기존 시스템의 키 변수 사용 (anthropicKey)
     if(typeof anthropicKey==='undefined' || !anthropicKey || !anthropicKey.trim()){
-      out.innerHTML='<div style="color:var(--red)">⚠ Claude API 키가 설정되어 있지 않습니다. 우측 상단 ⚙ 설정에서 입력해 주세요. (수동 입력으로 진행 가능)</div>';
+      out.innerHTML='<div style="color:var(--red);padding:8px 12px;background:#FEF1F1;border-radius:6px">⚠ Claude API 키가 설정되어 있지 않습니다. 우측 상단 ⚙ 설정에서 입력해 주세요. (수동 입력으로 진행 가능)</div>';
       return;
     }
-    // 이미지를 base64로 변환 (이미 data URL이니까 prefix 떼면 됨)
-    const imgBlocks = smpReqImgs.slice(0,4).map(im=>{
-      const m = im.url.match(/^data:(image\/[^;]+);base64,(.+)$/);
-      if(!m) return null;
-      return { type:'image', source:{ type:'base64', media_type:m[1], data:m[2] } };
-    }).filter(Boolean);
+    // 이미지를 base64로 변환 (Anthropic API는 jpeg/png/gif/webp만 허용)
+    // HEIC, AVIF 등 비호환 포맷은 canvas로 JPEG으로 재변환
+    const ALLOWED = ['image/jpeg','image/png','image/gif','image/webp'];
+    const normalizeImg = (dataUrl) => new Promise((resolve)=>{
+      const m = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
+      if(!m){ resolve(null); return; }
+      let mime = m[1].toLowerCase();
+      if(mime==='image/jpg') mime='image/jpeg';
+      if(ALLOWED.includes(mime)){
+        resolve({ media_type: mime, data: m[2] });
+        return;
+      }
+      const img = new Image();
+      img.onload = ()=>{
+        try{
+          const cv = document.createElement('canvas');
+          const maxSize = 1600;
+          let w = img.naturalWidth, h = img.naturalHeight;
+          if(w>maxSize || h>maxSize){
+            const r = maxSize/Math.max(w,h);
+            w = Math.round(w*r); h = Math.round(h*r);
+          }
+          cv.width = w; cv.height = h;
+          const ctx = cv.getContext('2d');
+          ctx.fillStyle = '#fff'; ctx.fillRect(0,0,w,h);
+          ctx.drawImage(img, 0, 0, w, h);
+          const jpgUrl = cv.toDataURL('image/jpeg', 0.9);
+          const jm = jpgUrl.match(/^data:(image\/jpeg);base64,(.+)$/);
+          if(jm) resolve({ media_type:'image/jpeg', data: jm[2] });
+          else resolve(null);
+        }catch(e){ console.warn('이미지 변환 실패:',e); resolve(null); }
+      };
+      img.onerror = ()=>{ console.warn('이미지 로드 실패'); resolve(null); };
+      img.src = dataUrl;
+    });
+
+    const normalized = await Promise.all(smpReqImgs.slice(0,4).map(im=>normalizeImg(im.url)));
+    const imgBlocks = normalized.filter(Boolean).map(n=>({
+      type:'image', source:{ type:'base64', media_type:n.media_type, data:n.data }
+    }));
     if(!imgBlocks.length){ out.innerHTML='<div style="color:var(--red)">이미지 변환 실패</div>'; return; }
 
-    const prompt = `당신은 주얼리 OEM 제조 전문가입니다. 첨부한 제품 사진을 보고 샘플의뢰서 작성에 필요한 정보를 추측해주세요.
+    // 확장된 프롬프트 — 스톤, 사이즈 추정 추가
+    const prompt = `당신은 숙련된 한국 주얼리 OEM 제조 전문가입니다. 첨부한 제품 사진(들)을 보고 샘플의뢰서 작성에 필요한 정보를 분석해 주세요.
 
-다음 JSON 형식으로만 답변해주세요. 모르는 항목은 빈 문자열("")로 두세요:
+다음 JSON 형식으로만 답변해 주세요. 사진에서 판단할 수 없는 항목은 빈 문자열("")로 두세요. 추측이 합리적인 경우엔 추측해도 됩니다.
+
 {
   "type": "반지 / 목걸이 / 귀걸이 / 팔찌 / 브로치 / 펜던트 중 하나",
-  "name": "제품을 잘 표현하는 짧은 이름 (예: 슬래시 반지, 발바닥 양각 반지)",
-  "mat": "추측되는 소재 (예: 925실버, 신주, 써지컬, 14K 골드)",
-  "plating": "추측되는 도금 (예: 실버, 골드, 실버 버니쉬, 무도금)",
-  "features": "디자인의 특징을 2~3문장으로",
-  "warning": "제작 시 주의해야 할 점 (예: 광마감, 두께 유지 등)"
+  "name": "제품을 잘 표현하는 짧은 한국어 이름 (10자 이내, 예: '솔리테어 목걸이', '슬래시 반지')",
+  "mat": "추측되는 소재 (예: 925실버, 신주, 써지컬, 14K 골드, 18K 골드)",
+  "plating": "추측되는 도금 (예: 실버, 골드, 로즈골드, 실버 버니쉬, 무도금)",
+  "size": "추정 사이즈 — 반지면 호수(예:13호), 목걸이면 길이(예:40cm), 귀걸이면 길이(예:1.5cm), 팔찌면 길이(예:17cm). 모르면 빈 문자열",
+  "stone": "스톤 정보 — 종류와 색상/모양 (예: '큐빅 라운드 1pc', '진주 8mm 화이트', '다이아 라운드 0.3ct 추정', '없음'). 정확한 캐럿/사이즈가 안 보이면 종류만 적기",
+  "features": "디자인의 핵심 특징을 2~3문장으로 한국어로",
+  "warning": "제작 시 주의해야 할 점 1~2가지 (예: 광마감 / 두께 유지 / 스톤 부착 강도 등)"
 }
 
-주의: 사진만으로 정확한 정보를 알 수 없으므로 보이는 것만 답변하고, 추측이라는 점을 인지하세요.`;
+규칙:
+- 사진에 사람의 얼굴/신체 일부가 보이더라도 사람에 대해서는 절대 언급하지 말고 제품에만 집중
+- "name"은 "킬리타", "발바닥", "체인" 같은 일반적이지 않은 고유 디자인명은 만들지 말고, 일반적인 제품 카테고리 단어 위주로
+- 모르면 빈 문자열로 두는 게 추측해서 틀리는 것보다 낫습니다`;
 
-    // 기존 callClaudeAPI 함수 사용 (Worker 프록시 자동 처리, CORS 문제 없음)
     const data = await callClaudeAPI({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 600,
+      max_tokens: 800,
       messages: [{ role:'user', content:[...imgBlocks, {type:'text', text:prompt}] }]
     });
 
     if(data.error){
-      out.innerHTML=`<div style="color:var(--red)">AI 호출 실패</div><div style="font-size:10px;color:var(--t3);margin-top:4px">${(data.error.message||data.error||'').toString().slice(0,300)}</div>`;
+      out.innerHTML=`<div style="color:var(--red);padding:8px 12px;background:#FEF1F1;border-radius:6px"><b>AI 호출 실패</b><div style="font-size:10px;margin-top:4px;color:#666">${(data.error.message||data.error||'').toString().slice(0,300)}</div></div>`;
       return;
     }
 
     const text = (data.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('').trim();
-    // JSON 추출
     let parsed=null;
     const m = text.match(/\{[\s\S]*\}/);
     if(m){ try{ parsed=JSON.parse(m[0]); }catch(e){} }
     if(!parsed){
-      out.innerHTML=`<div style="color:var(--org)">AI 응답을 파싱하지 못했습니다.</div><div style="margin-top:6px;color:var(--t2);font-size:10.5px">${text.slice(0,300)}</div>`;
+      out.innerHTML=`<div style="color:var(--org);padding:8px 12px;background:#FFF8E6;border-radius:6px"><b>AI 응답을 파싱하지 못했습니다</b><div style="margin-top:6px;color:var(--t2);font-size:10.5px">${text.slice(0,300)}</div></div>`;
       return;
     }
-    // UI 표시 + 적용 버튼
-    const fields = [
-      { key:'type', label:'아이템', target:'sr_type' },
-      { key:'name', label:'샘플명', target:'sr_name' },
-      { key:'mat', label:'소재', target:'sr_mat' },
-      { key:'plating', label:'도금', target:'sr_plating' },
-      { key:'features', label:'특징 → 본문에 추가', target:'sr_body' },
-      { key:'warning', label:'주의사항', target:'sr_warn' }
-    ];
-    let html='<div style="font-weight:600;margin-bottom:6px">✦ AI 추측 결과 — 채택할 항목을 클릭하세요:</div>';
-    fields.forEach(f=>{
-      const val=parsed[f.key];
-      if(!val) return;
-      const safe=String(val).replace(/'/g,"&#39;").replace(/"/g,'&quot;');
-      html += `<div style="display:flex;gap:6px;align-items:center;padding:4px 0;border-bottom:1px dotted var(--bdr)">
-        <span style="min-width:90px;color:var(--t3);font-size:10.5px">${f.label}:</span>
-        <span style="flex:1;color:var(--t2);overflow:hidden;text-overflow:ellipsis">${String(val).replace(/</g,'&lt;')}</span>
-        <button onclick="document.getElementById('${f.target}').value=${f.key==='features'?`(document.getElementById('${f.target}').value?document.getElementById('${f.target}').value+'\\n':'')+'${safe}'`:`'${safe}'`};renderSmpReqPreview()" style="background:var(--grn);color:#fff;border:none;padding:3px 8px;border-radius:4px;font-size:10.5px;cursor:pointer;font-family:inherit">채택</button>
-      </div>`;
-    });
-    html += '<button onclick="aiApplyAllSmpReq('+JSON.stringify(parsed).replace(/"/g,'&quot;')+')" style="margin-top:8px;width:100%;padding:6px;background:var(--gold);color:#fff;border:none;border-radius:5px;font-size:11px;cursor:pointer;font-family:inherit">전부 채택</button>';
-    out.innerHTML=html;
+
+    // ── 빈 칸만 자동으로 채움 + 결과 요약 표시 ──
+    const result = applyAiResultSafe(parsed);
+    renderAiResultSummary(out, parsed, result);
+
   }catch(e){
-    out.innerHTML='<div style="color:var(--red)">오류: '+(e.message||e)+'</div>';
+    out.innerHTML='<div style="color:var(--red);padding:8px 12px;background:#FEF1F1;border-radius:6px">오류: '+(e.message||e)+'</div>';
   }finally{
-    btn.disabled=false; btn.textContent='✨ AI 사진 분석 — 소재·도금·아이템 추측';
+    btn.disabled=false; btn.textContent='✨ AI 사진 분석 — 소재·도금·아이템·스톤·사이즈';
   }
 }
-function aiApplyAllSmpReq(parsed){
-  const map={type:'sr_type',name:'sr_name',mat:'sr_mat',plating:'sr_plating',warning:'sr_warn'};
-  Object.entries(map).forEach(([k,id])=>{
-    if(parsed[k]){ const e=document.getElementById(id); if(e) e.value=parsed[k]; }
+
+// AI 결과를 빈 칸에만 안전하게 적용 — 이미 입력된 칸은 절대 덮어쓰지 않음
+// 반환: { filled: [{label, val}], skipped: [{label, val, existing}] }
+function applyAiResultSafe(parsed){
+  // (key, target input id, label, optional handler)
+  const fields = [
+    { key:'type',    target:'sr_type',    label:'아이템' },
+    { key:'name',    target:'sr_name',    label:'샘플명' },
+    { key:'mat',     target:'sr_mat',     label:'소재' },
+    { key:'plating', target:'sr_plating', label:'도금' },
+    { key:'size',    target:'sr_size',    label:'사이즈',  mirror:'sr_sizeLine' },
+    { key:'stone',   target:'sr_stone',   label:'스톤' },
+    { key:'warning', target:'sr_warn',    label:'주의사항' }
+  ];
+  const filled = [], skipped = [];
+  fields.forEach(f=>{
+    const v = parsed[f.key];
+    if(!v) return;
+    const inputEl = document.getElementById(f.target);
+    if(!inputEl) return;
+    const existing = (inputEl.value||'').trim();
+    if(existing){
+      skipped.push({ label:f.label, val:v, existing, target:f.target, mirror:f.mirror });
+      return;
+    }
+    inputEl.value = v;
+    // 미러 필드도 비어있으면 같이 채움 (예: sr_size → sr_sizeLine)
+    if(f.mirror){
+      const mEl = document.getElementById(f.mirror);
+      if(mEl && !(mEl.value||'').trim()) mEl.value = v;
+    }
+    filled.push({ label:f.label, val:v });
   });
+
+  // features는 본문에 누적 (빈 칸이면 그대로, 이미 있으면 줄바꿈해서 추가)
   if(parsed.features){
-    const e=document.getElementById('sr_body');
-    if(e) e.value=(e.value?e.value+'\n':'')+parsed.features;
+    const bodyEl = document.getElementById('sr_body');
+    if(bodyEl){
+      const existing = (bodyEl.value||'').trim();
+      if(!existing){
+        bodyEl.value = parsed.features;
+        filled.push({ label:'본문 (특징)', val:parsed.features });
+      } else {
+        // 본문은 누적해도 사용자가 쓴 내용을 안 지우니까 합쳐도 안전
+        bodyEl.value = existing + '\n' + parsed.features;
+        filled.push({ label:'본문 (특징 추가)', val:parsed.features });
+      }
+    }
+  }
+
+  renderSmpReqPreview();
+  if(filled.length){
+    showToast('✓ AI 분석 완료 — '+filled.length+'개 항목이 채워졌습니다','var(--grn)',2500);
+  } else if(skipped.length){
+    showToast('이미 모든 칸이 입력되어 있어 AI 결과를 덮어쓰지 않았습니다','var(--blu)',2800);
+  } else {
+    showToast('AI가 사진에서 정보를 충분히 찾지 못했습니다','var(--org)',2500);
+  }
+  return { filled, skipped };
+}
+
+// AI 결과 요약을 우측 결과창에 표시 (덮어쓰기 버튼 포함)
+function renderAiResultSummary(out, parsed, result){
+  const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  let html = '';
+
+  if(result.filled.length){
+    html += `<div style="background:#EAF7E5;border:1px solid #B8E0AE;border-radius:6px;padding:10px 12px;margin-bottom:8px">
+      <div style="font-weight:600;color:var(--grn);font-size:11.5px;margin-bottom:6px">✓ ${result.filled.length}개 항목 자동 입력됨</div>
+      ${result.filled.map(f=>`<div style="font-size:10.5px;color:#444;padding:2px 0"><b style="color:var(--t3)">${esc(f.label)}:</b> ${esc(String(f.val).slice(0,100))}</div>`).join('')}
+    </div>`;
+  }
+
+  if(result.skipped.length){
+    html += `<div style="background:#FFF8E6;border:1px solid #E8D89A;border-radius:6px;padding:10px 12px;margin-bottom:8px">
+      <div style="font-weight:600;color:#7A4F00;font-size:11.5px;margin-bottom:6px">⚠ ${result.skipped.length}개 항목은 이미 입력되어 있어 건너뜀</div>
+      <div style="font-size:10px;color:#999;margin-bottom:6px">아래에서 개별로 덮어쓰기 가능</div>
+      ${result.skipped.map((s,i)=>`
+        <div style="display:flex;gap:6px;align-items:center;padding:4px 0;border-top:1px dotted #E8D89A;font-size:10.5px">
+          <div style="flex:1;min-width:0">
+            <div style="color:var(--t3);font-size:10px">${esc(s.label)}</div>
+            <div style="color:#999;text-decoration:line-through;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">현재: ${esc(s.existing)}</div>
+            <div style="color:#444;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">AI: ${esc(s.val)}</div>
+          </div>
+          <button class="sr-ai-overwrite" data-target="${esc(s.target)}" data-mirror="${esc(s.mirror||'')}" data-val="${esc(s.val)}" style="background:#fff;border:1px solid var(--gold);color:var(--gold);padding:4px 8px;border-radius:4px;font-size:10px;cursor:pointer;font-family:inherit;flex-shrink:0">덮어쓰기</button>
+        </div>
+      `).join('')}
+    </div>`;
+  }
+
+  if(!result.filled.length && !result.skipped.length){
+    html = `<div style="background:#FFF8E6;border:1px solid #E8D89A;border-radius:6px;padding:10px 12px">
+      <div style="color:#7A4F00;font-size:11.5px">AI가 사진에서 정보를 충분히 찾지 못했습니다. 수동으로 입력해 주세요.</div>
+    </div>`;
+  }
+
+  // 디버그용 — AI 응답 전체 보기 (접힘)
+  html += `<details style="margin-top:8px;font-size:10px;color:#999"><summary style="cursor:pointer">AI 원본 응답 보기</summary>
+    <pre style="margin-top:4px;padding:8px;background:#F8F8F8;border-radius:4px;white-space:pre-wrap;word-break:break-all;font-size:10px;max-height:200px;overflow:auto">${esc(JSON.stringify(parsed, null, 2))}</pre>
+  </details>`;
+
+  out.innerHTML = html;
+
+  // 덮어쓰기 버튼 이벤트 바인딩 (HTML 속성 escape 문제 회피)
+  out.querySelectorAll('.sr-ai-overwrite').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const target = btn.dataset.target;
+      const mirror = btn.dataset.mirror;
+      const val = btn.dataset.val;
+      srOverwriteField(target, val, mirror);
+      // 덮어쓴 항목은 표시에서 제거
+      btn.parentElement.style.opacity = '0.5';
+      btn.disabled = true;
+      btn.textContent = '✓ 적용됨';
+    });
+  });
+}
+
+// 개별 필드 덮어쓰기 (AI 결과로)
+function srOverwriteField(targetId, val, mirrorId){
+  const el = document.getElementById(targetId);
+  if(!el) return;
+  el.value = val;
+  if(mirrorId){
+    const m = document.getElementById(mirrorId);
+    if(m) m.value = val;
   }
   renderSmpReqPreview();
-  showToast('✓ AI 추측 결과 적용됨','var(--grn)');
+  showToast('✓ 덮어쓰기 적용됨','var(--grn)',1500);
+}
+
+// (구) 전부 채택 함수 — 호환성 유지를 위해 보존하되, 빈 칸만 채우는 안전 모드로 변경
+function aiApplyAllSmpReq(parsed){
+  applyAiResultSafe(parsed);
 }
 
 // 인쇄 (PDF 저장도 인쇄 대화상자에서 가능)
@@ -7767,6 +8492,8 @@ async function downloadSmpReqPng(){
   const target = document.getElementById('smpReqPreview');
   if(!target){ showToast('미리보기가 없습니다','var(--org)'); return; }
   showToast('🖼 이미지 변환 중...','var(--blu)',1500);
+  // 캡처 중에는 편집 표시(툴바/placeholder/호버) 숨김
+  target.classList.add('sr-capturing');
   try{
     if(typeof html2canvas==='undefined'){
       await new Promise((res,rej)=>{
@@ -7785,6 +8512,8 @@ async function downloadSmpReqPng(){
     showToast('✓ PNG 저장됨','var(--grn)');
   }catch(e){
     showToast('PNG 저장 실패: '+(e.message||e),'var(--red)');
+  }finally{
+    target.classList.remove('sr-capturing');
   }
 }
 
@@ -7793,8 +8522,17 @@ function confirmSmpReqAsSample(){
   const v=(id)=>document.getElementById(id)?.value||'';
   const name=v('sr_name')||v('sr_kind');
   if(!name){ showToast('샘플명을 입력해 주세요','var(--red)'); return; }
-  // 사진을 smpImgBuf 형식으로 옮김
-  smpImgBuf = smpReqImgs.map(im=>({url:im.url, name:im.name}));
+  // 사진을 smpImgBuf 형식으로 옮김 (회전 적용된 이미지로 굽힘)
+  Promise.all(smpReqImgs.map(async (im)=>{
+    const r = Number(im.rotate||0);
+    if(r){
+      try{ const baked = await bakeImgRotation(im.url, r); return {url: baked, name: im.name}; }
+      catch(_){ return {url: im.url, name: im.name}; }
+    }
+    return {url: im.url, name: im.name};
+  })).then(baked=>{
+    smpImgBuf = baked;
+  });
   smpCadBuf = [];
   smpSrcBuf = [];
   closeM('mSmpReq');
@@ -7864,14 +8602,57 @@ body{background:#fff;padding:14px}
 .sr-body-text{font-size:13px;line-height:1.75;color:#222}
 .sr-body-text b{color:#0033A0}
 .sr-body-imgs{display:flex;flex-direction:column;gap:10px;align-items:center}
-.sr-img-box{width:100%;max-width:300px;text-align:center}
-.sr-img-box img{width:100%;max-height:210px;object-fit:contain;border:1px solid #DDD;border-radius:4px;background:#fff}
+.sr-img-box{width:100%;max-width:300px;text-align:center;position:relative}
+.sr-img-box img{width:100%;max-height:210px;object-fit:contain;border:1px solid #DDD;border-radius:4px;background:#fff;display:block}
 .sr-img-cap{font-size:10px;color:#666;margin-top:3px}
+
+/* ── 인터랙티브 편집 (미리보기에서 직접 편집) ── */
+.sr-edit{cursor:text;outline:none;min-height:1.2em;border-radius:2px;transition:background .15s}
+.sr-edit:empty::before{content:attr(data-placeholder);color:#BBB;font-style:italic;font-size:.92em}
+.sr-edit:hover{background:#FFFBE5;box-shadow:inset 0 0 0 1px #E8D89A}
+.sr-edit:focus{background:#FFF7CC;box-shadow:inset 0 0 0 2px #C9A332;cursor:text}
+/* 드롭존 (사진 영역) */
+.sr-body-imgs.sr-drop-active{outline:2px dashed var(--gold,#A88732);outline-offset:-4px;background:#FFFBE5}
+.sr-img-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;min-height:120px;color:#999;text-align:center;padding:20px;font-size:11px;border:1px dashed #DDD;border-radius:6px;background:#FAFAFA;cursor:pointer;transition:all .15s}
+.sr-img-empty:hover{background:#FFFBE5;border-color:#C9A332;color:#7A4F00}
+/* 사진 박스 호버 시 툴바 노출 */
+.sr-img-box{transition:all .15s}
+.sr-img-box:hover{box-shadow:0 0 0 2px rgba(168,135,50,.4);border-radius:6px}
+.sr-img-tools{position:absolute;top:4px;right:4px;display:none;gap:2px;background:rgba(255,255,255,.95);border:1px solid #DDD;border-radius:4px;padding:2px;z-index:5;flex-wrap:wrap}
+.sr-img-box:hover .sr-img-tools{display:flex}
+.sr-img-tools button{background:#fff;border:1px solid #DDD;border-radius:3px;width:24px;height:24px;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;color:#444;font-family:inherit}
+.sr-img-tools button:hover{background:#FFF7CC;border-color:#C9A332;color:#7A4F00}
+.sr-img-tools button.danger:hover{background:#FEF1F1;border-color:#C03030;color:#C03030}
+/* 사진 크기 옵션 */
+.sr-img-box[data-size="sm"] img{max-height:140px}
+.sr-img-box[data-size="md"] img{max-height:210px}
+.sr-img-box[data-size="lg"] img{max-height:320px}
+/* 드래그 중 시각 피드백 */
+.sr-img-box.sr-dragging{opacity:.4}
+.sr-img-box.sr-drag-over{box-shadow:0 -3px 0 0 var(--gold,#A88732)}
+/* 자르기 모달 */
+.sr-crop-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px}
+.sr-crop-box{background:#fff;border-radius:10px;padding:18px;max-width:90vw;max-height:90vh;overflow:auto;display:flex;flex-direction:column;gap:12px}
+.sr-crop-stage{position:relative;display:inline-block;background:#222;border-radius:6px;overflow:hidden;line-height:0}
+.sr-crop-stage img{display:block;max-width:70vw;max-height:60vh}
+.sr-crop-rect{position:absolute;border:2px dashed #C9A332;background:rgba(201,163,50,.15);box-shadow:0 0 0 9999px rgba(0,0,0,.45);cursor:move}
+.sr-crop-handle{position:absolute;width:14px;height:14px;background:#C9A332;border:2px solid #fff;border-radius:50%}
+.sr-crop-handle.nw{top:-7px;left:-7px;cursor:nw-resize}
+.sr-crop-handle.ne{top:-7px;right:-7px;cursor:ne-resize}
+.sr-crop-handle.sw{bottom:-7px;left:-7px;cursor:sw-resize}
+.sr-crop-handle.se{bottom:-7px;right:-7px;cursor:se-resize}
 @media print{
   body{padding:0;margin:0}
   .sr-page{width:100%;max-width:100%;padding:0}
   @page{size:A4 portrait;margin:10mm}
+  .sr-img-tools,.sr-img-empty{display:none !important}
+  .sr-edit:hover,.sr-edit:focus{background:#fff !important;box-shadow:none !important}
+  .sr-edit:empty::before{content:'' !important}
 }
+/* 캡처(PNG 저장) 중에는 편집 UI 숨김 */
+.sr-capturing .sr-img-tools,.sr-capturing .sr-img-empty{display:none !important}
+.sr-capturing .sr-edit{background:#fff !important;box-shadow:none !important}
+.sr-capturing .sr-edit:empty::before{content:'' !important}
 `;
 
 // 미리보기 영역 스타일도 동일하게 (모달 안에서 보이는 부분)
@@ -8358,7 +9139,7 @@ function renderSample(){
   <div class="card" style="padding:0;margin-bottom:10px">
     <div style="display:flex;border-bottom:1px solid var(--bdr)">
       <div onclick="window._smpSubTab='list';renderSample()" style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--gold);border-bottom:3px solid var(--gold);background:linear-gradient(180deg,transparent,rgba(167,131,57,.04))">📋 샘플 목록 <span style="font-size:11px;color:var(--t3);font-weight:400;margin-left:4px">${samples.length}건</span></div>
-      <div onclick="window._smpSubTab='compose';renderSample()" style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--t3);border-bottom:3px solid transparent">✨ AI 의뢰서 작성 <span style="font-size:11px;color:var(--t3);font-weight:400;margin-left:4px">사진 → 의뢰서</span></div>
+      <div onclick="window._smpSubTab='compose';renderSample()" style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--t3);border-bottom:3px solid transparent">✨ AI 의뢰서 작성</div>
     </div>
   </div>
 
