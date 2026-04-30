@@ -366,6 +366,10 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 ::-webkit-scrollbar{width:4px;height:4px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:2px}
+/* 엑셀 미리보기 모달 (#mFilePrev_body) 내부 동적 테이블 스타일 — 이전엔 시트마다 인라인 <style>로 반복 주입되던 것을 통합 */
+#mFilePrev_body table{border-collapse:collapse;font-size:11.5px;font-family:inherit}
+#mFilePrev_body table td{border:1px solid #ddd;padding:5px 8px;min-width:40px;max-width:280px;word-break:break-all;vertical-align:top}
+#mFilePrev_body table tr:first-child td{background:var(--gold-bg);font-weight:600}
 </style>
 </head>
 <body>
@@ -936,7 +940,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="fr2"><div class="fg"><label>품목명 *</label><input class="fi" id="p_name"></div><div class="fg"><label>업체 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(직접입력 가능)</span></label><input class="fi" id="p_vendor" list="pVendorList" placeholder="선택 또는 직접입력"><datalist id="pVendorList"><option value="VT"><option value="WB"><option value="TT"><option value="AXI"><option value="YG"><option value="VIVI"><option value="TMT"><option value="BW"><option value="기타"></datalist></div></div>
   <div class="fr2"><div class="fg"><label>수량</label><input class="fi" id="p_qty"></div><div class="fg"><label>출고 예정일 *</label><input class="fi" type="date" id="p_due"></div></div>
   <div class="fg"><label>현재 단계</label><select class="fs" id="p_stage"><option value="0">주물</option><option value="1">도금</option><option value="2">검품</option><option value="3">포장</option><option value="4">출고</option></select></div>
-  
+
   <!-- 파셜 입고 트래킹 -->
   <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:10px 12px;margin-top:4px">
     <div style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">📦 입고 현황 (파셜 트래킹)</div>
@@ -955,7 +959,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       <div id="p_remainBarLabel" style="font-size:10px;color:var(--t3);margin-top:3px;text-align:right"></div>
     </div>
   </div>
-  
+
   <div class="fg"><label>비고</label><textarea class="fta" id="p_note" rows="2"></textarea></div>
   <div class="ma"><button class="btn bgo" onclick="closeM('mProc')">취소</button><button class="btn bp-red" id="p_del" onclick="deleteProc()" style="display:none">삭제</button><button class="btn bp" onclick="saveProc()">저장</button></div>
 </div></div>
@@ -4580,26 +4584,53 @@ async function pullFromNotion(opts){
 
       // 2단계: 기존처럼 병합 (로컬 _notionId 일치 항목 보존)
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map(x=>[x._notionId,x]));
+      // 🆕 _notionId 없는 로컬 항목을 dupKey로 매칭 (같은 code의 로컬 고아 항목 흡수용)
+      const localByDupKey={};
+      local.forEach(x=>{
+        if(x._notionId) return;
+        const k=dupKey(x);
+        if(k && !(k in localByDupKey)) localByDupKey[k]=x;
+      });
       const merged=remoteDedupe.map(r=>{
         const prev=byNotionId[r._notionId];
-        if(!prev) return {id:Date.now()+Math.random(), ...r};
-        const out={...r, id:prev.id};
-        idFields.forEach(f=>{
-          // 배열 필드: 로컬이 더 많은 항목을 가지고 있으면 로컬 유지 (데이터 유실 방지)
-          const isArr = Array.isArray(prev[f]) || Array.isArray(out[f]);
-          if(isArr){
-            const prevArr = Array.isArray(prev[f]) ? prev[f] : [];
-            const remoteArr = Array.isArray(out[f]) ? out[f] : [];
-            if(prevArr.length >= remoteArr.length){
-              out[f] = prevArr;
-            } else {
-              out[f] = remoteArr;
+        if(prev){
+          const out={...r, id:prev.id};
+          idFields.forEach(f=>{
+            // 배열 필드: 로컬이 더 많은 항목을 가지고 있으면 로컬 유지 (데이터 유실 방지)
+            const isArr = Array.isArray(prev[f]) || Array.isArray(out[f]);
+            if(isArr){
+              const prevArr = Array.isArray(prev[f]) ? prev[f] : [];
+              const remoteArr = Array.isArray(out[f]) ? out[f] : [];
+              if(prevArr.length >= remoteArr.length){
+                out[f] = prevArr;
+              } else {
+                out[f] = remoteArr;
+              }
+            } else if(prev[f] !== undefined){
+              out[f] = prev[f];
             }
-          } else if(prev[f] !== undefined){
-            out[f] = prev[f];
-          }
-        });
-        return out;
+          });
+          return out;
+        }
+        // 🆕 _notionId 매칭 실패 — 같은 dupKey(품목코드 등)의 로컬 고아 항목이 있으면 그걸 채택
+        const rKey=dupKey(r);
+        if(rKey && localByDupKey[rKey]){
+          const ghost=localByDupKey[rKey];
+          const out={...r, id:ghost.id};
+          idFields.forEach(f=>{
+            const isArr=Array.isArray(ghost[f])||Array.isArray(out[f]);
+            if(isArr){
+              const ghostArr=Array.isArray(ghost[f])?ghost[f]:[];
+              const remoteArr=Array.isArray(out[f])?out[f]:[];
+              out[f]=ghostArr.length>=remoteArr.length?ghostArr:remoteArr;
+            } else if(ghost[f]!==undefined){
+              out[f]=ghost[f];
+            }
+          });
+          // 흡수된 고아 항목은 localOnly 단계에서 제외됨 (mergedKeys에 rKey 들어있음)
+          return out;
+        }
+        return {id:Date.now()+Math.random(), ...r};
       });
 
       // 3단계: 로컬 전용 데이터 보존. 단, merged에 같은 내용이 있으면 제외
@@ -4646,6 +4677,15 @@ async function pullFromNotion(opts){
     function upsertMerge(remote, local, idFields){
       if(!remote.length) return local; // 변경 없음
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map((x,i)=>[x._notionId,{x,i}]));
+      // 🆕 품목코드 → 로컬 인덱스 맵 (제품DB 중복 방지용)
+      // 같은 code를 가진 로컬 항목이 이미 있으면 신규 추가 대신 _notionId만 채워서 합침
+      const byCode={};
+      local.forEach((x,i)=>{
+        if(x && x.code && (x.price!==undefined || x.stock!==undefined || x.metal!==undefined)){
+          // 가장 먼저 등장한 것 기준 (createdAt 빠른 순으로 정렬되어 있다면 그게 더 좋음)
+          if(!(x.code in byCode)) byCode[x.code]={x,i};
+        }
+      });
       const out=local.slice();
       for(const r of remote){
         const hit=byNotionId[r._notionId];
@@ -4665,8 +4705,40 @@ async function pullFromNotion(opts){
           });
           out[hit.i]=merged;
         } else {
-          // 신규 항목 추가
-          out.push({id:Date.now()+Math.random(), ...r});
+          // 🆕 신규로 보이는 항목이라도, 같은 품목코드의 로컬 항목이 이미 있으면 그것에 매핑
+          // (과거 _notionId가 누락된 채 로컬에만 존재하던 항목 또는 노션에 두 페이지가 있는 경우)
+          if(r && r.code && byCode[r.code]){
+            const codeHit=byCode[r.code];
+            const prev=codeHit.x;
+            // 기존 로컬에 _notionId가 없었다면 새로 받은 _notionId로 채워줌
+            const merged={...r, id:prev.id};
+            // 만약 로컬이 이미 다른 _notionId를 가지고 있었다면 (드물지만 안전장치)
+            // → 로컬 우선 유지하되, 새로 들어온 페이지는 그냥 무시 (중복 흡수)
+            if(prev._notionId && prev._notionId!==r._notionId){
+              console.warn('[upsertMerge] 같은 code의 다른 _notionId 발견 — 새 페이지 무시:', r.code, prev._notionId, 'vs', r._notionId);
+              continue;
+            }
+            idFields.forEach(f=>{
+              const isArr=Array.isArray(prev[f])||Array.isArray(merged[f]);
+              if(isArr){
+                const prevArr=Array.isArray(prev[f])?prev[f]:[];
+                const remoteArr=Array.isArray(merged[f])?merged[f]:[];
+                merged[f]=prevArr.length>=remoteArr.length?prevArr:remoteArr;
+              } else if(prev[f]!==undefined){
+                merged[f]=prev[f];
+              }
+            });
+            out[codeHit.i]=merged;
+            // byNotionId/byCode 모두 갱신 (같은 batch에 같은 code가 또 들어올 때 대비)
+            byNotionId[r._notionId]={x:merged, i:codeHit.i};
+            byCode[r.code]={x:merged, i:codeHit.i};
+          } else {
+            // 진짜 신규 항목 추가
+            const newItem={id:Date.now()+Math.random(), ...r};
+            out.push(newItem);
+            // 🆕 같은 batch 안에서 같은 code가 또 들어오면 중복 만들지 않도록 byCode 갱신
+            if(r && r.code) byCode[r.code]={x:newItem, i:out.length-1};
+          }
         }
       }
       return out;
@@ -5401,6 +5473,36 @@ async function deleteInqFromNotion(q){
 // ══════════════════════════════════
 // 8. 제품DB ↔ Notion
 // ══════════════════════════════════
+// ──────────────────────────────────────────────────────────────
+// 🔍 품목코드로 노션에서 기존 페이지 찾기 (중복 방지 핵심 함수)
+// 같은 품목코드를 가진 페이지가 노션에 이미 있으면 그 page_id를 반환.
+// 여러 개 있으면 가장 오래된 것 하나를 반환하고 나머지는 archive 처리.
+// ──────────────────────────────────────────────────────────────
+async function findProductPageByCode(code){
+  if(!notionCfg.workerUrl||!notionCfg.productDb||!code) return null;
+  try{
+    const dbId=notionCfg.productDb.replace(/-/g,'');
+    const data=await notionCall('POST','/databases/'+dbId+'/query',{
+      filter:{property:'품목코드', title:{equals: code}},
+      page_size:10,
+      sorts:[{timestamp:'created_time', direction:'ascending'}]
+    });
+    if(!data||!Array.isArray(data.results)||!data.results.length) return null;
+    const keep=data.results[0];
+    // 추가로 발견된 중복 페이지들은 즉시 archive
+    if(data.results.length>1){
+      console.warn(`[syncProduct] 노션에 같은 품목코드(${code}) ${data.results.length}개 발견 — 가장 오래된 것 유지, 나머지 ${data.results.length-1}개 archive`);
+      for(let i=1;i<data.results.length;i++){
+        try{ await nDelete(data.results[i].id); }catch(e){}
+      }
+    }
+    return keep.id;
+  }catch(e){
+    console.warn('[findProductPageByCode] 검색 실패:', code, e);
+    return null;
+  }
+}
+
 async function syncProductToNotion(pd, update){
   if(!notionCfg.workerUrl||!notionCfg.productDb) return;
   const p={
@@ -5420,8 +5522,30 @@ async function syncProductToNotion(pd, update){
   if(pd.plating) p["도금"]={"select":{"name":pd.plating}};
   if(pd.createdDate)  p["최초등록일"]={"date":{"start":pd.createdDate}};
   if(pd.lastModified) p["최종수정일"]={"date":{"start":pd.lastModified}};
-  if(pd._notionId){ await nUpdate(pd._notionId,p); }
-  else{ const r=await nCreate(notionCfg.productDb,p); if(r?.id) saveNotionId(productDB,pd.id,r.id,SK.pd); }
+
+  // 1) 이미 _notionId가 있으면 갱신
+  if(pd._notionId){ await nUpdate(pd._notionId,p); return; }
+
+  // 2) _notionId가 없을 때: 같은 품목코드의 페이지가 노션에 이미 있는지 먼저 확인.
+  //    있으면 nCreate 하지 않고 그 페이지의 ID를 재사용 → 중복 생성 방지.
+  if(pd.code){
+    const existingId=await findProductPageByCode(pd.code);
+    if(existingId){
+      // 기존 페이지에 매핑 후 갱신
+      saveNotionId(productDB, pd.id, existingId, SK.pd);
+      try{ await nUpdate(existingId, p); }catch(e){}
+      return;
+    }
+  }
+
+  // 3) 정말로 신규: 페이지 생성. 응답이 정상이고 id를 받은 경우에만 _notionId 저장.
+  //    응답이 null/undefined면 다음 동기화 때 다시 호출되더라도 위 2)에서 재확인 → 중복 차단됨.
+  const r=await nCreate(notionCfg.productDb,p);
+  if(r&&r.id){
+    saveNotionId(productDB,pd.id,r.id,SK.pd);
+  } else {
+    console.warn('[syncProduct] nCreate 응답에 id 없음 — 다음 동기화 때 품목코드로 재확인됨:', pd.code);
+  }
 }
 async function deleteProductFromNotion(pd){
   if(pd._notionId) await nDelete(pd._notionId);
@@ -6782,14 +6906,14 @@ function processUploadFiles(files){
   if(!files.length)return;
   const res=document.getElementById('uploadResult');
   res.innerHTML=`<div class="ai-loading"><div class="spin"></div>AI가 문서를 분석하는 중입니다... (${files.length}개 파일)</div>`;
-  
+
   // Convert first image to base64 and call Claude API
   const imgFiles=files.filter(f=>f.type.startsWith('image/'));
   if(!imgFiles.length){
     res.innerHTML=`<div style="padding:12px;background:var(--red-bg);border-radius:6px;color:var(--red);font-size:12px">이미지 파일을 업로드해 주세요 (JPG, PNG, HEIC)</div>`;
     return;
   }
-  
+
   const allB64=[];
   let done=0;
   imgFiles.forEach(f=>{
@@ -6832,7 +6956,7 @@ JSON 형식으로만 응답하세요. 다른 텍스트 없이:
   "notes": "인식 시 특이사항"
 }`}
   ];
-  
+
   // Add images to content
   imgs.slice(0,4).forEach(img=>{
     content.push({type:'image',source:{type:'base64',media_type:img.type||'image/jpeg',data:img.data}});
@@ -6863,7 +6987,7 @@ JSON 형식으로만 응답하세요. 다른 텍스트 없이:
     let parsed;
     try{parsed=JSON.parse(text.replace(/```json|```/g,'').trim());}
     catch{parsed={docType:'인식실패',confidence:0,notes:text.slice(0,200)};}
-    
+
     showParseResult(parsed,imgs,resultEl);
   }catch(err){
     // Fallback: show manual entry option
@@ -6882,7 +7006,7 @@ function showParseResult(parsed,imgs,resultEl){
   const doc=parsed.docType;
   const conf=Math.round((parsed.confidence||0)*100);
   const isHigh=conf>=70;
-  
+
   let fieldsHtml='';
   if(doc==='샘플의뢰서'&&parsed.sample){
     const s=parsed.sample;
@@ -6896,11 +7020,11 @@ function showParseResult(parsed,imgs,resultEl){
       fieldsHtml+=`<div class="parse-field" style="grid-column:1/-1"><div class="parse-label">품목</div><div class="parse-val">${o.rows.map(r=>r.name).filter(Boolean).join(' / ')}</div></div>`;
     }
   }
-  
+
   const imgsHtml=imgs.slice(0,4).map((im,i)=>`<div class="file-thumb" style="width:72px;height:72px;cursor:pointer" onclick="openPrevList(parseImgList,${i})">
     <img src="data:${im.type};base64,${im.data}" style="width:100%;height:100%">
   </div>`).join('');
-  
+
   window.parseImgList=imgs.map(im=>({url:`data:${im.type};base64,${im.data}`,name:im.name}));
 
   resultEl.innerHTML=`
@@ -9347,7 +9471,6 @@ function readExcelAsText(xlFile,tabType,resultEl){
         }catch(e){ console.warn('이미지 추출 실패:',e); }
       }
       console.warn('⚡ [발주서AI] 엑셀→텍스트 변환 완료, 길이:', text.length);
-      console.log('⚡ [발주서AI] 텍스트 미리보기 (처음 600자):\n', text.slice(0,600));
       // Trim to 8000 chars to avoid token overflow (발주서 품목 많을 수 있음)
       if(text.length>8000)text=text.substring(0,8000)+'...(이하 생략)';
       // rowImages를 전역에 저장해서 AI 파싱 결과와 매칭 시 사용
@@ -9403,7 +9526,6 @@ ${textForAI}
 }`;
 
   try{
-    console.log('[AI파싱] 엑셀/CSV 전송 중...', fileName, 'textLen:', csvText.length);
     const data=await callClaudeAPI({
         model:'claude-sonnet-4-5',
         max_tokens:2000,
@@ -9422,14 +9544,12 @@ ${textForAI}
       return;
     }
     const text=data.content?.find(b=>b.type==='text')?.text||'{}';
-    console.log('[AI파싱] 응답 원문 (처음 500자):', text.slice(0,500));
     let parsed;
     try{parsed=JSON.parse(text.replace(/```json|```/g,'').trim());}
     catch(parseErr){
       console.error('[AI파싱] JSON 파싱 실패:', parseErr.message, '원문:', text.slice(0,800));
       parsed={docType:tabType==='sample'?'샘플의뢰서':'발주서',confidence:0,notes:text.slice(0,200)};
     }
-    console.log('[AI파싱] 최종 결과:', parsed);
     // 엑셀에서 추출한 이미지를 각 품목 행에 매칭
     if(tabType==='order' && parsed.order && parsed.order.rows && parsed.order.rows.length){
       const imgs=window._excelRowImages||{};
@@ -10562,8 +10682,7 @@ async function renderExcelPreview(f, body){
       html+='<div style="background:#fff;border-radius:8px;padding:14px 18px;margin-bottom:14px;box-shadow:0 1px 6px rgba(0,0,0,.05);overflow-x:auto">';
       html+='<div style="font-size:11px;color:var(--t3);font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.8px">📊 '+sn+'</div>';
       const htmlTbl=XLSX.utils.sheet_to_html(ws,{header:'',footer:'',editable:false});
-      // 기본 스타일 개선
-      html+='<style>#mFilePrev_body table{border-collapse:collapse;font-size:11.5px;font-family:inherit}#mFilePrev_body table td{border:1px solid #ddd;padding:5px 8px;min-width:40px;max-width:280px;word-break:break-all;vertical-align:top}#mFilePrev_body table tr:first-child td{background:var(--gold-bg);font-weight:600}</style>';
+      // 스타일은 메인 <style> 블록(#mFilePrev_body table)에 통합되어 있음
       html+=htmlTbl;
       html+='</div>';
     });
@@ -11680,7 +11799,7 @@ function applyItemToRow(smpId){
   if(!s) return;
   const i = _itemSearchRowIdx;
   if(i < 0 || i >= ordRowsBuf.length) return;
-  
+
   // 품목명: "샘플명 [품번]" 형식
   ordRowsBuf[i].name = s.itemCode ? `${s.name} [${s.itemCode}]` : s.name;
   ordRowsBuf[i].itemCode = s.itemCode||'';
@@ -11689,7 +11808,7 @@ function applyItemToRow(smpId){
   ordRowsBuf[i].size = s.sz1||ordRowsBuf[i].size;
   ordRowsBuf[i].unitPrice = s.unitPrice||0;
   ordRowsBuf[i].note = s.itemCode||'';
-  
+
   closeM('mItemSearch');
   renderOrdRows();
   showToast(`✓ "${s.name}" 적용됨`, 'var(--gold-lt)');
