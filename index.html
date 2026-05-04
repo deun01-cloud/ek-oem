@@ -1095,6 +1095,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--bdr);position:sticky;top:0;background:var(--s1);z-index:1">
     <div id="printPreviewTitle" style="font-size:14px;font-weight:700">미리보기</div>
     <div style="display:flex;gap:8px">
+      <button onclick="doSaveAsPdf()" style="padding:7px 16px;background:var(--s2);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit" title="브라우저 인쇄창에서 'PDF로 저장' 선택">📥 PDF 저장</button>
       <button onclick="doPrint()" style="padding:7px 18px;background:var(--gold-lt);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">🖨 인쇄</button>
       <button onclick="closeM('mPrintPreview')" style="padding:7px 14px;background:none;border:1px solid var(--bdr);border-radius:6px;font-size:13px;cursor:pointer;font-family:inherit;color:var(--t2)">닫기</button>
     </div>
@@ -1600,6 +1601,7 @@ function toggleOrdVendorFilter(v){
 let samples=[], orders=[], procItems=[], tasks=[], asItems=[], productDB=[], invoiceHistory=[];
 let inquiries=[]; // 고객사 문의 관리
 let newDesigns=[]; // 신규 디자인 제안 관리
+let quotes=[]; // 견적 관리
 let stockHistory=[]; // 재고 변동 이력
 
 // ── 고객사 이니셜 색상 팔레트 (전역, 상단에 정의해서 TDZ 방지) ──
@@ -3141,77 +3143,6 @@ let _ordDocState={};
 function openOrdDeliveryNote(ordId){ _openOrdDoc(ordId,'delivery'); }
 function openOrdTaxInvoice(ordId){ _openOrdDoc(ordId,'invoice'); }
 
-// 📄 발주서 PDF — 공장 전달용 (금액 항목 제외)
-function openOrdPurchaseOrder(ordId){
-  const o=orders.find(x=>x.id==ordId);if(!o){showToast('⚠ 발주서를 찾을 수 없습니다','var(--red)');return;}
-  const rows=(o.rows||[]).filter(r=>String(r.name||'').trim());
-  if(!rows.length){showToast('⚠ 품목이 없습니다','var(--org)');return;}
-  const today=toLocalDateStr(new Date());
-  const co=company||{name:'이케이아이엔티'};
-  // 수량 합계 — "각 20개 (총 80개)" 같은 문자열도 정확히 파싱
-  const totalQty=rows.reduce((s,r)=>s+(typeof parseOrdQty==='function'?parseOrdQty(r.qty):(+r.qty||0)),0);
-  // 행에 첨부된 이미지가 하나라도 있는지 확인 — 있으면 사진 컬럼을 보여줌
-  const getRowImg=r=>{
-    if(!r.img) return '';
-    if(typeof r.img==='string') return r.img;
-    if(r.img.url) return r.img.url;
-    return '';
-  };
-  const hasAnyImg=rows.some(r=>getRowImg(r));
-  const rowsHtml=rows.map((r,i)=>{
-    const imgUrl=getRowImg(r);
-    // 수량 표시: 원본 문자열을 그대로 (예: "각 20개", "총 80개") — 숫자 변환 시 NaN 방지
-    const qtyDisplay=String(r.qty==null?'':r.qty).trim()||'0';
-    return `<tr>
-    <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${i+1}</td>${hasAnyImg?`
-    <td style="text-align:center;padding:4px;border:1px solid #ddd;background:#fafafa">${imgUrl?`<img src="${imgUrl}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;border:1px solid #e0e0e0;display:block;margin:0 auto" alt="${(r.name||'').replace(/"/g,'&quot;')}">`:'<span style="color:#bbb;font-size:9pt">—</span>'}</td>`:''}
-    <td style="padding:7px 8px;border:1px solid #ddd;font-family:monospace;font-size:9pt">${r.itemCode||''}</td>
-    <td style="padding:7px 8px;border:1px solid #ddd;font-weight:500">${r.name||''}</td>
-    <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.mat||''}</td>
-    <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.plating||''}</td>
-    <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.size||''}</td>
-    <td style="text-align:right;padding:7px 8px;border:1px solid #ddd;font-weight:700;color:#8B6914;white-space:nowrap">${qtyDisplay}</td>
-    <td style="padding:7px 8px;border:1px solid #ddd;color:#555;font-size:9pt">${r.note||''}</td>
-  </tr>`;}).join('');
-  // tfoot의 colspan은 사진 컬럼 유무에 따라 6 또는 7
-  const footColspan=hasAnyImg?7:6;
-  showPrintPreview('📄 발주서',`<div style="font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#222">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #8B6914">
-      <div><div style="font-size:22pt;font-weight:700;color:#8B6914;letter-spacing:2px">발 주 서</div><div style="font-size:10pt;color:#888;margin-top:4px">PURCHASE ORDER</div></div>
-      <div style="text-align:right;font-size:10pt"><div style="font-weight:700;font-size:12pt">${co.name||'이케이아이엔티'}</div>${co.ceo?'<div>대표자: '+co.ceo+'</div>':''}${co.brn?'<div>사업자번호: '+co.brn+'</div>':''}${co.tel?'<div>Tel: '+co.tel+'</div>':''}${co.addr?'<div>'+co.addr+'</div>':''}</div>
-    </div>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:10pt">
-      <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">발주번호</td><td style="padding:7px 10px;border:1px solid #ddd;font-family:monospace;font-weight:700">${o.no||''}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">발주일자</td><td style="padding:7px 10px;border:1px solid #ddd">${o.date||today}</td></tr>
-      <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">납품 요청일</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;color:#c03030">${o.ship||'미정'}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">발행일자</td><td style="padding:7px 10px;border:1px solid #ddd">${today}</td></tr>
-    </table>
-    <div style="font-size:10.5pt;color:#555;margin-bottom:10px;padding:8px 12px;background:#f9f7f2;border-left:3px solid #8B6914;border-radius:3px">아래와 같이 발주하오니 정확한 납기 준수 부탁드립니다.</div>
-    <table style="width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:16px">
-      <thead><tr style="background:#8B6914;color:#fff"><th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th>${hasAnyImg?'<th style="padding:8px 6px;border:1px solid #6B4E0A;width:72px">사진</th>':''}<th style="padding:8px 8px;border:1px solid #6B4E0A;width:100px">품목코드</th><th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:80px">소재</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:75px">규격</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:90px;text-align:right">발주수량</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">비고</th></tr></thead>
-      <tbody>${rowsHtml}</tbody>
-      <tfoot><tr style="background:#f7f3eb;font-weight:700"><td colspan="${footColspan}" style="padding:8px 10px;border:1px solid #ddd;text-align:right">합 계 수 량</td><td style="padding:8px 10px;border:1px solid #ddd;text-align:right;color:#8B6914;font-size:10.5pt">${totalQty.toLocaleString()}</td><td style="padding:8px 10px;border:1px solid #ddd;text-align:center;color:#888">${rows.length}품목</td></tr></tfoot>
-    </table>
-    ${o.memo?'<div style="background:#f9f7f2;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:10pt;color:#555;margin-bottom:14px"><b style="color:#333">📝 요청사항</b><div style="margin-top:4px;white-space:pre-wrap">'+o.memo+'</div></div>':''}
-    <div style="margin-top:30px;padding-top:16px;border-top:1px dashed #ccc;display:flex;justify-content:space-between;font-size:9.5pt;color:#888">
-      <div>※ 본 발주서는 ${co.name||'이케이아이엔티'}에서 발행한 정식 발주 문서입니다.</div>
-      <div>발행: ${today}</div>
-    </div>
-  </div>`);
-}
-
-// ── 선택한 발주서로 발주서 PDF 발행 (1건씩) ──
-function bulkOpenOrdPurchaseOrder(){
-  if(!window._ordChecked||!window._ordChecked.size){
-    showToast('⚠ 발주서를 선택해 주세요','var(--org)');
-    return;
-  }
-  if(window._ordChecked.size>1){
-    showToast('⚠ 발주서 PDF는 1건씩 발행됩니다 — 1건만 선택해 주세요','var(--org)',3000);
-    return;
-  }
-  const ordId=[...window._ordChecked][0];
-  openOrdPurchaseOrder(ordId);
-}
-
 function _openOrdDoc(ordId,type){
   const o=orders.find(x=>x.id==ordId);if(!o)return;
   const rows=(o.rows||[]).map(r=>{
@@ -3369,6 +3300,20 @@ function doPrint(){
     window.print();
     setTimeout(()=>{printEl.style.display='none';},1000);
   },150);
+}
+
+// ── PDF로 저장 ──
+// 브라우저 인쇄 다이얼로그에서 "대상: PDF로 저장" 선택을 안내한 뒤 print 호출
+function doSaveAsPdf(){
+  const html=document.getElementById('printPreviewContent').innerHTML;
+  const printEl=document.getElementById('printArea');
+  printEl.innerHTML=html;
+  printEl.style.display='block';
+  showToast('📥 인쇄창에서 "대상: PDF로 저장"을 선택하세요','var(--gold-lt)',4000);
+  setTimeout(()=>{
+    window.print();
+    setTimeout(()=>{printEl.style.display='none';},1000);
+  },300);
 }
 
 // ════════════════════════════════
@@ -5775,18 +5720,19 @@ async function syncInvoiceToNotion(inv, update){
 // ── Sales data (declared early to avoid TDZ) ──
 let clients=[], proposals=[], projects=[];
 let _salesInited=false, _salesSubTab='inquiry';
-const SL_K={cli:'ek_v9_cli',prop:'ek_v9_prop',prj:'ek_v9_prj',inq:'ek_inquiries',nd:'ek_newdesigns'};
+const SL_K={cli:'ek_v9_cli',prop:'ek_v9_prop',prj:'ek_v9_prj',inq:'ek_inquiries',nd:'ek_newdesigns',qt:'ek_quotes'};
 function slSave(){try{
   localStorage.setItem(SL_K.cli,JSON.stringify(clients));
   localStorage.setItem(SL_K.prop,JSON.stringify(proposals));
   localStorage.setItem(SL_K.prj,JSON.stringify(projects));
   localStorage.setItem(SL_K.inq,JSON.stringify(inquiries));
   localStorage.setItem(SL_K.nd,JSON.stringify(newDesigns));
+  localStorage.setItem(SL_K.qt,JSON.stringify(quotes));
 }catch(e){}}
 function slLoad(){try{
   const d=k=>JSON.parse(localStorage.getItem(k)||'[]');
   clients=d(SL_K.cli);proposals=d(SL_K.prop);projects=d(SL_K.prj);
-  inquiries=d(SL_K.inq);newDesigns=d(SL_K.nd);
+  inquiries=d(SL_K.inq);newDesigns=d(SL_K.nd);quotes=d(SL_K.qt);
 }catch(e){}}
 // ── Sales arrow helpers (declared after TODAY/dday are available as functions are hoisted) ──
 const elapsed=d=>d?Math.floor((TODAY-new Date(d))/86400000):0;
@@ -6401,7 +6347,7 @@ function exportAllData(){
     _version:'EK-v38',
     _exported:new Date().toISOString(),
     samples,orders,procItems,tasks,asItems,productDB,
-    clients,proposals,projects,
+    clients,proposals,projects,inquiries,newDesigns,quotes,
     weekChecklist,monthChecklist,
     notionCfg:{...notionCfg,token:''}  // token 제외
   };
@@ -6436,6 +6382,9 @@ function importAllData(){
           if(data.clients)    clients=data.clients;
           if(data.proposals)  proposals=data.proposals;
           if(data.projects)   projects=data.projects;
+          if(data.inquiries)  inquiries=data.inquiries;
+          if(data.newDesigns) newDesigns=data.newDesigns;
+          if(data.quotes)     quotes=data.quotes;
           if(data.weekChecklist)  weekChecklist=data.weekChecklist;
           if(data.monthChecklist) monthChecklist=data.monthChecklist;
           save();slSave();saveChecklists();
@@ -9566,8 +9515,7 @@ function openSmpStatusDropdown(ev, sid){
   const dd=document.createElement('div');
   dd.id='smpStatusDropdown';
   dd.dataset.sid=sid;
-  // 위치는 일단 화면 밖에 두고, 렌더 후 실제 크기를 측정해서 보정 (위/아래 flip + 가로 클램프)
-  dd.style.cssText=`position:fixed;top:-9999px;left:-9999px;background:var(--s1);border:1px solid var(--gold-line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:9999;min-width:110px;padding:4px;display:flex;flex-direction:column;gap:2px`;
+  dd.style.cssText=`position:fixed;top:${rect.bottom+4}px;left:${rect.left}px;background:var(--s1);border:1px solid var(--gold-line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:9999;min-width:110px;padding:4px;display:flex;flex-direction:column;gap:2px`;
   dd.innerHTML=opts.map(st=>`
     <div onclick="event.stopPropagation();changeSmpStatus(${sid},'${st}')"
       style="padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11.5px;display:flex;align-items:center;gap:6px;${st===s.status?'background:var(--gold-bg);font-weight:700':''}"
@@ -9577,26 +9525,6 @@ function openSmpStatusDropdown(ev, sid){
       ${st===s.status?'<span style="font-size:10px;color:var(--gold-lt);margin-left:auto">✓</span>':''}
     </div>`).join('');
   document.body.appendChild(dd);
-  // ── 위치 자동 보정: 아래 공간 부족하면 위로 flip, 좌우는 뷰포트 안에 클램프 ──
-  const ddRect=dd.getBoundingClientRect();
-  const vh=window.innerHeight, vw=window.innerWidth, margin=8;
-  const spaceBelow=vh-rect.bottom, spaceAbove=rect.top;
-  let top, left=rect.left;
-  // 아래 공간이 드롭다운+여백보다 작고, 위쪽이 더 넓으면 위로 띄움
-  if(spaceBelow < ddRect.height+margin && spaceAbove > spaceBelow){
-    top = Math.max(margin, rect.top - ddRect.height - 4);
-  } else {
-    top = rect.bottom + 4;
-    // 그래도 아래로 잘리면 위쪽 여백 안에서 최대한 보임
-    if(top + ddRect.height + margin > vh){
-      top = Math.max(margin, vh - ddRect.height - margin);
-    }
-  }
-  // 좌우 클램프
-  if(left + ddRect.width + margin > vw) left = vw - ddRect.width - margin;
-  if(left < margin) left = margin;
-  dd.style.top = top+'px';
-  dd.style.left = left+'px';
   // 바깥 클릭 시 닫기
   setTimeout(()=>{
     const closeHandler=(e)=>{
@@ -10981,7 +10909,6 @@ function renderOrder(){
         <div id="ordBulkBar" style="display:flex;align-items:center;gap:6px;padding:4px 12px;background:${window._ordChecked&&window._ordChecked.size?'var(--gold-bg)':'var(--s2)'};border:1px solid ${window._ordChecked&&window._ordChecked.size?'var(--gold-line)':'var(--bdr)'};border-radius:6px;font-size:11.5px;transition:all .15s">
           <span onclick="toggleAllOrdChk()" style="color:${window._ordChecked&&window._ordChecked.size?'var(--gold-lt)':'var(--t3)'};font-weight:600;cursor:pointer;user-select:none;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px" title="전체 선택/해제 토글">${window._ordChecked&&window._ordChecked.size?window._ordChecked.size+'건 선택됨':'전체 선택'}</span>
           <button class="btn bs" onclick="exportSelectedOrdersExcel()" ${window._ordChecked&&window._ordChecked.size?'':'disabled'} style="font-size:11px;background:${window._ordChecked&&window._ordChecked.size?'var(--grn)':'var(--s3)'};color:${window._ordChecked&&window._ordChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._ordChecked&&window._ordChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📊 엑셀</button>
-          <button class="btn bs" onclick="bulkOpenOrdPurchaseOrder()" ${window._ordChecked&&window._ordChecked.size?'':'disabled'} style="font-size:11px;background:${window._ordChecked&&window._ordChecked.size?'var(--org-bg)':'var(--s3)'};color:${window._ordChecked&&window._ordChecked.size?'var(--org)':'var(--t3)'};border:1px solid ${window._ordChecked&&window._ordChecked.size?'rgba(168,90,16,.3)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._ordChecked&&window._ordChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600" title="공장 전달용 발주서 PDF (금액 미포함)">📄 발주서 PDF</button>
           <button class="btn bs" onclick="bulkOpenOrdDeliveryNote()" ${window._ordChecked&&window._ordChecked.size?'':'disabled'} style="font-size:11px;background:${window._ordChecked&&window._ordChecked.size?'var(--blu-bg)':'var(--s3)'};color:${window._ordChecked&&window._ordChecked.size?'var(--blu)':'var(--t3)'};border:1px solid ${window._ordChecked&&window._ordChecked.size?'rgba(26,109,181,.3)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._ordChecked&&window._ordChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📋 출하지시서</button>
           <button class="btn bs" onclick="bulkOpenOrdTaxInvoice()" ${window._ordChecked&&window._ordChecked.size?'':'disabled'} style="font-size:11px;background:${window._ordChecked&&window._ordChecked.size?'var(--gold-bg)':'var(--s3)'};color:${window._ordChecked&&window._ordChecked.size?'var(--gold-lt)':'var(--t3)'};border:1px solid ${window._ordChecked&&window._ordChecked.size?'var(--gold-line)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._ordChecked&&window._ordChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">🧾 거래명세서</button>
           ${window._ordChecked&&window._ordChecked.size?`<button class="btn bgo bs" onclick="window._ordChecked.clear();renderOrder()" style="font-size:11px">해제</button>`:''}
@@ -12707,10 +12634,6 @@ async function saveOrd(){
     showToast(msg,'var(--blu)',2500);
   }
   closeM('mOrd');renderTab();updateBadges();
-  // 신규 등록 시 → 공장 전달용 발주서 PDF 자동 표시
-  if(isNew){
-    setTimeout(()=>{ openOrdPurchaseOrder(ordId); }, 300);
-  }
 }
 // saveOrd, deleteOrd defined above
 
@@ -13280,6 +13203,7 @@ function renderSalesTab(){
   c.innerHTML=`
   <div style="display:flex;border-bottom:1px solid var(--bdr);background:var(--s1);margin:-14px -16px 14px;padding:0 16px;overflow-x:auto">
     <button class="sl-subtab ${_salesSubTab==='inquiry'?'on':''}" onclick="setSalesSubTab('inquiry')">📬 고객사 문의</button>
+    <button class="sl-subtab ${_salesSubTab==='quotes'?'on':''}" onclick="setSalesSubTab('quotes')">📋 견적 관리</button>
     <button class="sl-subtab ${_salesSubTab==='proposals'?'on':''}" onclick="setSalesSubTab('proposals')">💡 신규 제안</button>
     <button class="sl-subtab ${_salesSubTab==='monthly'?'on':''}" onclick="setSalesSubTab('monthly')">📊 월별 실적</button>
     <button class="sl-subtab ${_salesSubTab==='clients'?'on':''}" onclick="setSalesSubTab('clients')">🏢 고객사</button>
@@ -13293,7 +13217,7 @@ function setSalesSubTab(tab){
   _salesSubTab=tab;
   // update tab buttons
   document.querySelectorAll('.sl-subtab').forEach(b=>{
-    const label = {inquiry:'문의',proposals:'제안',monthly:'월별',clients:'고객사'}[tab];
+    const label = {inquiry:'문의',quotes:'견적',proposals:'제안',monthly:'월별',clients:'고객사'}[tab];
     b.classList.toggle('on', label && b.textContent.includes(label));
   });
   renderSalesSubTab();
@@ -13304,6 +13228,7 @@ function renderSalesSubTab(){
   if(!c) return;
   c.innerHTML='';
   if(_salesSubTab==='inquiry') vInquiry(c);
+  else if(_salesSubTab==='quotes') vQuotes(c);
   else if(_salesSubTab==='proposals') vNewProposals(c);
   else if(_salesSubTab==='monthly') vMonthly(c);
   else if(_salesSubTab==='clients') vClients(c);
@@ -14163,6 +14088,805 @@ function deleteInq(id){
     renderSalesSubTab();
     showToast('✓ 삭제됨','var(--grn)');
   });
+}
+
+// ════════════════════════════════
+// 📋 견적 관리 (Quote Management)
+// ════════════════════════════════
+let _qtFilter='all';     // all / draft / sent / won / lost
+let _qtImgBuf=[];
+let _qtFileBuf=[];
+let _qtRowsBuf=[];
+function setQtFilter(v){ _qtFilter=v; renderSalesSubTab(); }
+
+// 견적번호 자동 생성 — QT-YYMMDD-001 형식
+function generateQuoteNo(dateStr){
+  const d = dateStr ? new Date(dateStr) : new Date();
+  const yy = String(d.getFullYear()).slice(2);
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  const datePart = `QT-${yy}${mm}${dd}`;
+  const todayQuotes = quotes.filter(q=>(q.no||'').startsWith(datePart));
+  let maxSeq = 0;
+  todayQuotes.forEach(q=>{
+    const m = (q.no||'').match(/-(\d{3})$/);
+    if(m){ const n = +m[1]; if(n>maxSeq) maxSeq=n; }
+  });
+  const seq = String(maxSeq+1).padStart(3,'0');
+  return `${datePart}-${seq}`;
+}
+
+// 만료된 견적 자동 처리
+function updateExpiredQuotes(){
+  const today = toLocalDateStr(new Date());
+  let changed = false;
+  quotes.forEach(q=>{
+    if(q.status==='발송' && q.validUntil && q.validUntil < today){
+      q.status='만료';
+      q.updatedAt = new Date().toISOString();
+      changed = true;
+    }
+  });
+  if(changed) slSave();
+}
+
+// ── 견적 목록 화면 ──
+function vQuotes(c){
+  updateExpiredQuotes();
+
+  let list=[...quotes];
+  if(_qtFilter==='draft') list=list.filter(q=>q.status==='작성중');
+  if(_qtFilter==='sent')  list=list.filter(q=>q.status==='발송');
+  if(_qtFilter==='won')   list=list.filter(q=>q.status==='수주');
+  if(_qtFilter==='lost')  list=list.filter(q=>q.status==='미수주'||q.status==='만료');
+  list.sort((a,b)=>(b.issuedAt||'').localeCompare(a.issuedAt||''));
+
+  const draftCnt=quotes.filter(q=>q.status==='작성중').length;
+  const sentCnt =quotes.filter(q=>q.status==='발송').length;
+  const wonCnt  =quotes.filter(q=>q.status==='수주').length;
+  const lostCnt =quotes.filter(q=>q.status==='미수주'||q.status==='만료').length;
+
+  const thisM = toLocalDateStr(new Date()).slice(0,7);
+  const thisMQuotes = quotes.filter(q=>(q.issuedAt||'').startsWith(thisM)&&q.status!=='작성중');
+  const thisMAmt = thisMQuotes.reduce((s,q)=>s+(+q.totalAmt||0),0);
+  const decided = wonCnt+lostCnt;
+  const wonRate = decided>0 ? Math.round((wonCnt/decided)*100) : 0;
+
+  const today = new Date();
+  const noResp = quotes.filter(q=>{
+    if(q.status!=='발송'||!q.sentAt) return false;
+    const days = Math.floor((today-new Date(q.sentAt))/86400000);
+    return days>=7;
+  }).length;
+
+  const STATUS_COLORS={'작성중':'var(--t3)','발송':'var(--blu)','수주':'var(--grn)','미수주':'var(--red)','만료':'var(--org)'};
+  const STATUS_ICONS={'작성중':'📝','발송':'📤','수주':'✅','미수주':'❌','만료':'⏰'};
+
+  c.innerHTML=`
+  <div class="card">
+    <div class="ch" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div>
+        <div class="ch-t">📋 견적 관리</div>
+        <div class="ch-s">고객사 견적 요청 · 발행 이력 관리</div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <div style="display:flex;gap:2px;padding:3px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px">
+          <button onclick="setQtFilter('all')" style="padding:5px 12px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${_qtFilter==='all'?'700':'500'};background:${_qtFilter==='all'?'var(--s1)':'transparent'};color:${_qtFilter==='all'?'var(--t1)':'var(--t3)'}">전체 <span style="font-size:10px;opacity:.7">${quotes.length}</span></button>
+          <button onclick="setQtFilter('draft')" style="padding:5px 12px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${_qtFilter==='draft'?'700':'500'};background:${_qtFilter==='draft'?'var(--s1)':'transparent'};color:${_qtFilter==='draft'?'var(--t1)':'var(--t3)'}">📝 작성중 <span style="font-size:10px;opacity:.7">${draftCnt}</span></button>
+          <button onclick="setQtFilter('sent')" style="padding:5px 12px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${_qtFilter==='sent'?'700':'500'};background:${_qtFilter==='sent'?'var(--s1)':'transparent'};color:${_qtFilter==='sent'?'var(--blu)':'var(--t3)'}">📤 발송 <span style="font-size:10px;opacity:.7">${sentCnt}</span></button>
+          <button onclick="setQtFilter('won')" style="padding:5px 12px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${_qtFilter==='won'?'700':'500'};background:${_qtFilter==='won'?'var(--s1)':'transparent'};color:${_qtFilter==='won'?'var(--grn)':'var(--t3)'}">✅ 수주 <span style="font-size:10px;opacity:.7">${wonCnt}</span></button>
+          <button onclick="setQtFilter('lost')" style="padding:5px 12px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${_qtFilter==='lost'?'700':'500'};background:${_qtFilter==='lost'?'var(--s1)':'transparent'};color:${_qtFilter==='lost'?'var(--red)':'var(--t3)'}">❌ 실패 <span style="font-size:10px;opacity:.7">${lostCnt}</span></button>
+        </div>
+        <button class="btn bp bs" onclick="openQtModal()">+ 견적 등록</button>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
+      <div style="background:var(--s2);padding:10px 14px;border-radius:8px;border:1px solid var(--bdr)">
+        <div style="font-size:10.5px;color:var(--t3)">이번달 발행</div>
+        <div style="font-size:18px;font-weight:700;margin-top:2px">${thisMQuotes.length}건</div>
+      </div>
+      <div style="background:var(--s2);padding:10px 14px;border-radius:8px;border:1px solid var(--bdr)">
+        <div style="font-size:10.5px;color:var(--t3)">이번달 발행금액</div>
+        <div style="font-size:18px;font-weight:700;margin-top:2px;color:var(--gold-lt)">₩${thisMAmt.toLocaleString()}</div>
+      </div>
+      <div style="background:var(--s2);padding:10px 14px;border-radius:8px;border:1px solid var(--bdr)">
+        <div style="font-size:10.5px;color:var(--t3)">수주 전환율</div>
+        <div style="font-size:18px;font-weight:700;margin-top:2px;color:${wonRate>=50?'var(--grn)':wonRate>0?'var(--gold-lt)':'var(--t1)'}">${wonRate}% <span style="font-size:11px;color:var(--t3);font-weight:500">(${wonCnt}/${decided||0})</span></div>
+      </div>
+      <div style="background:var(--s2);padding:10px 14px;border-radius:8px;border:1px solid var(--bdr)">
+        <div style="font-size:10.5px;color:var(--t3)">7일+ 미회신</div>
+        <div style="font-size:18px;font-weight:700;margin-top:2px;color:${noResp>0?'var(--org)':'var(--t1)'}">${noResp}건</div>
+      </div>
+    </div>
+    ${list.length ? `
+    <div class="tbl-wrap"><table>
+      <thead><tr>
+        <th style="width:90px">발행일</th>
+        <th style="width:130px">견적번호</th>
+        <th style="width:150px">고객사</th>
+        <th>건명 / 품목</th>
+        <th style="width:110px;text-align:right">합계</th>
+        <th style="width:80px;text-align:center">유효기한</th>
+        <th style="width:80px">상태</th>
+        <th style="width:60px"></th>
+      </tr></thead>
+      <tbody>
+      ${list.map(q=>{
+        const isDone = q.status==='수주'||q.status==='미수주';
+        const stColor = STATUS_COLORS[q.status]||'var(--t3)';
+        const stIcon = STATUS_ICONS[q.status]||'';
+        const itemCnt = (q.rows||[]).length;
+        const firstItem = itemCnt>0 ? (q.rows[0].name||'') : '';
+        let ddayHtml='—';
+        if(q.validUntil && q.status!=='수주' && q.status!=='미수주' && q.status!=='만료'){
+          const td=new Date();td.setHours(0,0,0,0);
+          const dt=new Date(q.validUntil);dt.setHours(0,0,0,0);
+          const days=Math.round((dt-td)/86400000);
+          if(days<0) ddayHtml=`<span style="color:var(--red);font-weight:600">D+${-days}</span>`;
+          else if(days===0) ddayHtml=`<span style="color:var(--red);font-weight:600">D-DAY</span>`;
+          else if(days<=3) ddayHtml=`<span style="color:var(--red)">D-${days}</span>`;
+          else if(days<=7) ddayHtml=`<span style="color:var(--org)">D-${days}</span>`;
+          else ddayHtml=`<span style="color:var(--grn)">D-${days}</span>`;
+        }
+        const attachCnt = ((q.imgs||[]).length+(q.files||[]).length);
+        return `<tr style="cursor:pointer;${isDone?'opacity:.75':''}" onclick="openQtModal(${q.id})">
+          <td style="font-size:11px;color:var(--t3);white-space:nowrap">${q.issuedAt||'-'}</td>
+          <td style="font-family:monospace;font-size:10.5px;color:var(--t2)">${q.no||'-'}</td>
+          <td><span class="cl-lbl">${vendorInitHtml(q.vendor,true)}<span class="cn">${q.vendor||'-'}</span></span></td>
+          <td style="font-size:12px">
+            <div style="font-weight:500">${q.subject||firstItem||'-'}${attachCnt?` <span style="font-size:10px;color:var(--gold-lt);margin-left:4px">📎${attachCnt}</span>`:''}</div>
+            ${itemCnt>0 ? `<div style="font-size:10px;color:var(--t3);margin-top:1px">${itemCnt}종 품목${itemCnt>1?` · ${firstItem} 외 ${itemCnt-1}건`:firstItem?` · ${firstItem}`:''}</div>` : ''}
+          </td>
+          <td style="text-align:right;font-weight:600;font-size:12px">${q.totalAmt?'₩'+(+q.totalAmt).toLocaleString():'-'}</td>
+          <td style="text-align:center;font-size:11px">${ddayHtml}</td>
+          <td><span class="chip" style="font-size:10.5px;background:${stColor}15;border-color:${stColor}40;color:${stColor};font-weight:600">${stIcon} ${q.status||'작성중'}</span></td>
+          <td style="text-align:center">
+            <button onclick="event.stopPropagation();openQtPreview(${q.id})" title="견적서 미리보기" style="padding:3px 8px;font-size:11px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;color:var(--gold-lt);font-family:inherit">📄</button>
+          </td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table></div>
+    ` : `<div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">
+      ${_qtFilter!=='all'?'해당 상태의 견적이 없습니다':'등록된 견적이 없습니다 — 오른쪽 위 <b>+ 견적 등록</b>으로 추가하세요'}
+    </div>`}
+  </div>`;
+}
+
+// ── 견적 등록/수정 모달 ──
+function openQtModal(id){
+  const q = id ? quotes.find(x=>x.id==id) : null;
+  const todayS = toLocalDateStr(new Date());
+  const validS = (()=>{
+    const d=new Date(); d.setDate(d.getDate()+30);
+    return toLocalDateStr(d);
+  })();
+  _qtImgBuf = q ? [...(q.imgs||[])] : [];
+  _qtFileBuf = q ? [...(q.files||[])] : [];
+  _qtRowsBuf = q && q.rows && q.rows.length
+    ? JSON.parse(JSON.stringify(q.rows))
+    : [{name:'',mat:'',plating:'',size:'',weight:'',qty:'',unitPrice:'',chinaCost:'',note:''}];
+
+  const vendorOpts = clients.map(cl=>`<option value="${(cl.name||'').replace(/"/g,'&quot;')}">${cl.name}</option>`).join('');
+
+  const html = `
+    <div style="font-size:15px;font-weight:700;margin-bottom:12px">
+      📋 ${id?'견적 수정':'견적 등록'}
+      ${q&&q.no?`<span style="font-family:monospace;font-size:11px;color:var(--gold-lt);margin-left:8px;background:var(--gold-bg);padding:2px 8px;border-radius:4px;border:1px solid var(--gold-line)">${q.no}</span>`:''}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div class="fg"><label>고객사 *</label>
+        <input class="fi" id="qt_vendor" list="qt_vendor_dl" value="${q?(q.vendor||'').replace(/"/g,'&quot;'):''}" placeholder="고객사명 (등록 또는 직접 입력)">
+        <datalist id="qt_vendor_dl">${vendorOpts}</datalist>
+      </div>
+      <div class="fg"><label>고객 담당자</label>
+        <input class="fi" id="qt_manager" value="${q?(q.manager||'').replace(/"/g,'&quot;'):''}" placeholder="고객사 담당자명">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <div class="fg"><label>발행일 *</label>
+        <input class="fi" type="date" id="qt_issuedAt" value="${q?q.issuedAt||todayS:todayS}">
+      </div>
+      <div class="fg"><label>유효기한</label>
+        <input class="fi" type="date" id="qt_validUntil" value="${q?q.validUntil||validS:validS}">
+      </div>
+      <div class="fg"><label>당사 담당자</label>
+        <input class="fi" id="qt_ourManager" value="${q?(q.ourManager||'').replace(/"/g,'&quot;'):''}" placeholder="발행 담당자">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px">
+      <div class="fg"><label>건명 *</label>
+        <input class="fi" id="qt_subject" value="${q?(q.subject||'').replace(/"/g,'&quot;'):''}" placeholder="예: 반지 단가 견적 요청">
+      </div>
+      <div class="fg"><label>유형</label>
+        <select class="fs" id="qt_category">
+          ${['신규','재견적','단가조정','추가견적','샘플견적'].map(opt=>`<option value="${opt}" ${q&&q.category===opt?'selected':''}>${opt}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>상태</label>
+        <select class="fs" id="qt_status">
+          ${['작성중','발송','수주','미수주','만료'].map(opt=>`<option value="${opt}" ${q&&q.status===opt?'selected':(!q&&opt==='작성중'?'selected':'')}>${opt}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-sec" style="margin-top:14px;display:flex;justify-content:space-between;align-items:center">
+      <span>견적 품목 <span style="font-size:10px;color:var(--t3);font-weight:400">— 품명·중량·수량·단가 입력 / 🔒 중국 입고원가는 내부 전용</span></span>
+      <button onclick="qtAddRow()" style="padding:4px 12px;font-size:10.5px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">+ 행 추가</button>
+    </div>
+    <div id="qt_rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
+    <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:10px 14px;margin:8px 0">
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px;font-size:12px;align-items:center">
+        <div style="color:var(--t2)">공급가액</div>
+        <div id="qt_supplyDisp" style="text-align:right;font-weight:600">-</div>
+        <div style="color:var(--t2);display:flex;align-items:center;gap:6px">
+          부가세 (10%)
+          <label style="font-size:10.5px;color:var(--t3);cursor:pointer;display:inline-flex;align-items:center;gap:3px">
+            <input type="checkbox" id="qt_taxIncluded" ${!q||q.taxIncluded!==false?'checked':''} onchange="qtCalcTotal()" style="margin:0">
+            포함
+          </label>
+        </div>
+        <div id="qt_taxDisp" style="text-align:right">-</div>
+        <div style="color:var(--t1);font-weight:700;border-top:1px solid var(--bdr);padding-top:6px;margin-top:2px">합계 금액</div>
+        <div id="qt_totalDisp" style="text-align:right;font-weight:700;color:var(--gold-lt);font-size:14px;border-top:1px solid var(--bdr);padding-top:6px;margin-top:2px">-</div>
+      </div>
+    </div>
+    <!-- 🔒 내부 전용 마진 정보 (견적서에 출력되지 않음) -->
+    <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;padding:10px 14px;margin:8px 0">
+      <div style="font-size:10px;font-weight:700;color:var(--gold-lt);margin-bottom:6px;display:flex;align-items:center;gap:6px">
+        🔒 내부 전용 — 견적서 출력 시 표시되지 않음
+      </div>
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px;font-size:11.5px;align-items:center">
+        <div style="color:var(--t2)">중국 입고원가 합계</div>
+        <div id="qt_chinaCostDisp" style="text-align:right;font-weight:600;color:var(--t2)">-</div>
+        <div style="color:var(--t2)">예상 마진</div>
+        <div id="qt_marginDisp" style="text-align:right;font-weight:700">-</div>
+      </div>
+    </div>
+    <div class="form-sec" style="margin-top:10px">견적 조건</div>
+    <div class="fg"><label>대금 지급 조건</label>
+      <input class="fi" id="qt_paymentTerms" value="${q?(q.paymentTerms||'').replace(/"/g,'&quot;'):'발주 시 50%, 출고 시 50%'}" placeholder="예: 발주 시 50%, 출고 시 50%">
+    </div>
+    <div class="fg"><label>납기 조건</label>
+      <input class="fi" id="qt_deliveryTerms" value="${q?(q.deliveryTerms||'').replace(/"/g,'&quot;'):'발주 후 영업일 기준 14일'}" placeholder="예: 발주 후 영업일 기준 14일">
+    </div>
+    <div class="fg"><label>고객 전달 메모 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(견적서에 표시)</span></label>
+      <textarea class="fi" id="qt_customerMemo" rows="2" placeholder="견적서에 표시되는 메모 (특이사항·옵션 등)">${q?q.customerMemo||'':''}</textarea>
+    </div>
+    <div class="fg"><label>내부 메모 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(견적서에 표시 안됨)</span></label>
+      <textarea class="fi" id="qt_memo" rows="2" placeholder="내부 참고용 메모">${q?q.memo||'':''}</textarea>
+    </div>
+    <div class="fg"><label>📎 첨부파일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(이미지·도면·PDF 등)</span></label>
+      <div class="drop-zone" id="qtDropZone" style="padding:14px 16px;cursor:pointer;min-height:unset" onclick="document.getElementById('qtFileInput').click()" ondragover="dzOver(event,this)" ondragleave="dzOut(this)" ondrop="handleQtDropAll(event)">
+        <input type="file" id="qtFileInput" multiple style="display:none" onchange="handleQtFilesAll(event)">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:22px">📎</span>
+          <div>
+            <div style="font-size:12px;color:var(--t2);font-weight:600">드래그 · 클릭 · Ctrl+V로 파일 추가</div>
+            <div style="font-size:10.5px;color:var(--t3);margin-top:2px">이미지는 썸네일로, 그 외(PDF/문서 등)는 첨부파일로 자동 분류</div>
+          </div>
+        </div>
+      </div>
+      <div id="qtImgPrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div>
+      <div id="qtFilePrev" style="display:flex;flex-direction:column;gap:4px;margin-top:6px"></div>
+    </div>
+    <input type="hidden" id="qt_id" value="${q?q.id:''}">
+    <div class="ma" style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
+      <div style="display:flex;gap:6px">
+        ${id?`<button class="btn bp-red" onclick="deleteQt(${id})">삭제</button>`:''}
+        ${id?`<button class="btn bgo" onclick="duplicateQt(${id})">📋 복제</button>`:''}
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn bgo" onclick="closeM('mQuote');_qtPasteCleanup()">취소</button>
+        ${id?`<button class="btn bgo" onclick="openQtPreview(${id})" style="border-color:var(--gold);color:var(--gold-lt)">📄 견적서 보기</button>`:''}
+        ${q&&q.status==='발송'?`<button class="btn bp-grn" onclick="convertQtToOrder(${id})">✅ 수주 확정 → 발주 생성</button>`:''}
+        <button class="btn bp" onclick="saveQt()">저장</button>
+      </div>
+    </div>
+  `;
+
+  let m = document.getElementById('mQuote');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mQuote';
+    m.className = 'ov';
+    m.innerHTML = '<div class="modal" style="max-width:820px"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mQuote');
+  setTimeout(()=>{
+    renderQtRows();
+    qtCalcTotal();
+    renderQtImgPrev();
+    renderQtFilePrev();
+  }, 50);
+  _qtPasteSetup();
+}
+
+function qtAddRow(){
+  _qtRowsBuf.push({name:'',mat:'',plating:'',size:'',weight:'',qty:'',unitPrice:'',chinaCost:'',note:''});
+  renderQtRows();
+  qtCalcTotal();
+}
+
+function renderQtRows(){
+  const el=document.getElementById('qt_rows');
+  if(!el) return;
+  if(!_qtRowsBuf.length){
+    el.innerHTML = '<div style="padding:14px;text-align:center;color:var(--t3);font-size:11px;background:var(--s2);border:1px dashed var(--bdr);border-radius:6px">품목을 추가해 주세요 — <b>+ 행 추가</b> 클릭</div>';
+    return;
+  }
+  el.innerHTML = _qtRowsBuf.map((r,i)=>{
+    const lineAmt = (+r.qty||0)*(+r.unitPrice||0);
+    const margin = (+r.unitPrice||0) - (+r.chinaCost||0);
+    const marginPct = (+r.unitPrice||0) > 0 ? Math.round((margin / (+r.unitPrice||0)) * 100) : 0;
+    return `
+    <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:8px">
+      <!-- 메인 행: 품명 · 소재 · 도금 · 규격 · 중량 · 수량 · 단가 · 금액 -->
+      <div style="display:grid;grid-template-columns:minmax(0,1.8fr) 90px 75px 70px 70px 65px 85px 90px 24px;gap:4px;align-items:center">
+        <input class="fi" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].name=this.value" placeholder="품명 *" style="font-size:11.5px;padding:5px 8px;font-weight:500">
+        <input class="fi" value="${(r.mat||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].mat=this.value" placeholder="소재" style="font-size:10.5px;padding:5px 6px">
+        <input class="fi" value="${(r.plating||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].plating=this.value" placeholder="도금" style="font-size:10.5px;padding:5px 6px">
+        <input class="fi" value="${(r.size||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].size=this.value" placeholder="규격" style="font-size:10.5px;padding:5px 6px">
+        <input class="fi" value="${(r.weight||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].weight=this.value" placeholder="중량(g)" style="font-size:10.5px;padding:5px 6px;text-align:right">
+        <input class="fi" type="number" value="${r.qty||''}" oninput="_qtRowsBuf[${i}].qty=+this.value;qtCalcTotal();qtUpdateLineAmt(${i})" placeholder="수량" style="font-size:11px;padding:5px 6px;text-align:right">
+        <input class="fi" type="number" value="${r.unitPrice||''}" oninput="_qtRowsBuf[${i}].unitPrice=+this.value;qtCalcTotal();qtUpdateLineAmt(${i})" placeholder="단가" style="font-size:11px;padding:5px 6px;text-align:right">
+        <div id="qt_lineAmt_${i}" style="text-align:right;font-size:11px;font-weight:600;color:${lineAmt>0?'var(--t1)':'var(--t3)'};padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${lineAmt>0?lineAmt.toLocaleString():'-'}</div>
+        <button onclick="_qtRowsBuf.splice(${i},1);renderQtRows();qtCalcTotal()" style="padding:2px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--t3);font-size:11px;font-family:inherit" title="행 삭제">×</button>
+      </div>
+      <!-- 보조 행: 비고 · 🔒 중국 입고원가 (내부전용) -->
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 200px;gap:6px;align-items:center;margin-top:6px;padding-top:6px;border-top:1px dashed var(--bdr)">
+        <input class="fi" value="${(r.note||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].note=this.value" placeholder="비고 (옵션·컬러·각인 등)" style="font-size:10.5px;padding:3px 7px;width:100%;background:transparent;border:none;color:var(--t2)">
+        <div style="display:flex;align-items:center;gap:4px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;padding:2px 6px" title="견적서 출력 시 표시되지 않습니다 (내부 전용)">
+          <span style="font-size:9.5px;color:var(--gold-lt);font-weight:700;white-space:nowrap">🔒 중국 입고원가</span>
+          <input class="fi" type="number" value="${r.chinaCost||''}" oninput="_qtRowsBuf[${i}].chinaCost=+this.value;qtUpdateMargin(${i})" placeholder="0" style="font-size:10.5px;padding:2px 6px;text-align:right;background:transparent;border:none;flex:1;min-width:50px;color:var(--gold-lt);font-weight:600">
+          <span id="qt_margin_${i}" style="font-size:9px;color:${marginPct>=30?'var(--grn)':marginPct>=10?'var(--org)':margin<0?'var(--red)':'var(--t3)'};font-weight:700;white-space:nowrap;min-width:34px;text-align:right">${(+r.chinaCost||0)>0&&(+r.unitPrice||0)>0?(marginPct>=0?'+':'')+marginPct+'%':''}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function qtUpdateMargin(i){
+  const r = _qtRowsBuf[i]; if(!r) return;
+  const margin = (+r.unitPrice||0) - (+r.chinaCost||0);
+  const marginPct = (+r.unitPrice||0) > 0 ? Math.round((margin / (+r.unitPrice||0)) * 100) : 0;
+  const el = document.getElementById('qt_margin_'+i);
+  if(el){
+    if((+r.chinaCost||0)>0 && (+r.unitPrice||0)>0){
+      el.textContent = (marginPct>=0?'+':'') + marginPct + '%';
+      el.style.color = marginPct>=30 ? 'var(--grn)' : marginPct>=10 ? 'var(--org)' : margin<0 ? 'var(--red)' : 'var(--t3)';
+    } else {
+      el.textContent = '';
+    }
+  }
+}
+
+function qtUpdateLineAmt(i){
+  const r = _qtRowsBuf[i]; if(!r) return;
+  const amt = (+r.qty||0)*(+r.unitPrice||0);
+  const el = document.getElementById('qt_lineAmt_'+i);
+  if(el){
+    el.textContent = amt>0 ? amt.toLocaleString() : '-';
+    el.style.color = amt>0 ? 'var(--t1)' : 'var(--t3)';
+  }
+}
+
+function qtCalcTotal(){
+  const supply = _qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.unitPrice||0), 0);
+  const chinaCostTotal = _qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.chinaCost||0), 0);
+  const taxIncluded = document.getElementById('qt_taxIncluded')?.checked;
+  const tax = taxIncluded ? Math.round(supply*0.1) : 0;
+  const total = supply + tax;
+  const sd = document.getElementById('qt_supplyDisp');
+  const td = document.getElementById('qt_taxDisp');
+  const totd = document.getElementById('qt_totalDisp');
+  if(sd) sd.textContent = supply>0 ? '₩'+supply.toLocaleString() : '-';
+  if(td) td.textContent = tax>0 ? '₩'+tax.toLocaleString() : (taxIncluded?'₩0':'별도');
+  if(totd) totd.textContent = total>0 ? '₩'+total.toLocaleString() : '-';
+  // 내부 전용 마진 계산
+  const ccd = document.getElementById('qt_chinaCostDisp');
+  const md = document.getElementById('qt_marginDisp');
+  if(ccd) ccd.textContent = chinaCostTotal>0 ? '₩'+chinaCostTotal.toLocaleString() : '-';
+  if(md){
+    if(supply>0 && chinaCostTotal>0){
+      const margin = supply - chinaCostTotal;
+      const marginPct = Math.round((margin/supply)*100);
+      const color = marginPct>=30 ? 'var(--grn)' : marginPct>=10 ? 'var(--org)' : margin<0 ? 'var(--red)' : 'var(--t1)';
+      md.innerHTML = `<span style="color:${color}">₩${margin.toLocaleString()} <span style="font-size:10px;font-weight:600">(${marginPct>=0?'+':''}${marginPct}%)</span></span>`;
+    } else {
+      md.textContent = '-';
+    }
+  }
+}
+
+// 첨부파일 헬퍼
+function handleQtFilesAll(e){
+  const files=[...(e.target.files||[])];
+  files.forEach(f=>{
+    const r=new FileReader();
+    r.onload=ev=>{
+      const isImg = f.type && f.type.startsWith('image/');
+      const obj = {url:ev.target.result, name:f.name||'untitled', type:f.type, size:f.size};
+      if(isImg) _qtImgBuf.push(obj);
+      else _qtFileBuf.push(obj);
+      renderQtImgPrev(); renderQtFilePrev();
+    };
+    r.readAsDataURL(f);
+  });
+  e.target.value='';
+}
+
+function handleQtDropAll(e){
+  e.preventDefault();
+  dzOut(e.currentTarget);
+  const files=[...(e.dataTransfer.files||[])];
+  files.forEach(f=>{
+    const r=new FileReader();
+    r.onload=ev=>{
+      const isImg = f.type && f.type.startsWith('image/');
+      const obj = {url:ev.target.result, name:f.name||'untitled', type:f.type, size:f.size};
+      if(isImg) _qtImgBuf.push(obj);
+      else _qtFileBuf.push(obj);
+      renderQtImgPrev(); renderQtFilePrev();
+    };
+    r.readAsDataURL(f);
+  });
+}
+
+function renderQtImgPrev(){
+  const el=document.getElementById('qtImgPrev');
+  if(!el) return;
+  el.innerHTML = _qtImgBuf.map((im,i)=>`
+    <div style="position:relative">
+      <img src="${im.url}" style="width:60px;height:60px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);cursor:pointer">
+      <button onclick="_qtImgBuf.splice(${i},1);renderQtImgPrev()" style="position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border:none;width:18px;height:18px;border-radius:50%;cursor:pointer;font-size:11px;font-family:inherit;line-height:1">×</button>
+    </div>
+  `).join('');
+}
+
+function renderQtFilePrev(){
+  const el=document.getElementById('qtFilePrev');
+  if(!el) return;
+  el.innerHTML = _qtFileBuf.map((f,i)=>{
+    const sz = f.size ? (f.size>1048576 ? (f.size/1048576).toFixed(1)+'MB' : Math.round(f.size/1024)+'KB') : '';
+    const ext = (f.name.split('.').pop()||'').toUpperCase().slice(0,4);
+    return `
+    <div style="display:flex;align-items:center;gap:8px;padding:5px 9px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;font-size:11.5px">
+      <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;font-size:8.5px;font-weight:700;color:var(--gold-lt)">${ext}</span>
+      <div style="min-width:0;flex:1">
+        <div style="font-weight:500;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.name}</div>
+        ${sz?`<div style="font-size:9.5px;color:var(--t3)">${sz}</div>`:''}
+      </div>
+      <a href="${f.url}" download="${f.name}" style="padding:2px 8px;font-size:10px;color:var(--gold-lt);text-decoration:none;border:1px solid var(--gold-line);border-radius:3px">다운로드</a>
+      <button onclick="_qtFileBuf.splice(${i},1);renderQtFilePrev()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;font-family:inherit;line-height:1">×</button>
+    </div>`;
+  }).join('');
+}
+
+let _qtPasteHandler=null;
+function _qtPasteSetup(){
+  _qtPasteCleanup();
+  _qtPasteHandler = (e)=>{
+    const m = document.getElementById('mQuote');
+    if(!m || !m.classList.contains('open')) return;
+    const items = e.clipboardData && e.clipboardData.items;
+    if(!items) return;
+    for(let i=0;i<items.length;i++){
+      const it = items[i];
+      if(it.kind==='file'){
+        const f = it.getAsFile();
+        if(!f) continue;
+        const r = new FileReader();
+        r.onload = ev=>{
+          const isImg = f.type && f.type.startsWith('image/');
+          const obj = {url:ev.target.result, name:f.name||('clipboard.'+(f.type.split('/')[1]||'png')), type:f.type, size:f.size};
+          if(isImg) _qtImgBuf.push(obj);
+          else _qtFileBuf.push(obj);
+          renderQtImgPrev(); renderQtFilePrev();
+        };
+        r.readAsDataURL(f);
+      }
+    }
+  };
+  document.addEventListener('paste', _qtPasteHandler);
+}
+function _qtPasteCleanup(){
+  if(_qtPasteHandler){
+    document.removeEventListener('paste', _qtPasteHandler);
+    _qtPasteHandler = null;
+  }
+}
+
+// 저장 / 삭제 / 복제
+function saveQt(){
+  const gv = id => document.getElementById(id)?.value?.trim() || '';
+  const idVal = gv('qt_id');
+  const id = idVal ? +idVal : null;
+
+  const vendor = gv('qt_vendor');
+  const subject = gv('qt_subject');
+  if(!vendor){ showToast('고객사를 입력해 주세요','var(--red)'); return; }
+  if(!subject){ showToast('건명을 입력해 주세요','var(--red)'); return; }
+  const validRows = _qtRowsBuf.filter(r=>(r.name||'').trim());
+  if(!validRows.length){
+    showToast('품목을 1개 이상 입력해 주세요 (품목명 필수)','var(--red)'); return;
+  }
+
+  const supply = validRows.reduce((s,r)=>s+(+r.qty||0)*(+r.unitPrice||0), 0);
+  const chinaCostTotal = validRows.reduce((s,r)=>s+(+r.qty||0)*(+r.chinaCost||0), 0);
+  const taxIncluded = document.getElementById('qt_taxIncluded')?.checked;
+  const tax = taxIncluded ? Math.round(supply*0.1) : 0;
+  const total = supply + tax;
+
+  const status = gv('qt_status');
+  const existing = id ? quotes.find(x=>x.id==id) : null;
+  const sentAt = (status==='발송' && (!existing || existing.status!=='발송'))
+    ? new Date().toISOString()
+    : (existing ? existing.sentAt : null);
+  const responseAt = ((status==='수주'||status==='미수주') && (!existing || (existing.status!=='수주'&&existing.status!=='미수주')))
+    ? new Date().toISOString()
+    : (existing ? existing.responseAt : null);
+
+  const obj = {
+    no: existing ? existing.no : generateQuoteNo(gv('qt_issuedAt')),
+    vendor, manager: gv('qt_manager'), ourManager: gv('qt_ourManager'),
+    issuedAt: gv('qt_issuedAt'), validUntil: gv('qt_validUntil'),
+    subject, category: gv('qt_category'), status,
+    rows: validRows,
+    supplyAmt: supply, taxIncluded, tax, totalAmt: total,
+    chinaCostTotal,
+    paymentTerms: gv('qt_paymentTerms'),
+    deliveryTerms: gv('qt_deliveryTerms'),
+    customerMemo: gv('qt_customerMemo'),
+    memo: gv('qt_memo'),
+    imgs: [..._qtImgBuf], files: [..._qtFileBuf],
+    sentAt, responseAt,
+    inqId: existing ? existing.inqId : null,
+    ordId: existing ? existing.ordId : null,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if(id){
+    const i = quotes.findIndex(x=>x.id==id);
+    if(i>=0) quotes[i] = {...quotes[i], ...obj};
+  } else {
+    quotes.unshift({id:Date.now(), createdAt:new Date().toISOString(), ...obj});
+  }
+
+  slSave();
+  _qtPasteCleanup();
+  closeM('mQuote');
+  showToast('✓ 견적 저장됨','var(--grn)');
+  renderSalesSubTab();
+}
+
+function deleteQt(id){
+  const q = quotes.find(x=>x.id==id);
+  showConfirm(`"${q?.subject||q?.no||'견적'}" 항목을 삭제합니다.`, ()=>{
+    quotes = quotes.filter(x=>x.id!=id);
+    slSave();
+    _qtPasteCleanup();
+    closeM('mQuote');
+    renderSalesSubTab();
+    showToast('✓ 삭제됨','var(--grn)');
+  });
+}
+
+function duplicateQt(id){
+  const q = quotes.find(x=>x.id==id);
+  if(!q) return;
+  const copy = JSON.parse(JSON.stringify(q));
+  copy.id = Date.now();
+  copy.no = generateQuoteNo();
+  copy.status = '작성중';
+  copy.issuedAt = toLocalDateStr(new Date());
+  const newValid = new Date(); newValid.setDate(newValid.getDate()+30);
+  copy.validUntil = toLocalDateStr(newValid);
+  copy.sentAt = null;
+  copy.responseAt = null;
+  copy.ordId = null;
+  copy.inqId = null;
+  copy.createdAt = new Date().toISOString();
+  copy.updatedAt = new Date().toISOString();
+  quotes.unshift(copy);
+  slSave();
+  _qtPasteCleanup();
+  closeM('mQuote');
+  showToast('✓ 견적이 복제되었습니다','var(--grn)');
+  setTimeout(()=>openQtModal(copy.id), 100);
+}
+
+// 견적 → 발주 전환
+function convertQtToOrder(id){
+  const q = quotes.find(x=>x.id==id);
+  if(!q) return;
+
+  showConfirm(
+    `"${q.subject}" 견적을 수주로 확정하고 발주서를 생성합니다.\n\n생성된 발주서는 생산관리 탭에서 확인할 수 있습니다.`,
+    ()=>{
+      const today = new Date();
+      const yy = String(today.getFullYear()).slice(2);
+      const mm = String(today.getMonth()+1).padStart(2,'0');
+      const dd = String(today.getDate()).padStart(2,'0');
+      const datePart = `EK-${yy}${mm}${dd}`;
+      const todayOrders = orders.filter(o=>(o.no||'').startsWith(datePart));
+      let maxSeq = 0;
+      todayOrders.forEach(o=>{
+        const m = (o.no||'').match(/-(\d{3})$/);
+        if(m){ const n=+m[1]; if(n>maxSeq) maxSeq=n; }
+      });
+      const ordNo = `${datePart}-${String(maxSeq+1).padStart(3,'0')}`;
+
+      const newOrd = {
+        id: Date.now(),
+        no: ordNo,
+        vendor: q.vendor,
+        manager: q.manager,
+        date: toLocalDateStr(new Date()),
+        ship: '',
+        status: '진행중',
+        rows: (q.rows||[]).map(r=>({
+          itemCode: r.itemCode||'',
+          name: r.name||'',
+          mat: r.mat||'',
+          plating: r.plating||'',
+          size: r.size||'',
+          weight: r.weight||'',
+          qty: r.qty||0,
+          unitPrice: r.unitPrice||0,
+          chinaCost: r.chinaCost||0,
+          note: r.note||'',
+          rcvHistory: []
+        })),
+        memo: `[견적 ${q.no} 기반]${q.customerMemo?'\n'+q.customerMemo:''}`,
+        quoteId: q.id,
+        createdAt: new Date().toISOString(),
+      };
+
+      orders.unshift(newOrd);
+      save();
+
+      q.status = '수주';
+      q.ordId = newOrd.id;
+      q.responseAt = new Date().toISOString();
+      q.updatedAt = new Date().toISOString();
+      slSave();
+
+      _qtPasteCleanup();
+      closeM('mQuote');
+      showToast(`✓ 발주서 ${ordNo} 생성됨 — 생산관리 탭에서 확인`,'var(--grn)',3500);
+      renderSalesSubTab();
+    },
+    '수주 확정',
+    '✅'
+  );
+}
+
+// 견적서 인쇄 미리보기
+function openQtPreview(id){
+  const q = quotes.find(x=>x.id==id);
+  if(!q){ showToast('견적을 찾을 수 없습니다','var(--red)'); return; }
+
+  const co = (typeof company!=='undefined' && company) || {name:'이케이아이엔티'};
+
+  const rowsHtml = (q.rows||[]).map((r,i)=>{
+    const amt = (+r.qty||0)*(+r.unitPrice||0);
+    return `<tr>
+      <td style="padding:7px 6px;border:1px solid #ddd;text-align:center">${i+1}</td>
+      <td style="padding:7px 8px;border:1px solid #ddd">
+        <div style="font-weight:600">${r.name||''}</div>
+        ${r.note?`<div style="font-size:9pt;color:#666;margin-top:2px">${r.note}</div>`:''}
+      </td>
+      <td style="padding:7px 6px;border:1px solid #ddd;font-size:9pt">${r.mat||''}</td>
+      <td style="padding:7px 6px;border:1px solid #ddd;font-size:9pt">${r.plating||''}</td>
+      <td style="padding:7px 6px;border:1px solid #ddd;font-size:9pt">${r.size||''}</td>
+      <td style="padding:7px 6px;border:1px solid #ddd;font-size:9pt;text-align:right">${r.weight?(r.weight+'g'):''}</td>
+      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right">${(+r.qty||0).toLocaleString()}</td>
+      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right">${r.unitPrice?'₩'+(+r.unitPrice).toLocaleString():'-'}</td>
+      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right;font-weight:600">${amt?'₩'+amt.toLocaleString():'-'}</td>
+    </tr>`;
+  }).join('');
+
+  let emptyRows = '';
+  const minRows = 5;
+  const itemCnt = (q.rows||[]).length;
+  for(let i=itemCnt; i<minRows; i++){
+    emptyRows += `<tr>${'<td style="padding:7px 8px;border:1px solid #ddd;height:24px">&nbsp;</td>'.repeat(9)}</tr>`;
+  }
+
+  const html = `
+    <div style="font-family:'Malgun Gothic','맑은 고딕',sans-serif;color:#222;padding:8px">
+      <div style="text-align:center;margin-bottom:24px;padding-bottom:14px;border-bottom:3px double #8B6914">
+        <div style="font-size:26pt;font-weight:700;color:#8B6914;letter-spacing:8px">견 적 서</div>
+        <div style="font-size:10pt;color:#888;margin-top:4px;letter-spacing:3px">QUOTATION</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:10pt;margin-bottom:18px">
+        <tr>
+          <td style="width:50%;vertical-align:top;padding-right:8px">
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td colspan="2" style="padding:6px 10px;background:#f7f3eb;border:1px solid #ddd;font-weight:700;font-size:10.5pt">📩 수 신</td></tr>
+              <tr><td style="padding:5px 10px;border:1px solid #ddd;background:#fafafa;width:80px;color:#666">고객사</td><td style="padding:5px 10px;border:1px solid #ddd;font-weight:600;font-size:11pt">${q.vendor||'—'} ${q.vendor?'<span style=\"font-size:9pt;color:#666;font-weight:400\">귀중</span>':''}</td></tr>
+              <tr><td style="padding:5px 10px;border:1px solid #ddd;background:#fafafa;color:#666">담당자</td><td style="padding:5px 10px;border:1px solid #ddd">${q.manager?q.manager+' 님':'—'}</td></tr>
+              <tr><td style="padding:5px 10px;border:1px solid #ddd;background:#fafafa;color:#666">건명</td><td style="padding:5px 10px;border:1px solid #ddd;font-weight:500">${q.subject||'—'}</td></tr>
+            </table>
+          </td>
+          <td style="width:50%;vertical-align:top;padding-left:8px">
+            <table style="width:100%;border-collapse:collapse">
+              <tr><td colspan="2" style="padding:6px 10px;background:#f7f3eb;border:1px solid #ddd;font-weight:700;font-size:10.5pt">🏢 발 행 처</td></tr>
+              <tr><td style="padding:5px 10px;border:1px solid #ddd;background:#fafafa;width:80px;color:#666">상호</td><td style="padding:5px 10px;border:1px solid #ddd;font-weight:600">${co.name||''}</td></tr>
+              <tr><td style="padding:5px 10px;border:1px solid #ddd;background:#fafafa;color:#666">대표</td><td style="padding:5px 10px;border:1px solid #ddd">${co.ceo||'—'}</td></tr>
+              <tr><td style="padding:5px 10px;border:1px solid #ddd;background:#fafafa;color:#666">연락처</td><td style="padding:5px 10px;border:1px solid #ddd">${co.tel||'—'}</td></tr>
+              ${q.ourManager?`<tr><td style="padding:5px 10px;border:1px solid #ddd;background:#fafafa;color:#666">담당</td><td style="padding:5px 10px;border:1px solid #ddd">${q.ourManager}</td></tr>`:''}
+            </table>
+          </td>
+        </tr>
+      </table>
+      <table style="width:100%;border-collapse:collapse;font-size:10pt;margin-bottom:14px">
+        <tr style="background:#f7f3eb">
+          <td style="padding:6px 10px;border:1px solid #ddd;color:#666;width:90px">견적번호</td>
+          <td style="padding:6px 10px;border:1px solid #ddd;font-family:monospace;font-weight:600">${q.no||'—'}</td>
+          <td style="padding:6px 10px;border:1px solid #ddd;color:#666;width:90px">발행일</td>
+          <td style="padding:6px 10px;border:1px solid #ddd">${q.issuedAt||'—'}</td>
+          <td style="padding:6px 10px;border:1px solid #ddd;color:#666;width:90px">유효기한</td>
+          <td style="padding:6px 10px;border:1px solid #ddd;color:#993C1D;font-weight:600">${q.validUntil||'—'}</td>
+        </tr>
+      </table>
+      <div style="padding:10px 14px;background:#FFFEF8;border-left:3px solid #BA7517;font-size:10.5pt;color:#555;margin-bottom:14px;line-height:1.6">
+        귀사의 일익번창을 기원합니다. 아래와 같이 견적을 제출하오니 검토하여 주시기 바랍니다.
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:11pt;margin-bottom:16px">
+        <tr style="background:#1A1612;color:#FFF">
+          <td style="padding:11px 16px;border:1px solid #1A1612;font-weight:700">합 계 금 액 (VAT ${q.taxIncluded?'포함':'별도'})</td>
+          <td style="padding:11px 16px;border:1px solid #1A1612;text-align:right;font-size:14pt;font-weight:700;color:#FAC775">
+            ₩ ${(q.totalAmt||0).toLocaleString()} 원정
+          </td>
+        </tr>
+      </table>
+      <table style="width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:14px">
+        <thead>
+          <tr style="background:#8B6914;color:#fff">
+            <th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th>
+            <th style="padding:8px 8px;border:1px solid #6B4E0A">품 명</th>
+            <th style="padding:8px 6px;border:1px solid #6B4E0A;width:70px">소재</th>
+            <th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th>
+            <th style="padding:8px 6px;border:1px solid #6B4E0A;width:60px">규격</th>
+            <th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px;text-align:right">중량</th>
+            <th style="padding:8px 8px;border:1px solid #6B4E0A;width:65px;text-align:right">수량</th>
+            <th style="padding:8px 8px;border:1px solid #6B4E0A;width:80px;text-align:right">단가</th>
+            <th style="padding:8px 8px;border:1px solid #6B4E0A;width:90px;text-align:right">금액</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+          ${emptyRows}
+        </tbody>
+      </table>
+      <table style="width:320px;margin-left:auto;border-collapse:collapse;font-size:10pt;margin-bottom:18px">
+        <tr><td style="padding:7px 12px;border:1px solid #ddd;background:#f7f3eb;font-weight:600">공급가액</td><td style="padding:7px 12px;border:1px solid #ddd;text-align:right">${(q.supplyAmt||0).toLocaleString()}원</td></tr>
+        <tr><td style="padding:7px 12px;border:1px solid #ddd;background:#f7f3eb;font-weight:600">부가세 (10%)</td><td style="padding:7px 12px;border:1px solid #ddd;text-align:right">${q.taxIncluded?(q.tax||0).toLocaleString()+'원':'별도'}</td></tr>
+        <tr style="background:#8B6914;color:#fff">
+          <td style="padding:9px 12px;border:1px solid #6B4E0A;font-weight:700;font-size:11pt">합 계</td>
+          <td style="padding:9px 12px;border:1px solid #6B4E0A;text-align:right;font-weight:700;font-size:11pt">${(q.totalAmt||0).toLocaleString()}원</td>
+        </tr>
+      </table>
+      <table style="width:100%;border-collapse:collapse;font-size:10pt;margin-bottom:14px">
+        <tr><td style="width:90px;padding:7px 12px;border:1px solid #ddd;background:#f7f3eb;font-weight:600">결 제 조 건</td><td style="padding:7px 12px;border:1px solid #ddd">${q.paymentTerms||'협의'}</td></tr>
+        <tr><td style="padding:7px 12px;border:1px solid #ddd;background:#f7f3eb;font-weight:600">납 기 조 건</td><td style="padding:7px 12px;border:1px solid #ddd">${q.deliveryTerms||'협의'}</td></tr>
+        <tr><td style="padding:7px 12px;border:1px solid #ddd;background:#f7f3eb;font-weight:600">유 효 기 한</td><td style="padding:7px 12px;border:1px solid #ddd">본 견적은 ${q.validUntil||'발행일로부터 30일'}까지 유효합니다</td></tr>
+      </table>
+      ${q.customerMemo?`
+      <div style="background:#f9f7f2;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:10pt;color:#555;margin-bottom:14px">
+        <b>📌 특이사항:</b> ${q.customerMemo.replace(/\n/g,'<br>')}
+      </div>
+      `:''}
+      <div style="margin-top:24px;padding-top:14px;border-top:1px solid #ddd;text-align:center;font-size:9pt;color:#888">
+        ${co.addr||''} ${co.brn?` · 사업자번호: ${co.brn}`:''}
+      </div>
+    </div>
+  `;
+
+  showPrintPreview(`📋 견적서 — ${q.vendor} / ${q.no}`, html);
 }
 
 // ════════════════════════════════
