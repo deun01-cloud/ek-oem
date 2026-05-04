@@ -4080,7 +4080,7 @@ async function callClaudeAPI(body) {
   }
 }
 let notionCfg = {
-  workerUrl: '',
+  workerUrl: 'https://ek-proxy.deun01.workers.dev',
   token: '',
   smpDb:   'dad8448577d74ea8bbbcb52f4419be3b', // 샘플의뢰
   ordDb:   '97ff79daa2c04b309df42a7a1a2c7b89', // 발주서
@@ -4146,7 +4146,17 @@ function updateNotionMode(){
   const worker=(document.getElementById('notion_worker')?.value||'').trim();
   const el=document.getElementById('notionModeInfo'); if(!el) return;
   if(worker) el.innerHTML=`<span style="color:var(--grn)">🟢 Worker 모드</span> — Notion 10개 DB 실시간 동기화 + R2 파일 저장 활성화`;
-  else el.innerHTML=`<span style="color:var(--org)">⚠️ Worker URL 없음</span> — Cloudflare Worker를 설정하면 실시간 동기화와 파일 저장이 활성화됩니다.`;
+  else el.innerHTML=`
+    <div style="color:var(--org);font-weight:600;margin-bottom:6px">⚠️ Worker URL 없음 — 동기화가 작동하지 않습니다</div>
+    <div style="font-size:11px;color:var(--t2);line-height:1.6">
+      <b>이전에 사용 중이었다면:</b><br>
+      1. 다른 컴퓨터/브라우저에서 같은 사이트 열기 → Notion 설정에서 Worker URL 복사<br>
+      2. 또는 <a href="https://dash.cloudflare.com" target="_blank" style="color:var(--gold-lt)">Cloudflare 대시보드</a> → Workers & Pages → 배포된 워커의 URL 확인<br>
+      3. 또는 EK 백업파일이 있다면 <b>대시보드 우상단 설정 → 데이터 관리 → JSON 가져오기</b>로 Worker URL까지 자동 복원<br>
+      <br>
+      <b>Worker URL 형식 예시:</b> <code style="background:var(--s2);padding:2px 5px;border-radius:3px;font-size:10.5px">https://ek-notion-proxy.<i>본인계정</i>.workers.dev</code>
+    </div>
+  `;
 }
 function updateNotionNavLabel(){
   const lbl=document.getElementById('notionSyncLabel');
@@ -6476,6 +6486,15 @@ function importAllData(){
           if(data.quotes)     quotes=data.quotes;
           if(data.weekChecklist)  weekChecklist=data.weekChecklist;
           if(data.monthChecklist) monthChecklist=data.monthChecklist;
+          // Notion Worker URL 복원 (token은 보안상 백업에 없음 — 사용자가 직접 입력)
+          if(data.notionCfg && data.notionCfg.workerUrl){
+            notionCfg.workerUrl = data.notionCfg.workerUrl;
+            // 다른 DB ID들도 복원 (혹시 다른 경우 대비)
+            ['smpDb','ordDb','propDb','clientDb','procDb','taskDb','asDb','invDb','productDb','ndDb','inqDb','qtDb'].forEach(k=>{
+              if(data.notionCfg[k]) notionCfg[k] = data.notionCfg[k];
+            });
+            try{ localStorage.setItem(NOTION_CFG_KEY, JSON.stringify(notionCfg)); }catch(e){}
+          }
           save();slSave();saveChecklists();
           _salesInited=false;
           showToast('✓ 데이터 복원 완료','var(--grn)',3000);
