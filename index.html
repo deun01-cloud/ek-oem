@@ -14422,17 +14422,20 @@ function renderQtRows(){
     const marginPct = (+r.unitPrice||0) > 0 ? Math.round((margin / (+r.unitPrice||0)) * 100) : 0;
     return `
     <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:8px">
-      <!-- 메인 행: 품명 · 소재 · 도금 · 규격 · 중량 · 수량 · 단가 · 금액 -->
-      <div style="display:grid;grid-template-columns:minmax(0,1.8fr) 90px 75px 70px 70px 65px 85px 90px 24px;gap:4px;align-items:center">
-        <input class="fi" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].name=this.value" placeholder="품명 *" style="font-size:11.5px;padding:5px 8px;font-weight:500">
-        <input class="fi" value="${(r.mat||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].mat=this.value" placeholder="소재" style="font-size:10.5px;padding:5px 6px">
-        <input class="fi" value="${(r.plating||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].plating=this.value" placeholder="도금" style="font-size:10.5px;padding:5px 6px">
-        <input class="fi" value="${(r.size||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].size=this.value" placeholder="규격" style="font-size:10.5px;padding:5px 6px">
+      <!-- 1줄: 품명 (메인) + 금액 + 삭제 -->
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 110px 24px;gap:6px;align-items:center;margin-bottom:6px">
+        <input class="fi" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].name=this.value" placeholder="품명 *" style="font-size:12.5px;padding:6px 10px;font-weight:600">
+        <div id="qt_lineAmt_${i}" style="text-align:right;font-size:13px;font-weight:700;color:${lineAmt>0?'var(--gold-lt)':'var(--t3)'};padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${lineAmt>0?'₩'+lineAmt.toLocaleString():'-'}</div>
+        <button onclick="_qtRowsBuf.splice(${i},1);renderQtRows();qtCalcTotal()" style="padding:4px 6px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--t3);font-size:11px;font-family:inherit" title="행 삭제">×</button>
+      </div>
+      <!-- 2줄: 소재 · 도금 · 규격 · 중량 · 수량 · 단가 -->
+      <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) 75px 75px 95px;gap:4px;align-items:center">
+        <input class="fi" value="${(r.mat||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].mat=this.value" placeholder="소재" style="font-size:10.5px;padding:5px 7px">
+        <input class="fi" value="${(r.plating||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].plating=this.value" placeholder="도금" style="font-size:10.5px;padding:5px 7px">
+        <input class="fi" value="${(r.size||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].size=this.value" placeholder="규격" style="font-size:10.5px;padding:5px 7px">
         <input class="fi" value="${(r.weight||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].weight=this.value" placeholder="중량(g)" style="font-size:10.5px;padding:5px 6px;text-align:right">
         <input class="fi" type="number" value="${r.qty||''}" oninput="_qtRowsBuf[${i}].qty=+this.value;qtCalcTotal();qtUpdateLineAmt(${i})" placeholder="수량" style="font-size:11px;padding:5px 6px;text-align:right">
         <input class="fi" type="number" value="${r.unitPrice||''}" oninput="_qtRowsBuf[${i}].unitPrice=+this.value;qtCalcTotal();qtUpdateLineAmt(${i})" placeholder="단가" style="font-size:11px;padding:5px 6px;text-align:right">
-        <div id="qt_lineAmt_${i}" style="text-align:right;font-size:11px;font-weight:600;color:${lineAmt>0?'var(--t1)':'var(--t3)'};padding:0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${lineAmt>0?lineAmt.toLocaleString():'-'}</div>
-        <button onclick="_qtRowsBuf.splice(${i},1);renderQtRows();qtCalcTotal()" style="padding:2px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--t3);font-size:11px;font-family:inherit" title="행 삭제">×</button>
       </div>
       <!-- 보조 행: 비고 · 🔒 중국 입고원가 (내부전용) -->
       <div style="display:grid;grid-template-columns:minmax(0,1fr) 200px;gap:6px;align-items:center;margin-top:6px;padding-top:6px;border-top:1px dashed var(--bdr)">
@@ -14467,8 +14470,8 @@ function qtUpdateLineAmt(i){
   const amt = (+r.qty||0)*(+r.unitPrice||0);
   const el = document.getElementById('qt_lineAmt_'+i);
   if(el){
-    el.textContent = amt>0 ? amt.toLocaleString() : '-';
-    el.style.color = amt>0 ? 'var(--t1)' : 'var(--t3)';
+    el.textContent = amt>0 ? '₩'+amt.toLocaleString() : '-';
+    el.style.color = amt>0 ? 'var(--gold-lt)' : 'var(--t3)';
   }
 }
 
