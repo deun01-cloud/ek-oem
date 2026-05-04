@@ -6493,7 +6493,7 @@ function openM(id){document.getElementById(id)?.classList.add('open');}
 
 // 편집용 모달들 — 바깥 클릭이나 ESC로 실수로 닫히지 않게 보호
 // (저장/취소 버튼을 통해서만 닫혀야 하는 모달들)
-const PROTECTED_MODALS=['mSmp','mOrd','mCl','mProp','mProc','mTask','mProduct','mComp','mInv','mPrintPreview','mConfirm','mNotion','mDataMgr','mItemSearch','mVendorSearch','mClientImport','mProductImport','mOrdDocQty','mInvDetail','mImportHist','mFilePrev'];
+const PROTECTED_MODALS=['mSmp','mOrd','mCl','mProp','mProc','mTask','mProduct','mComp','mInv','mPrintPreview','mConfirm','mNotion','mDataMgr','mItemSearch','mVendorSearch','mClientImport','mProductImport','mOrdDocQty','mInvDetail','mImportHist','mFilePrev','mQuote','mQtToSmp'];
 document.addEventListener('DOMContentLoaded',()=>{
   PROTECTED_MODALS.forEach(id=>{
     const ov=document.getElementById(id);
@@ -14099,7 +14099,48 @@ let _qtFileBuf=[];
 let _qtRowsBuf=[];
 function setQtFilter(v){ _qtFilter=v; renderSalesSubTab(); }
 
-// 견적번호 자동 생성 — QT-YYMMDD-001 형식
+// ── 견적: 소재 옵션 ──
+const QT_MATERIALS = ['14k','실버925','신주','직접입력'];
+
+// ── 견적 단가 자동계산 (사용자가 ⚡ 버튼을 눌렀을 때만 실행) ──
+// 공식: (원자재시세 × 1.15 × 중량 + 중국입고원가) × 1.4
+// 명시적 호출이므로 기존 단가가 있어도 새 값으로 덮어씀 (사용자 의도)
+function qtAutoCalcUnitPrice(i){
+  const r = _qtRowsBuf[i]; if(!r) return;
+  const matPrice = +r.materialPrice||0;
+  const weight = +r.weight||0;
+  const chinaCost = +r.chinaCost||0;
+  // 시세 또는 입고원가 중 하나는 있어야 계산 가능
+  if(matPrice<=0 && chinaCost<=0){
+    showToast('원자재 시세 또는 중국 입고원가를 입력해 주세요','var(--org)');
+    return;
+  }
+  // 시세는 있는데 중량이 없으면 경고
+  if(matPrice>0 && weight<=0){
+    showToast('원자재 시세를 사용하려면 중량을 입력해 주세요','var(--org)');
+    return;
+  }
+  const calculated = Math.round((matPrice * 1.15 * weight + chinaCost) * 1.4);
+  if(calculated<=0) return;
+  r.unitPrice = calculated;
+  renderQtRows();
+  qtCalcTotal();
+  showToast(`✓ 단가 자동계산: ₩${calculated.toLocaleString()}`,'var(--grn)',2000);
+}
+
+// 소재 드롭다운 변경 핸들러 — 시세 기본값은 채우지 않음 (사용자 직접 입력)
+function qtOnMaterialChange(i, val){
+  const r = _qtRowsBuf[i]; if(!r) return;
+  if(val==='직접입력'){
+    r._matMode = 'custom';
+    r.mat = '';
+  } else {
+    r._matMode = 'select';
+    r.mat = val;
+  }
+  renderQtRows();
+}
+
 function generateQuoteNo(dateStr){
   const d = dateStr ? new Date(dateStr) : new Date();
   const yy = String(d.getFullYear()).slice(2);
@@ -14234,7 +14275,7 @@ function vQuotes(c){
           <td style="font-family:monospace;font-size:10.5px;color:var(--t2)">${q.no||'-'}</td>
           <td><span class="cl-lbl">${vendorInitHtml(q.vendor,true)}<span class="cn">${q.vendor||'-'}</span></span></td>
           <td style="font-size:12px">
-            <div style="font-weight:500">${q.subject||firstItem||'-'}${attachCnt?` <span style="font-size:10px;color:var(--gold-lt);margin-left:4px">📎${attachCnt}</span>`:''}</div>
+            <div style="font-weight:500">${q.subject||firstItem||'-'}${attachCnt?` <span style="font-size:10px;color:var(--gold-lt);margin-left:4px">📎${attachCnt}</span>`:''}${q.sampleIds&&q.sampleIds.length?` <span style="font-size:10px;color:var(--grn);margin-left:4px;background:rgba(46,139,44,.1);border:1px solid rgba(46,139,44,.3);padding:1px 6px;border-radius:8px;font-weight:600">◉ ${q.sampleIds.length}건 샘플</span>`:''}</div>
             ${itemCnt>0 ? `<div style="font-size:10px;color:var(--t3);margin-top:1px">${itemCnt}종 품목${itemCnt>1?` · ${firstItem} 외 ${itemCnt-1}건`:firstItem?` · ${firstItem}`:''}</div>` : ''}
           </td>
           <td style="text-align:right;font-weight:600;font-size:12px">${q.totalAmt?'₩'+(+q.totalAmt).toLocaleString():'-'}</td>
@@ -14265,7 +14306,7 @@ function openQtModal(id){
   _qtFileBuf = q ? [...(q.files||[])] : [];
   _qtRowsBuf = q && q.rows && q.rows.length
     ? JSON.parse(JSON.stringify(q.rows))
-    : [{name:'',mat:'',plating:'',size:'',weight:'',qty:'',unitPrice:'',chinaCost:'',note:''}];
+    : [{name:'',mat:'',plating:'',size:'',weight:'',qty:'',unitPrice:'',chinaCost:'',materialPrice:'',note:''}];
 
   const vendorOpts = clients.map(cl=>`<option value="${(cl.name||'').replace(/"/g,'&quot;')}">${cl.name}</option>`).join('');
 
@@ -14274,6 +14315,12 @@ function openQtModal(id){
       📋 ${id?'견적 수정':'견적 등록'}
       ${q&&q.no?`<span style="font-family:monospace;font-size:11px;color:var(--gold-lt);margin-left:8px;background:var(--gold-bg);padding:2px 8px;border-radius:4px;border:1px solid var(--gold-line)">${q.no}</span>`:''}
     </div>
+    ${q&&q.sampleIds&&q.sampleIds.length?`
+    <div style="margin-bottom:12px;padding:9px 12px;background:rgba(46,139,44,.08);border:1px solid rgba(46,139,44,.3);border-radius:6px;font-size:11.5px;color:var(--grn);display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <span>✅ 이 견적에서 <b>${q.sampleIds.length}건의 샘플 의뢰</b>가 생성되었습니다</span>
+      <button onclick="closeM('mQuote');switchToSampleTab()" style="padding:3px 10px;font-size:10.5px;background:var(--grn);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">샘플의뢰서 탭 →</button>
+    </div>
+    `:''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <div class="fg"><label>고객사 *</label>
         <input class="fi" id="qt_vendor" list="qt_vendor_dl" value="${q?(q.vendor||'').replace(/"/g,'&quot;'):''}" placeholder="고객사명 (등록 또는 직접 입력)">
@@ -14310,7 +14357,7 @@ function openQtModal(id){
       </div>
     </div>
     <div class="form-sec" style="margin-top:14px;display:flex;justify-content:space-between;align-items:center">
-      <span>견적 품목 <span style="font-size:10px;color:var(--t3);font-weight:400">— 품명·중량·수량·단가 입력 / 🔒 중국 입고원가는 내부 전용</span></span>
+      <span>견적 품목 <span style="font-size:10px;color:var(--t3);font-weight:400">— ⚡ 자동계산: (원자재시세×1.15×중량+중국입고원가)×1.4 / 🔒 내부 전용 항목은 견적서 미표시</span></span>
       <button onclick="qtAddRow()" style="padding:4px 12px;font-size:10.5px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">+ 행 추가</button>
     </div>
     <div id="qt_rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px"></div>
@@ -14378,7 +14425,7 @@ function openQtModal(id){
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn bgo" onclick="closeM('mQuote');_qtPasteCleanup()">취소</button>
         ${id?`<button class="btn bgo" onclick="openQtPreview(${id})" style="border-color:var(--gold);color:var(--gold-lt)">📄 견적서 보기</button>`:''}
-        ${q&&q.status==='발송'?`<button class="btn bp-grn" onclick="convertQtToOrder(${id})">✅ 수주 확정 → 발주 생성</button>`:''}
+        ${q&&(q.status==='발송'||q.status==='수주')?`<button class="btn bp-grn" onclick="openQtToSampleModal(${id})">${q.status==='수주'?'➕ 추가 샘플 의뢰':'✅ 수주 확정 → 샘플 의뢰'}</button>`:''}
         <button class="btn bp" onclick="saveQt()">저장</button>
       </div>
     </div>
@@ -14404,7 +14451,7 @@ function openQtModal(id){
 }
 
 function qtAddRow(){
-  _qtRowsBuf.push({name:'',mat:'',plating:'',size:'',weight:'',qty:'',unitPrice:'',chinaCost:'',note:''});
+  _qtRowsBuf.push({name:'',mat:'',plating:'',size:'',weight:'',qty:'',unitPrice:'',chinaCost:'',materialPrice:'',note:''});
   renderQtRows();
   qtCalcTotal();
 }
@@ -14418,33 +14465,56 @@ function renderQtRows(){
   }
   el.innerHTML = _qtRowsBuf.map((r,i)=>{
     const lineAmt = (+r.qty||0)*(+r.unitPrice||0);
+    const qtyZeroWarn = (+r.qty||0)===0 && (+r.unitPrice||0)>0;
     const margin = (+r.unitPrice||0) - (+r.chinaCost||0);
     const marginPct = (+r.unitPrice||0) > 0 ? Math.round((margin / (+r.unitPrice||0)) * 100) : 0;
+    // 소재 드롭다운 / 직접입력 모드 판단
+    const isCustomMat = r._matMode==='custom' || (r.mat && !['14k','실버925','신주'].includes(r.mat));
     return `
     <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:8px">
-      <!-- 1줄: 품명 (메인) + 금액 + 삭제 -->
+      <!-- 1줄: 품명 + 금액 + 삭제 -->
       <div style="display:grid;grid-template-columns:minmax(0,1fr) 110px 24px;gap:6px;align-items:center;margin-bottom:6px">
         <input class="fi" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].name=this.value" placeholder="품명 *" style="font-size:12.5px;padding:6px 10px;font-weight:600">
-        <div id="qt_lineAmt_${i}" style="text-align:right;font-size:13px;font-weight:700;color:${lineAmt>0?'var(--gold-lt)':'var(--t3)'};padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${lineAmt>0?'₩'+lineAmt.toLocaleString():'-'}</div>
+        <div id="qt_lineAmt_${i}" style="text-align:right;font-size:${qtyZeroWarn?'10.5px':'13px'};font-weight:700;color:${lineAmt>0?'var(--gold-lt)':qtyZeroWarn?'var(--red)':'var(--t3)'};padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${qtyZeroWarn?'수량이 0입니다 — 입력 확인':''}">${lineAmt>0?'₩'+lineAmt.toLocaleString():qtyZeroWarn?'⚠ 수량 0':'-'}</div>
         <button onclick="_qtRowsBuf.splice(${i},1);renderQtRows();qtCalcTotal()" style="padding:4px 6px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--t3);font-size:11px;font-family:inherit" title="행 삭제">×</button>
       </div>
-      <!-- 2줄: 소재 · 도금 · 규격 · 중량 · 수량 · 단가 -->
-      <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) 75px 75px 95px;gap:4px;align-items:center">
-        <input class="fi" value="${(r.mat||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].mat=this.value" placeholder="소재" style="font-size:10.5px;padding:5px 7px">
+      <!-- 2줄: 소재(드롭다운) · 도금 · 규격 · 중량 · 수량 · 단가+자동계산버튼 -->
+      <div style="display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) 75px 75px 110px;gap:4px;align-items:center">
+        ${isCustomMat
+          ? `<div style="display:flex;gap:2px;align-items:stretch">
+              <input class="fi" value="${(r.mat||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].mat=this.value" placeholder="소재 직접입력" style="font-size:10.5px;padding:5px 7px;flex:1;min-width:0">
+              <button onclick="_qtRowsBuf[${i}]._matMode='select';_qtRowsBuf[${i}].mat='';renderQtRows()" title="목록에서 선택" style="padding:0 6px;background:var(--s3);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--t3);font-size:10px;font-family:inherit">▼</button>
+            </div>`
+          : `<select class="fs" onchange="qtOnMaterialChange(${i},this.value)" style="font-size:10.5px;padding:5px 7px">
+              <option value="" ${!r.mat?'selected':''}>소재 선택</option>
+              ${QT_MATERIALS.map(m=>`<option value="${m}" ${r.mat===m?'selected':''}>${m}</option>`).join('')}
+            </select>`
+        }
         <input class="fi" value="${(r.plating||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].plating=this.value" placeholder="도금" style="font-size:10.5px;padding:5px 7px">
         <input class="fi" value="${(r.size||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].size=this.value" placeholder="규격" style="font-size:10.5px;padding:5px 7px">
         <input class="fi" value="${(r.weight||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].weight=this.value" placeholder="중량(g)" style="font-size:10.5px;padding:5px 6px;text-align:right">
         <input class="fi" type="number" value="${r.qty||''}" oninput="_qtRowsBuf[${i}].qty=+this.value;qtCalcTotal();qtUpdateLineAmt(${i})" placeholder="수량" style="font-size:11px;padding:5px 6px;text-align:right">
-        <input class="fi" type="number" value="${r.unitPrice||''}" oninput="_qtRowsBuf[${i}].unitPrice=+this.value;qtCalcTotal();qtUpdateLineAmt(${i})" placeholder="단가" style="font-size:11px;padding:5px 6px;text-align:right">
+        <div style="display:flex;gap:2px;align-items:stretch">
+          <input class="fi" type="number" value="${r.unitPrice||''}" oninput="_qtRowsBuf[${i}].unitPrice=+this.value;qtCalcTotal();qtUpdateLineAmt(${i});qtUpdateMargin(${i})" placeholder="단가" style="font-size:11px;padding:5px 6px;text-align:right;flex:1;min-width:0">
+          <button onclick="qtAutoCalcUnitPrice(${i})" title="자동계산: (원자재시세×1.15×중량+중국입고원가)×1.4" style="padding:0 6px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;cursor:pointer;color:var(--gold-lt);font-size:11px;font-family:inherit;font-weight:700">⚡</button>
+        </div>
       </div>
-      <!-- 보조 행: 비고 · 🔒 중국 입고원가 (내부전용) -->
-      <div style="display:grid;grid-template-columns:minmax(0,1fr) 200px;gap:6px;align-items:center;margin-top:6px;padding-top:6px;border-top:1px dashed var(--bdr)">
-        <input class="fi" value="${(r.note||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].note=this.value" placeholder="비고 (옵션·컬러·각인 등)" style="font-size:10.5px;padding:3px 7px;width:100%;background:transparent;border:none;color:var(--t2)">
+      <!-- 3줄 (내부 전용): 🪙 원자재 시세 · 🔒 중국 입고원가 -->
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px;align-items:center;margin-top:6px">
+        <div style="display:flex;align-items:center;gap:4px;background:var(--s3);border:1px solid var(--bdr);border-radius:4px;padding:2px 6px" title="원자재 1g당 가격 — 자동계산 시 사용 (견적서에 표시되지 않음)">
+          <span style="font-size:9.5px;color:var(--t2);font-weight:700;white-space:nowrap">🪙 원자재시세</span>
+          <input class="fi" type="number" value="${r.materialPrice||''}" oninput="_qtRowsBuf[${i}].materialPrice=+this.value" placeholder="0" style="font-size:10.5px;padding:2px 6px;text-align:right;background:transparent;border:none;flex:1;min-width:40px;color:var(--t1);font-weight:600">
+          <span style="font-size:9px;color:var(--t3);white-space:nowrap">원/g</span>
+        </div>
         <div style="display:flex;align-items:center;gap:4px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;padding:2px 6px" title="견적서 출력 시 표시되지 않습니다 (내부 전용)">
-          <span style="font-size:9.5px;color:var(--gold-lt);font-weight:700;white-space:nowrap">🔒 중국 입고원가</span>
-          <input class="fi" type="number" value="${r.chinaCost||''}" oninput="_qtRowsBuf[${i}].chinaCost=+this.value;qtUpdateMargin(${i})" placeholder="0" style="font-size:10.5px;padding:2px 6px;text-align:right;background:transparent;border:none;flex:1;min-width:50px;color:var(--gold-lt);font-weight:600">
+          <span style="font-size:9.5px;color:var(--gold-lt);font-weight:700;white-space:nowrap">🔒 중국입고원가</span>
+          <input class="fi" type="number" value="${r.chinaCost||''}" oninput="_qtRowsBuf[${i}].chinaCost=+this.value;qtUpdateMargin(${i});qtCalcTotal()" placeholder="0" style="font-size:10.5px;padding:2px 6px;text-align:right;background:transparent;border:none;flex:1;min-width:50px;color:var(--gold-lt);font-weight:600">
           <span id="qt_margin_${i}" style="font-size:9px;color:${marginPct>=30?'var(--grn)':marginPct>=10?'var(--org)':margin<0?'var(--red)':'var(--t3)'};font-weight:700;white-space:nowrap;min-width:34px;text-align:right">${(+r.chinaCost||0)>0&&(+r.unitPrice||0)>0?(marginPct>=0?'+':'')+marginPct+'%':''}</span>
         </div>
+      </div>
+      <!-- 4줄: 비고 -->
+      <div style="margin-top:6px;padding-top:6px;border-top:1px dashed var(--bdr)">
+        <input class="fi" value="${(r.note||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].note=this.value" placeholder="비고 (옵션·컬러·각인 등)" style="font-size:10.5px;padding:3px 7px;width:100%;background:transparent;border:none;color:var(--t2)">
       </div>
     </div>`;
   }).join('');
@@ -14467,11 +14537,28 @@ function qtUpdateMargin(i){
 
 function qtUpdateLineAmt(i){
   const r = _qtRowsBuf[i]; if(!r) return;
-  const amt = (+r.qty||0)*(+r.unitPrice||0);
+  const qty = +r.qty||0;
+  const unit = +r.unitPrice||0;
+  const amt = qty*unit;
+  const qtyZeroWarn = qty===0 && unit>0;
   const el = document.getElementById('qt_lineAmt_'+i);
   if(el){
-    el.textContent = amt>0 ? '₩'+amt.toLocaleString() : '-';
-    el.style.color = amt>0 ? 'var(--gold-lt)' : 'var(--t3)';
+    if(amt>0){
+      el.textContent = '₩'+amt.toLocaleString();
+      el.style.color = 'var(--gold-lt)';
+      el.style.fontSize = '13px';
+      el.title = '';
+    } else if(qtyZeroWarn){
+      el.textContent = '⚠ 수량 0';
+      el.style.color = 'var(--red)';
+      el.style.fontSize = '10.5px';
+      el.title = '수량이 0입니다 — 입력 확인';
+    } else {
+      el.textContent = '-';
+      el.style.color = 'var(--t3)';
+      el.style.fontSize = '13px';
+      el.title = '';
+    }
   }
 }
 
@@ -14700,70 +14787,190 @@ function duplicateQt(id){
   setTimeout(()=>openQtModal(copy.id), 100);
 }
 
-// 견적 → 발주 전환
-function convertQtToOrder(id){
+// ── 견적 → 샘플 의뢰 변환: 품목 선택 모달 ──
+let _qtToSmpId = null;
+let _qtToSmpSel = new Set();   // 선택된 row index 집합
+let _qtToSmpDueDate = '';      // 일괄 적용할 납기일
+
+function openQtToSampleModal(id){
   const q = quotes.find(x=>x.id==id);
+  if(!q){ showToast('견적을 찾을 수 없습니다','var(--red)'); return; }
+  if(!(q.rows||[]).length){
+    showToast('이 견적에는 품목이 없습니다','var(--org)'); return;
+  }
+  _qtToSmpId = id;
+  // 기본: 모든 행 선택
+  _qtToSmpSel = new Set((q.rows||[]).map((_,i)=>i));
+  // 기본 납기일: 30일 후
+  const due = new Date(); due.setDate(due.getDate()+30);
+  _qtToSmpDueDate = toLocalDateStr(due);
+
+  const html = `
+    <div style="font-size:15px;font-weight:700;margin-bottom:8px">
+      ✅ 수주 확정 → 샘플 의뢰 생성
+    </div>
+    <div style="font-size:11.5px;color:var(--t2);margin-bottom:14px;padding:10px 12px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;line-height:1.5">
+      <b>${q.vendor}</b> · ${q.no}<br>
+      샘플 의뢰로 보낼 품목을 선택하세요. 선택된 품목은 <b>샘플의뢰서 탭</b>에 각각 등록됩니다.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <div class="fg" style="margin:0"><label style="font-size:10.5px">의뢰일</label>
+        <input class="fi" type="date" id="qtsmp_reqDate" value="${toLocalDateStr(new Date())}">
+      </div>
+      <div class="fg" style="margin:0"><label style="font-size:10.5px">납기일 (모든 샘플 공통)</label>
+        <input class="fi" type="date" id="qtsmp_due" value="${_qtToSmpDueDate}">
+      </div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div style="font-size:12px;font-weight:600;color:var(--t1)">📋 품목 목록 <span id="qtsmp_selCnt" style="font-size:10.5px;color:var(--gold-lt);margin-left:6px">${_qtToSmpSel.size}/${q.rows.length}개 선택</span></div>
+      <div style="display:flex;gap:6px">
+        <button onclick="qtToSmpToggleAll(true)" style="padding:3px 10px;font-size:10.5px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">전체 선택</button>
+        <button onclick="qtToSmpToggleAll(false)" style="padding:3px 10px;font-size:10.5px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">전체 해제</button>
+      </div>
+    </div>
+    <div id="qtsmp_rows" style="display:flex;flex-direction:column;gap:5px;max-height:380px;overflow-y:auto;padding:2px"></div>
+    <div class="ma" style="display:flex;justify-content:flex-end;gap:6px;margin-top:14px">
+      <button class="btn bgo" onclick="closeM('mQtToSmp')">취소</button>
+      <button class="btn bp-grn" onclick="confirmQtToSamples()">✅ 선택한 품목으로 샘플 의뢰 생성</button>
+    </div>
+  `;
+
+  let m = document.getElementById('mQtToSmp');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mQtToSmp';
+    m.className = 'ov';
+    // 견적 모달 위에 띄우기 위해 z-index 명시
+    m.style.zIndex = '450';
+    m.innerHTML = '<div class="modal" style="max-width:720px"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mQtToSmp');
+  setTimeout(()=>renderQtToSmpRows(), 30);
+}
+
+function renderQtToSmpRows(){
+  const q = quotes.find(x=>x.id==_qtToSmpId);
   if(!q) return;
+  const el = document.getElementById('qtsmp_rows');
+  if(!el) return;
 
-  showConfirm(
-    `"${q.subject}" 견적을 수주로 확정하고 발주서를 생성합니다.\n\n생성된 발주서는 생산관리 탭에서 확인할 수 있습니다.`,
-    ()=>{
-      const today = new Date();
-      const yy = String(today.getFullYear()).slice(2);
-      const mm = String(today.getMonth()+1).padStart(2,'0');
-      const dd = String(today.getDate()).padStart(2,'0');
-      const datePart = `EK-${yy}${mm}${dd}`;
-      const todayOrders = orders.filter(o=>(o.no||'').startsWith(datePart));
-      let maxSeq = 0;
-      todayOrders.forEach(o=>{
-        const m = (o.no||'').match(/-(\d{3})$/);
-        if(m){ const n=+m[1]; if(n>maxSeq) maxSeq=n; }
-      });
-      const ordNo = `${datePart}-${String(maxSeq+1).padStart(3,'0')}`;
+  el.innerHTML = (q.rows||[]).map((r,i)=>{
+    const isSel = _qtToSmpSel.has(i);
+    const lineAmt = (+r.qty||0)*(+r.unitPrice||0);
+    return `
+    <label style="display:grid;grid-template-columns:24px minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 12px;background:${isSel?'var(--gold-bg)':'var(--s2)'};border:1px solid ${isSel?'var(--gold-line)':'var(--bdr)'};border-radius:6px;cursor:pointer;transition:.15s">
+      <input type="checkbox" ${isSel?'checked':''} onchange="qtToSmpToggle(${i})" style="width:16px;height:16px;cursor:pointer;accent-color:var(--gold-lt)">
+      <div style="min-width:0">
+        <div style="font-size:12.5px;font-weight:600;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name||'(품명 없음)'}</div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:2px">${[r.mat,r.plating,r.size,r.weight?r.weight+'g':''].filter(Boolean).join(' · ')||'-'}${r.note?' · '+r.note:''}</div>
+      </div>
+      <div style="text-align:right;white-space:nowrap">
+        <div style="font-size:11px;color:var(--t2)">${(+r.qty||0).toLocaleString()}개 × ₩${(+r.unitPrice||0).toLocaleString()}</div>
+        <div style="font-size:12px;font-weight:700;color:var(--gold-lt);margin-top:1px">${lineAmt>0?'₩'+lineAmt.toLocaleString():'—'}</div>
+      </div>
+    </label>`;
+  }).join('');
+}
 
-      const newOrd = {
-        id: Date.now(),
-        no: ordNo,
-        vendor: q.vendor,
-        manager: q.manager,
-        date: toLocalDateStr(new Date()),
-        ship: '',
-        status: '진행중',
-        rows: (q.rows||[]).map(r=>({
-          itemCode: r.itemCode||'',
-          name: r.name||'',
-          mat: r.mat||'',
-          plating: r.plating||'',
-          size: r.size||'',
-          weight: r.weight||'',
-          qty: r.qty||0,
-          unitPrice: r.unitPrice||0,
-          chinaCost: r.chinaCost||0,
-          note: r.note||'',
-          rcvHistory: []
-        })),
-        memo: `[견적 ${q.no} 기반]${q.customerMemo?'\n'+q.customerMemo:''}`,
-        quoteId: q.id,
-        createdAt: new Date().toISOString(),
-      };
+function qtToSmpToggle(i){
+  if(_qtToSmpSel.has(i)) _qtToSmpSel.delete(i);
+  else _qtToSmpSel.add(i);
+  renderQtToSmpRows();
+  updateQtToSmpCount();
+}
 
-      orders.unshift(newOrd);
-      save();
+function qtToSmpToggleAll(selectAll){
+  const q = quotes.find(x=>x.id==_qtToSmpId);
+  if(!q) return;
+  if(selectAll) _qtToSmpSel = new Set((q.rows||[]).map((_,i)=>i));
+  else _qtToSmpSel = new Set();
+  renderQtToSmpRows();
+  updateQtToSmpCount();
+}
 
-      q.status = '수주';
-      q.ordId = newOrd.id;
-      q.responseAt = new Date().toISOString();
-      q.updatedAt = new Date().toISOString();
-      slSave();
+function updateQtToSmpCount(){
+  const q = quotes.find(x=>x.id==_qtToSmpId);
+  if(!q) return;
+  const el = document.getElementById('qtsmp_selCnt');
+  if(el) el.textContent = `${_qtToSmpSel.size}/${q.rows.length}개 선택`;
+}
 
-      _qtPasteCleanup();
-      closeM('mQuote');
-      showToast(`✓ 발주서 ${ordNo} 생성됨 — 생산관리 탭에서 확인`,'var(--grn)',3500);
-      renderSalesSubTab();
-    },
-    '수주 확정',
-    '✅'
-  );
+function switchToSampleTab(){
+  // 샘플 탭 버튼 찾아서 클릭
+  const btn = document.querySelector('.tab-btn[data-tab="sample"]');
+  if(btn && typeof switchTab==='function'){
+    try{ switchTab('sample', btn); }catch(e){ console.warn(e); }
+  }
+}
+
+function confirmQtToSamples(){
+  const q = quotes.find(x=>x.id==_qtToSmpId);
+  if(!q) return;
+  if(!_qtToSmpSel.size){
+    showToast('1개 이상의 품목을 선택해 주세요','var(--red)'); return;
+  }
+  const reqDate = document.getElementById('qtsmp_reqDate')?.value || toLocalDateStr(new Date());
+  const due = document.getElementById('qtsmp_due')?.value || '';
+  const selectedIdx = [...(_qtToSmpSel)].sort((a,b)=>a-b);
+  const cnt = selectedIdx.length;
+
+  // 선택된 행을 각각 샘플로 변환
+  const newSampleIds = [];
+  selectedIdx.forEach((rowIdx, n)=>{
+    const r = q.rows[rowIdx];
+    const sId = Date.now() + n; // 고유 id
+    const sample = {
+      id: sId,
+      name: r.name || '',
+      itemNo: '',
+      type: '신규',
+      status: '의뢰',
+      manager: q.vendor || '',  // 샘플의뢰서에서 manager는 의뢰처(고객사)
+      reqDate,
+      due,
+      qty: +r.qty || 1,
+      mat: r.mat || '',
+      plating: r.plating || '',
+      sz1: r.size || '',
+      sz2: '',
+      sz3: '',
+      sz4: '',
+      wt: r.weight || '',
+      engr: '',
+      card: '',
+      devCost: 0,
+      unitPrice: +r.unitPrice || 0,
+      costPrice: +r.chinaCost || 0,
+      notes: r.note ? [{text:r.note, checked:false}] : [],
+      imgs: [],
+      sourceDoc: [],
+      cadFiles: [],
+      quoteId: q.id,
+      quoteNo: q.no,
+      quoteRowIdx: rowIdx,
+      createdAt: new Date().toISOString(),
+    };
+    samples.unshift(sample);
+    newSampleIds.push(sId);
+  });
+
+  save();
+
+  // 견적 상태 업데이트
+  q.status = '수주';
+  q.sampleIds = (q.sampleIds || []).concat(newSampleIds);
+  q.responseAt = new Date().toISOString();
+  q.updatedAt = new Date().toISOString();
+  slSave();
+
+  _qtPasteCleanup();
+  closeM('mQtToSmp');
+  closeM('mQuote');
+  showToast(`✓ 샘플 의뢰서 ${cnt}건 생성됨 — 샘플의뢰서 탭에서 확인`,'var(--grn)',3500);
+  renderSalesSubTab();
+  if(typeof updateBadges==='function') try{updateBadges();}catch(e){}
 }
 
 // 견적서 인쇄 미리보기
@@ -14774,8 +14981,11 @@ function openQtPreview(id){
   const co = (typeof company!=='undefined' && company) || {name:'이케이아이엔티'};
 
   const rowsHtml = (q.rows||[]).map((r,i)=>{
-    const amt = (+r.qty||0)*(+r.unitPrice||0);
-    return `<tr>
+    const qty = +r.qty||0;
+    const unit = +r.unitPrice||0;
+    const amt = qty*unit;
+    const isZero = qty===0;
+    return `<tr${isZero?' style="background:#FFF8F2"':''}>
       <td style="padding:7px 6px;border:1px solid #ddd;text-align:center">${i+1}</td>
       <td style="padding:7px 8px;border:1px solid #ddd">
         <div style="font-weight:600">${r.name||''}</div>
@@ -14785,9 +14995,9 @@ function openQtPreview(id){
       <td style="padding:7px 6px;border:1px solid #ddd;font-size:9pt">${r.plating||''}</td>
       <td style="padding:7px 6px;border:1px solid #ddd;font-size:9pt">${r.size||''}</td>
       <td style="padding:7px 6px;border:1px solid #ddd;font-size:9pt;text-align:right">${r.weight?(r.weight+'g'):''}</td>
-      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right">${(+r.qty||0).toLocaleString()}</td>
-      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right">${r.unitPrice?'₩'+(+r.unitPrice).toLocaleString():'-'}</td>
-      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right;font-weight:600">${amt?'₩'+amt.toLocaleString():'-'}</td>
+      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right${isZero?';color:#C0392B;font-weight:700':''}">${qty.toLocaleString()}</td>
+      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right">${unit?'₩'+unit.toLocaleString():'-'}</td>
+      <td style="padding:7px 8px;border:1px solid #ddd;text-align:right;font-weight:600${isZero?';color:#C0392B':''}">${amt?'₩'+amt.toLocaleString():(isZero&&unit?'<span style="font-size:8.5pt;color:#C0392B;font-weight:500">수량 확인</span>':'-')}</td>
     </tr>`;
   }).join('');
 
