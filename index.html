@@ -1202,6 +1202,13 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
 </div></div>
 
+<!-- 🛠 제품DB 데이터 정리 마법사 모달 -->
+<div class="ov" id="mPdCleanup"><div class="modal wide" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column">
+  <div class="mt">🛠 제품DB 데이터 정리</div>
+  <div id="pdCleanupBody" style="overflow-y:auto;flex:1;padding-right:4px"></div>
+  <div class="ma" id="pdCleanupActions"></div>
+</div></div>
+
 <!-- 업로드 이력 모달 -->
 <div class="ov" id="mImportHist"><div class="modal" style="max-width:520px">
   <div class="mt">📂 업로드 이력</div>
@@ -1598,6 +1605,108 @@ function toggleOrdVendorFilter(v){
   }
   renderOrder();
 }
+
+// ════════════════════════════════════════════════════════════
+// 🎯 포커스 자동 복원 시스템
+// 문제: renderXxx() 함수들이 innerHTML을 통째로 교체해서 input/textarea/select가
+//       매번 새로 만들어짐 → 글자 1자 입력할 때마다 포커스가 빠짐
+// 해결: 마지막으로 포커스됐던 element의 id+caret 위치를 기억해뒀다가,
+//       DOM이 다시 그려지면 같은 id의 element를 찾아 포커스+caret 복원
+// ════════════════════════════════════════════════════════════
+(function(){
+  let lastFocus = null; // {id, selStart, selEnd, type}
+  let restoring = false;
+
+  // 사용자가 input/textarea에 포커스할 때마다 상태 저장
+  // (select는 onchange로 즉시 다음 동작이 발생하므로 복원 대상에서 제외)
+  document.addEventListener('focusin', e=>{
+    if(restoring) return;
+    const el = e.target;
+    if(!el) return;
+    const tag = el.tagName;
+    if(tag!=='INPUT' && tag!=='TEXTAREA'){
+      // input/textarea 외 element에 포커스 → 입력 작업이 아님, 복원 대상 아님
+      // (그러나 lastFocus는 유지: 모달 외부 클릭 등으로 잠시 빠진 경우 복원되도록)
+      return;
+    }
+    if(!el.id){
+      // id 없는 input/textarea (동적 row 등) → 사용자가 의도적으로 이 칸에 들어왔으므로
+      // 이전 칸(예: 모달 위쪽 발주번호 input)으로 돌아갈 수 없도록 lastFocus 무효화
+      // → 이 칸이 다시 그려져도 포커스를 어디로도 끌어가지 않음 (화면 점프 방지)
+      lastFocus = null;
+      return;
+    }
+    lastFocus = {
+      id: el.id,
+      selStart: (typeof el.selectionStart==='number') ? el.selectionStart : null,
+      selEnd:   (typeof el.selectionEnd==='number')   ? el.selectionEnd   : null,
+      type: tag
+    };
+  }, true);
+
+  // 사용자가 명시적으로 포커스를 다른 곳으로 옮겼을 때(클릭으로 input을 떠난 경우)
+  // 더 이상 자동 복원하지 않도록 상태 클리어
+  document.addEventListener('mousedown', e=>{
+    if(restoring) return;
+    const el = e.target;
+    if(!el) return;
+    const tag = el.tagName;
+    // input/textarea/select 가 아닌 곳을 클릭한 경우 → 의도적으로 포커스 떠남
+    if(tag!=='INPUT' && tag!=='TEXTAREA' && tag!=='SELECT' && tag!=='LABEL'){
+      lastFocus = null;
+    }
+  }, true);
+
+  // ESC키 누르면 포커스 복원 중단 (모달 닫기 등)
+  document.addEventListener('keydown', e=>{
+    if(e.key==='Escape') lastFocus = null;
+    // Tab 키로 의도적 포커스 이동 시 복원 안 함 (사용자가 다음 필드로 명시적 이동)
+    if(e.key==='Tab') lastFocus = null;
+  });
+
+  // DOM 변화 감지 → 포커스 복원 시도
+  function tryRestore(){
+    if(!lastFocus) return;
+    const el = document.getElementById(lastFocus.id);
+    if(!el) return;
+    if(document.activeElement === el) return; // 이미 포커스됨
+    // 같은 type의 element만 복원 대상 (id 충돌 방지)
+    if(el.tagName !== lastFocus.type) return;
+    // 화면에 보이지 않는 element는 복원 안 함 (display:none / 닫힌 모달 등)
+    if(el.offsetParent === null) return;
+
+    restoring = true;
+    try{
+      // preventScroll: 포커스 복원 시 화면이 자동으로 그 element로 스크롤되는 것을 차단
+      // (id 가진 input이 화면 밖에 있어도 화면이 따라가지 않음 → 갑작스런 점프 방지)
+      el.focus({preventScroll: true});
+      // caret 위치 복원 (text 계열 input/textarea)
+      if(lastFocus.selStart !== null && typeof el.setSelectionRange === 'function'){
+        try{
+          el.setSelectionRange(lastFocus.selStart, lastFocus.selEnd);
+        }catch(_){/* number/date/email 일부 type은 setSelectionRange 미지원 */}
+      }
+    }catch(_){/* 무시 */}
+    restoring = false;
+  }
+
+  // 1) MutationObserver로 DOM 변화 추적
+  const obs = new MutationObserver(()=>{
+    // 디바운싱: 한 번의 render에서 여러 mutation 발생하므로 microtask 끝나고 한 번만
+    if(obs._pending) return;
+    obs._pending = true;
+    queueMicrotask(()=>{
+      obs._pending = false;
+      tryRestore();
+    });
+  });
+  // body가 준비되면 observer 시작
+  function startObs(){
+    if(!document.body){ setTimeout(startObs, 30); return; }
+    obs.observe(document.body, {childList:true, subtree:true});
+  }
+  startObs();
+})();
 
 // data
 let samples=[], orders=[], procItems=[], tasks=[], asItems=[], productDB=[], invoiceHistory=[];
@@ -2808,10 +2917,24 @@ function renderPdImgPrev(){
       <button onclick="pdImgBuf.splice(${i},1);renderPdImgPrev()" style="position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;border:none;border-radius:50%;width:17px;height:17px;font-size:11px;cursor:pointer;line-height:1;padding:0">×</button>
     </div>`).join('');
 }
-function saveProduct(){
+function saveProduct(skipDupCheck){
   const code=gv('pd_code'), name=gv('pd_name');
   if(!name) return showToast('⚠ 품목명을 입력해 주세요','var(--red)');
   const id=gv('pd_id');
+  // ── 신규 등록 시 코드 중복 가드 (수정 모드는 제외) ──
+  if(!id && code && !skipDupCheck){
+    const dup = productDB.find(p=>(p.code||'').trim().toUpperCase()===code.trim().toUpperCase());
+    if(dup){
+      showConfirm(
+        `⚠ 같은 품목코드가 이미 있습니다\n\n` +
+        `코드: ${code}\n기존 품목명: "${dup.name||'(빈값)'}"\n\n` +
+        `사이즈·색상이 다른 신규 제품이라면 코드를 다르게 부여해야 합니다.\n그래도 이 코드로 등록하시겠습니까?`,
+        ()=>{ saveProduct(true); },
+        '코드 중복 확인','⚠'
+      );
+      return;
+    }
+  }
   const newStock=+gv('pd_stock')||0;
   const newSafety=+gv('pd_safetyStock')||0;
   const obj={
@@ -3142,19 +3265,48 @@ function pdDeleteBySource(importId, fileName){
 // ════════════════════════════════
 let _ordDocState={};
 
+// 발주(o) ↔ 거래명세서(v) 매칭 헬퍼
+// 단일 발행: v.ordId, v.ordNo로 매칭
+// 다중 통합 발행: v.ordIds 배열 또는 v.ordNo 콤마 연결 문자열로 매칭
+function invMatchesOrder(v, o){
+  if(!v || !o) return false;
+  // 1) 단일 ordId 직접 매칭 (가장 빠르고 정확)
+  if(v.ordId && v.ordId===o.id) return true;
+  // 2) 다중 통합 발행: ordIds 배열에 포함되는지
+  if(Array.isArray(v.ordIds) && v.ordIds.includes(o.id)) return true;
+  // 3) 발주번호 매칭 (다른 컴퓨터 동기화로 ordId가 깨졌을 수 있음)
+  if(o.no && v.ordNo){
+    // 다중 통합의 경우 콤마로 연결된 발주번호들 분해해서 검사
+    const noList = String(v.ordNo).split(',').map(s=>s.trim()).filter(Boolean);
+    if(noList.includes(o.no)) return true;
+  }
+  return false;
+}
+
 function openOrdDeliveryNote(ordId){ _openOrdDoc(ordId,'delivery'); }
 function openOrdTaxInvoice(ordId){ _openOrdDoc(ordId,'invoice'); }
 
-function _openOrdDoc(ordId,type){
-  const o=orders.find(x=>x.id==ordId);if(!o)return;
-  const rows=(o.rows||[]).map(r=>{
-    const rcvTotal=(r.rcvHistory||[]).reduce((s,h)=>s+(+h.qty||0),0);
-    return{...r,_docQty:rcvTotal>0?rcvTotal:(+r.qty||0)};
+function _openOrdDoc(ordIdOrIds,type){
+  // 단일 ID도 배열로 통일해서 처리
+  const ordIds = Array.isArray(ordIdOrIds) ? ordIdOrIds : [ordIdOrIds];
+  const ordsSel = ordIds.map(id=>orders.find(x=>x.id==id)).filter(Boolean);
+  if(!ordsSel.length) return;
+
+  // 발주별 row 그룹 생성: [{ord, rows:[...]}]
+  const groups = ordsSel.map(o=>{
+    const rows=(o.rows||[]).map(r=>{
+      const rcvTotal=(r.rcvHistory||[]).reduce((s,h)=>s+(+h.qty||0),0);
+      return{...r,_docQty:rcvTotal>0?rcvTotal:(+r.qty||0),_ordId:o.id};
+    });
+    return {ord:o, rows};
   });
-  _ordDocState={ordId,type,rows};
+  const isMulti = ordsSel.length>1;
+  _ordDocState={ordIds, type, groups, isMulti};
+
   const titleMap={delivery:'📋 출하지시서 — 수량 확인',invoice:'🧾 거래명세서 — 수량 확인'};
   const btnMap={delivery:'📋 출하지시서 발행',invoice:'🧾 거래명세서 발행'};
-  document.getElementById('mOrdDocQty_t').textContent=titleMap[type];
+  const titleSuffix = isMulti ? ` (발주 ${ordsSel.length}건 합쳐 발행)` : '';
+  document.getElementById('mOrdDocQty_t').textContent=titleMap[type]+titleSuffix;
   document.getElementById('ordDocQtyConfirmBtn').textContent=btnMap[type];
   renderOrdDocQtyRows();
   openM('mOrdDocQty');
@@ -3162,64 +3314,111 @@ function _openOrdDoc(ordId,type){
 
 function renderOrdDocQtyRows(){
   const el=document.getElementById('ordDocQtyRows');if(!el)return;
-  el.innerHTML=_ordDocState.rows.map((r,i)=>`
-    <div style="display:grid;grid-template-columns:1fr 90px 90px;gap:8px;align-items:center;padding:9px 12px;background:var(--s2);border-radius:6px;border:1px solid var(--bdr)">
-      <div>
-        <div style="font-size:12.5px;font-weight:600;color:var(--t1)">${r.name||''}</div>
-        <div style="font-size:10.5px;color:var(--t3);margin-top:1px">${r.itemCode?r.itemCode+' · ':''}${r.mat||''}${r.plating?' / '+r.plating:''}${r.size?' · '+r.size:''}</div>
-      </div>
-      <div style="font-size:10.5px;color:var(--t3);text-align:center">발주 ${Number(r.qty||0).toLocaleString()}개</div>
-      <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end">
-        <input type="number" value="${r._docQty||0}" min="0"
-          oninput="_ordDocState.rows[${i}]._docQty=Math.max(0,+this.value)"
-          style="width:68px;padding:5px 7px;border:1.5px solid var(--gold-line);border-radius:5px;font-size:13px;text-align:right;font-family:inherit;font-weight:600;background:var(--s1)">
-        <span style="font-size:11px;color:var(--t3)">개</span>
-      </div>
-    </div>`).join('');
+  const {groups, isMulti} = _ordDocState;
+
+  // 다중 모드: 발주별 그룹으로 그리고, 그룹 헤더에 발주번호 표시
+  // 단일 모드: 기존과 동일하게 row만 나열
+  el.innerHTML = groups.map((g,gi)=>{
+    const groupHeader = isMulti
+      ? `<div style="display:flex;align-items:center;gap:8px;margin:${gi===0?'0':'14px'} 0 6px 0;padding:6px 10px;background:var(--gold-bg);border-left:3px solid var(--gold-line);border-radius:4px">
+          <span style="font-family:monospace;font-size:11.5px;font-weight:700;color:var(--gold-lt)">${g.ord.no||'(번호없음)'}</span>
+          <span style="font-size:11px;color:var(--t2)">${g.ord.vendor||''}</span>
+          <span style="font-size:10.5px;color:var(--t3);margin-left:auto">발주일 ${g.ord.date||'—'} · 품목 ${g.rows.length}개</span>
+        </div>`
+      : '';
+    const rowsHtml = g.rows.map((r,ri)=>`
+      <div style="display:grid;grid-template-columns:1fr 90px 90px;gap:8px;align-items:center;padding:9px 12px;background:var(--s2);border-radius:6px;border:1px solid var(--bdr);margin-bottom:4px">
+        <div>
+          <div style="font-size:12.5px;font-weight:600;color:var(--t1)">${r.name||''}</div>
+          <div style="font-size:10.5px;color:var(--t3);margin-top:1px">${r.itemCode?r.itemCode+' · ':''}${r.mat||''}${r.plating?' / '+r.plating:''}${r.size?' · '+r.size:''}</div>
+        </div>
+        <div style="font-size:10.5px;color:var(--t3);text-align:center">발주 ${Number(r.qty||0).toLocaleString()}개</div>
+        <div style="display:flex;align-items:center;gap:4px;justify-content:flex-end">
+          <input type="number" value="${r._docQty||0}" min="0"
+            oninput="_ordDocState.groups[${gi}].rows[${ri}]._docQty=Math.max(0,+this.value)"
+            style="width:68px;padding:5px 7px;border:1.5px solid var(--gold-line);border-radius:5px;font-size:13px;text-align:right;font-family:inherit;font-weight:600;background:var(--s1)">
+          <span style="font-size:11px;color:var(--t3)">개</span>
+        </div>
+      </div>`).join('');
+    return groupHeader + rowsHtml;
+  }).join('');
 }
 
 function confirmOrdDoc(){
-  const {ordId,type,rows}=_ordDocState;
-  const o=orders.find(x=>x.id==ordId);if(!o)return;
-  const activeRows=rows.filter(r=>+r._docQty>0);
-  if(!activeRows.length){showToast('⚠ 출하 수량이 0인 항목만 있습니다','var(--org)');return;}
+  const {ordIds, type, groups, isMulti}=_ordDocState;
+  // 모든 그룹의 row를 평탄화하고 출하수량>0인 것만
+  const allActiveRows = [];
+  groups.forEach(g=>{
+    g.rows.forEach(r=>{
+      if(+r._docQty>0) allActiveRows.push(r);
+    });
+  });
+  if(!allActiveRows.length){showToast('⚠ 출하 수량이 0인 항목만 있습니다','var(--org)');return;}
   closeM('mOrdDocQty');
   const today=toLocalDateStr(new Date());
   const co=company||{name:'이케이아이엔티'};
+
+  // 합쳐진 발주번호/공급받는자/요청출고일 등 결정
+  const allOrders = groups.map(g=>g.ord);
+  const vendor = allOrders[0].vendor || '';
+  const allOrdNos = allOrders.map(o=>o.no||'').filter(Boolean).join(', ');
+  // 요청 출고일은 가장 빠른(가까운) 날짜로
+  const shipDates = allOrders.map(o=>o.ship).filter(Boolean).sort();
+  const shipDate = shipDates[0] || '';
+  // 발주일은 가장 빠른 날짜
+  const orderDates = allOrders.map(o=>o.date).filter(Boolean).sort();
+  const orderDate = orderDates[0] || '';
+  // 담당자: 모든 발주의 담당자(중복 제거)
+  const managers = [...new Set(allOrders.map(o=>o.manager).filter(Boolean))].join(', ');
+  // 메모: 다중일 경우 발주별로 합쳐서 표시 (있는 것만)
+  const memoBlock = isMulti
+    ? allOrders.filter(o=>o.memo).map(o=>`【${o.no||'발주'}】 ${o.memo}`).join('\n')
+    : (allOrders[0].memo || '');
+
   if(type==='delivery'){
-    const rowsHtml=activeRows.map((r,i)=>`<tr>
-      <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${i+1}</td>
-      <td style="padding:7px 8px;border:1px solid #ddd;font-family:monospace;font-size:9pt">${r.itemCode||''}</td>
-      <td style="padding:7px 8px;border:1px solid #ddd">${r.name||''}</td>
-      <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.mat||''}</td>
-      <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.plating||''}</td>
-      <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.size||''}</td>
-      <td style="text-align:right;padding:7px 8px;border:1px solid #ddd;font-weight:700;color:#1a6db5">${Number(r._docQty).toLocaleString()}</td>
-      <td style="padding:7px 8px;border:1px solid #ddd;color:#888;font-size:9pt">${r.note||''}</td>
-    </tr>`).join('');
-    showPrintPreview('📋 출하지시서',`<div style="font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#222">
+    // 출하지시서 — 모든 발주의 row를 한 표에 펼침. row마다 어느 발주에서 왔는지 표시(다중일 때만)
+    const rowsHtml = allActiveRows.map((r,i)=>{
+      const ordNo = isMulti ? (allOrders.find(o=>o.id===r._ordId)?.no || '') : '';
+      return `<tr>
+        <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${i+1}</td>
+        ${isMulti?`<td style="text-align:center;padding:7px 6px;border:1px solid #ddd;font-family:monospace;font-size:9pt;color:#8B6914">${ordNo}</td>`:''}
+        <td style="padding:7px 8px;border:1px solid #ddd;font-family:monospace;font-size:9pt">${r.itemCode||''}</td>
+        <td style="padding:7px 8px;border:1px solid #ddd">${r.name||''}</td>
+        <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.mat||''}</td>
+        <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.plating||''}</td>
+        <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.size||''}</td>
+        <td style="text-align:right;padding:7px 8px;border:1px solid #ddd;font-weight:700;color:#1a6db5">${Number(r._docQty).toLocaleString()}</td>
+        <td style="padding:7px 8px;border:1px solid #ddd;color:#888;font-size:9pt">${r.note||''}</td>
+      </tr>`;
+    }).join('');
+    const titleMain = isMulti ? '출 하 지 시 서' : '출 하 지 시 서';
+    const titleSub = isMulti ? `SHIPPING INSTRUCTION · 발주 ${allOrders.length}건 통합 발행` : 'SHIPPING INSTRUCTION';
+    showPrintPreview('📋 출하지시서'+(isMulti?` — ${vendor} (${allOrders.length}건 통합)`:''),`<div style="font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#222">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #8B6914">
-        <div><div style="font-size:22pt;font-weight:700;color:#8B6914;letter-spacing:2px">출 하 지 시 서</div><div style="font-size:10pt;color:#888;margin-top:4px">SHIPPING INSTRUCTION</div></div>
+        <div><div style="font-size:22pt;font-weight:700;color:#8B6914;letter-spacing:2px">${titleMain}</div><div style="font-size:10pt;color:#888;margin-top:4px">${titleSub}</div></div>
         <div style="text-align:right;font-size:10pt"><div style="font-weight:700;font-size:12pt">${co.name||'이케이아이엔티'}</div>${co.brn?'<div>사업자번호: '+co.brn+'</div>':''}${co.tel?'<div>Tel: '+co.tel+'</div>':''}${co.addr?'<div>'+co.addr+'</div>':''}</div>
       </div>
       <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:10pt">
-        <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">수 신</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:11pt">${o.vendor||''}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">발주번호</td><td style="padding:7px 10px;border:1px solid #ddd;font-family:monospace">${o.no||''}</td></tr>
-        <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">담당자</td><td style="padding:7px 10px;border:1px solid #ddd">${o.manager||''}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">발주일자</td><td style="padding:7px 10px;border:1px solid #ddd">${o.date||''}</td></tr>
-        <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">출고요청일</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;color:#c03030">${o.ship||''}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">발행일자</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700">${today}</td></tr>
+        <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">수 신</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:11pt">${vendor}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">발주번호</td><td style="padding:7px 10px;border:1px solid #ddd;font-family:monospace${isMulti?';font-size:9.5pt':''}">${allOrdNos}</td></tr>
+        <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">담당자</td><td style="padding:7px 10px;border:1px solid #ddd">${managers}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">발주일자</td><td style="padding:7px 10px;border:1px solid #ddd">${orderDate}${isMulti && orderDates.length>1?' 외':''}</td></tr>
+        <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">출고요청일</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;color:#c03030">${shipDate}${isMulti && shipDates.length>1?' (최단)':''}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">발행일자</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700">${today}</td></tr>
       </table>
       <table style="width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:20px">
-        <thead><tr style="background:#8B6914;color:#fff"><th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">품목코드</th><th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:75px">소재</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:65px">규격</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:75px;text-align:right">출하수량</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:80px">비고</th></tr></thead>
+        <thead><tr style="background:#8B6914;color:#fff"><th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th>${isMulti?'<th style="padding:8px 6px;border:1px solid #6B4E0A;width:75px">발주번호</th>':''}<th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">품목코드</th><th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:75px">소재</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:65px">규격</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:75px;text-align:right">출하수량</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:80px">비고</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
-      ${o.memo?'<div style="background:#f9f7f2;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:10pt;color:#555"><b>메모:</b> '+o.memo+'</div>':''}
+      ${memoBlock?'<div style="background:#f9f7f2;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:10pt;color:#555;white-space:pre-line"><b>메모:</b> '+memoBlock+'</div>':''}
     </div>`);
   } else {
+    // 거래명세서 — 행마다 단가/금액 계산
     let totalAmt=0;
-    const rowsHtml=activeRows.map((r,i)=>{
+    const rowsHtml = allActiveRows.map((r,i)=>{
+      const ordNo = isMulti ? (allOrders.find(o=>o.id===r._ordId)?.no || '') : '';
       const unit=+r.unitPrice||0,amt=+r._docQty*unit;
       totalAmt+=amt;
       return`<tr>
         <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${i+1}</td>
+        ${isMulti?`<td style="text-align:center;padding:7px 6px;border:1px solid #ddd;font-family:monospace;font-size:9pt;color:#8B6914">${ordNo}</td>`:''}
         <td style="padding:7px 8px;border:1px solid #ddd;font-family:monospace;font-size:9pt">${r.itemCode||''}</td>
         <td style="padding:7px 8px;border:1px solid #ddd">${r.name||''}</td>
         <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.mat||''}</td>
@@ -3231,49 +3430,72 @@ function confirmOrdDoc(){
       </tr>`;
     }).join('');
     const tax=Math.round(totalAmt*0.1),total=totalAmt+tax;
-    // 로컬 이력 저장
+
+    // 거래명세서 이력 1건 저장 (다중 발주를 합쳐서 한 명세서)
     const invRec={
       id:Date.now(),
       issuedAt:today,
-      vendor:o.vendor||'',
-      ordNo:o.no||'',
-      ordId:o.id,
-      shipDate:o.ship||today,
-      items:activeRows.map(r=>({name:r.name||'',code:r.itemCode||'',qty:+r._docQty,unit:+r.unitPrice||0,amt:(+r._docQty)*(+r.unitPrice||0)})),
-      itemSummary:activeRows.map(r=>r.name+' ×'+r._docQty).join(', '),
+      vendor:vendor,
+      ordNo:allOrdNos,                    // 다중일 경우 콤마 연결
+      ordId:allOrders[0].id,              // 대표 ordId (Notion 연결용 — 첫 번째)
+      ordIds:allOrders.map(o=>o.id),      // 합쳐진 발주 id 전체 (참조용)
+      shipDate:shipDate||today,
+      items:allActiveRows.map(r=>({
+        name:r.name||'',
+        code:r.itemCode||'',
+        qty:+r._docQty,
+        unit:+r.unitPrice||0,
+        amt:(+r._docQty)*(+r.unitPrice||0),
+        mat:r.mat||'',
+        plating:r.plating||'',
+        size:r.size||'',
+        ordNo: isMulti ? (allOrders.find(o=>o.id===r._ordId)?.no || '') : ''
+      })),
+      itemSummary:allActiveRows.map(r=>r.name+' ×'+r._docQty).join(', '),
       supplyAmt:totalAmt,tax,total,
-      status:'발행완료',memo:''
+      status:'발행완료',
+      memo:isMulti?`발주 ${allOrders.length}건 통합 (${allOrdNos})`:'',
+      isBulk:isMulti,
+      bulkCount:allOrders.length
     };
     invoiceHistory.unshift(invRec);
-    // 🧾 거래명세서 발행 = 출고 완료로 간주 → 발주 및 연결 공정 자동 완료 처리
-    if(type==='invoice' && o.status!=='출고완료'){
-      o.status='출고완료';
-      o.completedAt=new Date().toISOString();
-      procItems.filter(p=>p.orderId===o.id).forEach(p=>{
-        p.shipped=true;
-        if(p._notionId) debouncedSync('proc', p, true);
+
+    // 모든 합쳐진 발주를 출고완료 처리
+    if(type==='invoice'){
+      allOrders.forEach(o=>{
+        if(o.status!=='출고완료'){
+          o.status='출고완료';
+          o.completedAt=new Date().toISOString();
+          procItems.filter(p=>p.orderId===o.id).forEach(p=>{
+            p.shipped=true;
+            if(p._notionId) debouncedSync('proc', p, true);
+          });
+          debouncedSync('order', o, true);
+        }
       });
-      debouncedSync('order', o, true);
     }
     save();
-    // Notion 거래명세서 이력 저장 (syncInvoiceToNotion으로 통일)
+
+    // Notion 거래명세서 이력 저장
     if(notionCfg.workerUrl && notionCfg.invDb){
       syncInvoiceToNotion(invRec, false).then(()=>{
         if(invRec._notionId) showToast('✓ Notion에 저장됨','var(--grn)',2000);
       });
     }
-    showPrintPreview('🧾 거래명세서',`<div style="font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#222">
+
+    const titleSub = isMulti ? `TRANSACTION STATEMENT · 발주 ${allOrders.length}건 통합 발행` : 'TRANSACTION STATEMENT';
+    showPrintPreview('🧾 거래명세서'+(isMulti?` — ${vendor} (${allOrders.length}건 통합)`:''),`<div style="font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#222">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #8B6914">
-        <div><div style="font-size:22pt;font-weight:700;color:#8B6914;letter-spacing:2px">거 래 명 세 서</div><div style="font-size:10pt;color:#888;margin-top:4px">TRANSACTION STATEMENT</div></div>
+        <div><div style="font-size:22pt;font-weight:700;color:#8B6914;letter-spacing:2px">거 래 명 세 서</div><div style="font-size:10pt;color:#888;margin-top:4px">${titleSub}</div></div>
         <div style="text-align:right;font-size:10pt"><div style="font-weight:700;font-size:12pt">${co.name||'이케이아이엔티'}</div>${co.ceo?'<div>대표자: '+co.ceo+'</div>':''}${co.brn?'<div>사업자번호: '+co.brn+'</div>':''}${co.tel?'<div>Tel: '+co.tel+'</div>':''}${co.bank?'<div>계좌: '+co.bank+'</div>':''}</div>
       </div>
       <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:10pt">
-        <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">공급받는자</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:11pt">${o.vendor||''}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">발주번호</td><td style="padding:7px 10px;border:1px solid #ddd;font-family:monospace">${o.no||''}</td></tr>
-        <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">담당자</td><td style="padding:7px 10px;border:1px solid #ddd">${o.manager||''}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">출고일자</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700">${o.ship||today}</td></tr>
+        <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">공급받는자</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:11pt">${vendor}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">발주번호</td><td style="padding:7px 10px;border:1px solid #ddd;font-family:monospace${isMulti?';font-size:9.5pt':''}">${allOrdNos}</td></tr>
+        <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">담당자</td><td style="padding:7px 10px;border:1px solid #ddd">${managers}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">출고일자</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700">${shipDate||today}</td></tr>
         <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">발행일자</td><td style="padding:7px 10px;border:1px solid #ddd">${today}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600;color:#c03030">합계금액</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:12pt;color:#c03030">${total?'₩'+total.toLocaleString():'-'}</td></tr>
       </table>
       <table style="width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:16px">
-        <thead><tr style="background:#8B6914;color:#fff"><th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">품목코드</th><th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:70px">소재</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:65px">규격</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:65px;text-align:right">수량</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:80px;text-align:right">단가</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:90px;text-align:right">금액</th></tr></thead>
+        <thead><tr style="background:#8B6914;color:#fff"><th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th>${isMulti?'<th style="padding:8px 6px;border:1px solid #6B4E0A;width:75px">발주번호</th>':''}<th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">품목코드</th><th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:70px">소재</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:65px">규격</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:65px;text-align:right">수량</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:80px;text-align:right">단가</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:90px;text-align:right">금액</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
       <table style="width:300px;margin-left:auto;border-collapse:collapse;font-size:10pt;margin-bottom:20px">
@@ -3281,7 +3503,7 @@ function confirmOrdDoc(){
         <tr><td style="padding:7px 12px;border:1px solid #ddd;background:#f7f3eb;font-weight:600">부가세 (10%)</td><td style="padding:7px 12px;border:1px solid #ddd;text-align:right">${tax?'₩'+tax.toLocaleString():'-'}</td></tr>
         <tr style="background:#8B6914;color:#fff"><td style="padding:9px 12px;border:1px solid #6B4E0A;font-weight:700;font-size:11pt">합 계</td><td style="padding:9px 12px;border:1px solid #6B4E0A;text-align:right;font-weight:700;font-size:11pt">${total?'₩'+total.toLocaleString():'-'}</td></tr>
       </table>
-      ${o.memo?'<div style="background:#f9f7f2;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:10pt;color:#555"><b>메모:</b> '+o.memo+'</div>':''}
+      ${memoBlock?'<div style="background:#f9f7f2;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:10pt;color:#555;white-space:pre-line"><b>메모:</b> '+memoBlock+'</div>':''}
     </div>`);
   }
 }
@@ -3437,17 +3659,33 @@ function renderInvoiceCopyHtml(v){
   // 회사 정보 (현재 설정값)
   var co = (typeof company!=='undefined' && company) || {name:'이케이아이엔티'};
   // 원본 발주서 매칭 (소재/도금/규격/담당자/메모 보강용)
-  var o = null;
-  if(v.ordId) o = orders.find(function(x){return x.id==v.ordId;});
-  if(!o && v.ordNo) o = orders.find(function(x){return x.no===v.ordNo;});
-  // 발주서의 행을 코드/이름 기준으로 매칭해서 부가정보 가져옴
+  // 단일/다중 통합 모두 대응 — ordIds 배열 우선
+  var matchedOrders = [];
+  if(Array.isArray(v.ordIds) && v.ordIds.length){
+    matchedOrders = v.ordIds.map(function(id){return orders.find(function(x){return x.id==id;});}).filter(Boolean);
+  } else if(v.ordId){
+    var o1 = orders.find(function(x){return x.id==v.ordId;});
+    if(o1) matchedOrders.push(o1);
+  }
+  if(!matchedOrders.length && v.ordNo){
+    // 콤마 분해해서 모든 발주 매칭
+    var noList = String(v.ordNo).split(',').map(function(s){return s.trim();}).filter(Boolean);
+    matchedOrders = noList.map(function(no){return orders.find(function(x){return x.no===no;});}).filter(Boolean);
+  }
+  var o = matchedOrders[0] || null;  // 대표 발주 (담당자/메모 등에 사용)
+  // 발주서의 행을 코드/이름 기준으로 매칭해서 부가정보 가져옴 — 모든 매칭된 발주에서 검색
   function lookupOrdRow(item){
-    if(!o || !o.rows) return null;
-    return o.rows.find(function(r){
-      if(item.code && r.itemCode && r.itemCode===item.code) return true;
-      if(item.name && r.name && r.name===item.name) return true;
-      return false;
-    });
+    for(var oi=0; oi<matchedOrders.length; oi++){
+      var ord = matchedOrders[oi];
+      if(!ord || !ord.rows) continue;
+      var found = ord.rows.find(function(r){
+        if(item.code && r.itemCode && r.itemCode===item.code) return true;
+        if(item.name && r.name && r.name===item.name) return true;
+        return false;
+      });
+      if(found) return found;
+    }
+    return null;
   }
   // 품목 행 HTML
   var items = v.items || [];
@@ -3605,10 +3843,27 @@ function openInvDetail(id){
   if(rb){
     rb.onclick=function(){
       closeM('mInvDetail');
-      // 발주 매칭: ordId(로컬) 우선 → 발주번호(ordNo)로 폴백 (다른 컴퓨터 동기화 대응)
+      // 발주 매칭: ordIds(다중 통합) 우선 → ordId(단일) → ordNo(폴백)
+      if(Array.isArray(v.ordIds) && v.ordIds.length>1){
+        // 다중 통합 명세서 재발행 — 모든 발주가 여전히 존재하는지 확인
+        var matched = v.ordIds.map(function(id){return orders.find(function(x){return x.id==id;});}).filter(Boolean);
+        if(matched.length === v.ordIds.length){
+          _openOrdDoc(v.ordIds, 'invoice');
+          return;
+        }
+        showToast('⚠ 일부 원본 발주서를 찾을 수 없어 재발행할 수 없습니다 ('+matched.length+'/'+v.ordIds.length+'건만 존재)','var(--org)',4000);
+        return;
+      }
       var o=null;
       if(v.ordId) o=orders.find(function(x){return x.id==v.ordId;});
-      if(!o && v.ordNo) o=orders.find(function(x){return x.no===v.ordNo;});
+      if(!o && v.ordNo){
+        // 콤마 분해해서 첫 매칭
+        var noList = String(v.ordNo).split(',').map(function(s){return s.trim();}).filter(Boolean);
+        for(var i=0;i<noList.length;i++){
+          o = orders.find(function(x){return x.no===noList[i];});
+          if(o) break;
+        }
+      }
       if(o){ openOrdTaxInvoice(o.id); return; }
       showToast('원본 발주서를 찾을 수 없습니다','var(--org)');
     };
@@ -4246,6 +4501,11 @@ async function nDelete(pageId){
 async function archiveAllMatchingInvoices(ordNo, vendor, issuedAt){
   if(!notionCfg.workerUrl||!notionCfg.invDb) return {archived:0, errors:0};
   let archived=0, errors=0;
+  // 다중 통합 발주번호("VT0325, VT0407")는 콤마로 분해해서 각각 매칭
+  const isBulk = ordNo && String(ordNo).indexOf(',')>=0;
+  const ordNoList = isBulk
+    ? String(ordNo).split(',').map(s=>s.trim()).filter(Boolean)
+    : (ordNo ? [ordNo] : []);
   try{
     const rows=await nQueryAll(notionCfg.invDb);
     const matches=rows.filter(r=>{
@@ -4253,8 +4513,16 @@ async function archiveAllMatchingInvoices(ordNo, vendor, issuedAt){
       const rowOrdNo=np.text(p['발주번호']);
       const rowVendor=np.title(p['고객사']);
       const rowIssued=np.date(p['발행일자']);
-      // ordNo가 있으면 ordNo 우선 매칭, 없으면 vendor+issuedAt
-      if(ordNo && rowOrdNo) return rowOrdNo===ordNo;
+      // ordNo가 있으면 ordNo 우선 매칭 — 다중 통합도 부분 일치(콤마 분해)로 처리
+      if(ordNoList.length && rowOrdNo){
+        // 정확 일치 또는 분해된 발주번호 중 하나라도 포함되는지
+        if(rowOrdNo===ordNo) return true;
+        if(ordNoList.some(no=>rowOrdNo===no)) return true;
+        // rowOrdNo도 콤마 연결일 수 있음 (Notion에 다중으로 저장된 페이지)
+        const rowList = String(rowOrdNo).split(',').map(s=>s.trim()).filter(Boolean);
+        if(ordNoList.some(no=>rowList.includes(no))) return true;
+        return false;
+      }
       return rowVendor===vendor && rowIssued===issuedAt;
     });
     for(const r of matches){
@@ -4741,6 +5009,40 @@ async function pullFromNotion(opts){
       return false;
     }
 
+    // ── 발주 rows 전용 병합: row 단위로 매칭해서 rcvHistory와 img를 똑똑하게 합침 ──
+    // 노션에 push되는 rows는 rcvHistory를 포함하므로, 다른 컴퓨터에서 입고 추가한 게 노션에 있을 수 있음
+    // 단순 length 비교는 맞지 않음 — row 개수는 입고 추가해도 안 변하기 때문
+    // 정책:
+    //   - row 매칭: itemCode 우선, 없으면 name으로
+    //   - rcvHistory: 더 긴 쪽 채택 (= 더 많은 입고가 기록된 쪽이 더 최신)
+    //   - img: 로컬 우선 (base64 이미지는 노션에 저장 안 되므로)
+    //   - 기타 필드(qty, plating, mat 등): 노션 우선 (사용자가 마지막으로 편집한 값)
+    function mergeOrderRows(prevRows, remoteRows){
+      if(!Array.isArray(prevRows) || !prevRows.length) return remoteRows || [];
+      if(!Array.isArray(remoteRows) || !remoteRows.length) return prevRows;
+      const keyFn = r => (r.itemCode||'').trim() ? 'c:'+(r.itemCode||'').trim() : 'n:'+(r.name||'').trim();
+      const prevByKey = {};
+      prevRows.forEach((r,i)=>{
+        const k = keyFn(r);
+        if(k && k!=='c:' && k!=='n:') prevByKey[k] = {row:r, idx:i};
+      });
+      // remote 기반으로 합침 (remote가 마스터 — 단 로컬에서 보존할 필드만 가져옴)
+      const merged = remoteRows.map(rr=>{
+        const k = keyFn(rr);
+        const hit = (k && k!=='c:' && k!=='n:') ? prevByKey[k] : null;
+        if(!hit) return rr; // 로컬에 매칭되는 row 없음 → 노션 그대로
+        const pr = hit.row;
+        // rcvHistory: 더 긴 쪽 채택 (단순하지만 안전)
+        const prevHist = Array.isArray(pr.rcvHistory) ? pr.rcvHistory : [];
+        const remoteHist = Array.isArray(rr.rcvHistory) ? rr.rcvHistory : [];
+        const rcvHistory = prevHist.length > remoteHist.length ? prevHist : remoteHist;
+        // img: 로컬 우선 (base64는 노션에 없을 수 있음)
+        const img = pr.img !== undefined && pr.img !== '' ? pr.img : rr.img;
+        return {...rr, rcvHistory, img};
+      });
+      return merged;
+    }
+
     // "Notion 마스터" 정책 — 로컬의 이미지/파일 필드는 id로 매칭해서 보존
     // (이미지/첨부파일은 Notion에 저장되지 않기 때문)
     function mergeLocalAttachments(remote, local, idFields){
@@ -4788,6 +5090,13 @@ async function pullFromNotion(opts){
         if(!prev) return {id:Date.now()+Math.random(), ...r};
         const out={...r, id:prev.id};
         idFields.forEach(f=>{
+          // rows 필드는 row 단위 병합 — 단순 length 비교는 row 안 rcvHistory 변화를 못 잡아냄
+          if(f === 'rows'){
+            if(Array.isArray(prev.rows) || Array.isArray(out.rows)){
+              out.rows = mergeOrderRows(prev.rows, out.rows);
+            }
+            return;
+          }
           // 배열 필드: 로컬이 더 많은 항목을 가지고 있으면 로컬 유지 (데이터 유실 방지)
           const isArr = Array.isArray(prev[f]) || Array.isArray(out[f]);
           if(isArr){
@@ -4857,6 +5166,13 @@ async function pullFromNotion(opts){
           const prev=hit.x;
           const merged={...r, id:prev.id};
           idFields.forEach(f=>{
+            // rows 필드는 row 단위 병합 (rcvHistory 동기화 안 되는 버그 방지)
+            if(f === 'rows'){
+              if(Array.isArray(prev.rows) || Array.isArray(merged.rows)){
+                merged.rows = mergeOrderRows(prev.rows, merged.rows);
+              }
+              return;
+            }
             const isArr=Array.isArray(prev[f])||Array.isArray(merged[f]);
             if(isArr){
               const prevArr=Array.isArray(prev[f])?prev[f]:[];
@@ -6417,6 +6733,383 @@ async function deduplicateAllData(){
     showToast(`✓ ${totalRemoved}건 중복 제거됨 (${detail}${notionMsg})`,'var(--grn)',5000);
   }
   renderTab();updateBadges();
+}
+
+// ════════════════════════════════════════════════════════════
+// 🛠 제품DB 데이터 정리 마법사
+// 1) 백업 다운로드 → 2) 컬럼 swap → 3) 회계 더미 삭제 → 4) 코드 중복 정리
+// ════════════════════════════════════════════════════════════
+
+// 한글 포함 여부 (가-힣)
+function _pdHasKorean(s){ return /[\uAC00-\uD7AF\u3131-\u318E]/.test(String(s||'')); }
+
+// 회계 더미 판정: 짧은 숫자 코드(00001~99999, 11111 등) + 비제품 이름
+const PD_DUMMY_NAMES = ['AS건','as건','샘플','시료','택배','부자재','원부자재','운송비','배송비','수수료','반품','폐기','시제품'];
+function _pdIsAccountingDummy(p){
+  const code = String(p.code||'').trim();
+  const name = String(p.name||'').trim();
+  // 코드가 5자리 이하 순수 숫자(또는 11111 같은 패턴)이고 이름이 더미 리스트에 있으면 더미
+  if(/^\d{1,6}$/.test(code) && PD_DUMMY_NAMES.some(d=>name===d || name.includes(d))) return true;
+  // 코드 자체가 "부자재" 같은 더미 키워드인 경우 (한글 코드)
+  if(PD_DUMMY_NAMES.includes(code)) return true;
+  return false;
+}
+
+// 정리 마법사 진입점
+function openPdCleanup(){
+  _pdCleanupState = { step:1, swapList:[], dummyList:[], dupGroups:[] };
+  openM('mPdCleanup');
+  renderPdCleanupStep();
+}
+
+let _pdCleanupState = null;
+
+function closePdCleanup(){
+  closeM('mPdCleanup');
+  _pdCleanupState = null;
+}
+
+// ── 단계별 화면 렌더 ──
+function renderPdCleanupStep(){
+  const body = document.getElementById('pdCleanupBody');
+  const acts = document.getElementById('pdCleanupActions');
+  if(!_pdCleanupState){ closePdCleanup(); return; }
+  const st = _pdCleanupState;
+
+  // 진행 표시
+  const stepBar = `
+    <div style="display:flex;gap:6px;margin-bottom:14px;font-size:11px">
+      ${[
+        {n:1,t:'백업'},{n:2,t:'컬럼 Swap'},{n:3,t:'회계 더미'},{n:4,t:'코드 중복'},{n:5,t:'완료'}
+      ].map(s=>{
+        const on = st.step===s.n;
+        const done = st.step>s.n;
+        return `<div style="flex:1;padding:6px 8px;border-radius:5px;text-align:center;background:${on?'var(--gold-bg)':done?'var(--grn-bg)':'var(--s2)'};border:1px solid ${on?'var(--gold-line)':done?'rgba(46,139,44,.3)':'var(--bdr)'};color:${on?'var(--gold-lt)':done?'var(--grn)':'var(--t3)'};font-weight:${on?700:500}">${done?'✓ ':''}${s.n}. ${s.t}</div>`;
+      }).join('')}
+    </div>`;
+
+  if(st.step===1){
+    // ── 1단계: 백업 ──
+    body.innerHTML = stepBar + `
+      <div style="background:var(--blu-bg);border:1px solid rgba(26,109,181,.3);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:13px;font-weight:700;color:var(--blu);margin-bottom:6px">📥 1단계 — 백업 다운로드</div>
+        <div style="font-size:12px;color:var(--t1);line-height:1.6">
+          이 정리 작업은 <b>로컬 productDB와 연결된 Notion 페이지를 모두 변경/삭제</b>합니다.<br>
+          만약을 위해 현재 productDB 전체를 JSON 파일로 다운받아 두세요. 문제 발생 시 이 파일로 복원할 수 있습니다.
+        </div>
+        <div style="font-size:11px;color:var(--t3);margin-top:8px">현재 제품 수: <b style="color:var(--t1)">${productDB.length.toLocaleString()}개</b></div>
+      </div>
+      <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:10px 14px;font-size:11.5px;color:var(--t2);line-height:1.6">
+        <b>이 마법사가 수행할 작업:</b><br>
+        ① 품목코드에 한글이 있는 항목 → 코드/이름 swap<br>
+        ② 회계용 더미(AS건·샘플·택배·부자재 등) → 로컬 + Notion에서 삭제<br>
+        ③ 같은 품목코드를 가진 중복 페이지 → 가장 오래된 1개만 남기고 Notion에서 삭제
+      </div>`;
+    acts.innerHTML = `
+      <button class="btn bgo" onclick="closePdCleanup()">취소</button>
+      <button class="btn bp-blu" onclick="pdCleanupDownloadBackup()">📥 백업 다운로드</button>
+      <button class="btn bp" onclick="_pdCleanupState.step=2;renderPdCleanupStep()">백업했음 — 다음 ▶</button>`;
+    return;
+  }
+
+  if(st.step===2){
+    // ── 2단계: 컬럼 swap 미리보기 ──
+    st.swapList = productDB.filter(p=>_pdHasKorean(p.code)).map(p=>({
+      id: p.id,
+      _notionId: p._notionId,
+      oldCode: p.code,
+      oldName: p.name,
+      newCode: p.name,
+      newName: p.code
+    }));
+    body.innerHTML = stepBar + `
+      <div style="background:var(--org-bg);border:1px solid rgba(168,90,16,.3);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:13px;font-weight:700;color:var(--org);margin-bottom:4px">🔁 2단계 — 컬럼 Swap (코드↔이름 교환)</div>
+        <div style="font-size:11.5px;color:var(--t2);line-height:1.5">품목코드에 한글이 들어간 항목 <b>${st.swapList.length}개</b>를 찾았습니다.<br>코드와 이름을 바꿔서 정상화합니다.</div>
+      </div>
+      ${st.swapList.length===0
+        ? `<div style="padding:30px;text-align:center;color:var(--t3);font-size:12.5px">✓ swap이 필요한 항목이 없습니다.</div>`
+        : `<div style="overflow-y:auto;max-height:380px;border:1px solid var(--bdr);border-radius:6px">
+          <table style="width:100%;font-size:11.5px;border-collapse:collapse">
+            <thead style="position:sticky;top:0;background:var(--s2);z-index:1">
+              <tr>
+                <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--bdr);font-weight:600">현재 코드 (잘못됨)</th>
+                <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--bdr);font-weight:600">현재 이름</th>
+                <th style="padding:7px 10px;text-align:center;border-bottom:1px solid var(--bdr);width:30px"></th>
+                <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--bdr);font-weight:600;color:var(--grn)">→ 새 코드</th>
+                <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--bdr);font-weight:600;color:var(--grn)">→ 새 이름</th>
+              </tr>
+            </thead>
+            <tbody>${st.swapList.slice(0,200).map(s=>`<tr>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);color:var(--red);font-weight:500">${s.oldCode||'(빈값)'}</td>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);color:var(--t2);font-family:monospace">${s.oldName||'(빈값)'}</td>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);text-align:center;color:var(--t3)">→</td>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);font-family:monospace;color:var(--t1)">${s.newCode||'(빈값)'}</td>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);color:var(--t1)">${s.newName||'(빈값)'}</td>
+            </tr>`).join('')}
+            ${st.swapList.length>200?`<tr><td colspan="5" style="padding:6px;text-align:center;color:var(--t3)">...외 ${(st.swapList.length-200).toLocaleString()}건</td></tr>`:''}
+            </tbody>
+          </table>
+        </div>`}`;
+    acts.innerHTML = `
+      <button class="btn bgo" onclick="_pdCleanupState.step=1;renderPdCleanupStep()">◀ 이전</button>
+      ${st.swapList.length>0
+        ? `<button class="btn bp" onclick="pdCleanupExecuteSwap()">${st.swapList.length}건 Swap 실행 ▶</button>`
+        : `<button class="btn bp" onclick="_pdCleanupState.step=3;renderPdCleanupStep()">건너뛰기 ▶</button>`}`;
+    return;
+  }
+
+  if(st.step===3){
+    // ── 3단계: 회계 더미 삭제 미리보기 ──
+    st.dummyList = productDB.filter(_pdIsAccountingDummy);
+    body.innerHTML = stepBar + `
+      <div style="background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:4px">🗑 3단계 — 회계용 더미 삭제</div>
+        <div style="font-size:11.5px;color:var(--t2);line-height:1.5">실제 OEM 제품이 아닌 회계 처리용 항목 <b>${st.dummyList.length}개</b>를 찾았습니다.<br>로컬과 Notion에서 모두 삭제됩니다.</div>
+      </div>
+      ${st.dummyList.length===0
+        ? `<div style="padding:30px;text-align:center;color:var(--t3);font-size:12.5px">✓ 삭제할 회계 더미가 없습니다.</div>`
+        : `<div style="overflow-y:auto;max-height:380px;border:1px solid var(--bdr);border-radius:6px">
+          <table style="width:100%;font-size:11.5px;border-collapse:collapse">
+            <thead style="position:sticky;top:0;background:var(--s2);z-index:1">
+              <tr>
+                <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--bdr);font-weight:600">품목코드</th>
+                <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--bdr);font-weight:600">품목명</th>
+                <th style="padding:7px 10px;text-align:center;border-bottom:1px solid var(--bdr);font-weight:600">Notion 동기화</th>
+              </tr>
+            </thead>
+            <tbody>${st.dummyList.map(p=>`<tr>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);font-family:monospace;color:var(--t3)">${p.code||'(빈값)'}</td>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);color:var(--t1)">${p.name||'(빈값)'}</td>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);text-align:center;font-size:10.5px">${p._notionId?'<span style="color:var(--blu)">○ 연결됨</span>':'<span style="color:var(--t3)">— 로컬만</span>'}</td>
+            </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`}`;
+    acts.innerHTML = `
+      <button class="btn bgo" onclick="_pdCleanupState.step=2;renderPdCleanupStep()">◀ 이전</button>
+      ${st.dummyList.length>0
+        ? `<button class="btn bp-red" onclick="pdCleanupExecuteDummyDelete()">${st.dummyList.length}건 삭제 실행 ▶</button>`
+        : `<button class="btn bp" onclick="_pdCleanupState.step=4;renderPdCleanupStep()">건너뛰기 ▶</button>`}`;
+    return;
+  }
+
+  if(st.step===4){
+    // ── 4단계: 코드 중복 그룹 ──
+    const buckets = {};
+    productDB.forEach(p=>{
+      const k = String(p.code||'').trim();
+      if(!k) return;
+      if(!buckets[k]) buckets[k] = [];
+      buckets[k].push(p);
+    });
+    st.dupGroups = Object.entries(buckets)
+      .filter(([k,arr])=>arr.length>1)
+      .map(([code,arr])=>{
+        const sorted = [...arr].sort((a,b)=>{
+          // 우선순위: _notionId 있는 것 → createdAt 빠른 것
+          if(a._notionId && !b._notionId) return -1;
+          if(!a._notionId && b._notionId) return 1;
+          const ta = new Date(a.createdAt||0).getTime();
+          const tb = new Date(b.createdAt||0).getTime();
+          return ta-tb;
+        });
+        const keep = sorted[0];
+        const remove = sorted.slice(1);
+        // 이름이 모두 같으면 'identical', 다르면 'diff' (사용자에게 경고)
+        const allSameName = arr.every(x=>x.name===keep.name);
+        return { code, keep, remove, allSameName };
+      });
+
+    const safeGroups = st.dupGroups.filter(g=>g.allSameName);
+    const riskGroups = st.dupGroups.filter(g=>!g.allSameName);
+    const totalRemove = st.dupGroups.reduce((s,g)=>s+g.remove.length,0);
+    const safeRemove = safeGroups.reduce((s,g)=>s+g.remove.length,0);
+
+    body.innerHTML = stepBar + `
+      <div style="background:var(--prp-bg);border:1px solid rgba(80,64,160,.3);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:13px;font-weight:700;color:var(--prp);margin-bottom:4px">🧹 4단계 — 코드 중복 정리</div>
+        <div style="font-size:11.5px;color:var(--t2);line-height:1.5">같은 품목코드를 가진 중복 그룹 <b>${st.dupGroups.length}개</b> · 삭제 대상 <b>${totalRemove}건</b></div>
+      </div>
+
+      ${riskGroups.length>0?`
+      <div style="background:var(--red-bg);border:1px solid rgba(192,48,48,.4);border-radius:6px;padding:10px 14px;margin-bottom:12px">
+        <div style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:6px">⚠ 주의: 같은 코드인데 이름이 다른 그룹 (${riskGroups.length}개)</div>
+        <div style="font-size:11px;color:var(--t2);line-height:1.5">아래 그룹들은 사이즈·색상 차이로 코드를 잘못 재사용한 경우일 수 있습니다. <b>이름이 다른 그룹은 자동 정리에서 제외됩니다</b> — 수동으로 코드를 다르게 부여하세요.</div>
+        <div style="margin-top:8px;max-height:160px;overflow-y:auto;background:var(--s1);border-radius:4px;padding:6px">
+          ${riskGroups.map(g=>`
+            <div style="padding:5px 8px;border-bottom:1px dashed var(--bdr);font-size:11px">
+              <span style="font-family:monospace;color:var(--red);font-weight:600">${g.code}</span> →
+              ${[g.keep,...g.remove].map(p=>`<span style="margin-left:6px;color:var(--t2)">"${p.name||'(빈)'}"</span>`).join(' /')}
+            </div>`).join('')}
+        </div>
+      </div>`:''}
+
+      ${safeGroups.length>0?`
+      <div style="font-size:12px;font-weight:600;color:var(--t1);margin-bottom:6px">자동 정리 대상 (이름 동일): ${safeGroups.length}개 그룹 · 삭제 ${safeRemove}건</div>
+      <div style="overflow-y:auto;max-height:280px;border:1px solid var(--bdr);border-radius:6px">
+        <table style="width:100%;font-size:11.5px;border-collapse:collapse">
+          <thead style="position:sticky;top:0;background:var(--s2);z-index:1">
+            <tr>
+              <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--bdr);font-weight:600">코드</th>
+              <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--bdr);font-weight:600">이름</th>
+              <th style="padding:7px 10px;text-align:center;border-bottom:1px solid var(--bdr);font-weight:600">중복 수</th>
+              <th style="padding:7px 10px;text-align:center;border-bottom:1px solid var(--bdr);font-weight:600;color:var(--red)">Notion 삭제</th>
+            </tr>
+          </thead>
+          <tbody>${safeGroups.slice(0,300).map(g=>{
+            const notionToDel = g.remove.filter(p=>p._notionId).length;
+            return `<tr>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);font-family:monospace;color:var(--t3)">${g.code}</td>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);color:var(--t1)">${g.keep.name||'(빈)'}</td>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);text-align:center">${1+g.remove.length}개 → 1개</td>
+              <td style="padding:5px 10px;border-bottom:1px solid var(--bdr);text-align:center;color:${notionToDel?'var(--red)':'var(--t3)'};font-weight:${notionToDel?600:400}">${notionToDel?notionToDel+'건':'—'}</td>
+            </tr>`;}).join('')}
+          ${safeGroups.length>300?`<tr><td colspan="4" style="padding:6px;text-align:center;color:var(--t3)">...외 ${(safeGroups.length-300).toLocaleString()}그룹</td></tr>`:''}
+          </tbody>
+        </table>
+      </div>`:`<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">✓ 자동 정리 대상이 없습니다.</div>`}`;
+    acts.innerHTML = `
+      <button class="btn bgo" onclick="_pdCleanupState.step=3;renderPdCleanupStep()">◀ 이전</button>
+      ${safeGroups.length>0
+        ? `<button class="btn bp-red" onclick="pdCleanupExecuteDedup()">${safeRemove}건 중복 삭제 실행 ▶</button>`
+        : `<button class="btn bp" onclick="_pdCleanupState.step=5;renderPdCleanupStep()">건너뛰기 ▶</button>`}`;
+    return;
+  }
+
+  if(st.step===5){
+    // ── 5단계: 완료 ──
+    body.innerHTML = stepBar + `
+      <div style="text-align:center;padding:30px 14px">
+        <div style="font-size:48px;margin-bottom:10px">✅</div>
+        <div style="font-size:16px;font-weight:700;color:var(--grn);margin-bottom:8px">정리 완료</div>
+        <div style="font-size:12px;color:var(--t2);line-height:1.7">
+          모든 단계가 완료되었습니다.<br>
+          현재 제품 수: <b>${productDB.length.toLocaleString()}개</b>
+        </div>
+        <div style="background:var(--blu-bg);border:1px solid rgba(26,109,181,.3);border-radius:6px;padding:10px 14px;margin-top:16px;font-size:11.5px;color:var(--t2);text-align:left;line-height:1.6">
+          <b style="color:var(--blu)">💡 권장 사항</b><br>
+          • 화면을 새로고침해서 결과를 확인하세요<br>
+          • 노션 DB를 직접 열어 변경 사항이 반영됐는지 확인하세요<br>
+          • 향후 같은 코드로 신규 등록 시 경고가 뜨도록 가드가 추가되었습니다
+        </div>
+      </div>`;
+    acts.innerHTML = `<button class="btn bp" onclick="closePdCleanup();renderTab()">닫기</button>`;
+    return;
+  }
+}
+
+// ── 백업 다운로드 ──
+function pdCleanupDownloadBackup(){
+  const data = {
+    exportedAt: new Date().toISOString(),
+    appVersion: 'EK OEM v3 backup',
+    productDB: productDB
+  };
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+  a.href = url;
+  a.download = `productDB_backup_${ts}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`✓ 백업 다운로드 완료 (${productDB.length}개)`,'var(--grn)',3000);
+}
+
+// ── 컬럼 swap 실행 ──
+async function pdCleanupExecuteSwap(){
+  const st = _pdCleanupState;
+  if(!st || !st.swapList.length) return;
+  const total = st.swapList.length;
+  showToast(`🔄 ${total}건 swap 진행 중...`,'var(--org)',2500);
+
+  let nUpdated=0, nFailed=0;
+  for(let i=0;i<st.swapList.length;i++){
+    const item = st.swapList[i];
+    const idx = productDB.findIndex(x=>x.id===item.id);
+    if(idx<0) continue;
+    // 로컬 swap
+    productDB[idx].code = item.newCode;
+    productDB[idx].name = item.newName;
+    productDB[idx].lastModified = toLocalDateStr(new Date());
+    // 노션 동기화 (이미 _notionId 있으면 update)
+    if(productDB[idx]._notionId && notionCfg.workerUrl && notionCfg.productDb){
+      try{
+        await syncProductToNotion(productDB[idx], true);
+        nUpdated++;
+      }catch(e){
+        console.warn('swap sync 실패:', item.oldCode, e);
+        nFailed++;
+      }
+      await new Promise(r=>setTimeout(r,120)); // 노션 rate limit 보호
+    }
+  }
+  save();
+  showToast(`✓ Swap 완료 — 로컬 ${total}건 / Notion ${nUpdated}건 업데이트${nFailed?` · 실패 ${nFailed}건`:''}`,'var(--grn)',4500);
+  st.step = 3;
+  renderPdCleanupStep();
+}
+
+// ── 회계 더미 삭제 실행 ──
+async function pdCleanupExecuteDummyDelete(){
+  const st = _pdCleanupState;
+  if(!st || !st.dummyList.length) return;
+  const total = st.dummyList.length;
+  showToast(`🔄 ${total}건 더미 삭제 중...`,'var(--red)',2500);
+
+  let nDeleted=0, nFailed=0;
+  for(const p of st.dummyList){
+    if(p._notionId && notionCfg.workerUrl){
+      try{
+        await nDelete(p._notionId);
+        nDeleted++;
+      }catch(e){
+        console.warn('dummy nDelete 실패:', p.code, e);
+        nFailed++;
+      }
+      await new Promise(r=>setTimeout(r,120));
+    }
+  }
+  // 로컬에서 제거
+  const ids = new Set(st.dummyList.map(x=>x.id));
+  productDB = productDB.filter(p=>!ids.has(p.id));
+  save();
+  showToast(`✓ 더미 삭제 완료 — 로컬 ${total}건 / Notion ${nDeleted}건${nFailed?` · 실패 ${nFailed}건`:''}`,'var(--grn)',4500);
+  st.step = 4;
+  renderPdCleanupStep();
+}
+
+// ── 코드 중복 정리 실행 (이름 동일 그룹만) ──
+async function pdCleanupExecuteDedup(){
+  const st = _pdCleanupState;
+  if(!st || !st.dupGroups.length) return;
+  const safeGroups = st.dupGroups.filter(g=>g.allSameName);
+  const removeList = safeGroups.flatMap(g=>g.remove);
+  if(!removeList.length){ st.step=5; renderPdCleanupStep(); return; }
+
+  showToast(`🔄 ${removeList.length}건 중복 정리 중...`,'var(--prp)',2500);
+
+  let nDeleted=0, nFailed=0;
+  for(const p of removeList){
+    if(p._notionId && notionCfg.workerUrl){
+      try{
+        await nDelete(p._notionId);
+        nDeleted++;
+      }catch(e){
+        console.warn('dedup nDelete 실패:', p.code, e);
+        nFailed++;
+      }
+      await new Promise(r=>setTimeout(r,120));
+    }
+  }
+  // 로컬에서 제거
+  const ids = new Set(removeList.map(x=>x.id));
+  productDB = productDB.filter(p=>!ids.has(p.id));
+  save();
+  showToast(`✓ 중복 정리 완료 — 로컬 ${removeList.length}건 / Notion ${nDeleted}건${nFailed?` · 실패 ${nFailed}건`:''}`,'var(--grn)',4500);
+  st.step = 5;
+  renderPdCleanupStep();
 }
 
 function resetAllData(){
@@ -8811,7 +9504,7 @@ function switchTab(tab,el){
   const acts=document.getElementById('subActs');
   acts.innerHTML='';
   if(tab==='as') acts.innerHTML='<button class="btn bp bs" onclick="openASModal(null)">+ AS 접수</button>';
-  else if(tab==='products') acts.innerHTML='<button class="btn bp bs" onclick="openProductModal(null)">+ 제품 등록</button><button class="btn bgo bs" onclick="openProductImport()">📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button>';
+  else if(tab==='products') acts.innerHTML='<button class="btn bp bs" onclick="openProductModal(null)">+ 제품 등록</button><button class="btn bgo bs" onclick="openProductImport()">📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button><button class="btn bgo bs" onclick="openPdCleanup()" title="컬럼 swap·회계 더미·중복 페이지 일괄 정리" style="border-color:rgba(168,90,16,.4);color:var(--org)">🛠 데이터 정리</button>';
   else if(tab==='sample') acts.innerHTML='<button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 샘플 등록</button>';
   else if(tab==='order') acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button>';
   else if(tab==='schedule') acts.innerHTML='<button class="btn bp bs" onclick="openTaskModal()">+ 업무 추가</button>';
@@ -9784,13 +10477,20 @@ function openBulkInvoice(){
   const ids=[...window._smpChecked];
   const selected=ids.map(id=>samples.find(s=>s.id==id)).filter(Boolean);
   if(!selected.length)return;
+  // ── 고객사(담당자) 검증: 다른 고객사가 섞여 있으면 차단 ──
+  // 샘플은 s.manager가 고객사 식별자(이니셜) — 발주의 vendor와 같은 역할
+  const managers = [...new Set(selected.map(s=>(s.manager||'').trim()).filter(Boolean))];
+  if(managers.length>1){
+    showToast(`⚠ 다른 고객사가 섞여 있습니다 (${managers.join(', ')}) — 같은 고객사끼리만 합쳐 발행할 수 있습니다`,'var(--red)',5000);
+    return;
+  }
   // Use first sample's manager as client, open invoice modal with all items
   const clientName=selected.map(s=>s.manager).filter(Boolean)[0]||'—';
   openM('mInv');
   document.getElementById('inv_issuerName').textContent=company.name||'(미설정)';
   document.getElementById('inv_issuerSub').textContent=[company.brn,company.tel,company.bank].filter(Boolean).join(' · ')||'';
   document.getElementById('inv_clientName').textContent=clientName;
-  document.getElementById('inv_clientSub').textContent=selected.length+'개 샘플 항목';
+  document.getElementById('inv_clientSub').textContent=selected.length+'개 샘플 항목'+(selected.length>1?` (합쳐 발행)`:'');
   const invNo='INV-'+new Date().getFullYear()+'-'+String(Date.now()).slice(-4);
   sv('inv_no',invNo);sv('inv_date',todayStr);sv('inv_note','');
   // Clear and pre-fill rows
@@ -10797,26 +11497,42 @@ function bulkOpenOrdDeliveryNote(){
     showToast('⚠ 발주서를 선택해 주세요','var(--org)');
     return;
   }
-  if(window._ordChecked.size>1){
-    showToast('⚠ 출하지시서는 1건씩 발행됩니다 — 1건만 선택해 주세요','var(--org)',3000);
+  const ids=[...window._ordChecked];
+  // 고객사 검증: 다른 고객사가 섞여 있으면 차단
+  const ordsSel = ids.map(id=>orders.find(o=>o.id==id)).filter(Boolean);
+  if(!ordsSel.length){ showToast('⚠ 선택된 발주서를 찾을 수 없습니다','var(--red)'); return; }
+  const vendors = [...new Set(ordsSel.map(o=>(o.vendor||'').trim()).filter(Boolean))];
+  if(vendors.length>1){
+    showToast(`⚠ 다른 고객사가 섞여 있습니다 (${vendors.join(', ')}) — 같은 고객사끼리만 합쳐 발행할 수 있습니다`,'var(--red)',5000);
     return;
   }
-  const ordId=[...window._ordChecked][0];
-  openOrdDeliveryNote(ordId);
+  if(ids.length===1){
+    openOrdDeliveryNote(ids[0]);
+  } else {
+    _openOrdDoc(ids,'delivery');
+  }
 }
 
-// ── 선택한 발주서로 거래명세서 발행 (1건씩) ──
+// ── 선택한 발주서로 거래명세서 발행 (1건 또는 같은 고객사 다건 합쳐 발행) ──
 function bulkOpenOrdTaxInvoice(){
   if(!window._ordChecked||!window._ordChecked.size){
     showToast('⚠ 발주서를 선택해 주세요','var(--org)');
     return;
   }
-  if(window._ordChecked.size>1){
-    showToast('⚠ 거래명세서는 1건씩 발행됩니다 — 1건만 선택해 주세요','var(--org)',3000);
+  const ids=[...window._ordChecked];
+  // 고객사 검증
+  const ordsSel = ids.map(id=>orders.find(o=>o.id==id)).filter(Boolean);
+  if(!ordsSel.length){ showToast('⚠ 선택된 발주서를 찾을 수 없습니다','var(--red)'); return; }
+  const vendors = [...new Set(ordsSel.map(o=>(o.vendor||'').trim()).filter(Boolean))];
+  if(vendors.length>1){
+    showToast(`⚠ 다른 고객사가 섞여 있습니다 (${vendors.join(', ')}) — 같은 고객사끼리만 합쳐 발행할 수 있습니다`,'var(--red)',5000);
     return;
   }
-  const ordId=[...window._ordChecked][0];
-  openOrdTaxInvoice(ordId);
+  if(ids.length===1){
+    openOrdTaxInvoice(ids[0]);
+  } else {
+    _openOrdDoc(ids,'invoice');
+  }
 }
 
 // ── 발주서 엑셀 빌더 — 모든 품목 한 시트에 펼침 (한국어/영문 헤더) ──
@@ -13618,14 +14334,23 @@ function vMonthly(c){
   // 발주서 금액: 발행된 거래명세서 있으면 그 합계, 없으면 품목 단가×수량
   function ordAmt(o){
     // 1) 이 발주서에 대해 발행된 거래명세서가 있으면 그 공급가액 합계 사용
-    //    매칭: ordId(로컬 ID) 우선 → 실패 시 발주번호로 폴백
-    //    (다른 컴퓨터에서 동기화하면 ordId가 깨질 수 있어 발주번호로도 매칭)
-    const invs=invoiceHistory.filter(v=>
-      (v.ordId && v.ordId===o.id) ||
-      (o.no && v.ordNo && v.ordNo===o.no)
-    );
+    //    매칭: invMatchesOrder 헬퍼 (단일/다중 통합 모두 대응)
+    const invs=invoiceHistory.filter(v=>invMatchesOrder(v, o));
     if(invs.length){
-      return invs.reduce((s,v)=>s+(+v.supplyAmt||0),0);
+      return invs.reduce((s,v)=>{
+        // 다중 통합 명세서인 경우: items 중 이 발주에 속하는 것만 안분 계산
+        if(Array.isArray(v.ordIds) && v.ordIds.length>1 && Array.isArray(v.items) && v.items.length){
+          const myItems = v.items.filter(it=>it.ordNo===o.no);
+          if(myItems.length){
+            // 안분된 공급가액 = 내 발주의 amt 합계
+            return s + myItems.reduce((s2,it)=>s2 + (+it.amt||0), 0);
+          }
+          // items에 ordNo 없는 옛날 데이터 → 발주 수로 균등 분배
+          return s + Math.round((+v.supplyAmt||0) / v.ordIds.length);
+        }
+        // 단일 명세서: 그대로
+        return s + (+v.supplyAmt||0);
+      }, 0);
     }
     // 2) 없으면 품목 단가×수량 합계
     return(o.rows||[]).reduce((s,r)=>s+(+(r.unitPrice||0))*(+(r.qty||1)),0);
@@ -13645,12 +14370,9 @@ function vMonthly(c){
     return st!=='출고완료' && st!=='취소';
   });
   // 거래명세서 미발행 발주만 골라서 "예상 금액" 합산
-  // 매칭: ordId(로컬) 우선, 발주번호(ordNo)로 폴백 — 다른 컴퓨터 동기화 대응
+  // 매칭: invMatchesOrder 헬퍼 사용 (단일/다중 통합 모두 대응)
   const pendingOrdersNotInvoiced=pendingOrders.filter(o=>
-    !invoiceHistory.some(v=>
-      (v.ordId && v.ordId===o.id) ||
-      (o.no && v.ordNo && v.ordNo===o.no)
-    )
+    !invoiceHistory.some(v=>invMatchesOrder(v, o))
   );
   const pendingOrdAmt=pendingOrdersNotInvoiced.reduce((s,o)=>s+ordAmt(o),0);
   const pendingOrdCnt=pendingOrders.length;
@@ -13673,11 +14395,8 @@ function vMonthly(c){
   // "확정매출" = 출고완료된 발주 또는 거래명세서 발행된 발주의 금액
   // "예상매출" = 진행중(출고완료·취소 제외, 명세서 미발행) 발주의 금액
   // 6개월 누적은 발주일 기준으로 필터
-  // 헬퍼: 해당 발주에 거래명세서가 발행되었는지 (ordId 우선, ordNo 폴백)
-  const hasInvoiceFor = (o) => invoiceHistory.some(v=>
-    (v.ordId && v.ordId===o.id) ||
-    (o.no && v.ordNo && v.ordNo===o.no)
-  );
+  // 헬퍼: 해당 발주에 거래명세서가 발행되었는지 (단일/다중 통합 모두 대응)
+  const hasInvoiceFor = (o) => invoiceHistory.some(v=>invMatchesOrder(v, o));
   const clientOrdMap={};
   orders.forEach(o=>{
     const key=(o.vendor||'기타').trim();
