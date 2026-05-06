@@ -1209,6 +1209,27 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="ma" id="pdCleanupActions"></div>
 </div></div>
 
+<!-- 🩺 고객사 이니셜 진단 모달 -->
+<div class="ov" id="mInitDiag"><div class="modal wide" style="max-width:780px;max-height:90vh;display:flex;flex-direction:column">
+  <div class="mt">🩺 고객사 이니셜 진단</div>
+  <div id="initDiagBody" style="overflow-y:auto;flex:1;padding-right:4px"></div>
+  <div class="ma" id="initDiagActions"></div>
+</div></div>
+
+<!-- 🩺 영업관리 동기화 진단 모달 -->
+<div class="ov" id="mSalesSyncDiag"><div class="modal wide" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column">
+  <div class="mt">🩺 영업관리 Notion 동기화 진단</div>
+  <div id="salesSyncDiagBody" style="overflow-y:auto;flex:1;padding-right:4px"></div>
+  <div class="ma" id="salesSyncDiagActions"></div>
+</div></div>
+
+<!-- 🩺 제품DB 동기화 진단 모달 -->
+<div class="ov" id="mPdSyncDiag"><div class="modal wide" style="max-width:760px;max-height:90vh;display:flex;flex-direction:column">
+  <div class="mt">🩺 제품DB Notion 동기화 진단</div>
+  <div id="pdSyncDiagBody" style="overflow-y:auto;flex:1;padding-right:4px"></div>
+  <div class="ma" id="pdSyncDiagActions"></div>
+</div></div>
+
 <!-- 업로드 이력 모달 -->
 <div class="ov" id="mImportHist"><div class="modal" style="max-width:520px">
   <div class="mt">📂 업로드 이력</div>
@@ -2612,6 +2633,8 @@ function renderAS(){
 // ════════════════════════════════
 let pdImgBuf=[], _importRows=[];
 let pdSearch='', pdFilterType='전체', pdFilterMat='전체', pdPage=1, pdLowOnly=false;
+// 최종수정일 필터: 프리셋 ('all' / '7d' / '30d' / '90d' / '180d' / '365d' / 'over1y') 또는 커스텀 ('custom')
+let pdFilterMod='all', pdFilterModFrom='', pdFilterModTo='';
 let pdSortKey=null, pdSortDir='asc'; // 정렬 상태: key=null이면 기본순서, dir='asc'(오름)/'desc'(내림)
 const PD_PAGE_SIZE=20;
 
@@ -2648,6 +2671,47 @@ function renderProducts(){
       return safety>0&&stock<=safety;
     });
   }
+  // ── 최종수정일 필터 ──
+  if(pdFilterMod !== 'all'){
+    const today=new Date(); today.setHours(0,0,0,0);
+    const ymdToDate=s=>{ if(!s) return null; const d=new Date(s); return isNaN(d.getTime())?null:d; };
+    if(pdFilterMod === 'custom'){
+      // 커스텀 범위: from~to (둘 중 하나만 있어도 적용)
+      const fromD = ymdToDate(pdFilterModFrom);
+      const toD   = ymdToDate(pdFilterModTo);
+      list = list.filter(p=>{
+        const d = ymdToDate(p.lastModified);
+        if(!d) return false; // lastModified 없는 항목은 커스텀 범위 적용 시 제외
+        if(fromD && d < fromD) return false;
+        if(toD){
+          // to는 그날 23:59까지 포함
+          const toEnd = new Date(toD); toEnd.setHours(23,59,59,999);
+          if(d > toEnd) return false;
+        }
+        return true;
+      });
+    } else {
+      // 프리셋: 일수 기반
+      const presetDays = {'7d':7,'30d':30,'90d':90,'180d':180,'365d':365};
+      if(pdFilterMod === 'over1y'){
+        // 1년 이전 (lastModified 없는 항목도 포함 — "오래된" 의미)
+        const cutoff = new Date(today); cutoff.setDate(cutoff.getDate()-365);
+        list = list.filter(p=>{
+          const d = ymdToDate(p.lastModified);
+          if(!d) return true; // 수정일 없는 항목 = 가장 오래된 것으로 간주
+          return d < cutoff;
+        });
+      } else if(presetDays[pdFilterMod]){
+        const days = presetDays[pdFilterMod];
+        const cutoff = new Date(today); cutoff.setDate(cutoff.getDate()-days);
+        list = list.filter(p=>{
+          const d = ymdToDate(p.lastModified);
+          if(!d) return false; // 수정일 없으면 "최근 N일" 필터에는 안 들어감
+          return d >= cutoff;
+        });
+      }
+    }
+  }
 
   // ── 헤더 클릭 정렬 ──
   if(pdSortKey){
@@ -2680,9 +2744,18 @@ function renderProducts(){
     <div class="kpi" style="cursor:${lowStock.length?'pointer':'default'};border-color:${lowStock.length?'rgba(192,48,48,.4)':'var(--bdr)'};background:${lowStock.length?'rgba(192,48,48,.04)':''}" ${lowStock.length?'onclick="pdShowLowStock()"':''}><div class="kpi-l" style="${lowStock.length?'color:var(--red)':''}">재고 부족</div><div class="kpi-v" style="${lowStock.length?'color:var(--red)':''}">${lowStock.length}<span class="kpi-d">개</span></div></div>
   </div>`;
 
+  const modPresets=[
+    {key:'all',label:'전체'},
+    {key:'7d',label:'1주일'},
+    {key:'30d',label:'1개월'},
+    {key:'90d',label:'3개월'},
+    {key:'180d',label:'6개월'},
+    {key:'365d',label:'1년'},
+    {key:'over1y',label:'1년 이상 미수정'},
+  ];
   const filters=`
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 14px;background:var(--s2);border-radius:var(--r);border:1px solid var(--bdr)">
-    <input class="search-box" placeholder="품목코드, 품목명 검색..." value="${pdSearch}" oninput="pdSearch=this.value;pdPage=1;renderProducts()" style="width:200px">
+    <input id="pdSearchBox" class="search-box" placeholder="품목코드, 품목명 검색..." value="${pdSearch}" oninput="pdSearch=this.value;pdPage=1;renderProducts()" style="width:200px">
     <div style="display:flex;gap:4px;flex-wrap:wrap">
       ${types.map(t=>`<button onclick="pdFilterType='${t}';pdPage=1;renderProducts()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdFilterType===t?'var(--gold)':'var(--bdr)'};background:${pdFilterType===t?'var(--gold-bg)':'var(--s1)'};color:${pdFilterType===t?'var(--gold-lt)':'var(--t2)'};cursor:pointer;font-family:inherit">${t}</button>`).join('')}
     </div>
@@ -2690,6 +2763,20 @@ function renderProducts(){
       ${mats.map(m=>`<button onclick="pdFilterMat='${m}';pdPage=1;renderProducts()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdFilterMat===m?'var(--blu)':'var(--bdr)'};background:${pdFilterMat===m?'var(--blu-bg)':'var(--s1)'};color:${pdFilterMat===m?'var(--blu)':'var(--t2)'};cursor:pointer;font-family:inherit">${m}</button>`).join('')}
     </div>
     <button onclick="pdShowLowStock()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdLowOnly?'var(--red)':'var(--bdr)'};background:${pdLowOnly?'rgba(192,48,48,.1)':'var(--s1)'};color:${pdLowOnly?'var(--red)':'var(--t2)'};cursor:pointer;font-family:inherit;margin-left:auto;font-weight:600">${pdLowOnly?'✓ ':''}⚠ 재고부족만</button>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:8px 14px;margin-top:6px;background:var(--s2);border-radius:var(--r);border:1px solid var(--bdr)">
+    <span style="font-size:11.5px;color:var(--t3);font-weight:600">📅 최종수정일</span>
+    <div style="display:flex;gap:4px;flex-wrap:wrap">
+      ${modPresets.map(p=>`<button onclick="pdFilterMod='${p.key}';pdPage=1;renderProducts()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdFilterMod===p.key?'var(--gold)':'var(--bdr)'};background:${pdFilterMod===p.key?'var(--gold-bg)':'var(--s1)'};color:${pdFilterMod===p.key?'var(--gold-lt)':'var(--t2)'};cursor:pointer;font-family:inherit;font-weight:${pdFilterMod===p.key?'700':'500'}">${p.label}</button>`).join('')}
+      <button onclick="pdFilterMod='custom';pdPage=1;renderProducts()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdFilterMod==='custom'?'var(--gold)':'var(--bdr)'};background:${pdFilterMod==='custom'?'var(--gold-bg)':'var(--s1)'};color:${pdFilterMod==='custom'?'var(--gold-lt)':'var(--t2)'};cursor:pointer;font-family:inherit;font-weight:${pdFilterMod==='custom'?'700':'500'}">기간 직접 지정</button>
+    </div>
+    ${pdFilterMod==='custom' ? `
+      <div style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--t2)">
+        <input id="pdFilterModFrom" type="date" value="${pdFilterModFrom}" oninput="pdFilterModFrom=this.value;pdPage=1;renderProducts()" style="padding:3px 6px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;font-family:inherit">
+        <span>~</span>
+        <input id="pdFilterModTo" type="date" value="${pdFilterModTo}" oninput="pdFilterModTo=this.value;pdPage=1;renderProducts()" style="padding:3px 6px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;font-family:inherit">
+      </div>` : ''}
+    ${pdFilterMod !== 'all' ? `<span style="font-size:10.5px;color:var(--gold-lt);margin-left:auto;font-weight:600">${list.length.toLocaleString()}개 일치</span>` : ''}
   </div>`;
 
   // 페이지네이션
@@ -3584,7 +3671,7 @@ function renderInvoiceHistory(){
   h+='<select class="fs" onchange="setInvVendor(this.value)" style="width:160px"><option value="">전체 고객사</option>';
   vendors.forEach(function(v){ h+='<option value="'+v+'"'+(invFilter.vendor===v?' selected':'')+'>'+v+'</option>'; });
   h+='</select>';
-  h+='<input class="search-box" placeholder="고객사 검색..." value="'+(invFilter.vendor||'')+'" oninput="setInvVendor(this.value)" style="width:130px">';
+  h+='<input id="invSearchBox" class="search-box" placeholder="고객사 검색..." value="'+(invFilter.vendor||'')+'" oninput="setInvVendor(this.value)" style="width:130px">';
   h+='<div style="display:flex;gap:4px">';
   statuses.forEach(function(s){
     var on=(st===s||(!st&&s==='전체'));
@@ -4370,6 +4457,7 @@ function saveNotionSettings(){
     productDb:document.getElementById('notion_product_db')?.value.trim()||notionCfg.productDb,
     inqDb:   document.getElementById('notion_inq_db')?.value.trim()||notionCfg.inqDb,
     qtDb:    document.getElementById('notion_qt_db')?.value.trim()||notionCfg.qtDb,
+    ndDb:    notionCfg.ndDb, // 신규 디자인 제안 (UI 노출 안 함, 기본값 유지)
   };
   try{ localStorage.setItem(NOTION_CFG_KEY, JSON.stringify(notionCfg)); }catch(e){}
   closeM('mNotion'); updateNotionNavLabel();
@@ -4882,6 +4970,36 @@ function mapNotionInquiry(row){
     files:     parseFiles(np.text(p['파일JSON'])),
   };
 }
+
+// Notion file 속성(file/external 혼합) → 로컬 {name, url, type} 배열로 변환
+function notionFilesToLocal(prop){
+  if(!prop || !Array.isArray(prop.files)) return [];
+  return prop.files.map(f=>{
+    const url = f.type==='external' ? (f.external?.url||'') : (f.file?.url||'');
+    return { name: f.name||'file', url, type: '' };
+  }).filter(f=>f.url);
+}
+
+// 신규 디자인 제안 (노션 → 로컬 매퍼)
+// 스키마: 디자인명(title), 고객사(text), 카테고리(select), 상태(select),
+//        제안일(date), 메모(text), 이미지(file), 첨부파일(file), 로컬ID(text)
+function mapNotionNewDesign(row){
+  const p=row.properties||{};
+  return{
+    _notionId:  row.id,
+    title:      np.title(p['디자인명']),
+    vendor:     np.text(p['고객사']),
+    category:   np.select(p['카테고리'])||'',
+    status:     np.select(p['상태'])||'기획',
+    proposedAt: np.date(p['제안일']),
+    note:       np.text(p['메모']),
+    imgs:       notionFilesToLocal(p['이미지']),
+    files:      notionFilesToLocal(p['첨부파일']),
+    // 로컬ID는 역참조용 (노션에 저장된 원래 로컬 id를 복원하면
+    // 같은 항목이 새 페이지로 다시 생성되는 일을 막을 수 있음)
+    _origLocalId: np.text(p['로컬ID']),
+  };
+}
 function mapNotionQuote(row){
   const p=row.properties||{};
   const parseJson=(s,fallback)=>{ try{ const v=JSON.parse(s||(fallback||'[]')); return v; }catch(e){ return Array.isArray(fallback)?fallback:[]; } };
@@ -4985,8 +5103,8 @@ async function pullFromNotion(opts){
       console.log(`[pull] 모드: ${useIncremental?'증분 (since 기준)':'풀 (전체)'}`);
     }
 
-    // 9개 DB를 병렬 쿼리 (증분 모드면 since 이후만 받음)
-    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows,qtRows]=await Promise.all([
+    // 12개 DB를 병렬 쿼리 (증분 모드면 since 이후만 받음)
+    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows,qtRows,ndRows]=await Promise.all([
       notionCfg.smpDb   ? nQueryAll(notionCfg.smpDb,    sinceFor(notionCfg.smpDb))    : Promise.resolve([]),
       notionCfg.ordDb   ? nQueryAll(notionCfg.ordDb,    sinceFor(notionCfg.ordDb))    : Promise.resolve([]),
       notionCfg.procDb  ? nQueryAll(notionCfg.procDb,   sinceFor(notionCfg.procDb))   : Promise.resolve([]),
@@ -4998,6 +5116,7 @@ async function pullFromNotion(opts){
       notionCfg.invDb   ? nQueryAll(notionCfg.invDb,    sinceFor(notionCfg.invDb))    : Promise.resolve([]),
       notionCfg.inqDb   ? nQueryAll(notionCfg.inqDb,    sinceFor(notionCfg.inqDb))    : Promise.resolve([]),
       notionCfg.qtDb    ? nQueryAll(notionCfg.qtDb,     sinceFor(notionCfg.qtDb))     : Promise.resolve([]),
+      notionCfg.ndDb    ? nQueryAll(notionCfg.ndDb,     sinceFor(notionCfg.ndDb))     : Promise.resolve([]),
     ]);
 
     // pull 도중 회로차단기가 열린 경우 → Worker가 응답 실패 상태
@@ -5059,7 +5178,12 @@ async function pullFromNotion(opts){
         }
         if(item.name && item.reqDate) return 'smp:'+item.name+'_'+item.reqDate;
         if(item.initials) return 'cli:'+item.initials;
-        if(item.title && item.date) return 'as:'+item.title+'_'+item.date;
+        // 신규 디자인 제안: title + vendor + proposedAt — AS와 구분(AS는 client 필드)
+        if(item.title && item.proposedAt !== undefined && item.client === undefined){
+          return 'nd:'+item.title+'_'+(item.vendor||'')+'_'+(item.proposedAt||'');
+        }
+        // AS: title + date + client (필수 client 검사로 newDesigns와 명확히 구분)
+        if(item.title && item.date && item.client !== undefined) return 'as:'+item.title+'_'+item.date+'_'+(item.client||'');
         if(item.cont && item.date) return 'task:'+item.cont+'_'+item.date+'_'+(item.ap||''); // 업무일지
         if(item.vendor && item.receivedAt && item.content!==undefined){ // 고객사 문의
           return 'inq:'+item.vendor+'_'+item.receivedAt+'_'+(String(item.content||'').slice(0,40));
@@ -5235,6 +5359,7 @@ async function pullFromNotion(opts){
     invoiceHistory= mergeRows(invRows,  invoiceHistory, mapNotionInvoice,   ['items','ordId'], '청구이력', notionCfg.invDb);
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','inqId','ordId'], '견적',     notionCfg.qtDb);
+    newDesigns    = mergeRows(ndRows,   newDesigns,     mapNotionNewDesign, ['imgs','files'], '신규제안', notionCfg.ndDb);
 
     // 풀 모드를 성공적으로 마쳤다면 마지막 풀 동기화 시각 기록
     if(!useIncremental){
@@ -6134,7 +6259,7 @@ async function syncInvoiceToNotion(inv, update){
 
 // ── Sales data (declared early to avoid TDZ) ──
 let clients=[], proposals=[], projects=[];
-let _salesInited=false, _salesSubTab='inquiry';
+let _salesInited=false, _salesSubTab='inquiry', _salesAutoSyncTried=false;
 const SL_K={cli:'ek_v9_cli',prop:'ek_v9_prop',prj:'ek_v9_prj',inq:'ek_inquiries',nd:'ek_newdesigns',qt:'ek_quotes'};
 function slSave(){try{
   localStorage.setItem(SL_K.cli,JSON.stringify(clients));
@@ -7294,7 +7419,7 @@ function openM(id){document.getElementById(id)?.classList.add('open');}
 
 // 편집용 모달들 — 바깥 클릭이나 ESC로 실수로 닫히지 않게 보호
 // (저장/취소 버튼을 통해서만 닫혀야 하는 모달들)
-const PROTECTED_MODALS=['mSmp','mOrd','mCl','mProp','mProc','mTask','mProduct','mComp','mInv','mPrintPreview','mConfirm','mNotion','mDataMgr','mItemSearch','mVendorSearch','mClientImport','mProductImport','mOrdDocQty','mInvDetail','mImportHist','mFilePrev','mQuote','mQtToSmp'];
+const PROTECTED_MODALS=['mSmp','mOrd','mCl','mProp','mProc','mTask','mProduct','mComp','mInv','mPrintPreview','mConfirm','mNotion','mDataMgr','mItemSearch','mVendorSearch','mClientImport','mProductImport','mOrdDocQty','mInvDetail','mImportHist','mFilePrev','mQuote','mQtToSmp','mPdCleanup','mInitDiag','mSalesSyncDiag','mPdSyncDiag'];
 document.addEventListener('DOMContentLoaded',()=>{
   PROTECTED_MODALS.forEach(id=>{
     const ov=document.getElementById(id);
@@ -9504,11 +9629,11 @@ function switchTab(tab,el){
   const acts=document.getElementById('subActs');
   acts.innerHTML='';
   if(tab==='as') acts.innerHTML='<button class="btn bp bs" onclick="openASModal(null)">+ AS 접수</button>';
-  else if(tab==='products') acts.innerHTML='<button class="btn bp bs" onclick="openProductModal(null)">+ 제품 등록</button><button class="btn bgo bs" onclick="openProductImport()">📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button><button class="btn bgo bs" onclick="openPdCleanup()" title="컬럼 swap·회계 더미·중복 페이지 일괄 정리" style="border-color:rgba(168,90,16,.4);color:var(--org)">🛠 데이터 정리</button>';
+  else if(tab==='products') acts.innerHTML='<button class="btn bp bs" onclick="openProductModal(null)">+ 제품 등록</button><button class="btn bgo bs" onclick="openProductImport()">📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button><button class="btn bgo bs" onclick="openPdSyncDiag()" title="노션 vs 로컬 제품 수 비교 + 누락분 자동 보충" style="border-color:rgba(168,90,16,.4);color:var(--org)">🩺 동기화 진단</button><button class="btn bgo bs" onclick="openPdCleanup()" title="컬럼 swap·회계 더미·중복 페이지 일괄 정리" style="border-color:rgba(168,90,16,.4);color:var(--org)">🛠 데이터 정리</button>';
   else if(tab==='sample') acts.innerHTML='<button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 샘플 등록</button>';
-  else if(tab==='order') acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button>';
+  else if(tab==='order') acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button><button class="btn bgo bs" onclick="openInitDiag()" title="고객사 이니셜 표시 상태 확인 — 동기화 / 매칭 / 이니셜 등록 점검" style="border-color:rgba(168,90,16,.4);color:var(--org)">🩺 이니셜 진단</button>';
   else if(tab==='schedule') acts.innerHTML='<button class="btn bp bs" onclick="openTaskModal()">+ 업무 추가</button>';
-  else if(tab==='sales') acts.innerHTML='<button class="btn bp bs" onclick="openClModal(null)">+ 고객사 등록</button><button class="btn bgo bs" onclick="openPropModal(null)">+ 영업 등록</button><button class="btn bgo bs" onclick="openClientImport()">📥 고객사 엑셀 업로드</button>';
+  else if(tab==='sales') acts.innerHTML='<button class="btn bp bs" onclick="openClModal(null)">+ 고객사 등록</button><button class="btn bgo bs" onclick="openPropModal(null)">+ 영업 등록</button><button class="btn bgo bs" onclick="openClientImport()">📥 고객사 엑셀 업로드</button><button class="btn bgo bs" onclick="openSalesSyncDiag()" title="영업관리 5개 영역의 Notion 동기화 상태 점검 + 강제 동기화" style="border-color:rgba(168,90,16,.4);color:var(--org)">🩺 동기화 진단</button>';
   renderTab();updateBadges();
   // 탭 전환 시 silent 동기화 (마지막 동기화 후 30초 이상 지났을 때만)
   if(notionCfg.workerUrl && Date.now()-_lastSyncAt > 30000){
@@ -10011,7 +10136,7 @@ function renderSample(){
           title="필터 패널 ${smpAdvFilter.panelOpen?'접기':'펼치기'}">
           🔽 필터${smpAdvActiveCount()?`<span style="background:var(--gold);color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:2px">${smpAdvActiveCount()}</span>`:''}
         </button>
-        <input class="search-box" placeholder="검색..." value="${smpSearch}" oninput="smpSearch=this.value;renderSample()">
+        <input id="smpSearchBox" class="search-box" placeholder="검색..." value="${smpSearch}" oninput="smpSearch=this.value;renderSample()">
       </div>
     </div>
     ${(()=>{
@@ -11753,7 +11878,7 @@ function renderOrder(){
           title="필터 패널 ${ordAdvFilter.panelOpen?'접기':'펼치기'}">
           🔽 필터${ordAdvActiveCount()?`<span style="background:var(--gold);color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:2px">${ordAdvActiveCount()}</span>`:''}
         </button>
-        <input class="search-box" placeholder="업체명, 품목 검색..." value="${ordSearch}" oninput="ordSearch=this.value;renderOrder()">
+        <input id="ordSearchBox" class="search-box" placeholder="업체명, 품목 검색..." value="${ordSearch}" oninput="ordSearch=this.value;renderOrder()">
       </div>
     </div>
     ${(()=>{
@@ -14022,6 +14147,19 @@ function renderSalesTab(){
   if(!_salesInited){ _salesInited=true; slLoad(); }
   const sm=document.getElementById('salesModalArea');
   if(sm) sm.style.display='block';
+
+  // ── 데이터 0건 자동 진단 ──
+  // 영업관리 탭 진입했는데 5개 영역 데이터가 모두 0건이면, Notion 연결되어 있으면
+  // 자동으로 한 번 동기화 트리거 (사용자가 빈 화면 보고 당황하는 케이스 방지)
+  const totalSalesData = clients.length + inquiries.length + quotes.length + newDesigns.length + proposals.length;
+  if(totalSalesData === 0 && notionCfg.workerUrl && !_isSyncing && !_salesAutoSyncTried){
+    _salesAutoSyncTried = true;
+    showToast('영업관리 데이터를 동기화하는 중...','var(--blu)',2000);
+    pullFromNotion({silent:false}).then(ok=>{
+      // 끝나면 화면 다시 그리기 (현재 탭이 sales면 자동 재렌더)
+      if(typeof renderTab==='function') try{ renderTab(); }catch(e){}
+    }).catch(e=>console.warn('auto sales sync 실패:',e));
+  }
 
   const c=document.getElementById('content');
   c.innerHTML=`
@@ -16470,7 +16608,7 @@ async function saveNd(){
   showToast('✓ 제안 저장됨','var(--grn)');
   renderSalesSubTab();
   // Notion 동기화
-  if(saved && notionCfg.enabled){
+  if(saved && notionCfg.workerUrl && notionCfg.ndDb){
     setTimeout(()=>syncNewDesignToNotion(saved).catch(e=>console.warn('Notion 동기화 실패:',e)), 100);
   }
 }
@@ -16480,7 +16618,7 @@ function deleteNd(id){
   if(!p) return;
   showConfirm(`"${p.title||'제안'}" 항목을 삭제합니다.`, ()=>{
     // Notion 먼저 삭제
-    if(p._notionId && notionCfg.enabled){
+    if(p._notionId && notionCfg.workerUrl){
       deleteNewDesignFromNotion(p).catch(e=>console.warn(e));
     }
     newDesigns = newDesigns.filter(x=>x.id!=id);
@@ -16656,22 +16794,518 @@ function vendorInitHtml(vendorName, small){
   // 1) 고객사 DB 등록된 업체면 해당 이니셜/색상 사용 (관대한 매칭)
   const cl=findClientByVendor(name);
   if(cl) return clInitHtml(cl, small);
-  // 2) 등록 안 됨 → 영문 이니셜 추출 시도 (한글 깜빡임 방지)
-  //    이름에 영문/숫자가 있으면 그것만 모아 첫 2글자 사용. 없으면 빈 배지(─)로 둠.
-  //    → clients가 노션에서 로드된 후 재렌더링 시 진짜 이니셜로 채워지므로,
-  //      한글 폴백이 잠깐 보이고 영문으로 바뀌는 깜빡임을 방지함.
-  const nm=name.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
-  const ascii=nm.replace(/[^A-Za-z0-9]/g,'');
+  // 2) 등록 안 됨 → 이니셜 폴백
+  //    우선순위:
+  //      a. 영문 2자+ → 영문 두 글자 (예: "BNW Co" → "BN")
+  //      b. 한글 있음 → 회사 접두사("주식회사", "㈜" 등) 제거 후 한글 두 글자
+  //         (예: "주식회사제이스바이브" → "제이", "(주)포에리" → "포에")
+  //      c. 영문 1자만 → 그 한 글자 + ·
+  //      d. 아무것도 없음 → ─
+  const stripped=name.replace(/^\(.*?\)/,'').replace(/주식회사|㈜|\(주\)|\(유\)|유한회사/g,'').trim();
+  const ascii=stripped.replace(/[^A-Za-z0-9]/g,'');
   let init='';
   if(ascii.length>=2){
     init=ascii.slice(0,2).toUpperCase();
-  } else if(ascii.length===1){
-    init=ascii.toUpperCase()+'·';
   } else {
-    init='─'; // 한글 전용 이름 — clients 로드 전까지는 중립 표시
+    // 한글(또는 다른 비-ASCII) 추출
+    const korean=stripped.replace(/[A-Za-z0-9\s]/g,'').trim();
+    if(korean.length>=2){
+      init=korean.slice(0,2);
+    } else if(korean.length===1){
+      init=korean;
+    } else if(ascii.length===1){
+      init=ascii.toUpperCase()+'·';
+    } else {
+      init='─';
+    }
   }
   const sz=small?'cl-init cl-init-sm':'cl-init';
-  return`<span class="${sz}" style="background:${strToColor(name)}" title="${name}">${init}</span>`;
+  return`<span class="${sz}" style="background:${strToColor(name)}" title="${name} (고객사 DB 미등록)">${init}</span>`;
+}
+
+// ════════════════════════════════════════════════════════════
+// 🩺 고객사 이니셜 진단 도구
+// 발주에 쓰인 업체명이 고객사 DB와 매칭되는지, 이니셜이 등록되어 있는지 확인
+// + 동기화 트리거 + 미등록 업체 신규 등록 유도
+// ════════════════════════════════════════════════════════════
+function openInitDiag(){
+  openM('mInitDiag');
+  renderInitDiag();
+}
+
+function renderInitDiag(){
+  const body = document.getElementById('initDiagBody');
+  const acts = document.getElementById('initDiagActions');
+  if(!body) return;
+
+  // 1) 동기화 상태
+  const lastFullSync = (()=>{
+    try{ const v=localStorage.getItem('ek_last_full_sync_v1'); return v?parseInt(v,10):0; }catch(e){ return 0; }
+  })();
+  const lastSyncMs = Math.max(_lastSyncAt||0, lastFullSync);
+  const syncAgo = lastSyncMs ? formatTimeAgo(Date.now()-lastSyncMs) : '아직 안 됨';
+  const isConnected = !!notionCfg.workerUrl;
+
+  // 2) clients 통계
+  const clientsTotal = clients.length;
+  const clientsWithInit = clients.filter(c=>(c.initials||'').trim()).length;
+
+  // 3) 발주에 쓰인 모든 vendor 목록 (중복 제거)
+  const vendorSet = new Set();
+  orders.forEach(o=>{
+    const v = (o.vendor||'').trim();
+    if(v) vendorSet.add(v);
+  });
+  const vendors = [...vendorSet].sort();
+
+  // 4) 각 vendor의 매칭 상태 분류
+  const matched = [];      // 매칭 + 이니셜 있음
+  const matchedNoInit = []; // 매칭 + 이니셜 없음
+  const unmatched = [];    // 매칭 안 됨
+  vendors.forEach(v=>{
+    const cl = findClientByVendor(v);
+    if(!cl){
+      unmatched.push({vendor:v});
+    } else if(!(cl.initials||'').trim()){
+      matchedNoInit.push({vendor:v, cl});
+    } else {
+      matched.push({vendor:v, cl, init:cl.initials.trim().toUpperCase()});
+    }
+  });
+
+  // ── 렌더 ──
+  body.innerHTML = `
+    <!-- 동기화 상태 카드 -->
+    <div style="background:${isConnected?'var(--blu-bg)':'var(--red-bg)'};border:1px solid ${isConnected?'rgba(26,109,181,.3)':'rgba(192,48,48,.3)'};border-radius:6px;padding:12px 14px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:12.5px;font-weight:700;color:${isConnected?'var(--blu)':'var(--red)'};margin-bottom:4px">
+            ${isConnected?'☁ Notion 연결됨':'⚠ Notion 연결 안 됨'}
+          </div>
+          <div style="font-size:11.5px;color:var(--t2);line-height:1.5">
+            마지막 동기화: <b style="color:var(--t1)">${syncAgo}</b><br>
+            로컬 고객사 ${clientsTotal}개 (이니셜 등록 ${clientsWithInit}개 / 미등록 ${clientsTotal-clientsWithInit}개)
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          ${isConnected
+            ? `<button class="btn bp-blu bs" onclick="manualSyncNow();setTimeout(renderInitDiag,1500)" style="font-size:11px">🔄 지금 동기화</button>
+               <button class="btn bgo bs" onclick="forceFullSyncNow();setTimeout(()=>{closeM('mInitDiag');},500)" style="font-size:11px;border-color:var(--org);color:var(--org)" title="모든 DB를 처음부터 다시 받아옴">↻ 전체 다시</button>`
+            : `<button class="btn bp-blu bs" onclick="closeM('mInitDiag');openNotionSettings()" style="font-size:11px">⚙ 연결 설정</button>`}
+        </div>
+      </div>
+    </div>
+
+    <!-- 매칭 안 되는 업체 (미등록) -->
+    ${unmatched.length ? `
+    <div style="background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--red);margin-bottom:6px">
+        ❌ 고객사 DB에 등록 안 된 업체 (${unmatched.length}개)
+      </div>
+      <div style="font-size:11px;color:var(--t2);margin-bottom:8px;line-height:1.5">
+        이 업체들은 발주에 쓰였지만 고객사 DB에 없어 영문 이니셜이 안 보입니다.
+        대신 한글 두 글자로 임시 표시되고 있어요. 등록하면 영문 이니셜로 바뀝니다.
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;background:var(--s1);border-radius:4px;padding:6px">
+        ${unmatched.map(u=>`
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 8px;border-bottom:1px dashed var(--bdr);font-size:11.5px">
+            <div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1">
+              ${vendorInitHtml(u.vendor, true)}
+              <span style="color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${u.vendor}</span>
+            </div>
+            <button onclick="quickRegisterClient('${u.vendor.replace(/'/g,"\\'")}')"
+              style="font-size:10.5px;padding:3px 9px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);border-radius:4px;cursor:pointer;font-family:inherit;flex-shrink:0">
+              + 고객사 등록
+            </button>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+
+    <!-- 매칭 됐는데 이니셜 비어있는 업체 -->
+    ${matchedNoInit.length ? `
+    <div style="background:var(--org-bg);border:1px solid rgba(168,90,16,.3);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--org);margin-bottom:6px">
+        ⚠ 고객사 DB는 등록되어 있는데 이니셜이 비어있는 업체 (${matchedNoInit.length}개)
+      </div>
+      <div style="font-size:11px;color:var(--t2);margin-bottom:8px;line-height:1.5">
+        이니셜을 채우면 영문 이니셜이 칩에 보이게 됩니다.
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto;background:var(--s1);border-radius:4px;padding:6px">
+        ${matchedNoInit.map(m=>`
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 8px;border-bottom:1px dashed var(--bdr);font-size:11.5px">
+            <div style="display:flex;align-items:center;gap:6px;min-width:0;flex:1">
+              ${vendorInitHtml(m.vendor, true)}
+              <span style="color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.vendor}</span>
+              <span style="font-size:10px;color:var(--t3)">→ ${m.cl.name}</span>
+            </div>
+            <button onclick="closeM('mInitDiag');openClModal(${m.cl.id})"
+              style="font-size:10.5px;padding:3px 9px;background:var(--blu-bg);border:1px solid rgba(26,109,181,.3);color:var(--blu);border-radius:4px;cursor:pointer;font-family:inherit;flex-shrink:0">
+              ✏ 이니셜 입력
+            </button>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+
+    <!-- 정상 매칭 -->
+    ${matched.length ? `
+    <div style="background:var(--grn-bg);border:1px solid rgba(46,139,44,.3);border-radius:6px;padding:12px 14px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--grn);margin-bottom:6px">
+        ✓ 정상 매칭 (${matched.length}개)
+      </div>
+      <div style="font-size:11px;color:var(--t2);margin-bottom:8px">
+        고객사 DB 매칭 + 이니셜 등록 완료 — 영문 이니셜이 정상 표시됩니다.
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px;max-height:140px;overflow-y:auto;background:var(--s1);border-radius:4px;padding:6px">
+        ${matched.map(m=>`
+          <div style="display:flex;align-items:center;gap:5px;padding:3px 8px;background:var(--s2);border:1px solid var(--bdr);border-radius:14px;font-size:11px">
+            ${vendorInitHtml(m.vendor, true)}
+            <span style="color:var(--t1)">${m.vendor}</span>
+            <span style="font-size:10px;color:var(--gold-lt);font-weight:700;font-family:monospace">${m.init}</span>
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+
+    ${(unmatched.length===0 && matchedNoInit.length===0) ? `
+    <div style="text-align:center;padding:24px 14px;color:var(--grn);font-size:13px;font-weight:600">
+      ✓ 모든 업체가 정상적으로 매칭되어 있습니다
+    </div>` : ''}
+  `;
+
+  acts.innerHTML = `<button class="btn bp" onclick="closeM('mInitDiag')">닫기</button>`;
+}
+
+// 시간 차이를 사람이 읽기 좋게: "방금 전", "5분 전", "2시간 전", "3일 전"
+function formatTimeAgo(ms){
+  if(ms<0||!isFinite(ms)) return '알 수 없음';
+  const sec = Math.floor(ms/1000);
+  if(sec<10) return '방금 전';
+  if(sec<60) return sec+'초 전';
+  const min = Math.floor(sec/60);
+  if(min<60) return min+'분 전';
+  const hr = Math.floor(min/60);
+  if(hr<24) return hr+'시간 전';
+  const day = Math.floor(hr/24);
+  if(day<30) return day+'일 전';
+  const mo = Math.floor(day/30);
+  return mo+'개월 전';
+}
+
+// 미등록 업체를 빠르게 고객사로 등록 — 고객사명을 미리 채운 채로 모달 열기
+function quickRegisterClient(vendorName){
+  closeM('mInitDiag');
+  openClModal(null);
+  // 모달이 열린 직후 고객사명 input에 자동 입력
+  setTimeout(()=>{
+    const nameInput = document.getElementById('cl_nm');
+    if(nameInput){
+      nameInput.value = vendorName;
+      // 이니셜 input에 포커스 (사용자가 바로 입력할 수 있게)
+      const initInput = document.getElementById('cl_init');
+      if(initInput) initInput.focus();
+    }
+  }, 100);
+}
+
+// ════════════════════════════════════════════════════════════
+// 🩺 영업관리 동기화 진단 도구
+// 5개 영역(고객사, 문의, 견적, 신규제안, 영업제안)의 노션 동기화 상태 점검
+// ════════════════════════════════════════════════════════════
+function openSalesSyncDiag(){
+  openM('mSalesSyncDiag');
+  renderSalesSyncDiag();
+}
+
+function renderSalesSyncDiag(){
+  const body = document.getElementById('salesSyncDiagBody');
+  const acts = document.getElementById('salesSyncDiagActions');
+  if(!body) return;
+
+  const isConnected = !!notionCfg.workerUrl;
+  const lastFullSync = (()=>{
+    try{ const v=localStorage.getItem('ek_last_full_sync_v1'); return v?parseInt(v,10):0; }catch(e){ return 0; }
+  })();
+  const lastSyncMs = Math.max(_lastSyncAt||0, lastFullSync);
+  const syncAgo = lastSyncMs ? formatTimeAgo(Date.now()-lastSyncMs) : '아직 안 됨';
+
+  // 5개 영역 데이터 카운트
+  const areas = [
+    {key:'clients',    label:'🏢 고객사',       icon:'🏢', count:clients.length,    db:notionCfg.clientDb, dbLabel:'clientDb',  withId:clients.filter(x=>x._notionId).length},
+    {key:'inquiries',  label:'📬 고객사 문의',  icon:'📬', count:inquiries.length,  db:notionCfg.inqDb,    dbLabel:'inqDb',     withId:inquiries.filter(x=>x._notionId).length},
+    {key:'quotes',     label:'📋 견적',         icon:'📋', count:quotes.length,     db:notionCfg.qtDb,     dbLabel:'qtDb',      withId:quotes.filter(x=>x._notionId).length},
+    {key:'newDesigns', label:'💡 신규 디자인',  icon:'💡', count:newDesigns.length, db:notionCfg.ndDb,     dbLabel:'ndDb',      withId:newDesigns.filter(x=>x._notionId).length},
+    {key:'proposals',  label:'📋 영업 제안',    icon:'📋', count:proposals.length,  db:notionCfg.propDb,   dbLabel:'propDb',    withId:proposals.filter(x=>x._notionId).length},
+  ];
+
+  body.innerHTML = `
+    <!-- 동기화 상태 -->
+    <div style="background:${isConnected?'var(--blu-bg)':'var(--red-bg)'};border:1px solid ${isConnected?'rgba(26,109,181,.3)':'rgba(192,48,48,.3)'};border-radius:6px;padding:12px 14px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:12.5px;font-weight:700;color:${isConnected?'var(--blu)':'var(--red)'};margin-bottom:4px">
+            ${isConnected?'☁ Notion 연결됨':'⚠ Notion 연결 안 됨 — 데이터를 불러올 수 없습니다'}
+          </div>
+          <div style="font-size:11.5px;color:var(--t2);line-height:1.5">
+            마지막 동기화: <b style="color:var(--t1)">${syncAgo}</b>
+            ${_isSyncing ? '<span style="color:var(--blu);margin-left:6px">⟳ 동기화 진행 중</span>' : ''}
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          ${isConnected
+            ? `<button class="btn bp-blu bs" onclick="manualSyncNow();setTimeout(renderSalesSyncDiag,1500)" style="font-size:11px">🔄 지금 동기화</button>
+               <button class="btn bgo bs" onclick="if(confirm('전체 데이터를 처음부터 다시 받아옵니다. 시간이 걸릴 수 있어요.\\n계속할까요?')){forceFullSyncNow();setTimeout(()=>{closeM('mSalesSyncDiag');},500);}" style="font-size:11px;border-color:var(--org);color:var(--org)" title="모든 DB를 처음부터 다시 받아옴">↻ 전체 다시</button>`
+            : `<button class="btn bp-blu bs" onclick="closeM('mSalesSyncDiag');openNotionSettings()" style="font-size:11px">⚙ 연결 설정</button>`}
+        </div>
+      </div>
+    </div>
+
+    <!-- 5개 영역 카운트 -->
+    <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--t1);margin-bottom:8px">📊 5개 영역 데이터 현황</div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:8px;line-height:1.5">
+        "노션 매칭"은 그 항목의 _notionId가 등록된 개수 — 이 숫자가 로컬 개수보다 적으면 일부가 노션에 push 안 된 상태입니다.
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 90px 110px 80px;gap:6px;align-items:center;font-size:11.5px">
+        <div style="font-weight:600;color:var(--t3);padding:5px 8px;border-bottom:1px solid var(--bdr)">영역</div>
+        <div style="font-weight:600;color:var(--t3);text-align:center;padding:5px 8px;border-bottom:1px solid var(--bdr)">로컬</div>
+        <div style="font-weight:600;color:var(--t3);text-align:center;padding:5px 8px;border-bottom:1px solid var(--bdr)">노션 매칭</div>
+        <div style="font-weight:600;color:var(--t3);text-align:center;padding:5px 8px;border-bottom:1px solid var(--bdr)">DB 설정</div>
+        ${areas.map(a=>{
+          const dbOk = !!a.db;
+          const matchOk = a.count === 0 || a.withId === a.count;
+          const matchClass = matchOk ? 'var(--grn)' : 'var(--org)';
+          return `
+            <div style="padding:6px 8px;background:var(--s1);border-radius:4px">${a.label}</div>
+            <div style="text-align:center;padding:6px 8px;background:var(--s1);border-radius:4px;font-weight:700;color:${a.count>0?'var(--t1)':'var(--t3)'}">${a.count}</div>
+            <div style="text-align:center;padding:6px 8px;background:var(--s1);border-radius:4px;font-weight:700;color:${matchClass}">${a.withId} ${matchOk?'✓':'⚠'}</div>
+            <div style="text-align:center;padding:6px 8px;background:var(--s1);border-radius:4px;font-size:10.5px">${dbOk?'<span style="color:var(--grn)">✓ OK</span>':'<span style="color:var(--red)">❌ 미설정</span>'}</div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- 트러블슈팅 가이드 -->
+    <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:12.5px;font-weight:700;color:var(--t1);margin-bottom:6px">🔍 데이터가 안 보이면 — 단계별 점검</div>
+      <ol style="font-size:11.5px;color:var(--t2);margin:0;padding-left:20px;line-height:1.7">
+        <li>위 "<b>마지막 동기화</b>"가 <b>"아직 안 됨"</b> 또는 <b>오래된 시각</b> → <b>🔄 지금 동기화</b> 클릭</li>
+        <li>로컬 개수가 0인데 노션엔 데이터가 있다면 → <b>↻ 전체 다시</b> 클릭 (처음부터 받아옴)</li>
+        <li>여전히 0이면 → 우측 상단 <b>⚙ Notion 설정</b>에서 DB ID와 Worker URL이 정확한지 확인</li>
+        <li>그래도 안 되면 → 다른 컴퓨터에서는 보이는지 확인 (특정 컴퓨터의 localStorage 손상 가능성)</li>
+      </ol>
+    </div>
+
+    <!-- 진단 자동 트리거 표시 -->
+    ${_salesAutoSyncTried ? `
+    <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;padding:8px 12px;font-size:11px;color:var(--gold-lt)">
+      💡 영업관리 탭 진입 시 데이터가 0건이라 자동으로 한 번 동기화를 시도했습니다.
+    </div>` : ''}
+  `;
+
+  acts.innerHTML = `<button class="btn bp" onclick="closeM('mSalesSyncDiag')">닫기</button>`;
+}
+
+// ════════════════════════════════════════════════════════════
+// 🩺 제품DB 동기화 진단 도구
+// 노션 vs 로컬 카운트 비교 + 누락된 노션 페이지를 자동으로 가져와 보충
+// ════════════════════════════════════════════════════════════
+let _pdDiagRemoteCache = null; // {ts, pages} 형태로 캐시 (반복 조회 방지)
+
+function openPdSyncDiag(){
+  openM('mPdSyncDiag');
+  renderPdSyncDiag({phase:'init'});
+}
+
+async function renderPdSyncDiag(state){
+  state = state || {phase:'init'};
+  const body = document.getElementById('pdSyncDiagBody');
+  const acts = document.getElementById('pdSyncDiagActions');
+  if(!body) return;
+
+  const isConnected = !!notionCfg.workerUrl;
+  const localTotal = productDB.length;
+  const localWithId = productDB.filter(p=>p._notionId).length;
+  const localWithoutId = localTotal - localWithId;
+
+  // ── Phase 1: 초기 (아직 노션 조회 안 함) ──
+  if(state.phase === 'init'){
+    body.innerHTML = `
+      <div style="background:${isConnected?'var(--blu-bg)':'var(--red-bg)'};border:1px solid ${isConnected?'rgba(26,109,181,.3)':'rgba(192,48,48,.3)'};border-radius:6px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:12.5px;font-weight:700;color:${isConnected?'var(--blu)':'var(--red)'};margin-bottom:4px">
+          ${isConnected?'☁ Notion 연결됨':'⚠ Notion 연결 안 됨'}
+        </div>
+        <div style="font-size:11.5px;color:var(--t2);line-height:1.5">
+          이 도구는 노션 제품DB의 전체 페이지 수를 직접 조회해서, 로컬에 누락된 항목이 있는지 확인합니다.
+          ${isConnected ? '시작 버튼을 누르면 노션 조회를 시작합니다.<br>(품목이 많으면 30초~1분 정도 걸릴 수 있어요)' : '먼저 Notion 연결 설정이 필요합니다.'}
+        </div>
+      </div>
+
+      <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:12.5px;font-weight:700;color:var(--t1);margin-bottom:8px">📊 로컬 제품DB 현황</div>
+        <div style="display:grid;grid-template-columns:1fr 90px;gap:6px;align-items:center;font-size:11.5px">
+          <div style="padding:6px 10px;background:var(--s1);border-radius:4px">전체 품목</div>
+          <div style="text-align:center;padding:6px 10px;background:var(--s1);border-radius:4px;font-weight:700">${localTotal.toLocaleString()}</div>
+          <div style="padding:6px 10px;background:var(--s1);border-radius:4px;color:var(--grn)">노션 매칭됨 (_notionId 있음)</div>
+          <div style="text-align:center;padding:6px 10px;background:var(--s1);border-radius:4px;font-weight:700;color:var(--grn)">${localWithId.toLocaleString()}</div>
+          <div style="padding:6px 10px;background:var(--s1);border-radius:4px;color:${localWithoutId>0?'var(--org)':'var(--t3)'}">노션 매칭 안 됨 (로컬에만)</div>
+          <div style="text-align:center;padding:6px 10px;background:var(--s1);border-radius:4px;font-weight:700;color:${localWithoutId>0?'var(--org)':'var(--t3)'}">${localWithoutId.toLocaleString()}</div>
+        </div>
+      </div>
+    `;
+    acts.innerHTML = `
+      ${isConnected ? `<button class="btn bp-blu" onclick="renderPdSyncDiag({phase:'fetching'})">🔍 노션 조회 시작</button>` : ''}
+      <button class="btn bgo" onclick="closeM('mPdSyncDiag')">닫기</button>
+    `;
+    return;
+  }
+
+  // ── Phase 2: 노션 조회 중 ──
+  if(state.phase === 'fetching'){
+    body.innerHTML = `
+      <div style="text-align:center;padding:40px 14px">
+        <div style="font-size:14px;font-weight:700;color:var(--blu);margin-bottom:8px">⟳ 노션 제품DB 조회 중...</div>
+        <div style="font-size:11.5px;color:var(--t3)">전체 페이지를 한 번에 받아옵니다.<br>품목 수가 많으면 시간이 걸릴 수 있습니다.</div>
+        <div id="pdDiagProgress" style="font-size:11px;color:var(--t2);margin-top:14px"></div>
+      </div>
+    `;
+    acts.innerHTML = `<button class="btn bgo" onclick="closeM('mPdSyncDiag')">닫기</button>`;
+
+    // 비동기로 노션 조회
+    try{
+      const startTs = Date.now();
+      const progressEl = document.getElementById('pdDiagProgress');
+      // nQueryAll은 페이지네이션 자동 처리
+      const remote = await nQueryAll(notionCfg.productDb);
+      if(progressEl) progressEl.textContent = `${remote.length}건 받아옴 — 매칭 분석 중...`;
+      _pdDiagRemoteCache = { ts: Date.now(), pages: remote };
+      // 짧은 텀 둬서 사용자가 진행 상황 볼 수 있게
+      setTimeout(()=>renderPdSyncDiag({phase:'compare'}), 300);
+    } catch(e){
+      console.warn('제품DB 진단 조회 실패:', e);
+      body.innerHTML = `
+        <div style="background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;padding:14px;text-align:center">
+          <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:6px">⚠ 노션 조회 실패</div>
+          <div style="font-size:11.5px;color:var(--t2)">${(e.message||e).toString().replace(/</g,'&lt;')}</div>
+        </div>
+      `;
+      acts.innerHTML = `<button class="btn bgo" onclick="closeM('mPdSyncDiag')">닫기</button>`;
+    }
+    return;
+  }
+
+  // ── Phase 3: 비교 결과 ──
+  if(state.phase === 'compare'){
+    if(!_pdDiagRemoteCache){
+      // 캐시 없으면 다시 조회
+      return renderPdSyncDiag({phase:'fetching'});
+    }
+    const remote = _pdDiagRemoteCache.pages;
+    const remoteTotal = remote.length;
+    // 로컬의 _notionId 집합
+    const localIdSet = new Set(productDB.filter(p=>p._notionId).map(p=>p._notionId));
+    // 노션엔 있는데 로컬엔 없는 페이지
+    const onlyRemote = remote.filter(r => !localIdSet.has(r.id));
+    // 로컬엔 있는데 노션 매칭 없는 항목 (이미 위 localWithoutId)
+    const diff = remoteTotal - localWithId;
+
+    body.innerHTML = `
+      <div style="background:${diff===0?'var(--grn-bg)':'var(--org-bg)'};border:1px solid ${diff===0?'rgba(46,139,44,.3)':'rgba(168,90,16,.3)'};border-radius:6px;padding:14px;margin-bottom:12px">
+        <div style="font-size:13px;font-weight:700;color:${diff===0?'var(--grn)':'var(--org)'};margin-bottom:6px">
+          ${diff===0 ? '✓ 노션과 로컬이 일치합니다' : `⚠ 노션에 ${diff.toLocaleString()}개 더 있음`}
+        </div>
+        <div style="font-size:11.5px;color:var(--t2);line-height:1.5">
+          ${diff===0
+            ? '노션 제품DB의 모든 페이지가 로컬에도 매칭되어 있어요.'
+            : `노션에는 ${remoteTotal.toLocaleString()}건, 로컬엔 매칭된 ${localWithId.toLocaleString()}건. 즉 노션에만 있는 페이지가 ${onlyRemote.length}건 있습니다.`}
+        </div>
+      </div>
+
+      <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:12.5px;font-weight:700;color:var(--t1);margin-bottom:8px">📊 비교 결과</div>
+        <div style="display:grid;grid-template-columns:1fr 90px;gap:6px;align-items:center;font-size:11.5px">
+          <div style="padding:6px 10px;background:var(--s1);border-radius:4px;color:var(--blu);font-weight:600">노션 제품DB 전체</div>
+          <div style="text-align:center;padding:6px 10px;background:var(--s1);border-radius:4px;font-weight:700;color:var(--blu)">${remoteTotal.toLocaleString()}</div>
+          <div style="padding:6px 10px;background:var(--s1);border-radius:4px">로컬 전체 (화면 표시값)</div>
+          <div style="text-align:center;padding:6px 10px;background:var(--s1);border-radius:4px;font-weight:700">${localTotal.toLocaleString()}</div>
+          <div style="padding:6px 10px;background:var(--s1);border-radius:4px;color:var(--grn)">로컬 + 노션 매칭됨</div>
+          <div style="text-align:center;padding:6px 10px;background:var(--s1);border-radius:4px;font-weight:700;color:var(--grn)">${localWithId.toLocaleString()}</div>
+          <div style="padding:6px 10px;background:var(--s1);border-radius:4px;color:${localWithoutId>0?'var(--org)':'var(--t3)'}">로컬에만 있음 (노션 매칭 X)</div>
+          <div style="text-align:center;padding:6px 10px;background:var(--s1);border-radius:4px;font-weight:700;color:${localWithoutId>0?'var(--org)':'var(--t3)'}">${localWithoutId.toLocaleString()}</div>
+          <div style="padding:6px 10px;background:var(--s1);border-radius:4px;color:${onlyRemote.length>0?'var(--red)':'var(--t3)'};font-weight:600">노션에만 있음 (로컬 누락) ⚠</div>
+          <div style="text-align:center;padding:6px 10px;background:var(--s1);border-radius:4px;font-weight:700;color:${onlyRemote.length>0?'var(--red)':'var(--t3)'}">${onlyRemote.length.toLocaleString()}</div>
+        </div>
+      </div>
+
+      ${onlyRemote.length > 0 ? `
+        <div style="background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+          <div style="font-size:12.5px;font-weight:700;color:var(--red);margin-bottom:6px">
+            ⚠ 노션에만 있는 ${onlyRemote.length.toLocaleString()}개 항목 — 로컬에 가져오기
+          </div>
+          <div style="font-size:11px;color:var(--t2);margin-bottom:10px;line-height:1.5">
+            아래 버튼을 누르면 누락된 ${onlyRemote.length.toLocaleString()}개 노션 페이지를 매핑해서 로컬에 추가합니다.<br>
+            (기존 로컬 데이터는 그대로 유지됩니다)
+          </div>
+          <button class="btn bp-red bs" onclick="importMissingProductsFromNotion()" style="font-size:12px">
+            ⬇ 누락된 ${onlyRemote.length.toLocaleString()}개 가져오기
+          </button>
+        </div>` : ''}
+
+      ${localWithoutId > 0 ? `
+        <div style="background:var(--org-bg);border:1px solid rgba(168,90,16,.3);border-radius:6px;padding:12px 14px;margin-bottom:12px">
+          <div style="font-size:12.5px;font-weight:700;color:var(--org);margin-bottom:6px">
+            📤 로컬에만 있는 ${localWithoutId.toLocaleString()}개 — 노션에 업로드
+          </div>
+          <div style="font-size:11px;color:var(--t2);margin-bottom:10px;line-height:1.5">
+            로컬에 추가했지만 아직 노션에 push 안 된 항목들을 일괄 업로드합니다.
+          </div>
+          <button class="btn bgo bs" onclick="closeM('mPdSyncDiag');syncAllProductsToNotion()" style="font-size:12px">
+            ☁ Notion 일괄 동기화 실행
+          </button>
+        </div>` : ''}
+    `;
+
+    acts.innerHTML = `
+      <button class="btn bgo" onclick="renderPdSyncDiag({phase:'fetching'})">🔄 다시 조회</button>
+      <button class="btn bp" onclick="closeM('mPdSyncDiag')">닫기</button>
+    `;
+    return;
+  }
+}
+
+// 노션엔 있는데 로컬엔 없는 제품을 매핑해서 로컬에 추가
+async function importMissingProductsFromNotion(){
+  if(!_pdDiagRemoteCache){
+    showToast('⚠ 노션 데이터 캐시가 없습니다. 다시 조회하세요','var(--org)',3000);
+    return;
+  }
+  const remote = _pdDiagRemoteCache.pages;
+  const localIdSet = new Set(productDB.filter(p=>p._notionId).map(p=>p._notionId));
+  const onlyRemote = remote.filter(r => !localIdSet.has(r.id));
+  if(!onlyRemote.length){
+    showToast('가져올 페이지가 없습니다','var(--blu)',2000);
+    return;
+  }
+  let added = 0;
+  onlyRemote.forEach(row=>{
+    try{
+      const mapped = mapNotionProduct(row);
+      // 로컬 id 부여
+      productDB.push({
+        id: Date.now() + Math.random(),
+        ...mapped
+      });
+      added++;
+    }catch(e){
+      console.warn('매핑 실패:', row.id, e);
+    }
+  });
+  if(added){
+    save();
+    showToast(`✓ ${added.toLocaleString()}개 항목을 로컬에 추가했습니다`,'var(--grn)',2500);
+    closeM('mPdSyncDiag');
+    if(typeof renderTab==='function') try{ renderTab(); }catch(e){}
+    // 캐시 무효화
+    _pdDiagRemoteCache = null;
+  }
 }
 
 // 고객사 전체 라벨 (뱃지 + 이름 or 뱃지만)
