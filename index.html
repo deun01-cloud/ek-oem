@@ -4093,6 +4093,7 @@ let notionCfg = {
   productDb: '1ae024e2addf455a90cc57488ede7772', // 제품DB
   ndDb:    '201b2b17b3924161b636134229f532ee', // 신규 디자인 제안
   inqDb:   '28ad79cef0bc4895a4815827f3cb7da2', // 고객사 문의
+  quoteDb: 'eeda4d95607c411da6b3a69bb6a732cc', // 📋 견적 DB
 };
 
 function loadNotionCfg(){
@@ -4113,6 +4114,7 @@ function saveNotionSettings(){
     invDb:   document.getElementById('notion_inv_db')?.value.trim()||notionCfg.invDb,
     productDb:document.getElementById('notion_product_db')?.value.trim()||notionCfg.productDb,
     inqDb:   document.getElementById('notion_inq_db')?.value.trim()||notionCfg.inqDb,
+    quoteDb: notionCfg.quoteDb, // 견적서 DB (UI 입력 필드 없음 — 기존 값 유지)
   };
   try{ localStorage.setItem(NOTION_CFG_KEY, JSON.stringify(notionCfg)); }catch(e){}
   closeM('mNotion'); updateNotionNavLabel();
@@ -4257,6 +4259,65 @@ async function nDelete(pageId){
   if(!notionCfg.workerUrl||!pageId) return;
   return notionCall('PATCH','/pages/'+pageId,{archived:true});
 }
+// 단일 페이지 GET — stale 체크용 (전체 동기화 없이 한 항목만 빠르게 확인)
+async function nGetPage(pageId){
+  if(!notionCfg.workerUrl||!pageId) return null;
+  return notionCall('GET','/pages/'+pageId, null);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 🔒 다중 사용자 충돌 방지 — 저장 직전 stale 체크
+// ────────────────────────────────────────────────────────────────
+// 사용자가 모달을 연 시점에 노션 페이지의 last_edited_time을 기록해두고,
+// 저장 시점에 다시 확인해서 그 사이 다른 사용자가 수정했는지 검사
+// ════════════════════════════════════════════════════════════════
+window._editStartSnapshots = window._editStartSnapshots || {};
+
+// 모달 열 때 호출: 현재 페이지의 last_edited_time 기록
+async function recordEditStart(pageId){
+  if(!pageId || !notionCfg.workerUrl) return;
+  try{
+    const page = await nGetPage(pageId);
+    if(page && page.last_edited_time){
+      window._editStartSnapshots[pageId] = page.last_edited_time;
+    }
+  }catch(e){ /* 기록 실패해도 무시 — 충돌 체크는 옵셔널 */ }
+}
+
+// 저장 직전 호출: 다른 사용자가 그 사이 수정했는지 확인
+// 반환값: {stale:true, remoteEditedAt, localEditedAt} 또는 {stale:false}
+// 네트워크 실패 시 stale:null (체크 불가) — 호출자가 진행 여부 결정
+async function checkStaleBeforeSave(pageId){
+  if(!pageId || !notionCfg.workerUrl) return {stale:false};
+  const localEditedAt = window._editStartSnapshots[pageId];
+  if(!localEditedAt) return {stale:false}; // 스냅샷 없음 → 신규 또는 옛 모달 → 그냥 진행
+  try{
+    const page = await nGetPage(pageId);
+    if(!page) return {stale:null}; // 네트워크 실패
+    const remoteEditedAt = page.last_edited_time;
+    if(remoteEditedAt && remoteEditedAt > localEditedAt){
+      return {stale:true, remoteEditedAt, localEditedAt, remotePage:page};
+    }
+    return {stale:false};
+  }catch(e){
+    return {stale:null}; // 체크 실패
+  }
+}
+
+// 사용자에게 충돌 알림 — 강제 저장 / 취소 선택
+function showStaleWarning(itemLabel, onForce, onCancel){
+  showConfirm(
+    `⚠ 다른 사용자가 방금 "${itemLabel}"을(를) 수정했습니다.\n\n` +
+    `그대로 저장하면 다른 사용자의 변경이 덮어써집니다.\n` +
+    `[취소]를 누르고 동기화 버튼(상단 🔄)을 눌러 최신 버전을 받은 뒤 다시 작업하시는 것을 권장합니다.`,
+    onForce,
+    '동시 편집 충돌 감지',
+    '⚠',
+    '그대로 저장 (덮어쓰기)',
+    'red'
+  );
+}
+
 
 // ── 거래명세서 중복/좀비 청소: 같은 식별자로 매칭되는 Notion 페이지를 모두 archive ──
 // 매칭 키: 발주번호(ordNo) + 고객사(vendor) + 발행일(issuedAt)
@@ -4669,6 +4730,39 @@ function mapNotionInvoice(row){
     status:    np.select(p['상태'])||'발행완료',
   };
 }
+// 견적서 매핑 (📋 견적 DB)
+function mapNotionQuote(row){
+  const p=row.properties||{};
+  const parseJson=(s,fb)=>{ try{ return JSON.parse(s||fb); }catch(e){ return JSON.parse(fb); } };
+  const parseIds=(s)=>{ try{ const v=JSON.parse(s||'[]'); return Array.isArray(v)?v:[]; }catch(e){ return []; } };
+  return{
+    _notionId:    row.id,
+    no:           np.title(p['견적번호']),  // QT-YYMMDD-NNN
+    vendor:       np.text(p['고객사']),
+    cliManager:   np.text(p['고객담당자']),
+    ourManager:   np.text(p['당사담당자']),
+    subject:      np.text(p['건명']),
+    issuedAt:     np.date(p['발행일']),
+    validUntil:   np.date(p['유효기한']),
+    status:       np.select(p['상태'])||'작성중',
+    type:         np.select(p['유형'])||'신규',
+    supplyAmt:    np.number(p['공급가액'])||0,
+    tax:          np.number(p['부가세'])||0,
+    total:        np.number(p['합계금액'])||0,
+    cnCostTotal:  np.number(p['중국입고원가합계'])||0,
+    vatIncluded:  np.check(p['부가세포함']),
+    payment:      np.text(p['결제조건']),
+    delivery:     np.text(p['납기조건']),
+    cliMemo:      np.text(p['고객메모']),
+    intMemo:      np.text(p['내부메모']),
+    sentAt:       np.text(p['발송일시']),
+    repliedAt:    np.text(p['회신일시']),
+    sampleIds:    parseIds(np.text(p['샘플IDs'])),
+    rows:         parseJson(np.text(p['품목JSON']),'[]'),
+    imgs:         parseJson(np.text(p['이미지JSON']),'[]'),
+    files:        parseJson(np.text(p['파일JSON']),'[]'),
+  };
+}
 
 // ─── 동기화 상태 UI ───
 function setSyncState(txt, color){
@@ -4710,8 +4804,8 @@ async function pullFromNotion(opts){
       console.log(`[pull] 모드: ${useIncremental?'증분 (since 기준)':'풀 (전체)'}`);
     }
 
-    // 9개 DB를 병렬 쿼리 (증분 모드면 since 이후만 받음)
-    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows]=await Promise.all([
+    // 9개 DB를 병렬 쿼리 (증분 모드면 since 이후만 받음) + 견적 DB
+    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows,qtRows]=await Promise.all([
       notionCfg.smpDb   ? nQueryAll(notionCfg.smpDb,    sinceFor(notionCfg.smpDb),   callOpts) : Promise.resolve([]),
       notionCfg.ordDb   ? nQueryAll(notionCfg.ordDb,    sinceFor(notionCfg.ordDb),   callOpts) : Promise.resolve([]),
       notionCfg.procDb  ? nQueryAll(notionCfg.procDb,   sinceFor(notionCfg.procDb),  callOpts) : Promise.resolve([]),
@@ -4722,6 +4816,7 @@ async function pullFromNotion(opts){
       notionCfg.productDb ? nQueryAll(notionCfg.productDb, sinceFor(notionCfg.productDb),callOpts) : Promise.resolve([]),
       notionCfg.invDb   ? nQueryAll(notionCfg.invDb,    sinceFor(notionCfg.invDb),   callOpts) : Promise.resolve([]),
       notionCfg.inqDb   ? nQueryAll(notionCfg.inqDb,    sinceFor(notionCfg.inqDb),   callOpts) : Promise.resolve([]),
+      notionCfg.quoteDb ? nQueryAll(notionCfg.quoteDb,  sinceFor(notionCfg.quoteDb), callOpts) : Promise.resolve([]),
     ]);
 
     // pull 도중 회로차단기가 열린 경우 → Worker가 응답 실패 상태
@@ -4918,6 +5013,7 @@ async function pullFromNotion(opts){
     productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['imgs','importSource','createdAt'], '제품DB',   notionCfg.productDb);
     invoiceHistory= mergeRows(invRows,  invoiceHistory, mapNotionInvoice,   ['items','ordId'], '청구이력', notionCfg.invDb);
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
+    quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
 
     // 풀 모드를 성공적으로 마쳤다면 마지막 풀 동기화 시각 기록
     if(!useIncremental){
@@ -4933,7 +5029,7 @@ async function pullFromNotion(opts){
     setTimeout(()=>{ if(typeof renderTab==='function') try{renderTab();}catch(e){} }, 100);
 
     if(!silent){
-      const total=smpRows.length+ordRows.length+procRows.length+propRows.length+cliRows.length+taskRows.length+asRows.length+pdRows.length+invRows.length+inqRows.length;
+      const total=smpRows.length+ordRows.length+procRows.length+propRows.length+cliRows.length+taskRows.length+asRows.length+pdRows.length+invRows.length+inqRows.length+qtRows.length;
       setSyncState('Notion 🟢','var(--grn)');
       const modeLabel = useIncremental ? '증분' : '전체';
       showToast(`✓ Notion ${modeLabel} 동기화 완료 (${total}건)`,'var(--grn)',2200);
@@ -4974,13 +5070,45 @@ function forceFullSyncNow(){
   pullFromNotion({silent:false});
 }
 
-// 자동 동기화: 주기 5분 + 탭 전환 시 + 앱 로드 시
-const SYNC_INTERVAL_MS = 5*60*1000;
+// 자동 동기화: 화면 활성 시 30초 주기, 비활성 시 5분 주기 + 탭 전환 시 + 앱 로드 시
+// 다중 사용자 환경 — 다른 사용자의 변경을 거의 실시간으로 반영
+const SYNC_INTERVAL_ACTIVE_MS = 30*1000;     // 30초 (화면 활성)
+const SYNC_INTERVAL_HIDDEN_MS = 5*60*1000;   // 5분 (백그라운드 탭/최소화)
 let _syncTimer=null;
+let _currentSyncInterval=0;
+
+function _pickSyncInterval(){
+  // document.hidden이 true면 탭이 백그라운드 → 긴 주기
+  return (typeof document!=='undefined' && document.hidden)
+    ? SYNC_INTERVAL_HIDDEN_MS
+    : SYNC_INTERVAL_ACTIVE_MS;
+}
+
 function startAutoSync(){
   if(_syncTimer) clearInterval(_syncTimer);
   if(!notionCfg.workerUrl) return;
-  _syncTimer=setInterval(()=>pullFromNotion({silent:true}), SYNC_INTERVAL_MS);
+  _currentSyncInterval = _pickSyncInterval();
+  _syncTimer=setInterval(()=>pullFromNotion({silent:true}), _currentSyncInterval);
+}
+
+// 화면 가시성 변화 감지: 활성 ↔ 백그라운드 전환 시 주기 재조정
+// + 백그라운드 → 활성 전환 순간엔 즉시 한 번 동기화 (사용자가 돌아오자마자 최신 상태)
+if(typeof document!=='undefined'){
+  document.addEventListener('visibilitychange', ()=>{
+    if(!notionCfg.workerUrl) return;
+    const want = _pickSyncInterval();
+    if(want !== _currentSyncInterval){
+      // 주기 바뀌었으면 타이머 재시작
+      startAutoSync();
+    }
+    // 백그라운드에서 활성으로 돌아온 순간 → 즉시 한 번 동기화
+    if(!document.hidden){
+      // 마지막 동기화로부터 10초 이상 지났을 때만 (스팸 방지)
+      if(Date.now() - _lastSyncAt > 10000){
+        pullFromNotion({silent:true});
+      }
+    }
+  });
 }
 
 // 앱 시작 시 1회 실행 (notionCfg 로드 후)
@@ -5766,21 +5894,83 @@ async function syncInvoiceToNotion(inv, update){
   if(r?.id){ inv._notionId=r.id; save(); }
 }
 
+// ════════════════════════════════════════════════════════════════
+// 📋 견적서 노션 동기화
+// ════════════════════════════════════════════════════════════════
+async function syncQuoteToNotion(qt, update){
+  if(!notionCfg.workerUrl||!notionCfg.quoteDb||!qt) return;
+  const txt=v=>String(v==null?'':v);
+  const j=v=>JSON.stringify(v||[]);
+  const p={
+    "견적번호":{"title":[{"text":{"content":qt.no||''}}]},
+    "고객사":{"rich_text":[{"text":{"content":txt(qt.vendor)}}]},
+    "고객담당자":{"rich_text":[{"text":{"content":txt(qt.cliManager)}}]},
+    "당사담당자":{"rich_text":[{"text":{"content":txt(qt.ourManager)}}]},
+    "건명":{"rich_text":[{"text":{"content":txt(qt.subject)}}]},
+    "공급가액":{"number":+qt.supplyAmt||0},
+    "부가세":{"number":+qt.tax||0},
+    "합계금액":{"number":+qt.total||0},
+    "중국입고원가합계":{"number":+qt.cnCostTotal||0},
+    "부가세포함":{"checkbox":!!qt.vatIncluded},
+    "결제조건":{"rich_text":[{"text":{"content":txt(qt.payment).slice(0,2000)}}]},
+    "납기조건":{"rich_text":[{"text":{"content":txt(qt.delivery).slice(0,2000)}}]},
+    "고객메모":{"rich_text":[{"text":{"content":txt(qt.cliMemo).slice(0,2000)}}]},
+    "내부메모":{"rich_text":[{"text":{"content":txt(qt.intMemo).slice(0,2000)}}]},
+    "발송일시":{"rich_text":[{"text":{"content":txt(qt.sentAt)}}]},
+    "회신일시":{"rich_text":[{"text":{"content":txt(qt.repliedAt)}}]},
+    "샘플IDs":{"rich_text":[{"text":{"content":j(qt.sampleIds)}}]},
+    "품목JSON":{"rich_text":[{"text":{"content":j(qt.rows).slice(0,2000)}}]},
+    "이미지JSON":{"rich_text":[{"text":{"content":j(qt.imgs).slice(0,2000)}}]},
+    "파일JSON":{"rich_text":[{"text":{"content":j(qt.files).slice(0,2000)}}]},
+  };
+  if(qt.issuedAt)   p["발행일"]={"date":{"start":qt.issuedAt}};
+  if(qt.validUntil) p["유효기한"]={"date":{"start":qt.validUntil}};
+  if(qt.status)     p["상태"]={"select":{"name":qt.status}};
+  if(qt.type)       p["유형"]={"select":{"name":qt.type}};
+  if(qt._notionId){
+    await nUpdate(qt._notionId,p);
+    return;
+  }
+  // 중복 방지: 같은 견적번호 이미 있으면 update
+  if(qt.no){
+    try{
+      const rows=await nQueryAll(notionCfg.quoteDb);
+      const existing=rows.find(r=>np.title(r.properties?.['견적번호'])===qt.no);
+      if(existing){
+        qt._notionId=existing.id;
+        slSave();
+        await nUpdate(existing.id,p);
+        return;
+      }
+    }catch(e){ console.warn('견적 중복 검사 실패:',e); }
+  }
+  const r=await nCreate(notionCfg.quoteDb,p);
+  if(r?.id){ qt._notionId=r.id; slSave(); }
+}
+
+async function deleteQuoteFromNotion(qt){
+  if(!notionCfg.workerUrl||!qt?._notionId) return;
+  try{ await nDelete(qt._notionId); }
+  catch(e){ console.warn('견적 노션 삭제 실패:',e); }
+}
+
 // ── Sales data (declared early to avoid TDZ) ──
-let clients=[], proposals=[], projects=[];
+let clients=[], proposals=[], projects=[], quotes=[];
 let _salesInited=false, _salesSubTab='inquiry';
-const SL_K={cli:'ek_v9_cli',prop:'ek_v9_prop',prj:'ek_v9_prj',inq:'ek_inquiries',nd:'ek_newdesigns'};
+const SL_K={cli:'ek_v9_cli',prop:'ek_v9_prop',prj:'ek_v9_prj',inq:'ek_inquiries',nd:'ek_newdesigns',qt:'ek_quotes'};
 function slSave(){try{
   localStorage.setItem(SL_K.cli,JSON.stringify(clients));
   localStorage.setItem(SL_K.prop,JSON.stringify(proposals));
   localStorage.setItem(SL_K.prj,JSON.stringify(projects));
   localStorage.setItem(SL_K.inq,JSON.stringify(inquiries));
   localStorage.setItem(SL_K.nd,JSON.stringify(newDesigns));
+  localStorage.setItem(SL_K.qt,JSON.stringify(quotes));
 }catch(e){}}
 function slLoad(){try{
   const d=k=>JSON.parse(localStorage.getItem(k)||'[]');
   clients=d(SL_K.cli);proposals=d(SL_K.prop);projects=d(SL_K.prj);
   inquiries=d(SL_K.inq);newDesigns=d(SL_K.nd);
+  quotes=d(SL_K.qt);
 }catch(e){}}
 // ── Sales arrow helpers (declared after TODAY/dday are available as functions are hoisted) ──
 const elapsed=d=>d?Math.floor((TODAY-new Date(d))/86400000):0;
@@ -6541,6 +6731,7 @@ function importAllData(){
 }
 
 load();
+slLoad();  // ⚠ 영업관리 데이터(clients/inquiries/proposals/projects/newDesigns)를 localStorage에서 복원
 setTimeout(()=>{ loadNotionCfg(); initAutoSync(); }, 0);
 
 // ════════════════════════════════
@@ -10452,7 +10643,12 @@ async function callAIParseForTabText(csvText,fileName,tabType,resultEl){
   // productDB 카탈로그 (발주서일 때만, productDB가 있을 때만)
   const dbCatalog = (tabType==='order' && productDB && productDB.length) ? buildProductCatalogForAI(500) : '';
 
-  const prompt=`다음은 주얼리 OEM 제조업체의 엑셀/CSV 파일 내용입니다. ${hint}${orderGuide}${dbCatalog}
+  // 탭별로 강제 스키마 — AI가 헷갈려서 엉뚱한 필드에 데이터 넣는 것 방지
+  const strictRule = tabType==='order'
+    ? `\n\n⚠️ 매우 중요: 이 파일은 사용자가 "발주서 업로드" 탭에서 업로드한 것입니다. 무조건 발주서로 처리하고 "order" 필드만 채우세요. "sample" 필드는 비워두세요(빈 객체로). 단순 품목 리스트, 수량 표, 재발주 양식, 컬럼이 적어도 모두 발주서로 간주합니다. 품목명에 도금 코드(SV/GD/RG)가 붙어 있으면 plating 필드에 분리하세요. 호수는 size 필드로.`
+    : `\n\n⚠️ 매우 중요: 이 파일은 사용자가 "샘플의뢰서 업로드" 탭에서 업로드한 것입니다. 무조건 샘플의뢰서로 처리하고 "sample" 필드만 채우세요. "order" 필드는 비워두세요.`;
+
+  const prompt=`다음은 주얼리 OEM 제조업체의 엑셀/CSV 파일 내용입니다. ${hint}${strictRule}${orderGuide}${dbCatalog}
 
 파일명: ${fileName}
 내용:
@@ -10495,6 +10691,34 @@ ${textForAI}
       parsed={docType:tabType==='sample'?'샘플의뢰서':'발주서',confidence:0,notes:text.slice(0,200)};
     }
     console.log('[AI파싱] 최종 결과:', parsed);
+
+    // 폴백: 발주서 탭인데 order.rows가 비어있고 sample에 데이터가 있으면 변환
+    if(tabType==='order' && (!parsed.order || !parsed.order.rows || !parsed.order.rows.length)){
+      const s=parsed.sample;
+      if(s && (s.name || s.qty)){
+        parsed.order = parsed.order || {};
+        parsed.order.vendor = parsed.order.vendor || '';
+        parsed.order.date = parsed.order.date || '';
+        parsed.order.shipDate = parsed.order.shipDate || s.due || s.reqDate || '';
+        parsed.order.manager = parsed.order.manager || s.manager || '';
+        parsed.order.rows = [{
+          name: s.name||'',
+          qty: s.qty||'',
+          plating: s.plating||'',
+          mat: s.mat||'',
+          size: s.sz2||s.sz1||'',
+          note: s.desc||'',
+          itemCode: ''
+        }];
+        parsed.docType = '발주서';
+        console.warn('[AI파싱/엑셀] sample 데이터를 order 형식으로 자동 변환:', parsed.order.rows);
+      }
+    }
+    // 폴백 2: 발주서 탭인데 rows가 여전히 비어있으면 빈 행이라도 1개
+    if(tabType==='order' && parsed.order && (!parsed.order.rows || !parsed.order.rows.length)){
+      parsed.order.rows = [{name:'',qty:'',plating:'',mat:'',size:'',note:parsed.notes||'',itemCode:''}];
+    }
+
     // 엑셀에서 추출한 이미지를 각 품목 행에 매칭
     if(tabType==='order' && parsed.order && parsed.order.rows && parsed.order.rows.length){
       const imgs=window._excelRowImages||{};
@@ -10540,7 +10764,14 @@ async function callAIParseForTab(filePayloads,resultEl,tabType){
   const hint=tabType==='sample'?'이 문서는 주얼리 샘플의뢰서입니다.':'이 문서는 주얼리 발주서/주문서입니다. 표 형식의 품목 목록을 정확히 읽어주세요.';
   // productDB 카탈로그 (발주서일 때만)
   const dbCatalog = (tabType==='order' && productDB && productDB.length) ? buildProductCatalogForAI(500) : '';
-  const content=[{type:'text',text:`다음은 주얼리 OEM 제조업체의 업무 문서입니다. ${hint}${dbCatalog}
+
+  // 탭별로 강제 스키마 — AI가 헷갈려서 엉뚱한 필드에 데이터 넣는 것 방지
+  // 발주서 탭에서 업로드한 파일은 무조건 order 필드를 채워야 함
+  const strictRule = tabType==='order'
+    ? `\n\n⚠️ 매우 중요: 이 파일은 사용자가 "발주서 업로드" 탭에서 업로드한 것입니다. 무조건 발주서로 처리하고 "order" 필드만 채우세요. "sample" 필드는 비워두세요(빈 객체로). 단순 품목 리스트, 수량 표, 재발주 양식, 컬럼이 적어도 모두 발주서로 간주합니다. 품목명에 도금 코드(SV/GD/RG)가 붙어 있으면 plating 필드에 분리하세요. 호수는 size 필드로.`
+    : `\n\n⚠️ 매우 중요: 이 파일은 사용자가 "샘플의뢰서 업로드" 탭에서 업로드한 것입니다. 무조건 샘플의뢰서로 처리하고 "sample" 필드만 채우세요. "order" 필드는 비워두세요.`;
+
+  const content=[{type:'text',text:`다음은 주얼리 OEM 제조업체의 업무 문서입니다. ${hint}${strictRule}${dbCatalog}
 
 JSON 형식으로만 응답하세요 (다른 텍스트 없이):
 {
@@ -10579,6 +10810,37 @@ JSON 형식으로만 응답하세요 (다른 텍스트 없이):
     let parsed;
     try{parsed=JSON.parse(text.replace(/```json|```/g,'').trim());}
     catch{parsed={docType:tabType==='sample'?'샘플의뢰서':'발주서',confidence:0,notes:text.slice(0,200)};}
+
+    // 폴백: 발주서 탭인데 order.rows가 비어있고 sample에 데이터가 있으면 변환
+    // (AI가 발주서를 sample 스키마로 잘못 채운 경우 — 컬럼이 적은 단순 발주서에서 자주 발생)
+    if(tabType==='order' && (!parsed.order || !parsed.order.rows || !parsed.order.rows.length)){
+      const s=parsed.sample;
+      if(s && (s.name || s.qty)){
+        // sample → order 단일 행으로 변환
+        parsed.order = parsed.order || {};
+        parsed.order.vendor = parsed.order.vendor || '';
+        parsed.order.date = parsed.order.date || '';
+        parsed.order.shipDate = parsed.order.shipDate || s.due || s.reqDate || '';
+        parsed.order.manager = parsed.order.manager || s.manager || '';
+        parsed.order.rows = [{
+          name: s.name||'',
+          qty: s.qty||'',
+          plating: s.plating||'',
+          mat: s.mat||'',
+          size: s.sz2||s.sz1||'',
+          note: s.desc||'',
+          itemCode: ''
+        }];
+        parsed.docType = '발주서';
+        console.warn('[AI파싱] sample 데이터를 order 형식으로 자동 변환:', parsed.order.rows);
+      }
+    }
+    // 폴백 2: 발주서 탭인데 order가 텍스트로만 채워져 있고 rows가 비어있는 경우
+    // → notes에 있는 텍스트라도 보여주기 위해 빈 행 1개 만들기
+    if(tabType==='order' && parsed.order && (!parsed.order.rows || !parsed.order.rows.length)){
+      parsed.order.rows = [{name:'',qty:'',plating:'',mat:'',size:'',note:parsed.notes||'',itemCode:''}];
+    }
+
     const srcLabel=filePayloads.some(fp=>fp.kind==='pdf')?'PDF':filePayloads.some(fp=>fp.kind==='image')?'이미지':'파일';
     showTabParseResult(parsed,imgs,resultEl,tabType,srcLabel);
   }catch(err){
@@ -12432,6 +12694,8 @@ function openOrdModal(idOrNull){
   if(shipHistEl){
     shipHistEl.innerHTML = (o && o.shipHistory && o.shipHistory.length) ? renderDueHistory(o.shipHistory, '요청 출고일') : '';
   }
+  // 충돌 감지: 수정 모드면 현재 노션 last_edited_time 스냅샷 기록
+  if(o && o._notionId) recordEditStart(o._notionId);
   renderOrdRows();openM('mOrd');
 
   // 발주 모달 전용 paste 리스너 등록 (이전 리스너가 있으면 제거)
@@ -12788,9 +13052,23 @@ function applyItemToRow(smpId){
   renderOrdRows();
   showToast(`✓ "${s.name}" 적용됨`, 'var(--gold-lt)');
 }
-async function saveOrd(){
+async function saveOrd(forceOverwrite){
   const vendor=gv('o_vendor');if(!vendor)return showToast('⚠ 업체명을 입력해 주세요','var(--red)');
   const id=gv('o_id');const isNew=!id;
+  // ── 다중 사용자 충돌 감지 (수정 케이스만, 강제 저장이 아닐 때만)
+  if(!isNew && !forceOverwrite){
+    const existing = orders.find(x=>x.id==id);
+    if(existing && existing._notionId){
+      const check = await checkStaleBeforeSave(existing._notionId);
+      if(check.stale === true){
+        // 충돌 감지 — 사용자 확인 후 강제 저장 가능
+        showStaleWarning(`발주서 ${existing.no||existing.vendor||''}`,
+          ()=>saveOrd(true),  // 그대로 저장 → forceOverwrite=true로 재호출
+          null);
+        return;
+      }
+    }
+  }
   // ── 미완성 발주 차단 (신규 등록 시에만, 수정은 허용)
   if(isNew){
     const validRows=ordRowsBuf.filter(r=>String(r.name||'').trim());
@@ -12912,6 +13190,8 @@ async function saveOrd(){
   if(so){
     if(isNew) setTimeout(()=>syncOrderToNotion(so, false), 50);
     else debouncedSync('order', so, true);
+    // 충돌 감지 스냅샷 정리 (다음 편집 시 새로 기록되도록)
+    if(so._notionId) delete window._editStartSnapshots[so._notionId];
   }
   // 입고로 인한 재고 자동 증가 알림
   if(stockReceiveResult.matched){
@@ -13490,6 +13770,7 @@ function renderSalesTab(){
   <div style="display:flex;border-bottom:1px solid var(--bdr);background:var(--s1);margin:-14px -16px 14px;padding:0 16px;overflow-x:auto">
     <button class="sl-subtab ${_salesSubTab==='inquiry'?'on':''}" onclick="setSalesSubTab('inquiry')">📬 고객사 문의</button>
     <button class="sl-subtab ${_salesSubTab==='proposals'?'on':''}" onclick="setSalesSubTab('proposals')">💡 신규 제안</button>
+    <button class="sl-subtab ${_salesSubTab==='quotes'?'on':''}" onclick="setSalesSubTab('quotes')">📋 견적서</button>
     <button class="sl-subtab ${_salesSubTab==='monthly'?'on':''}" onclick="setSalesSubTab('monthly')">📊 월별 실적</button>
     <button class="sl-subtab ${_salesSubTab==='clients'?'on':''}" onclick="setSalesSubTab('clients')">🏢 고객사</button>
   </div>
@@ -13502,7 +13783,7 @@ function setSalesSubTab(tab){
   _salesSubTab=tab;
   // update tab buttons
   document.querySelectorAll('.sl-subtab').forEach(b=>{
-    const label = {inquiry:'문의',proposals:'제안',monthly:'월별',clients:'고객사'}[tab];
+    const label = {inquiry:'문의',proposals:'제안',quotes:'견적',monthly:'월별',clients:'고객사'}[tab];
     b.classList.toggle('on', label && b.textContent.includes(label));
   });
   renderSalesSubTab();
@@ -13514,6 +13795,7 @@ function renderSalesSubTab(){
   c.innerHTML='';
   if(_salesSubTab==='inquiry') vInquiry(c);
   else if(_salesSubTab==='proposals') vNewProposals(c);
+  else if(_salesSubTab==='quotes') vQuotes(c);
   else if(_salesSubTab==='monthly') vMonthly(c);
   else if(_salesSubTab==='clients') vClients(c);
   else { _salesSubTab='inquiry'; vInquiry(c); } // fallback: 예전 'newdesign'으로 저장된 상태 복구
@@ -13580,11 +13862,13 @@ function openClModal(idOrNull){
   document.getElementById('mCl_t').textContent=cl?'고객사 수정':'고객사 등록';
   document.getElementById('cl_delBtn').style.display=cl?'':'none';
   updateInitPreview();
+  // 충돌 감지: 수정 모드면 현재 노션 last_edited_time 스냅샷 기록
+  if(cl && cl._notionId) recordEditStart(cl._notionId);
   document.getElementById('mCl').classList.add('open');
 }
 
 // saveCl — 신규 등록 + 수정 통합
-function saveCl(){
+async function saveCl(){
   const nm=gv('cl_nm'); if(!nm) return showToast('⚠ 고객사명 필수','var(--red)');
   const id=gv('cl_id');
   const init=gv('cl_init').toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
@@ -13594,18 +13878,42 @@ function saveCl(){
     brandStyle:gv('cl_bs'), materials:gv('cl_mat'), priceRange:gv('cl_pr'), status:'active', memo:gv('cl_mo')
   };
   if(id){
-    const i=clients.findIndex(c=>c.id==id);
-    if(i>=0){ clients[i]={...clients[i],...obj}; }
-    slSave();
-    const uc=clients.find(c=>c.id==id);if(uc) debouncedSync('client', uc, true);
-    showToast('✓ 고객사 수정됨','var(--grn)');
+    // 충돌 감지: 다른 사용자가 사이에 수정했는지 체크
+    const existing = clients.find(c=>c.id==id);
+    if(existing && existing._notionId){
+      const check = await checkStaleBeforeSave(existing._notionId);
+      if(check.stale === true){
+        // 충돌 감지 — 사용자 확인
+        showStaleWarning(nm, ()=>_doSaveCl(id, obj), null);
+        return;
+      }
+      // stale:null(체크 실패)이면 그대로 진행 (오프라인/네트워크 문제 시 작업 막지 않음)
+    }
+    _doSaveCl(id, obj);
   } else {
     const nc={id:Date.now(),...obj};
     clients.push(nc);
     slSave();
     setTimeout(()=>syncClientToNotion(nc,false),50);
     showToast('✓ 고객사 등록됨','var(--grn)');
+    document.getElementById('mCl').classList.remove('open');
+    sv('cl_id',''); sv('cl_init','');
+    _salesInited=false; renderSalesTab();
   }
+}
+
+// 실제 저장 로직 (충돌 체크 후 호출)
+function _doSaveCl(id, obj){
+  const i=clients.findIndex(c=>c.id==id);
+  if(i>=0){ clients[i]={...clients[i],...obj}; }
+  slSave();
+  const uc=clients.find(c=>c.id==id);
+  if(uc){
+    debouncedSync('client', uc, true);
+    // 저장 후 스냅샷 정리 (다음 편집 시 새로 기록되도록)
+    if(uc._notionId) delete window._editStartSnapshots[uc._notionId];
+  }
+  showToast('✓ 고객사 수정됨','var(--grn)');
   document.getElementById('mCl').classList.remove('open');
   sv('cl_id',''); sv('cl_init','');
   _salesInited=false; renderSalesTab();
@@ -14087,9 +14395,675 @@ function vClients(c){
   </tbody></table></div></div>`;
 }
 
-// ════════════════════════════════
+// ════════════════════════════════════════════════════════════════
+// 📋 견적서 (Quotation)
+// ════════════════════════════════════════════════════════════════
+// 입고단가 → KRW 환산 계수 (중국 입고원가 → 원화)
+// 원래 공식: 생산원가 = 입고단가 × 220 + 중량 × 원자재시세
+// 220은 운송/관세/마진 포함 환산 계수. 추후 변경 시 이 한 곳만 수정.
+const QUOTE_CN_RATE = 220;
+
+// 중량 문자열에서 숫자 추출 ("0.5g" → 0.5, "1.3" → 1.3)
+function parseWeightNum(w){
+  if(w==null) return 0;
+  const m = String(w).match(/[\d.]+/);
+  return m ? (parseFloat(m[0])||0) : 0;
+}
+
+// 행 하나의 생산원가 계산
+function calcProdCost(row){
+  const cn = +row.cnPrice||0;
+  const wt = parseWeightNum(row.weight);
+  const mr = +row.matRate||0;
+  return Math.round(cn * QUOTE_CN_RATE + wt * mr);
+}
+
+// 견적번호 자동생성: QT-YYMMDD-NNN (오늘 날짜 + 일련번호)
+function genQuoteNo(dateStr){
+  const d = dateStr ? new Date(dateStr) : new Date();
+  const yy = String(d.getFullYear()).slice(2);
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  const prefix = `QT-${yy}${mm}${dd}-`;
+  // 같은 날짜 견적번호 중 최대 일련번호 찾아 +1
+  let maxN = 0;
+  quotes.forEach(q=>{
+    if(q.no && q.no.startsWith(prefix)){
+      const n = parseInt(q.no.slice(prefix.length),10);
+      if(!isNaN(n) && n>maxN) maxN=n;
+    }
+  });
+  return prefix + String(maxN+1).padStart(3,'0');
+}
+
+// 유효기한 기본값: 발행일 + 30일
+function defaultValidUntil(issuedAt){
+  const d = issuedAt ? new Date(issuedAt) : new Date();
+  d.setDate(d.getDate()+30);
+  return toLocalDateStr(d);
+}
+
+// 견적서 상태 색상
+function qtStatusChip(status){
+  const map = {
+    '작성중':'chip',
+    '발송':'co',
+    '수주':'cg',
+    '미수주':'cr',
+    '만료':'chip'
+  };
+  return `<span class="chip ${map[status]||'chip'}">${status||'작성중'}</span>`;
+}
+
+// 목록 렌더
+let _qtFilter='all'; // all / draft / sent / won / lost
+function setQtFilter(v){ _qtFilter=v; renderSalesSubTab(); }
+
+function vQuotes(c){
+  let list=[...quotes];
+  if(_qtFilter==='draft') list=list.filter(q=>q.status==='작성중');
+  else if(_qtFilter==='sent') list=list.filter(q=>q.status==='발송');
+  else if(_qtFilter==='won') list=list.filter(q=>q.status==='수주');
+  else if(_qtFilter==='lost') list=list.filter(q=>q.status==='미수주'||q.status==='만료');
+  list.sort((a,b)=>(b.issuedAt||b.no||'').localeCompare(a.issuedAt||a.no||''));
+
+  const cnt = {
+    all: quotes.length,
+    draft: quotes.filter(q=>q.status==='작성중').length,
+    sent: quotes.filter(q=>q.status==='발송').length,
+    won: quotes.filter(q=>q.status==='수주').length,
+    lost: quotes.filter(q=>q.status==='미수주'||q.status==='만료').length,
+  };
+
+  c.innerHTML = `
+    <div class="card">
+      <div class="ch">
+        <div>
+          <div class="ch-t">📋 견적서</div>
+          <div class="csub">총 ${quotes.length}건 — 합계 ₩${quotes.reduce((s,q)=>s+(+q.total||0),0).toLocaleString()}</div>
+        </div>
+        <button class="btn bp bs" onclick="openQuoteModal(null)">+ 견적서 작성</button>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+        <button class="chip ${_qtFilter==='all'?'cg':''}" style="cursor:pointer;font-size:11px" onclick="setQtFilter('all')">전체 ${cnt.all}</button>
+        <button class="chip ${_qtFilter==='draft'?'cg':''}" style="cursor:pointer;font-size:11px" onclick="setQtFilter('draft')">작성중 ${cnt.draft}</button>
+        <button class="chip ${_qtFilter==='sent'?'cg':''}" style="cursor:pointer;font-size:11px" onclick="setQtFilter('sent')">발송 ${cnt.sent}</button>
+        <button class="chip ${_qtFilter==='won'?'cg':''}" style="cursor:pointer;font-size:11px" onclick="setQtFilter('won')">수주 ${cnt.won}</button>
+        <button class="chip ${_qtFilter==='lost'?'cg':''}" style="cursor:pointer;font-size:11px" onclick="setQtFilter('lost')">미수주/만료 ${cnt.lost}</button>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr>
+            <th>견적번호</th><th>발행일</th><th>고객사</th><th>건명</th>
+            <th style="text-align:right">합계</th><th>유효기한</th><th>상태</th><th></th>
+          </tr></thead>
+          <tbody>
+            ${list.length===0
+              ? '<tr><td colspan="8" style="text-align:center;color:var(--t3);padding:40px">'+(quotes.length?'조건에 맞는 견적서가 없습니다':'견적서가 없습니다 — "+ 견적서 작성" 버튼으로 시작하세요')+'</td></tr>'
+              : list.map(q=>{
+                const expired = q.validUntil && q.validUntil < toLocalDateStr(new Date()) && q.status!=='수주' && q.status!=='미수주';
+                return `<tr>
+                  <td style="font-weight:600;font-family:monospace;font-size:11.5px">${q.no||'-'}</td>
+                  <td style="font-size:11.5px">${q.issuedAt||'-'}</td>
+                  <td>${q.vendor||'-'}${q.cliManager?'<br><span class="csub">'+q.cliManager+'</span>':''}</td>
+                  <td style="font-size:12px;color:var(--t2)">${q.subject||'-'}</td>
+                  <td style="text-align:right;font-weight:600">₩${(+q.total||0).toLocaleString()}</td>
+                  <td style="font-size:11.5px;color:${expired?'var(--red)':'var(--t2)'}">${q.validUntil||'-'}${expired?' <span style="font-size:10px">(만료)</span>':''}</td>
+                  <td>${qtStatusChip(q.status)}</td>
+                  <td style="text-align:center;white-space:nowrap">
+                    <button onclick="openQuotePreview('${q.id}')" style="padding:3px 8px;font-size:11px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--gold-lt);margin-right:3px" title="PDF 미리보기/다운로드">📄</button>
+                    <button onclick="openQuoteModal('${q.id}')" style="padding:3px 8px;font-size:11px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">수정</button>
+                  </td>
+                </tr>`;
+              }).join('')
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ────────────────────────────────────────────────
+// 견적서 모달
+// ────────────────────────────────────────────────
+let _qtRowsBuf = [];
+let _qtSampleIdsBuf = [];
+
+function openQuoteModal(idOrNull){
+  const q = idOrNull ? quotes.find(x=>x.id==idOrNull) : null;
+  const today = toLocalDateStr(new Date());
+  const issued = q?q.issuedAt||today : today;
+  const valid  = q?q.validUntil||defaultValidUntil(issued) : defaultValidUntil(issued);
+  const no     = q?q.no||'' : ''; // 신규는 저장 시점에 자동생성
+
+  _qtRowsBuf = q && q.rows && q.rows.length
+    ? q.rows.map(r=>({...r}))
+    : [{name:'',mat:'',plating:'',spec:'',weight:'',qty:1,unitPrice:0,cnPrice:0,matRate:0,note:''}];
+  _qtSampleIdsBuf = q && q.sampleIds ? [...q.sampleIds] : [];
+
+  const vendorOpts = clients.map(cl=>`<option value="${(cl.name||'').replace(/"/g,'&quot;')}">${cl.name}</option>`).join('');
+
+  const html = `
+    <div style="font-size:15px;font-weight:700;margin-bottom:12px">📋 ${idOrNull?'견적서 수정':'견적서 작성'}</div>
+
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px">
+      <div class="fg">
+        <label>견적번호 ${no?'':'<span style="font-size:9.5px;color:var(--t3)">(저장 시 자동 생성)</span>'}</label>
+        <input class="fi" id="qt_no" value="${no}" placeholder="저장 시 자동 생성됨" ${no?'':'readonly'}>
+      </div>
+      <div class="fg"><label>발행일 *</label><input class="fi" type="date" id="qt_issued" value="${issued}" onchange="document.getElementById('qt_valid').value=defaultValidUntil(this.value)"></div>
+      <div class="fg"><label>유효기한</label><input class="fi" type="date" id="qt_valid" value="${valid}"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+      <div class="fg"><label>유형</label>
+        <select class="fs" id="qt_type">
+          ${['신규','재견적','단가조정','추가견적','샘플견적'].map(t=>`<option value="${t}" ${(q&&q.type)===t?'selected':(!q&&t==='신규'?'selected':'')}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg"><label>상태</label>
+        <select class="fs" id="qt_status">
+          ${['작성중','발송','수주','미수주','만료'].map(s=>`<option value="${s}" ${(q&&q.status)===s?'selected':(!q&&s==='작성중'?'selected':'')}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="fg" style="display:flex;align-items:center;gap:6px;padding-top:18px">
+        <input type="checkbox" id="qt_vatIncluded" ${(q&&q.vatIncluded)?'checked':'checked'}>
+        <label for="qt_vatIncluded" style="margin:0;cursor:pointer">부가세 포함 (10%)</label>
+      </div>
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--bdr);margin:12px 0 8px">
+    <div style="font-size:12px;font-weight:600;color:var(--t2);margin-bottom:6px">📩 수신 (고객사 정보)</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px">
+      <div class="fg"><label>고객사 *</label>
+        <input class="fi" id="qt_vendor" list="qt_vendor_dl" value="${q?q.vendor||'':''}" placeholder="고객사명">
+        <datalist id="qt_vendor_dl">${vendorOpts}</datalist>
+      </div>
+      <div class="fg"><label>고객 담당자</label><input class="fi" id="qt_cliManager" value="${q?q.cliManager||'':''}"></div>
+      <div class="fg"><label>건명</label><input class="fi" id="qt_subject" value="${q?q.subject||'':''}" placeholder="예: 목걸이, 귀걸이"></div>
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--bdr);margin:12px 0 8px">
+    <div style="font-size:12px;font-weight:600;color:var(--t2);margin-bottom:6px">📦 샘플의뢰서 연결 <span style="font-weight:400;font-size:10.5px;color:var(--t3)">— 선택 시 품목이 자동으로 채워집니다</span></div>
+    <div id="qt_sampleArea">${_renderQtSampleSection()}</div>
+
+    <hr style="border:none;border-top:1px solid var(--bdr);margin:12px 0 8px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="font-size:12px;font-weight:600;color:var(--t2)">📋 품목 내역</div>
+      <button onclick="addQuoteRow()" style="padding:4px 10px;font-size:11px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--gold-lt)">+ 행 추가</button>
+    </div>
+    <div id="qt_rowsArea">${_renderQtRows()}</div>
+
+    <hr style="border:none;border-top:1px solid var(--bdr);margin:12px 0 8px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div class="fg"><label>결제 조건</label><input class="fi" id="qt_payment" value="${q?q.payment||'':''}" placeholder="예: 발주 시 80%, 출고 시 20%"></div>
+      <div class="fg"><label>납기 조건</label><input class="fi" id="qt_delivery" value="${q?q.delivery||'':''}" placeholder="예: 발주 후 영업일 기준 14일"></div>
+    </div>
+    <div class="fg"><label>특이사항 (고객메모)</label>
+      <textarea class="fi" id="qt_cliMemo" rows="2" placeholder="견적서 PDF에 표시됩니다">${q?q.cliMemo||'':''}</textarea>
+    </div>
+    <div class="fg"><label>내부 메모 <span style="font-size:9.5px;color:var(--t3)">(고객에게 안 보임)</span></label>
+      <textarea class="fi" id="qt_intMemo" rows="2">${q?q.intMemo||'':''}</textarea>
+    </div>
+
+    <div id="qt_totalArea" style="margin-top:14px;padding:10px 14px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px">
+      ${_renderQtTotalsBox()}
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      ${idOrNull?`<button class="btn" style="background:var(--red-bg);color:var(--red);border:1px solid rgba(192,48,48,.3)" onclick="deleteQuote()">삭제</button>`:''}
+      <button class="btn" onclick="closeM('mQuote')">취소</button>
+      ${idOrNull?`<button class="btn bp-blu" onclick="openQuotePreview('${idOrNull}')">PDF 미리보기</button>`:''}
+      <button class="btn bp" onclick="saveQuote()">저장</button>
+    </div>
+    <input type="hidden" id="qt_id" value="${q?q.id:''}">
+  `;
+
+  let m = document.getElementById('mQuote');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mQuote';
+    m.className = 'ov';
+    m.innerHTML = '<div class="modal" style="max-width:780px;max-height:90vh;overflow-y:auto"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mQuote');
+
+  // 충돌 감지
+  if(q && q._notionId) recordEditStart(q._notionId);
+}
+
+// 합계 박스 렌더
+function _renderQtTotalsBox(){
+  const supply = _qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.unitPrice||0),0);
+  const tax = Math.round(supply*0.1);
+  const total = supply+tax;
+  // 내부 원가 합계 (수량 반영)
+  const totalProdCost = _qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*calcProdCost(r),0);
+  const totalCnCost   = _qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.cnPrice||0)*QUOTE_CN_RATE,0);
+  const totalMargin = supply - totalProdCost;
+  const marginPct = supply>0 ? Math.round((totalMargin/supply)*100) : 0;
+  const marginColor = totalMargin<0 ? 'var(--red)' : marginPct<20 ? 'var(--org)' : 'var(--grn)';
+  return `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:10px">
+      <div><div style="font-size:10.5px;color:var(--t3)">공급가액</div><div style="font-size:14px;font-weight:600">₩${supply.toLocaleString()}</div></div>
+      <div><div style="font-size:10.5px;color:var(--t3)">부가세 (10%)</div><div style="font-size:14px;font-weight:600">₩${tax.toLocaleString()}</div></div>
+      <div><div style="font-size:10.5px;color:var(--gold-lt);font-weight:600">합계 (VAT 포함) — 고객 표시</div><div style="font-size:18px;font-weight:700;color:var(--gold-lt)">₩${total.toLocaleString()}</div></div>
+    </div>
+    <div style="border-top:1px dashed var(--bdr);padding-top:8px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+      <div><div style="font-size:10.5px;color:var(--t3)">🔒 입고원가 합계</div><div style="font-size:13px;font-weight:600;font-family:monospace">₩${Math.round(totalCnCost).toLocaleString()}</div></div>
+      <div><div style="font-size:10.5px;color:var(--t3)">🔒 생산원가 합계</div><div style="font-size:13px;font-weight:600;font-family:monospace">₩${totalProdCost.toLocaleString()}</div></div>
+      <div><div style="font-size:10.5px;color:${marginColor};font-weight:600">🔒 예상 마진 (공급가-생산원가)</div><div style="font-size:14px;font-weight:700;color:${marginColor};font-family:monospace">₩${totalMargin.toLocaleString()} ${supply>0?`(${marginPct}%)`:''}</div></div>
+    </div>`;
+}
+
+// 품목 행 렌더 (모달 안) — 2줄 구조: PDF용 / 내부 원가용
+function _renderQtRows(){
+  return `
+    <div style="display:grid;grid-template-columns:30px 1.6fr 1fr 1fr 0.8fr 0.7fr 0.7fr 1fr 30px;gap:4px;align-items:center;font-size:10.5px;color:var(--t3);font-weight:600;padding:4px 4px;background:var(--s1);border-radius:4px;margin-bottom:4px">
+      <div style="text-align:center">NO</div><div>품명</div><div>소재</div><div>도금</div><div>규격</div><div>중량</div><div>수량</div><div style="text-align:right">판매단가</div><div></div>
+    </div>
+    ${_qtRowsBuf.map((r,i)=>{
+      const prodCost = calcProdCost(r);
+      const sale = (+r.unitPrice||0);
+      const margin = sale - prodCost;
+      const marginPct = sale>0 ? Math.round((margin/sale)*100) : 0;
+      const marginColor = margin<0 ? 'var(--red)' : marginPct<20 ? 'var(--org)' : 'var(--grn)';
+      return `
+      <div style="border:1px solid var(--bdr);border-radius:5px;padding:5px;margin-bottom:5px;background:var(--s1)">
+        <!-- 1행: PDF에 표시되는 정보 -->
+        <div style="display:grid;grid-template-columns:30px 1.6fr 1fr 1fr 0.8fr 0.7fr 0.7fr 1fr 30px;gap:4px;align-items:center;margin-bottom:4px">
+          <div style="text-align:center;font-size:11px;color:var(--t3);font-weight:600">${i+1}</div>
+          <input class="fi" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].name=this.value" placeholder="품명" style="font-size:11.5px;padding:4px 6px">
+          <input class="fi" value="${(r.mat||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].mat=this.value" placeholder="실버925" style="font-size:11.5px;padding:4px 6px">
+          <input class="fi" value="${(r.plating||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].plating=this.value" placeholder="무도금" style="font-size:11.5px;padding:4px 6px">
+          <input class="fi" value="${(r.spec||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].spec=this.value" placeholder="목걸이" style="font-size:11.5px;padding:4px 6px">
+          <input class="fi" value="${(r.weight||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].weight=this.value;_updateQtTotals()" placeholder="0.5g" style="font-size:11.5px;padding:4px 6px" title="숫자만 추출되어 원가 계산에 사용 (예: '1.3g' → 1.3)">
+          <input class="fi" type="number" value="${r.qty||1}" oninput="_qtRowsBuf[${i}].qty=+this.value;_updateQtTotals()" style="font-size:11.5px;padding:4px 6px;text-align:center">
+          <input class="fi" type="number" value="${r.unitPrice||0}" oninput="_qtRowsBuf[${i}].unitPrice=+this.value;_updateQtTotals()" placeholder="판매단가" style="font-size:11.5px;padding:4px 6px;text-align:right;font-weight:600;color:var(--gold-lt)">
+          <button onclick="removeQuoteRow(${i})" style="padding:2px 6px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;color:var(--t3);font-size:12px">×</button>
+        </div>
+        <!-- 2행: 내부 원가 정보 (PDF에 안 보임) -->
+        <div style="display:grid;grid-template-columns:30px 1fr 1fr 1.2fr 1.2fr 30px;gap:4px;align-items:center;font-size:10.5px;background:var(--s2);border-radius:4px;padding:4px 6px">
+          <div style="text-align:center;color:var(--t3);font-size:9.5px;font-weight:600">🔒</div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <span style="color:var(--t3);font-size:9.5px;flex-shrink:0">입고단가</span>
+            <input class="fi" type="number" step="0.01" value="${r.cnPrice||''}" oninput="_qtRowsBuf[${i}].cnPrice=+this.value;_updateQtTotals()" placeholder="0" style="font-size:11px;padding:3px 5px;text-align:right" title="중국 입고단가 (× ${QUOTE_CN_RATE} 환산)">
+          </div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <span style="color:var(--t3);font-size:9.5px;flex-shrink:0">시세</span>
+            <input class="fi" type="number" value="${r.matRate||''}" oninput="_qtRowsBuf[${i}].matRate=+this.value;_updateQtTotals()" placeholder="0" style="font-size:11px;padding:3px 5px;text-align:right" title="원자재 시세 (g당 KRW)">
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;background:rgba(192,144,32,.08);padding:3px 6px;border-radius:3px">
+            <span style="color:var(--t3);font-size:9.5px;flex-shrink:0">생산원가</span>
+            <span style="font-size:11.5px;font-weight:700;color:var(--gold-lt);font-family:monospace">₩${prodCost.toLocaleString()}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;${sale>0?`background:rgba(46,139,44,.06);`:''}padding:3px 6px;border-radius:3px">
+            <span style="color:var(--t3);font-size:9.5px;flex-shrink:0">마진</span>
+            ${sale>0
+              ? `<span style="font-size:11px;font-weight:600;color:${marginColor};font-family:monospace">₩${margin.toLocaleString()} (${marginPct}%)</span>`
+              : '<span style="font-size:10.5px;color:var(--t3)">-</span>'}
+          </div>
+          <div></div>
+        </div>
+      </div>`;
+    }).join('')}
+    <div style="font-size:10px;color:var(--t3);padding:4px 8px;background:var(--s1);border-radius:4px;margin-top:6px">
+      💡 <b>생산원가</b> = 입고단가 × ${QUOTE_CN_RATE} + 중량 × 원자재시세 · 🔒 내부 원가 정보는 고객사 PDF에 노출되지 않습니다
+    </div>
+  `;
+}
+
+function addQuoteRow(){
+  _qtRowsBuf.push({name:'',mat:'',plating:'',spec:'',weight:'',qty:1,unitPrice:0,cnPrice:0,matRate:0,note:''});
+  document.getElementById('qt_rowsArea').innerHTML = _renderQtRows();
+  _updateQtTotals();
+}
+
+function removeQuoteRow(i){
+  if(_qtRowsBuf.length<=1){
+    _qtRowsBuf[0]={name:'',mat:'',plating:'',spec:'',weight:'',qty:1,unitPrice:0,cnPrice:0,matRate:0,note:''};
+  } else {
+    _qtRowsBuf.splice(i,1);
+  }
+  document.getElementById('qt_rowsArea').innerHTML = _renderQtRows();
+  _updateQtTotals();
+}
+
+function _updateQtTotals(){
+  const el=document.getElementById('qt_totalArea');
+  if(el) el.innerHTML = _renderQtTotalsBox();
+}
+
+// 샘플 연결 영역 렌더
+function _renderQtSampleSection(){
+  const linked = _qtSampleIdsBuf.map(sid=>samples.find(s=>String(s.id)===String(sid))).filter(Boolean);
+  return `
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;min-height:24px">
+      ${linked.length===0
+        ? '<span style="font-size:11px;color:var(--t3)">연결된 샘플 없음</span>'
+        : linked.map(s=>`<span class="chip cg" style="font-size:11px;display:inline-flex;align-items:center;gap:4px">📌 ${s.name||'(이름없음)'}<button onclick="removeQuoteSample('${s.id}')" style="background:none;border:none;cursor:pointer;color:inherit;font-size:13px;line-height:1;padding:0 0 0 2px">×</button></span>`).join('')
+      }
+    </div>
+    <button onclick="openSamplePickerForQuote()" style="padding:5px 12px;font-size:11px;background:var(--s2);border:1px dashed var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">+ 샘플 선택</button>
+  `;
+}
+
+function _refreshQtSampleArea(){
+  const el=document.getElementById('qt_sampleArea');
+  if(el) el.innerHTML = _renderQtSampleSection();
+}
+
+function removeQuoteSample(sid){
+  _qtSampleIdsBuf = _qtSampleIdsBuf.filter(x=>String(x)!==String(sid));
+  _refreshQtSampleArea();
+}
+
+// 샘플 선택 다이얼로그
+function openSamplePickerForQuote(){
+  // 신규 샘플(접수일 기준 최근) 우선 정렬
+  const list = [...samples].sort((a,b)=>(b.reqDate||'').localeCompare(a.reqDate||''));
+  const html = `
+    <div style="font-size:14px;font-weight:600;margin-bottom:10px">📦 샘플 선택 — 견적 품목 자동 채우기</div>
+    <input class="fi" id="qtSampleSearch" placeholder="검색 (샘플명/소재/도금)" style="margin-bottom:8px" oninput="_renderQtSamplePickerList()">
+    <div style="font-size:10.5px;color:var(--t3);margin-bottom:8px">선택한 샘플의 정보(이름·소재·도금·중량)가 견적 품목 행으로 자동 추가됩니다.</div>
+    <div id="qtSamplePickerList" style="max-height:50vh;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button class="btn" onclick="closeM('mSamplePickQt')">닫기</button>
+    </div>
+  `;
+  let m = document.getElementById('mSamplePickQt');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mSamplePickQt';
+    m.className = 'ov';
+    m.innerHTML = '<div class="modal" style="max-width:600px"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mSamplePickQt');
+  _renderQtSamplePickerList();
+}
+
+function _renderQtSamplePickerList(){
+  const q = (document.getElementById('qtSampleSearch')?.value||'').toLowerCase().trim();
+  let list = [...samples];
+  if(q){
+    list = list.filter(s=>(s.name||'').toLowerCase().includes(q) || (s.mat||'').toLowerCase().includes(q) || (s.plating||'').toLowerCase().includes(q));
+  }
+  list.sort((a,b)=>(b.reqDate||'').localeCompare(a.reqDate||''));
+  const el=document.getElementById('qtSamplePickerList');
+  if(!el) return;
+  if(!list.length){ el.innerHTML='<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">샘플이 없습니다</div>'; return; }
+  el.innerHTML = list.slice(0,50).map(s=>{
+    const linked = _qtSampleIdsBuf.some(sid=>String(sid)===String(s.id));
+    return `
+    <div style="padding:8px 10px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;${linked?'opacity:.5;background:var(--s1)':''}">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:600">${s.name||'(이름없음)'}</div>
+        <div style="font-size:10.5px;color:var(--t3)">${s.mat||''} · ${s.plating||'무도금'} · ${s.wt?s.wt+(String(s.wt).includes('g')?'':'g'):''} · ${s.reqDate||''}</div>
+      </div>
+      <button ${linked?'disabled':''} onclick="addSampleToQuote('${s.id}')" style="padding:4px 10px;font-size:11px;background:${linked?'var(--s2)':'var(--gold)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit">${linked?'추가됨':'+ 추가'}</button>
+    </div>`;
+  }).join('');
+}
+
+function addSampleToQuote(sid){
+  const s = samples.find(x=>String(x.id)===String(sid));
+  if(!s) return;
+  if(_qtSampleIdsBuf.some(x=>String(x)===String(sid))) return; // 중복 방지
+
+  // 샘플IDs 배열에 추가
+  _qtSampleIdsBuf.push(sid);
+
+  // 품목 행 자동 추가 (샘플 정보로)
+  // 현재 첫 행이 비어있으면(name이 비어있고 단가도 0이면) 그 자리에 채움, 아니면 새 행 추가
+  const newRow = {
+    name: s.name||'',
+    mat: s.mat||'',
+    plating: s.plating||'무도금',
+    spec: s.type||'', // 샘플 종류 (반지/목걸이 등)
+    weight: s.wt?String(s.wt)+(String(s.wt).includes('g')?'':'g'):'',
+    qty: 1,
+    unitPrice: +s.unitPrice||0, // 샘플단가가 있으면 자동 채우기
+    cnPrice: +s.costPrice||0,   // 샘플 입고원가 → 입고단가로 자동 채우기
+    matRate: 0,                  // 원자재 시세는 견적 작성 시점 시세를 사용자가 입력
+    note: '',
+    _fromSampleId: sid
+  };
+  if(_qtRowsBuf.length===1 && !_qtRowsBuf[0].name && !+_qtRowsBuf[0].unitPrice){
+    _qtRowsBuf[0] = newRow;
+  } else {
+    _qtRowsBuf.push(newRow);
+  }
+
+  // 건명이 비어있으면 샘플 종류로 채우기 (첫 샘플일 때만)
+  const subjectEl = document.getElementById('qt_subject');
+  if(subjectEl && !subjectEl.value && s.type){ subjectEl.value = s.type; }
+
+  // UI 갱신
+  _refreshQtSampleArea();
+  document.getElementById('qt_rowsArea').innerHTML = _renderQtRows();
+  _updateQtTotals();
+  _renderQtSamplePickerList(); // 다이얼로그 안 버튼 상태 갱신
+  showToast(`✓ "${s.name||'샘플'}" 견적에 추가됨`,'var(--grn)');
+}
+
+// 저장
+async function saveQuote(forceOverwrite){
+  const vendor = (gv('qt_vendor')||'').trim();
+  if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
+  const validRows = _qtRowsBuf.filter(r=>String(r.name||'').trim());
+  if(validRows.length===0){ showToast('⚠ 품목을 1개 이상 입력해 주세요','var(--red)'); return; }
+
+  const id = gv('qt_id');
+  const isNew = !id;
+
+  // 충돌 감지 (수정 시)
+  if(!isNew && !forceOverwrite){
+    const existing = quotes.find(x=>String(x.id)===String(id));
+    if(existing && existing._notionId){
+      const check = await checkStaleBeforeSave(existing._notionId);
+      if(check.stale === true){
+        showStaleWarning(`견적서 ${existing.no||vendor}`,
+          ()=>saveQuote(true), null);
+        return;
+      }
+    }
+  }
+
+  // 합계 계산
+  const supply = _qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.unitPrice||0),0);
+  const tax = Math.round(supply*0.1);
+  const total = supply+tax;
+  // 내부 원가 합계 (수량 반영) — 노션 "중국입고원가합계" 필드에 저장
+  const cnCostTotal = Math.round(_qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.cnPrice||0)*QUOTE_CN_RATE, 0));
+
+  const issuedAt = gv('qt_issued') || toLocalDateStr(new Date());
+  let no = (gv('qt_no')||'').trim();
+  if(!no) no = genQuoteNo(issuedAt);
+
+  const obj = {
+    no,
+    vendor,
+    cliManager: gv('qt_cliManager'),
+    ourManager: gv('qt_ourManager')||'',
+    subject: gv('qt_subject'),
+    issuedAt,
+    validUntil: gv('qt_valid') || defaultValidUntil(issuedAt),
+    status: gv('qt_status') || '작성중',
+    type: gv('qt_type') || '신규',
+    vatIncluded: !!document.getElementById('qt_vatIncluded')?.checked,
+    payment: gv('qt_payment'),
+    delivery: gv('qt_delivery'),
+    cliMemo: gv('qt_cliMemo'),
+    intMemo: gv('qt_intMemo'),
+    rows: _qtRowsBuf.map(r=>({...r})),
+    sampleIds: [..._qtSampleIdsBuf],
+    supplyAmt: supply,
+    tax,
+    total,
+    cnCostTotal, // 입고원가 합계 (자동 계산)
+    imgs: [],
+    files: [],
+  };
+
+  let target;
+  if(isNew){
+    target = {id:Date.now(), createdAt:new Date().toISOString(), ...obj};
+    quotes.unshift(target);
+  } else {
+    const i = quotes.findIndex(x=>String(x.id)===String(id));
+    if(i>=0){
+      quotes[i] = {...quotes[i], ...obj};
+      target = quotes[i];
+    }
+  }
+  slSave();
+
+  // 노션 동기화 (백그라운드)
+  if(target && notionCfg.workerUrl && notionCfg.quoteDb){
+    syncQuoteToNotion(target, !isNew).then(()=>{
+      if(target._notionId) delete window._editStartSnapshots[target._notionId];
+    }).catch(e=>console.warn('견적 노션 sync 실패:',e));
+  }
+
+  closeM('mQuote');
+  showToast(isNew?'✓ 견적서 등록됨':'✓ 견적서 수정됨','var(--grn)');
+  renderSalesSubTab();
+}
+
+function deleteQuote(){
+  const id = gv('qt_id'); if(!id) return;
+  const q = quotes.find(x=>String(x.id)===String(id));
+  if(!q) return;
+  showConfirm(`견적서 "${q.no||q.vendor||''}"을(를) 삭제합니다.`,()=>{
+    if(q._notionId) deleteQuoteFromNotion(q);
+    quotes = quotes.filter(x=>String(x.id)!==String(id));
+    slSave();
+    closeM('mQuote');
+    showToast('✓ 견적서 삭제됨','var(--grn)');
+    renderSalesSubTab();
+  },'견적서 삭제','🗑');
+}
+
+// ────────────────────────────────────────────────
+// 견적서 PDF 미리보기 (업로드 PDF 양식 그대로)
+// ────────────────────────────────────────────────
+function openQuotePreview(idOrInline){
+  const q = quotes.find(x=>String(x.id)===String(idOrInline));
+  if(!q){ showToast('⚠ 견적서를 찾을 수 없습니다','var(--red)'); return; }
+  const html = buildQuoteHtml(q);
+  showPrintPreview('견적서 미리보기', html, q.no||'견적서');
+}
+
+function buildQuoteHtml(q){
+  const co = (typeof company==='object'&&company)?company:{};
+  const fmt = n => '₩' + (Number(n||0)).toLocaleString();
+  const supply = +q.supplyAmt||0;
+  const tax = +q.tax||0;
+  const total = +q.total||0;
+
+  const rowsHtml = (q.rows||[]).map((r,i)=>`
+    <tr>
+      <td style="text-align:center;font-size:10px;padding:6px 4px">${i+1}</td>
+      <td style="padding:6px 8px;font-size:11px">${escHtml(r.name||'')}</td>
+      <td style="padding:6px 4px;text-align:center;font-size:10.5px">${escHtml(r.mat||'')}</td>
+      <td style="padding:6px 4px;text-align:center;font-size:10.5px">${escHtml(r.plating||'')}</td>
+      <td style="padding:6px 4px;text-align:center;font-size:10.5px">${escHtml(r.spec||'')}</td>
+      <td style="padding:6px 4px;text-align:center;font-size:10.5px">${escHtml(r.weight||'')}</td>
+      <td style="padding:6px 4px;text-align:center;font-size:10.5px">${r.qty||0}</td>
+      <td style="padding:6px 6px;text-align:right;font-size:10.5px">${fmt(r.unitPrice)}</td>
+      <td style="padding:6px 6px;text-align:right;font-size:10.5px;font-weight:600">${fmt((+r.qty||0)*(+r.unitPrice||0))}</td>
+    </tr>
+  `).join('');
+
+  return `
+  <div style="max-width:760px;margin:0 auto;padding:20px;background:#fff;color:#222;font-family:'맑은 고딕','Malgun Gothic',sans-serif">
+    <div style="text-align:center;background:#3a6b3a;color:#fff;padding:16px;border-radius:6px;margin-bottom:18px">
+      <div style="font-size:24px;font-weight:700;letter-spacing:24px;margin-left:24px">견 적 서</div>
+      <div style="font-size:11px;opacity:.85;margin-top:4px;letter-spacing:6px">QUOTATION</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <div style="border:1.5px solid #3a6b3a;border-radius:5px;padding:10px 12px">
+        <div style="font-size:11px;font-weight:700;color:#3a6b3a;margin-bottom:6px">📩 수 신</div>
+        <div style="display:grid;grid-template-columns:60px 1fr;gap:4px;font-size:11px">
+          <div style="color:#888">고객사</div><div><b>${escHtml(q.vendor||'')}</b> 귀중</div>
+          <div style="color:#888">담당자</div><div>${escHtml(q.cliManager||'—')}</div>
+          <div style="color:#888">건명</div><div>${escHtml(q.subject||'—')}</div>
+        </div>
+      </div>
+      <div style="border:1.5px solid #3a6b3a;border-radius:5px;padding:10px 12px">
+        <div style="font-size:11px;font-weight:700;color:#3a6b3a;margin-bottom:6px">🏢 발 행 처</div>
+        <div style="display:grid;grid-template-columns:60px 1fr;gap:4px;font-size:11px">
+          <div style="color:#888">상호</div><div><b>${escHtml(co.name||'이케이아이엔티')}</b></div>
+          <div style="color:#888">대표</div><div>${escHtml(co.ceo||'—')}</div>
+          <div style="color:#888">연락처</div><div>${escHtml(co.tel||'—')}</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:14px;font-size:11px;margin-bottom:14px;padding:8px 12px;background:#f5f5f0;border-radius:4px">
+      <div><b>견적번호</b> <span style="font-family:monospace">${escHtml(q.no||'')}</span></div>
+      <div><b>발행일</b> ${escHtml(q.issuedAt||'')}</div>
+      <div><b>유효기한</b> ${escHtml(q.validUntil||'')}</div>
+    </div>
+
+    <div style="font-size:11.5px;color:#444;margin:10px 0 8px">귀사의 일익번창을 기원합니다. 아래와 같이 견적을 제출하오니 검토하여 주시기 바랍니다.</div>
+
+    <div style="background:#f0e9d8;border:2px solid #b59850;border-radius:6px;padding:12px 16px;margin-bottom:14px;text-align:center">
+      <span style="font-size:12px;color:#7a5a18;font-weight:600">합 계 금 액 (VAT 포함)</span>
+      <span style="font-size:22px;font-weight:700;color:#7a5a18;margin-left:10px">${fmt(total)}</span>
+      <span style="font-size:12px;color:#7a5a18">원정</span>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:10px">
+      <thead>
+        <tr style="background:#3a6b3a;color:#fff">
+          <th style="padding:7px 4px;font-size:10.5px;width:34px">NO</th>
+          <th style="padding:7px 6px;font-size:10.5px;text-align:left">품 명</th>
+          <th style="padding:7px 4px;font-size:10.5px">소재</th>
+          <th style="padding:7px 4px;font-size:10.5px">도금</th>
+          <th style="padding:7px 4px;font-size:10.5px">규격</th>
+          <th style="padding:7px 4px;font-size:10.5px">중량</th>
+          <th style="padding:7px 4px;font-size:10.5px">수량</th>
+          <th style="padding:7px 6px;font-size:10.5px;text-align:right">단가</th>
+          <th style="padding:7px 6px;font-size:10.5px;text-align:right">금액</th>
+        </tr>
+      </thead>
+      <tbody style="border:1px solid #ddd">${rowsHtml}</tbody>
+      <tfoot style="border-top:2px solid #3a6b3a">
+        <tr><td colspan="8" style="padding:6px 10px;text-align:right;font-size:11px;color:#666">공급가액</td><td style="padding:6px 10px;text-align:right;font-size:11px">${fmt(supply)}</td></tr>
+        <tr><td colspan="8" style="padding:6px 10px;text-align:right;font-size:11px;color:#666">부가세 (10%)</td><td style="padding:6px 10px;text-align:right;font-size:11px">${fmt(tax)}</td></tr>
+        <tr style="background:#f0e9d8"><td colspan="8" style="padding:8px 10px;text-align:right;font-size:12px;font-weight:700;color:#7a5a18">합 계</td><td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:700;color:#7a5a18">${fmt(total)}</td></tr>
+      </tfoot>
+    </table>
+
+    ${q.payment?`<div style="display:flex;gap:8px;margin-bottom:6px;padding:8px 12px;background:#fafafa;border-left:3px solid #3a6b3a;font-size:11px"><b style="color:#3a6b3a;min-width:80px">결 제 조 건</b><span>${escHtml(q.payment)}</span></div>`:''}
+    ${q.delivery?`<div style="display:flex;gap:8px;margin-bottom:6px;padding:8px 12px;background:#fafafa;border-left:3px solid #3a6b3a;font-size:11px"><b style="color:#3a6b3a;min-width:80px">납 기 조 건</b><span>${escHtml(q.delivery)}</span></div>`:''}
+    <div style="display:flex;gap:8px;margin-bottom:14px;padding:8px 12px;background:#fafafa;border-left:3px solid #3a6b3a;font-size:11px">
+      <b style="color:#3a6b3a;min-width:80px">유 효 기 한</b>
+      <span>본 견적은 ${escHtml(q.validUntil||'')}까지 유효합니다</span>
+    </div>
+
+    ${q.cliMemo?`<div style="margin-top:12px;padding:10px 14px;background:#fff8e1;border:1px solid #d4b85a;border-radius:5px;font-size:11px"><b style="color:#7a5a18">📌 특이사항:</b> ${escHtml(q.cliMemo).replace(/\n/g,'<br>')}</div>`:''}
+
+    <div style="margin-top:24px;text-align:center;font-size:10px;color:#999">
+      ${escHtml(co.name||'이케이아이엔티')} · 본 견적서는 EK OEM 통합관리 시스템에서 자동 생성되었습니다
+    </div>
+  </div>`;
+}
+
+// HTML escape
+function escHtml(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ════════════════════════════════════════════════════════════════
 // 📬 고객사 문의 관리
-// ════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 let _inqFilter='all';
 let _inqImgBuf=[];
 let _inqFileBuf=[];
@@ -14223,6 +15197,8 @@ function openInqModal(id){
   setTimeout(()=>{ renderInqImgPrev(); renderInqFilePrev(); }, 50);
   // Ctrl+V paste handler
   _inqPasteSetup();
+  // 충돌 감지: 수정 모드면 현재 노션 last_edited_time 스냅샷 기록
+  if(q && q._notionId) recordEditStart(q._notionId);
 }
 
 // ── 문의 모달용 파일 첨부 헬퍼 ──
@@ -14315,11 +15291,25 @@ function renderInqFilePrev(){
   }).join('');
 }
 
-async function saveInq(){
+async function saveInq(forceOverwrite){
   const vendor = gv('inq_vendor').trim();
   const content = gv('inq_content').trim();
   if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
   if(!content){ showToast('⚠ 문의 내용을 입력해 주세요','var(--red)'); return; }
+  const id = gv('inq_id');
+  // 다중 사용자 충돌 감지 (수정 케이스만, 강제 저장이 아닐 때)
+  if(id && !forceOverwrite){
+    const existing = inquiries.find(x=>x.id==id);
+    if(existing && existing._notionId){
+      const check = await checkStaleBeforeSave(existing._notionId);
+      if(check.stale === true){
+        showStaleWarning(`문의 — ${existing.vendor||''}`,
+          ()=>saveInq(true),
+          null);
+        return;
+      }
+    }
+  }
   // 첨부 파일 — base64인 것은 R2 업로드 (Worker 설정된 경우)
   let imgs = [..._inqImgBuf];
   let files = [..._inqFileBuf];
@@ -14331,7 +15321,6 @@ async function saveInq(){
       try{ files = await uploadImagesToR2(files); }catch(e){ console.warn('파일 R2 업로드 실패:',e); }
     }
   }
-  const id = gv('inq_id');
   const obj = {
     vendor, receivedAt: gv('inq_date'), manager: gv('inq_manager'),
     category: gv('inq_category'), status: gv('inq_status'),
@@ -14351,6 +15340,8 @@ async function saveInq(){
   if(target && notionCfg.workerUrl && notionCfg.inqDb){
     if(id) debouncedSync('inquiry', target, true);
     else syncInqToNotion(target, false).catch(e=>console.warn('문의 sync 실패:',e));
+    // 충돌 감지 스냅샷 정리
+    if(target._notionId) delete window._editStartSnapshots[target._notionId];
   }
   _inqPasteCleanup();
   closeM('mInquiry');
