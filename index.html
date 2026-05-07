@@ -1525,7 +1525,8 @@ let smpAdvFilter={
   dday:'',         // 전체/overdue/d3/d7/none
   dueFrom:'', dueTo:'',     // 납기일 범위
   createdFrom:'', createdTo:'', // 생성일 범위
-  sort:'req_asc',  // req_asc/req_desc/due_asc/due_desc/created_asc/created_desc/name_asc
+  // 'default'는 기본정렬(=req_asc 폴백). 헤더 클릭 토글이 'req_asc'/'req_desc'를 의미있게 쓰도록 'default'로 분리
+  sort:'default',
   panelOpen:false,
 };
 function smpAdvActiveCount(){
@@ -1535,12 +1536,42 @@ function smpAdvActiveCount(){
   if(smpAdvFilter.dday)n++;
   if(smpAdvFilter.dueFrom||smpAdvFilter.dueTo)n++;
   if(smpAdvFilter.createdFrom||smpAdvFilter.createdTo)n++;
-  if(smpAdvFilter.sort&&smpAdvFilter.sort!=='req_asc')n++;
+  if(smpAdvFilter.sort && smpAdvFilter.sort!=='default' && smpAdvFilter.sort!=='req_asc')n++;
   return n;
 }
 function resetSmpAdvFilter(){
-  smpAdvFilter={manager:'',type:'',dday:'',dueFrom:'',dueTo:'',createdFrom:'',createdTo:'',sort:'req_asc',panelOpen:smpAdvFilter.panelOpen};
+  smpAdvFilter={manager:'',type:'',dday:'',dueFrom:'',dueTo:'',createdFrom:'',createdTo:'',sort:'default',panelOpen:smpAdvFilter.panelOpen};
   renderSample();
+}
+
+// 샘플 테이블 헤더 클릭 시 정렬 토글
+// field: 'req' (의뢰일) | 'due' (D-day = 납기일 기준)
+// 패턴:
+//   1) 다른 컬럼/초기상태(default)에서 클릭 → 기본 방향 (의뢰일=desc/최신순, D-day=asc/임박순)
+//   2) 같은 컬럼 기본방향 상태에서 클릭 → 역순으로 토글
+//   3) 같은 컬럼 역순 상태에서 클릭 → 기본 정렬('default')로 리셋
+function smpToggleSort(field){
+  const current = smpAdvFilter.sort || 'default';
+  const defaultDir = field === 'req' ? 'desc' : 'asc';
+  const oppositeDir = defaultDir === 'desc' ? 'asc' : 'desc';
+  const defaultKey = `${field}_${defaultDir}`;
+  const oppositeKey = `${field}_${oppositeDir}`;
+  if(current === defaultKey){
+    smpAdvFilter.sort = oppositeKey;
+  } else if(current === oppositeKey){
+    smpAdvFilter.sort = 'default';
+  } else {
+    smpAdvFilter.sort = defaultKey;
+  }
+  renderSample();
+}
+
+// 헤더에서 표시할 정렬 아이콘 결정
+function _smpSortIndicator(field){
+  const s = smpAdvFilter.sort || 'default';
+  if(s === `${field}_asc`) return ' ▲';
+  if(s === `${field}_desc`) return ' ▼';
+  return " <span style='color:var(--t3);opacity:.4'>⇅</span>";
 }
 
 // 고객사 이니셜 칩 클릭 시 필터 토글
@@ -1564,7 +1595,8 @@ let ordAdvFilter={
   stage:'',        // 전체/0~4 (주물/도금/검품/포장/출고)
   shipFrom:'', shipTo:'',     // 출고일 범위
   dateFrom:'', dateTo:'',     // 발주일 범위
-  sort:'date_asc', // ship_asc/ship_desc/date_desc/date_asc/vendor_asc
+  // 'default'는 기본정렬(=date_asc 폴백). 헤더 클릭 토글이 'date_asc'/'date_desc'를 의미있게 쓰도록 'default'로 분리
+  sort:'default',
   panelOpen:false,
 };
 function ordAdvActiveCount(){
@@ -1575,12 +1607,43 @@ function ordAdvActiveCount(){
   if(ordAdvFilter.stage!=='')n++; // stage=0('주물')도 활성
   if(ordAdvFilter.shipFrom||ordAdvFilter.shipTo)n++;
   if(ordAdvFilter.dateFrom||ordAdvFilter.dateTo)n++;
-  if(ordAdvFilter.sort&&ordAdvFilter.sort!=='date_asc')n++;
+  if(ordAdvFilter.sort && ordAdvFilter.sort!=='default' && ordAdvFilter.sort!=='date_asc')n++;
   return n;
 }
 function resetOrdAdvFilter(){
-  ordAdvFilter={vendor:'',dday:'',status:'',stage:'',shipFrom:'',shipTo:'',dateFrom:'',dateTo:'',sort:'date_asc',panelOpen:ordAdvFilter.panelOpen};
+  ordAdvFilter={vendor:'',dday:'',status:'',stage:'',shipFrom:'',shipTo:'',dateFrom:'',dateTo:'',sort:'default',panelOpen:ordAdvFilter.panelOpen};
   renderOrder();
+}
+
+// 발주 테이블 헤더 클릭 시 정렬 토글
+// field: 'date' (발주일) | 'ship' (D-DAY = 요청출고일 기준)
+// 패턴:
+//   1) 다른 컬럼/초기상태(default)에서 클릭 → 기본 방향
+//      - 발주일은 desc(최신순), D-DAY(ship)는 asc(임박순)
+//   2) 같은 컬럼 기본방향 상태에서 클릭 → 역순으로
+//   3) 같은 컬럼 역순 상태에서 클릭 → 기본 정렬('default')로 리셋
+function ordToggleSort(field){
+  const current = ordAdvFilter.sort || 'default';
+  const defaultDir = field === 'date' ? 'desc' : 'asc';
+  const oppositeDir = defaultDir === 'desc' ? 'asc' : 'desc';
+  const defaultKey = `${field}_${defaultDir}`;
+  const oppositeKey = `${field}_${oppositeDir}`;
+  if(current === defaultKey){
+    ordAdvFilter.sort = oppositeKey;
+  } else if(current === oppositeKey){
+    ordAdvFilter.sort = 'default';
+  } else {
+    ordAdvFilter.sort = defaultKey;
+  }
+  renderOrder();
+}
+
+// 발주 헤더에서 표시할 정렬 아이콘 결정
+function _ordSortIndicator(field){
+  const s = ordAdvFilter.sort || 'default';
+  if(s === `${field}_asc`) return ' ▲';
+  if(s === `${field}_desc`) return ' ▼';
+  return " <span style='color:var(--t3);opacity:.4'>⇅</span>";
 }
 
 // 업체 이니셜 칩 클릭 시 필터 토글 (진행중만 자동 적용)
@@ -2499,6 +2562,8 @@ function renderAS(){
 // ════════════════════════════════
 let pdImgBuf=[], _importRows=[];
 let pdSearch='', pdFilterType='전체', pdFilterMat='전체', pdPage=1, pdLowOnly=false;
+// 최종수정일 필터: 'all' / 'today' / 'week' / 'month' / 'quarter' / 'year' / 'custom' (custom일 땐 pdDateFrom/To 사용)
+let pdDateFilter='all', pdDateFrom='', pdDateTo='';
 let pdSortKey=null, pdSortDir='asc'; // 정렬 상태: key=null이면 기본순서, dir='asc'(오름)/'desc'(내림)
 const PD_PAGE_SIZE=20;
 
@@ -2506,8 +2571,8 @@ const PD_PAGE_SIZE=20;
 function pdToggleSort(key){
   if(pdSortKey!==key){
     pdSortKey=key;
-    // 재고는 처음 클릭 시 '많은 순'(내림차순)이 기본, 나머지는 가나다순
-    pdSortDir = (key==='stock') ? 'desc' : 'asc';
+    // 재고/날짜는 처음 클릭 시 '많은 순/최신순'(내림차순)이 기본, 나머지는 가나다순
+    pdSortDir = (key==='stock' || key==='lastModified') ? 'desc' : 'asc';
   } else if(pdSortDir==='asc'){
     pdSortDir='desc';
   } else if(pdSortDir==='desc'){
@@ -2516,6 +2581,100 @@ function pdToggleSort(key){
   }
   pdPage=1;
   renderProducts();
+}
+
+// 최종수정일 필터의 날짜 범위 계산
+// 반환: {from: 'YYYY-MM-DD', to: 'YYYY-MM-DD'} 또는 null
+function _getPdDateRange(){
+  if(pdDateFilter === 'all') return null;
+  const today = new Date();
+  const fmt = (d)=>{
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  };
+  const todayStr = fmt(today);
+  if(pdDateFilter === 'today'){
+    return { from: todayStr, to: todayStr };
+  }
+  if(pdDateFilter === 'week'){
+    const start = new Date(today); start.setDate(start.getDate() - 7);
+    return { from: fmt(start), to: todayStr };
+  }
+  if(pdDateFilter === 'month'){
+    const start = new Date(today); start.setMonth(start.getMonth() - 1);
+    return { from: fmt(start), to: todayStr };
+  }
+  if(pdDateFilter === 'quarter'){
+    const start = new Date(today); start.setMonth(start.getMonth() - 3);
+    return { from: fmt(start), to: todayStr };
+  }
+  if(pdDateFilter === 'year'){
+    const start = new Date(today); start.setFullYear(start.getFullYear() - 1);
+    return { from: fmt(start), to: todayStr };
+  }
+  if(pdDateFilter === 'custom'){
+    return { from: pdDateFrom||'', to: pdDateTo||'' };
+  }
+  return null;
+}
+
+// 날짜 필터 설정 (드롭다운/직접 입력에서 호출)
+function setPdDateFilter(value){
+  pdDateFilter = value;
+  if(value !== 'custom'){
+    pdDateFrom = ''; pdDateTo = '';
+  }
+  pdPage = 1;
+  // 드롭다운 닫기
+  const dd = document.getElementById('pdDateFilterDropdown');
+  if(dd) dd.style.display = 'none';
+  renderProducts();
+}
+
+function setPdDateRangeCustom(from, to){
+  pdDateFilter = 'custom';
+  pdDateFrom = from || '';
+  pdDateTo = to || '';
+  pdPage = 1;
+  renderProducts();
+}
+
+function togglePdDateFilterDropdown(e){
+  e?.stopPropagation();
+  const dd = document.getElementById('pdDateFilterDropdown');
+  if(!dd) return;
+  dd.style.display = dd.style.display === 'block' ? 'none' : 'block';
+  // 다른 곳 클릭 시 닫기
+  if(dd.style.display === 'block'){
+    setTimeout(()=>{
+      const closer = (ev)=>{
+        if(!dd.contains(ev.target) && !ev.target.closest('#pdDateFilterBtn')){
+          dd.style.display = 'none';
+          document.removeEventListener('click', closer);
+        }
+      };
+      document.addEventListener('click', closer);
+    }, 0);
+  }
+}
+
+// 현재 적용된 날짜 필터의 표시 라벨
+function _getPdDateFilterLabel(){
+  switch(pdDateFilter){
+    case 'today': return '오늘';
+    case 'week': return '최근 7일';
+    case 'month': return '최근 1달';
+    case 'quarter': return '최근 3달';
+    case 'year': return '최근 1년';
+    case 'custom':
+      if(pdDateFrom && pdDateTo) return `${pdDateFrom} ~ ${pdDateTo}`;
+      if(pdDateFrom) return `${pdDateFrom} ~`;
+      if(pdDateTo) return `~ ${pdDateTo}`;
+      return '직접 입력';
+    default: return '';
+  }
 }
 
 // ── 제품 목록 렌더 ──
@@ -2528,6 +2687,19 @@ function renderProducts(){
   let list=productDB;
   if(pdFilterType!=='전체') list=list.filter(p=>p.type===pdFilterType);
   if(pdFilterMat!=='전체') list=list.filter(p=>p.mat===pdFilterMat);
+  // 최종수정일 필터 적용
+  if(pdDateFilter !== 'all'){
+    const range = _getPdDateRange();
+    if(range){
+      list = list.filter(p=>{
+        if(!p.lastModified) return false;
+        const d = String(p.lastModified).slice(0,10);
+        if(range.from && d < range.from) return false;
+        if(range.to && d > range.to) return false;
+        return true;
+      });
+    }
+  }
   if(pdSearch) list=list.filter(p=>(p.code+p.name+(p.memo||'')).toLowerCase().includes(pdSearch.toLowerCase()));
   if(pdLowOnly){
     list=list.filter(p=>{
@@ -2543,6 +2715,16 @@ function renderProducts(){
       if(pdSortKey==='stock'){
         va=+a.stock||0; vb=+b.stock||0;
         return pdSortDir==='asc' ? va-vb : vb-va;
+      } else if(pdSortKey==='lastModified'){
+        // 날짜 정렬: ISO 형식이라 문자열 비교로 충분 (YYYY-MM-DD)
+        // 빈 값은 항상 뒤로
+        va = a.lastModified || '';
+        vb = b.lastModified || '';
+        if(!va && vb) return 1;
+        if(va && !vb) return -1;
+        if(!va && !vb) return 0;
+        const cmp = va.localeCompare(vb);
+        return pdSortDir==='asc' ? cmp : -cmp;
       } else {
         // 문자열 정렬 (유형/소재/도금)
         va=(a[pdSortKey]||'').toString();
@@ -2602,7 +2784,28 @@ function renderProducts(){
           <th style="padding:8px 10px;text-align:center;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" onclick="pdToggleSort('stock')" title="클릭하여 정렬 (처음 클릭 = 많은 순)">재고${pdSortKey==='stock'?(pdSortDir==='asc'?' ▲':' ▼'):" <span style='color:var(--t3);opacity:.4'>⇅</span>"}</th>
           <th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">출고단가</th>
           <th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">입고원가</th>
-          <th style="padding:8px 10px;text-align:center;font-weight:600;white-space:nowrap">최종수정일</th>
+          <th style="padding:8px 10px;text-align:center;font-weight:600;white-space:nowrap;position:relative">
+            <span style="cursor:pointer;user-select:none" onclick="pdToggleSort('lastModified')" title="클릭하여 정렬 (처음 클릭 = 최신순)">
+              최종수정일${pdSortKey==='lastModified'?(pdSortDir==='asc'?' ▲':' ▼'):" <span style='color:var(--t3);opacity:.4'>⇅</span>"}
+            </span>
+            <button id="pdDateFilterBtn" onclick="togglePdDateFilterDropdown(event)" title="기간 필터" style="margin-left:4px;padding:1px 5px;font-size:9.5px;background:${pdDateFilter!=='all'?'var(--gold-bg)':'var(--s2)'};border:1px solid ${pdDateFilter!=='all'?'var(--gold-line)':'var(--bdr)'};border-radius:3px;cursor:pointer;color:${pdDateFilter!=='all'?'var(--gold-lt)':'var(--t3)'};font-family:inherit;font-weight:${pdDateFilter!=='all'?'700':'500'}">${pdDateFilter!=='all' ? '🔽 ' + _getPdDateFilterLabel() : '🔽'}</button>
+            <div id="pdDateFilterDropdown" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;background:var(--s1);border:1px solid var(--bdr);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:100;min-width:200px;text-align:left;padding:4px">
+              <div onclick="setPdDateFilter('all')" style="padding:7px 12px;font-size:11.5px;cursor:pointer;border-radius:4px;color:${pdDateFilter==='all'?'var(--gold-lt)':'var(--t1)'};background:${pdDateFilter==='all'?'var(--gold-bg)':'transparent'};font-weight:${pdDateFilter==='all'?'600':'500'}" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='${pdDateFilter==='all'?'var(--gold-bg)':'transparent'}'">전체</div>
+              <div onclick="setPdDateFilter('today')" style="padding:7px 12px;font-size:11.5px;cursor:pointer;border-radius:4px;color:${pdDateFilter==='today'?'var(--gold-lt)':'var(--t1)'};background:${pdDateFilter==='today'?'var(--gold-bg)':'transparent'};font-weight:${pdDateFilter==='today'?'600':'500'}" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='${pdDateFilter==='today'?'var(--gold-bg)':'transparent'}'">오늘</div>
+              <div onclick="setPdDateFilter('week')" style="padding:7px 12px;font-size:11.5px;cursor:pointer;border-radius:4px;color:${pdDateFilter==='week'?'var(--gold-lt)':'var(--t1)'};background:${pdDateFilter==='week'?'var(--gold-bg)':'transparent'};font-weight:${pdDateFilter==='week'?'600':'500'}" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='${pdDateFilter==='week'?'var(--gold-bg)':'transparent'}'">최근 7일</div>
+              <div onclick="setPdDateFilter('month')" style="padding:7px 12px;font-size:11.5px;cursor:pointer;border-radius:4px;color:${pdDateFilter==='month'?'var(--gold-lt)':'var(--t1)'};background:${pdDateFilter==='month'?'var(--gold-bg)':'transparent'};font-weight:${pdDateFilter==='month'?'600':'500'}" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='${pdDateFilter==='month'?'var(--gold-bg)':'transparent'}'">최근 1달</div>
+              <div onclick="setPdDateFilter('quarter')" style="padding:7px 12px;font-size:11.5px;cursor:pointer;border-radius:4px;color:${pdDateFilter==='quarter'?'var(--gold-lt)':'var(--t1)'};background:${pdDateFilter==='quarter'?'var(--gold-bg)':'transparent'};font-weight:${pdDateFilter==='quarter'?'600':'500'}" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='${pdDateFilter==='quarter'?'var(--gold-bg)':'transparent'}'">최근 3달</div>
+              <div onclick="setPdDateFilter('year')" style="padding:7px 12px;font-size:11.5px;cursor:pointer;border-radius:4px;color:${pdDateFilter==='year'?'var(--gold-lt)':'var(--t1)'};background:${pdDateFilter==='year'?'var(--gold-bg)':'transparent'};font-weight:${pdDateFilter==='year'?'600':'500'}" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='${pdDateFilter==='year'?'var(--gold-bg)':'transparent'}'">최근 1년</div>
+              <div style="padding:7px 12px;border-top:1px solid var(--bdr);margin-top:4px;font-weight:${pdDateFilter==='custom'?'600':'500'};color:${pdDateFilter==='custom'?'var(--gold-lt)':'var(--t1)'}">
+                <div style="font-size:11px;margin-bottom:5px">📅 직접 입력</div>
+                <div style="display:flex;gap:4px;align-items:center;font-size:11px">
+                  <input type="date" id="pdDateFrom" value="${pdDateFrom||''}" onchange="setPdDateRangeCustom(this.value, document.getElementById('pdDateTo').value)" onclick="event.stopPropagation()" style="font-size:11px;padding:3px 5px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);color:var(--t1);font-family:inherit;width:110px">
+                  <span style="color:var(--t3)">~</span>
+                  <input type="date" id="pdDateTo" value="${pdDateTo||''}" onchange="setPdDateRangeCustom(document.getElementById('pdDateFrom').value, this.value)" onclick="event.stopPropagation()" style="font-size:11px;padding:3px 5px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);color:var(--t1);font-family:inherit;width:110px">
+                </div>
+              </div>
+            </div>
+          </th>
           <th style="padding:8px 10px;width:40px"></th>
         </tr>
       </thead>
@@ -3139,7 +3342,60 @@ function pdDeleteBySource(importId, fileName){
 let _ordDocState={};
 
 function openOrdDeliveryNote(ordId){ _openOrdDoc(ordId,'delivery'); }
-function openOrdTaxInvoice(ordId){ _openOrdDoc(ordId,'invoice'); }
+
+// 발주서 → 거래명세서 (단계 3: 새 흐름)
+// - 이 발주에 이미 거래명세서가 있으면 사용자에게 선택지 제공 (기존 보기 vs 새로 작성)
+// - 한 발주에 명세서 여러 장 가능 (Q-A 결정)
+function openOrdTaxInvoice(ordId){
+  const o = orders.find(x=>String(x.id)===String(ordId));
+  if(!o){ showToast('⚠ 발주서를 찾을 수 없습니다','var(--red)'); return; }
+  const linked = getInvoicesForOrder(o);
+  if(linked.length === 0){
+    // 명세서 없음 → 바로 새 작성 모달
+    openInvoiceForOrder(ordId);
+    return;
+  }
+  // 이미 명세서가 있으면 선택 다이얼로그
+  _showOrdInvoiceChooser(o, linked);
+}
+
+// 발주에 이미 명세서가 있을 때 — 어떤 명세서를 열거나 새로 만들지 선택
+function _showOrdInvoiceChooser(o, linked){
+  const list = linked.slice().sort((a,b)=>(b.issuedAt||'').localeCompare(a.issuedAt||''));
+  const html = `
+    <h3 class="mh">🧾 거래명세서 — ${o.no||o.vendor||''}</h3>
+    <div style="font-size:11.5px;color:var(--t3);margin-bottom:10px">이 발주서에 ${linked.length}개의 거래명세서가 있습니다. 기존 명세서를 열거나 새로 작성하세요.</div>
+    <div style="max-height:50vh;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px;margin-bottom:12px">
+      ${list.map(v=>{
+        const r = +v.paymentRatio||0;
+        const tp = +v.totalPaid||0;
+        const tot = +v.total||0;
+        const sc = v.status==='청구완료'?'var(--blu)':v.status==='미수'?'var(--red)':v.status==='작성중'?'var(--t3)':v.status==='발송'?'var(--org)':'var(--grn)';
+        return `<div style="padding:10px 12px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;cursor:pointer" onclick="closeM('mOrdInvChoose');openStandaloneInvoiceModal('${v.id}')">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12.5px;font-weight:600">${v.issuedAt||'-'} · 합계 ₩${tot.toLocaleString()}</div>
+            <div style="font-size:11px;color:var(--t3);margin-top:2px">입금 ₩${tp.toLocaleString()} / ${r.toFixed(1)}%</div>
+          </div>
+          <span style="font-size:10px;background:rgba(0,0,0,.05);color:${sc};border:1px solid ${sc};padding:2px 8px;border-radius:10px;font-weight:700">${v.status||'-'}</span>
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;gap:6px;justify-content:flex-end">
+      <button class="btn" onclick="closeM('mOrdInvChoose')">닫기</button>
+      <button class="btn bp bs" onclick="closeM('mOrdInvChoose');openInvoiceForOrder(${o.id})">+ 새 거래명세서 작성</button>
+    </div>
+  `;
+  let m = document.getElementById('mOrdInvChoose');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mOrdInvChoose';
+    m.className = 'ov';
+    m.innerHTML = '<div class="modal" style="max-width:560px"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mOrdInvChoose');
+}
 
 function _openOrdDoc(ordId,type){
   const o=orders.find(x=>x.id==ordId);if(!o)return;
@@ -3241,16 +3497,9 @@ function confirmOrdDoc(){
       status:'발행완료',memo:''
     };
     invoiceHistory.unshift(invRec);
-    // 🧾 거래명세서 발행 = 출고 완료로 간주 → 발주 및 연결 공정 자동 완료 처리
-    if(type==='invoice' && o.status!=='출고완료'){
-      o.status='출고완료';
-      o.completedAt=new Date().toISOString();
-      procItems.filter(p=>p.orderId===o.id).forEach(p=>{
-        p.shipped=true;
-        if(p._notionId) debouncedSync('proc', p, true);
-      });
-      debouncedSync('order', o, true);
-    }
+    // ⚠ 단계 3: 거래명세서 발행 시 출고완료 자동 처리하던 로직 제거
+    // 이제 출고완료는 거래명세서 입금 100% 도달 시점에 자동 처리됨 (checkAutoCompleteShipment)
+    // 또는 사용자가 수동으로 발주 모달에서 출고완료 처리
     save();
     // Notion 거래명세서 이력 저장 (syncInvoiceToNotion으로 통일)
     if(notionCfg.workerUrl && notionCfg.invDb){
@@ -3338,6 +3587,13 @@ function renderInvoiceHistory(){
     if(st && st!=='전체' && v.status!==st) return false;
     return true;
   });
+  // 발행일 최신순 정렬 (같은 날짜는 id 큰 순서 = 더 나중에 작성된 것이 위로)
+  list.sort(function(a,b){
+    var da=a.issuedAt||'', db=b.issuedAt||'';
+    if(da!==db) return db.localeCompare(da); // 발행일 내림차순
+    // 같은 발행일이면 id(생성 순서, Date.now() 기반) 내림차순
+    return (b.id||0) - (a.id||0);
+  });
   var tSup=list.reduce(function(s,v){return s+v.supplyAmt;},0);
   var tTax=list.reduce(function(s,v){return s+v.tax;},0);
   var tAmt=list.reduce(function(s,v){return s+v.total;},0);
@@ -3377,7 +3633,8 @@ function renderInvoiceHistory(){
   if(notionCfg.workerUrl && notionCfg.invDb){
     h+='<button onclick="cleanupNotionInvoiceZombies()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);font-weight:600" title="Notion에만 남아있는 좀비 페이지를 모두 archive — 로컬에 없는 페이지만 정리">🧹 Notion 좀비 정리</button>';
   }
-  h+='<button onclick="openSalesExcelExport()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--grn);background:var(--grn-bg);color:var(--grn);font-weight:600">📊 매출내역 엑셀 다운로드</button></div>';
+  h+='<button onclick="openSalesExcelExport()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--grn);background:var(--grn-bg);color:var(--grn);font-weight:600">📊 매출내역 엑셀 다운로드</button>';
+  h+='<button onclick="openStandaloneInvoiceModal(null)" style="padding:5px 14px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--gold-line);background:var(--gold);color:#fff;font-weight:700" title="발주서 없이 재고 판매용 거래명세서 작성">+ 거래명세서 작성</button></div>';
   h+='</div>';
 
   // 테이블
@@ -3605,6 +3862,11 @@ function openInvDetail(id){
   if(rb){
     rb.onclick=function(){
       closeM('mInvDetail');
+      // 독립형 거래명세서(재고 판매)는 발주서가 없음 → 새 거래명세서 모달로 이동 (수정 모드)
+      if(v.ordId === null || v._isStandalone || (v.ordNo && String(v.ordNo).startsWith('STOCK-'))){
+        openStandaloneInvoiceModal(v.id);
+        return;
+      }
       // 발주 매칭: ordId(로컬) 우선 → 발주번호(ordNo)로 폴백 (다른 컴퓨터 동기화 대응)
       var o=null;
       if(v.ordId) o=orders.find(function(x){return x.id==v.ordId;});
@@ -4741,6 +5003,7 @@ function mapNotionProduct(row){
 }
 function mapNotionInvoice(row){
   const p=row.properties||{};
+  const parsePayments=(s)=>{ try{ const v=JSON.parse(s||'[]'); return Array.isArray(v)?v:[]; }catch(e){ return []; } };
   return{
     _notionId:row.id,
     vendor:    np.title(p['고객사']),
@@ -4753,6 +5016,10 @@ function mapNotionInvoice(row){
     issuedAt:  np.date(p['발행일자']),
     shipDate:  np.date(p['출고일자']),
     status:    np.select(p['상태'])||'발행완료',
+    // 입금 이력 (단계 1 추가)
+    payments:    parsePayments(np.text(p['입금이력JSON'])),
+    totalPaid:   np.number(p['총입금액'])||0,
+    paymentRatio:np.number(p['입금률'])||0,
   };
 }
 // 견적서 매핑 (📋 견적 DB)
@@ -5890,6 +6157,10 @@ async function syncInvoiceToNotion(inv, update){
     "공급가액":{"number":+inv.supplyAmt||0},
     "부가세":{"number":+inv.tax||0},
     "합계금액":{"number":+inv.total||0},
+    // 입금 이력 (단계 1 추가)
+    "입금이력JSON":{"rich_text":[{"text":{"content":JSON.stringify(inv.payments||[]).slice(0,2000)}}]},
+    "총입금액":{"number":+inv.totalPaid||0},
+    "입금률":{"number":+inv.paymentRatio||0},
   };
   if(inv.issuedAt) p["발행일자"]={"date":{"start":inv.issuedAt}};
   if(inv.shipDate) p["출고일자"]={"date":{"start":inv.shipDate}};
@@ -9769,6 +10040,7 @@ function renderSample(){
           <div>
             <label style="font-size:10px;color:var(--t3);font-weight:700;display:block;margin-bottom:3px">정렬</label>
             <select class="fs" style="width:100%;font-size:11.5px;padding:5px 7px" onchange="smpAdvFilter.sort=this.value;renderSample()">
+              <option value="default" ${af.sort==='default'?'selected':''}>기본 정렬</option>
               <option value="req_asc" ${af.sort==='req_asc'?'selected':''}>의뢰일 ↑ (빠른순)</option>
               <option value="req_desc" ${af.sort==='req_desc'?'selected':''}>의뢰일 ↓ (늦은순)</option>
               <option value="due_asc" ${af.sort==='due_asc'?'selected':''}>납기일 ↑ (빠른순)</option>
@@ -9817,10 +10089,10 @@ function renderSample(){
             <th>품번</th>
             <th>유형</th>
             <th>상태</th>
-            <th>의뢰일</th>
+            <th style="cursor:pointer;user-select:none" onclick="smpToggleSort('req')" title="클릭하여 정렬 (처음 클릭 = 최신순)">의뢰일${_smpSortIndicator('req')}</th>
             <th>공장출고일</th>
             <th>납기일</th>
-            <th>D-day</th>
+            <th style="cursor:pointer;user-select:none" onclick="smpToggleSort('due')" title="클릭하여 정렬 (처음 클릭 = 임박순)">D-day${_smpSortIndicator('due')}</th>
             <th>소재 / 도금</th>
             <th>사이즈</th>
             <th>명세서</th>
@@ -11572,6 +11844,7 @@ function renderOrder(){
           <div>
             <label style="font-size:10px;color:var(--t3);font-weight:700;display:block;margin-bottom:3px">정렬</label>
             <select class="fs" style="width:100%;font-size:11.5px;padding:5px 7px" onchange="ordAdvFilter.sort=this.value;renderOrder()">
+              <option value="default" ${af.sort==='default'?'selected':''}>기본 정렬</option>
               <option value="date_asc" ${af.sort==='date_asc'?'selected':''}>발주일 ↑ (오래된순) ⭐</option>
               <option value="date_desc" ${af.sort==='date_desc'?'selected':''}>발주일 ↓ (최근순)</option>
               <option value="ship_asc" ${af.sort==='ship_asc'?'selected':''}>출고일 ↑ (빠른순)</option>
@@ -11617,13 +11890,13 @@ function renderOrder(){
             })()}</th>
             <th>업체</th>
             <th>발주번호</th>
-            <th>발주일</th>
+            <th style="cursor:pointer;user-select:none" onclick="ordToggleSort('date')" title="클릭하여 정렬 (처음 클릭 = 최신순)">발주일${_ordSortIndicator('date')}</th>
             ${ordSubTab==='done' ? `
             <th>출고완료일</th>
             ` : `
             <th>공장출고일</th>
             <th>요청출고일</th>
-            <th>D-day</th>
+            <th style="cursor:pointer;user-select:none" onclick="ordToggleSort('ship')" title="클릭하여 정렬 (처음 클릭 = 임박순)">D-day${_ordSortIndicator('ship')}</th>
             `}
             <th>상태</th>
             <th>첨부</th>
@@ -11659,13 +11932,49 @@ function renderOrder(){
                 return `${y}-${m}-${day}`;
               }catch(e){ return ''; }
             })();
-            const statusBadge = isOrdDone
-              ? (ordSubTab==='done'
-                 ? '<span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">✓ 출고완료</span>'
-                 : `<div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px"><span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">✓ 출고완료</span>${completedDateStr?`<span style="font-size:9.5px;color:var(--t3);white-space:nowrap" title="완료일자">${completedDateStr}</span>`:''}</div>`)
-              : isOrdCanceled
-              ? '<span style="font-size:9.5px;background:rgba(192,48,48,.12);color:var(--red);border:1px solid rgba(192,48,48,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">취소</span>'
-              : '<span style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">진행중</span>';
+            // 🧾 거래명세서 매칭 (ordId 우선, 없으면 ordNo로 폴백 — 다른 컴퓨터 동기화 대응)
+            const linkedInvoices = invoiceHistory.filter(v=>{
+              if(v.ordId && o.id && String(v.ordId)===String(o.id)) return true;
+              if(v.ordNo && o.no && v.ordNo===o.no) return true;
+              return false;
+            });
+            const invCount = linkedInvoices.length;
+            // 거래명세서 청구 상태 집계
+            const invStatusCounts = { '발행완료':0, '청구완료':0, '미수':0 };
+            linkedInvoices.forEach(v=>{
+              const s = v.status || '발행완료';
+              if(invStatusCounts[s] !== undefined) invStatusCounts[s]++;
+            });
+            // 가장 우려스러운 상태를 우선 표시: 미수 > 발행완료 > 청구완료
+            let invBadge = '';
+            if(invCount > 0){
+              if(invStatusCounts['미수'] > 0){
+                invBadge = `<span style="font-size:9px;background:rgba(192,48,48,.12);color:var(--red);border:1px solid rgba(192,48,48,.3);padding:1px 6px;border-radius:9px;font-weight:700;white-space:nowrap" title="거래명세서 ${invCount}건 (미수 ${invStatusCounts['미수']}건 포함)">⚠ 미수 ${invStatusCounts['미수']}건</span>`;
+              } else if(invStatusCounts['청구완료'] === invCount){
+                // 모두 청구완료
+                invBadge = `<span style="font-size:9px;background:rgba(26,109,181,.12);color:var(--blu);border:1px solid rgba(26,109,181,.3);padding:1px 6px;border-radius:9px;font-weight:700;white-space:nowrap" title="거래명세서 ${invCount}건 모두 청구완료">✓ 청구완료${invCount>1?' '+invCount+'건':''}</span>`;
+              } else {
+                // 발행은 됐지만 일부 청구 미완료
+                invBadge = `<span style="font-size:9px;background:rgba(192,144,32,.12);color:var(--gold-lt);border:1px solid var(--gold-line);padding:1px 6px;border-radius:9px;font-weight:700;white-space:nowrap" title="거래명세서 ${invCount}건 발행됨 (청구완료 ${invStatusCounts['청구완료']}건 / 발행완료 ${invStatusCounts['발행완료']}건)">🧾 명세서 ${invCount}건</span>`;
+              }
+            } else if(isOrdDone){
+              // 출고완료인데 거래명세서 미발행 — 청구 누락 가능성
+              invBadge = `<span style="font-size:9px;background:var(--s2);color:var(--t3);border:1px dashed var(--bdr);padding:1px 6px;border-radius:9px;font-weight:600;white-space:nowrap" title="출고완료 후 거래명세서 미발행 — 청구 필요 여부 확인">○ 명세서 미발행</span>`;
+            }
+            const statusBadge = (()=>{
+              const ordChip = isOrdDone
+                ? (ordSubTab==='done'
+                   ? '<span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">✓ 출고완료</span>'
+                   : `<span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">✓ 출고완료</span>${completedDateStr?`<span style="font-size:9.5px;color:var(--t3);white-space:nowrap;display:block;margin-top:1px" title="완료일자">${completedDateStr}</span>`:''}`)
+                : isOrdCanceled
+                ? '<span style="font-size:9.5px;background:rgba(192,48,48,.12);color:var(--red);border:1px solid rgba(192,48,48,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">취소</span>'
+                : '<span style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">진행중</span>';
+              // 거래명세서 칩이 있으면 두 줄로
+              if(invBadge){
+                return `<div style="display:flex;flex-direction:column;align-items:flex-start;gap:3px">${ordChip}${invBadge}</div>`;
+              }
+              return ordChip;
+            })();
             // 가로형 품목 칩: 작은 이미지 옆에 이름·수량 (한 줄, 컴팩트)
             const itemChips = rows.map(r=>`<span style="display:inline-flex;flex-direction:row;align-items:center;gap:6px;font-size:11px;padding:3px 9px 3px ${r.img?'3px':'9px'};border-radius:5px;background:var(--s2);border:1px solid var(--bdr);flex-shrink:0;white-space:nowrap">
               ${r.img?`<img src="${r.img}" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\'").replace(/"/g,'&quot;')}'}],0,false)" title="클릭하여 크게 보기">`:''}
@@ -15679,6 +15988,920 @@ function deleteQuote(){
     showToast('✓ 견적서 삭제됨','var(--grn)');
     renderSalesSubTab();
   },'견적서 삭제','🗑');
+}
+
+// ════════════════════════════════════════════════════════════════
+// 🧾 독립형 거래명세서 (재고 판매 — 발주서 없이 작성)
+// ════════════════════════════════════════════════════════════════
+let _invRowsBuf = []; // 작성 중인 거래명세서의 품목 임시 버퍼
+let _invPaymentsBuf = []; // 작성 중인 거래명세서의 입금 이력 임시 버퍼
+
+// ───────────────────────────────────────────────────────────────
+// 입금 이력 관련 헬퍼
+// ───────────────────────────────────────────────────────────────
+
+// payments 배열에서 합계 + 입금률 계산
+// 입금률은 0~100 (소수 1자리까지)
+function calcPaymentSummary(payments, total){
+  const totalPaid = (payments||[]).reduce((s,pm)=>s + (+pm.amount||0), 0);
+  const t = +total||0;
+  const ratio = t>0 ? Math.round((totalPaid / t) * 1000) / 10 : 0; // 소수 1자리
+  return { totalPaid, ratio };
+}
+
+// 입금 이력에 따라 status 자동 결정
+// - 입금 100% 이상 → "청구완료"
+// - 1건 이상 입금 (100% 미만) → "발행완료" 유지 (선금 입금 상태)
+// - 입금 0건 → 기존 status 유지 (작성중 또는 발송)
+// 단, 사용자가 수동으로 "미수"로 설정한 경우는 존중 (강제 변환 안 함)
+function determineStatusFromPayments(currentStatus, payments, total){
+  const { totalPaid, ratio } = calcPaymentSummary(payments, total);
+  // 사용자가 명시적으로 "미수"로 설정한 경우는 그대로 유지 (자동 변경 X)
+  if(currentStatus === '미수') return currentStatus;
+  // 100% 이상 입금되면 자동으로 청구완료
+  if(ratio >= 100) return '청구완료';
+  // 입금 1건 이상 있는데 100% 미만이면 발행완료 유지 (선금 상태)
+  if(totalPaid > 0) return '발행완료';
+  // 입금 0건 → 현재 상태 유지 (작성중 / 발송 / 발행완료 등)
+  return currentStatus || '작성중';
+}
+
+// 한 거래명세서의 payments를 종합 처리
+// - totalPaid, paymentRatio 갱신
+// - 자동 상태 변경
+// - 추가로 변경된 status를 반환 (호출자가 알림 등 처리 가능)
+function refreshInvoicePaymentInfo(inv){
+  if(!inv) return;
+  const oldStatus = inv.status || '작성중';
+  const { totalPaid, ratio } = calcPaymentSummary(inv.payments||[], inv.total||0);
+  inv.totalPaid = totalPaid;
+  inv.paymentRatio = ratio;
+  const newStatus = determineStatusFromPayments(oldStatus, inv.payments||[], inv.total||0);
+  inv.status = newStatus;
+  return { oldStatus, newStatus, statusChanged: oldStatus !== newStatus, totalPaid, ratio };
+}
+
+// ───────────────────────────────────────────────────────────────
+// 발주서 ↔ 거래명세서 연결 헬퍼
+// ───────────────────────────────────────────────────────────────
+
+// 발주서에 연결된 모든 거래명세서를 찾기 (ordId 우선, ordNo 폴백)
+function getInvoicesForOrder(o){
+  if(!o) return [];
+  return invoiceHistory.filter(v=>{
+    if(v.ordId && o.id && String(v.ordId)===String(o.id)) return true;
+    if(v.ordNo && o.no && v.ordNo===o.no) return true;
+    return false;
+  });
+}
+
+// 발주서의 모든 거래명세서가 100% 입금됐는지 체크
+// - 명세서 0장: false (출고완료 자동 트리거 X)
+// - 명세서 1장 이상이고 모두 100%: true
+function areAllInvoicesPaidFull(o){
+  const invs = getInvoicesForOrder(o);
+  if(invs.length === 0) return false;
+  return invs.every(v=>(+v.paymentRatio||0) >= 100);
+}
+
+// 발주서를 자동 출고완료 처리 (이미 완료/취소면 스킵)
+// 반환: { changed: bool, reason: string }
+function autoCompleteOrderShipment(o){
+  if(!o) return { changed: false, reason: 'no order' };
+  if(o.status === '출고완료') return { changed: false, reason: 'already completed' };
+  if(o.status === '취소') return { changed: false, reason: 'canceled' };
+  o.status = '출고완료';
+  o.completedAt = new Date().toISOString();
+  // 연결 공정도 출고처리
+  if(typeof procItems !== 'undefined'){
+    procItems.filter(p=>p.orderId===o.id).forEach(p=>{
+      p.shipped = true;
+      if(p._notionId && typeof debouncedSync === 'function'){
+        debouncedSync('proc', p, true);
+      }
+    });
+  }
+  if(o._notionId && typeof debouncedSync === 'function'){
+    debouncedSync('order', o, true);
+  }
+  return { changed: true, reason: 'all invoices paid in full' };
+}
+
+// 거래명세서 입금 이력 변경 후 호출 — 자동 출고완료 트리거 체크
+// inv: 방금 업데이트된 거래명세서
+// 반환: { autoCompleted: bool, order: o|null }
+function checkAutoCompleteShipment(inv){
+  if(!inv) return { autoCompleted: false, order: null };
+  if(inv._isStandalone === true) return { autoCompleted: false, order: null }; // 독립형은 발주 없음
+  // 연결된 발주서 찾기
+  const ordId = inv.ordId;
+  const ordNo = inv.ordNo;
+  let o = null;
+  if(ordId) o = orders.find(x=>String(x.id)===String(ordId));
+  if(!o && ordNo) o = orders.find(x=>x.no===ordNo);
+  if(!o) return { autoCompleted: false, order: null };
+  // 이 발주의 모든 명세서가 100%인지 확인
+  if(!areAllInvoicesPaidFull(o)) return { autoCompleted: false, order: o };
+  // 출고완료 자동 처리
+  const r = autoCompleteOrderShipment(o);
+  return { autoCompleted: r.changed, order: o };
+}
+
+// ───────────────────────────────────────────────────────────────
+// 재고 변경 헬퍼: items 배열을 받아 productDB의 stock을 차감(-1) 또는 복구(+1)
+// direction: -1 (차감, 거래명세서 발행 시) / +1 (복구, 삭제/수정 전 되돌리기)
+// 반환: { changed: [{code, name, before, after}], notFound: [{code, name}], negativeWarnings: [{code, name, after}] }
+function applyInvoiceStockChange(items, direction){
+  const result = { changed: [], notFound: [], negativeWarnings: [] };
+  if(!Array.isArray(items)) return result;
+  items.forEach(it=>{
+    const code = it.code;
+    const qty = +it.qty || 0;
+    if(!code || qty<=0) return; // 품번 없거나 수량 0인 행은 스킵
+    const p = productDB.find(x=>x.code===code);
+    if(!p){
+      result.notFound.push({code, name: it.name||''});
+      return;
+    }
+    const before = +p.stock || 0;
+    const after = before + (direction * qty);
+    p.stock = after;
+    p.lastModified = toLocalDateStr(new Date());
+    result.changed.push({code, name: p.name||it.name||'', before, after});
+    // 차감 후 음수면 경고
+    if(direction === -1 && after < 0){
+      result.negativeWarnings.push({code, name: p.name||it.name||'', after});
+    }
+    // 노션 백그라운드 동기화
+    if(p._notionId && notionCfg.workerUrl && notionCfg.productDb){
+      debouncedSync('product', p, true);
+    }
+  });
+  return result;
+}
+
+// 발주서에서 거래명세서 작성 진입점 (단계 3)
+// 발주 정보를 자동 채워서 새 거래명세서 모달 열기
+// 한 발주에 명세서 여러 장 가능 (Q-A 결정)
+function openInvoiceForOrder(ordId){
+  const o = orders.find(x=>String(x.id)===String(ordId));
+  if(!o){ showToast('⚠ 발주서를 찾을 수 없습니다','var(--red)'); return; }
+  const items = (o.rows||[]).filter(r=>String(r.name||'').trim()).map(r=>({
+    name: r.name||'',
+    code: r.itemCode||'',
+    qty:  +r.qty||0,
+    unit: +r.unitPrice||0,
+  }));
+  if(items.length === 0){
+    showToast('⚠ 발주서에 품목이 없어 거래명세서를 만들 수 없습니다','var(--red)');
+    return;
+  }
+  openStandaloneInvoiceModal(null, {
+    fromOrder: true,
+    ordId: o.id,
+    ordNo: o.no || '',
+    vendor: o.vendor || '',
+    shipDate: o.ship || toLocalDateStr(new Date()),
+    items,
+  });
+}
+
+function openStandaloneInvoiceModal(idOrNull, prefill){
+  const inv = idOrNull ? invoiceHistory.find(x=>String(x.id)===String(idOrNull)) : null;
+  // 임시 버퍼 초기화 — 수정 / prefill / 빈 상태 3가지 케이스
+  if(inv){
+    _invRowsBuf = inv.items && inv.items.length
+      ? inv.items.map(r=>({...r}))
+      : [{name:'', code:'', qty:1, unit:0}];
+    _invPaymentsBuf = Array.isArray(inv.payments)
+      ? inv.payments.map(p=>({...p}))
+      : [];
+  } else if(prefill && prefill.items && prefill.items.length){
+    _invRowsBuf = prefill.items.map(r=>({...r}));
+    _invPaymentsBuf = [];
+  } else {
+    _invRowsBuf = [{name:'', code:'', qty:1, unit:0}];
+    _invPaymentsBuf = [];
+  }
+
+  const today = toLocalDateStr(new Date());
+  const issuedAt = inv ? (inv.issuedAt||today) : today;
+  const shipDate = inv ? (inv.shipDate||today) : (prefill?.shipDate || today);
+  const vendor = inv ? (inv.vendor||'') : (prefill?.vendor || '');
+  const memo = inv ? (inv.memo||'') : '';
+  const status = inv ? (inv.status||'작성중') : '작성중';
+  const id = inv ? inv.id : '';
+  // 발주 연결 정보
+  const linkedOrdId = inv ? (inv.ordId||'') : (prefill?.ordId||'');
+  const linkedOrdNo = inv ? (inv.ordNo||'') : (prefill?.ordNo||'');
+  const isFromOrder = !!(prefill?.fromOrder) || !!(inv && (inv.ordId || inv.ordNo) && !inv._isStandalone);
+
+  const html = `
+    <h3 class="mh">${inv?'🧾 거래명세서 수정':isFromOrder?'🧾 거래명세서 작성 (발주 기반)':'🧾 거래명세서 작성'}</h3>
+    <input type="hidden" id="siv_id" value="${id}">
+    <input type="hidden" id="siv_ordId" value="${linkedOrdId}">
+    <input type="hidden" id="siv_ordNo" value="${(linkedOrdNo||'').replace(/"/g,'&quot;')}">
+    <input type="hidden" id="siv_isFromOrder" value="${isFromOrder?'1':'0'}">
+
+    ${isFromOrder ? `
+    <div style="background:var(--blu-bg);border:1px solid rgba(60,108,170,.3);border-radius:6px;padding:10px 13px;margin-bottom:14px;font-size:11.5px;color:var(--blu)">
+      📦 <b>발주서 ${linkedOrdNo||'(번호없음)'}</b> 기반 거래명세서입니다. 입금 100% 도달 시 <b>발주서가 자동 출고완료 처리</b>됩니다.
+    </div>` : `
+    <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;padding:10px 13px;margin-bottom:14px;font-size:11.5px;color:var(--gold-lt)">
+      💡 거래명세서를 발행하고 입금 이력을 기록할 수 있습니다. <b>입금 100% 도달 시 자동으로 청구완료 + 재고 차감</b>됩니다.
+    </div>`}
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
+      <div class="fg"><label>발행일 *</label><input class="fi" type="date" id="siv_issued" value="${issuedAt}"></div>
+      <div class="fg"><label>출고일</label><input class="fi" type="date" id="siv_ship" value="${shipDate}"></div>
+      <div class="fg"><label>상태</label>
+        <select class="fi" id="siv_status">
+          <option value="작성중" ${status==='작성중'?'selected':''}>📝 작성중</option>
+          <option value="발송" ${status==='발송'?'selected':''}>📤 발송 (고객 전달)</option>
+          <option value="발행완료" ${status==='발행완료'?'selected':''}>✓ 발행완료</option>
+          <option value="청구완료" ${status==='청구완료'?'selected':''}>✓ 청구완료 (입금 100%)</option>
+          <option value="미수" ${status==='미수'?'selected':''}>⚠ 미수</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="fg" style="margin-bottom:10px"><label>고객사 *</label>
+      <div style="display:flex;gap:4px">
+        <input class="fi" id="siv_vendor" list="siv_vendor_dl" value="${vendor.replace(/"/g,'&quot;')}" placeholder="고객사명 (직접 입력 또는 🔍)" style="flex:1;min-width:0">
+        <button type="button" onclick="openClientPickerForInv()" title="고객사DB에서 검색" style="padding:0 10px;background:var(--blu-bg);border:1px solid rgba(60,108,170,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--blu);font-size:13px;flex-shrink:0">🔍</button>
+      </div>
+      <datalist id="siv_vendor_dl">${clients.map(cl=>`<option value="${(cl.name||'').replace(/"/g,'&quot;')}">${cl.name}</option>`).join('')}</datalist>
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--bdr);margin:12px 0 8px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="font-size:12px;font-weight:600;color:var(--t2)">📋 품목 내역</div>
+      <div style="display:flex;gap:6px">
+        <button onclick="openProductPickerForInv()" style="padding:4px 10px;font-size:11px;background:var(--blu-bg);border:1px solid rgba(60,108,170,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--blu)" title="제품DB에서 품목 검색해서 추가">🔍 제품DB 검색</button>
+        <button onclick="addInvRow()" style="padding:4px 10px;font-size:11px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--gold-lt)">+ 행 추가</button>
+      </div>
+    </div>
+    <div id="siv_rowsArea">${_renderInvRows()}</div>
+
+    <hr style="border:none;border-top:1px solid var(--bdr);margin:12px 0 8px">
+    <div class="fg" style="margin-bottom:10px"><label>메모</label>
+      <textarea class="fi" id="siv_memo" rows="2" placeholder="비고/특이사항">${memo.replace(/"/g,'&quot;')}</textarea>
+    </div>
+
+    <div id="siv_totalsBox" style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px;padding:12px 14px;margin-bottom:12px">
+      ${_renderInvTotalsBox()}
+    </div>
+
+    <hr style="border:none;border-top:1px solid var(--bdr);margin:12px 0 8px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="font-size:12px;font-weight:600;color:var(--t2)">💰 입금 이력</div>
+      <button onclick="addInvPayment()" style="padding:4px 10px;font-size:11px;background:var(--grn-bg);border:1px solid rgba(46,139,44,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--grn);font-weight:600">+ 입금 추가</button>
+    </div>
+    <div id="siv_paymentsArea">${_renderInvPayments()}</div>
+    <div id="siv_paymentSummary" style="background:rgba(46,139,44,.05);border:1px solid rgba(46,139,44,.2);border-radius:6px;padding:10px 12px;margin-top:8px">
+      ${_renderInvPaymentSummary()}
+    </div>
+
+    <div class="ma" style="display:flex;gap:6px;justify-content:flex-end;margin-top:14px">
+      ${inv?'<button class="btn br" onclick="deleteStandaloneInvoice()" style="margin-right:auto">🗑 삭제</button>':''}
+      <button class="btn" onclick="closeM('mStandaloneInv')">취소</button>
+      <button class="btn bp bs" onclick="saveStandaloneInvoice()">${inv?'수정':'발행'}</button>
+    </div>
+  `;
+
+  let m = document.getElementById('mStandaloneInv');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mStandaloneInv';
+    m.className = 'ov';
+    m.innerHTML = '<div class="modal" style="max-width:880px"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mStandaloneInv');
+}
+
+function _renderInvRows(){
+  return `
+    <div style="display:grid;grid-template-columns:30px 2fr 1.2fr 0.8fr 1fr 1.2fr 30px;gap:4px;align-items:center;font-size:10.5px;color:var(--t3);font-weight:600;padding:4px;background:var(--s1);border-radius:4px;margin-bottom:4px">
+      <div style="text-align:center">NO</div><div>품명</div><div>품번</div><div style="text-align:center">수량</div><div style="text-align:right">단가</div><div style="text-align:right">금액</div><div></div>
+    </div>
+    ${_invRowsBuf.map((r,i)=>{
+      const amt = (+r.qty||0) * (+r.unit||0);
+      // 재고 미리보기 — 품번이 있을 때만
+      const matched = r.code ? productDB.find(p=>p.code===r.code) : null;
+      const currentStock = matched ? (+matched.stock||0) : null;
+      const qty = +r.qty||0;
+      const afterStock = currentStock!==null ? currentStock - qty : null;
+      let stockHint = '';
+      if(matched){
+        const color = afterStock < 0 ? 'var(--red)' : afterStock === 0 ? 'var(--org)' : 'var(--t3)';
+        const icon = afterStock < 0 ? '⚠ ' : '';
+        stockHint = `<div style="grid-column:2/7;font-size:9.5px;color:${color};padding:0 4px;line-height:1.2">${icon}재고 ${currentStock.toLocaleString()} → ${afterStock.toLocaleString()} ${afterStock<0?'(부족)':''}</div>`;
+      } else if(r.code){
+        stockHint = `<div style="grid-column:2/7;font-size:9.5px;color:var(--org);padding:0 4px;line-height:1.2">⚠ 제품DB에 없는 품번 — 재고 차감 안 됨</div>`;
+      }
+      return `
+      <div style="display:grid;grid-template-columns:30px 2fr 1.2fr 0.8fr 1fr 1.2fr 30px;gap:4px 4px;align-items:center;margin-bottom:6px;padding-bottom:3px;border-bottom:1px dashed transparent">
+        <div style="text-align:center;font-size:11px;color:var(--t3);font-weight:600">${i+1}</div>
+        <input class="fi" id="sivName_${i}" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].name=this.value" placeholder="품명" style="font-size:11.5px;padding:4px 6px">
+        <input class="fi" id="sivCode_${i}" value="${(r.code||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].code=this.value;_updateInvRowCalc(${i})" placeholder="품번 (재고 연동)" style="font-size:11px;padding:4px 6px;font-family:monospace">
+        <input class="fi" id="sivQty_${i}" type="number" value="${r.qty||1}" oninput="_invRowsBuf[${i}].qty=+this.value;_updateInvRowCalc(${i})" style="font-size:11.5px;padding:4px 6px;text-align:center">
+        <input class="fi" id="sivUnit_${i}" type="number" value="${r.unit||0}" oninput="_invRowsBuf[${i}].unit=+this.value;_updateInvRowCalc(${i})" placeholder="0" style="font-size:11.5px;padding:4px 6px;text-align:right">
+        <div id="sivAmt_${i}" style="font-size:11.5px;font-weight:700;text-align:right;padding:4px 6px;color:var(--gold-lt);font-family:monospace">${amt?'₩'+amt.toLocaleString():'-'}</div>
+        <button onclick="removeInvRow(${i})" style="padding:2px 6px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;color:var(--t3);font-size:12px">×</button>
+        ${stockHint}
+      </div>`;
+    }).join('')}
+    <div style="font-size:10px;color:var(--t3);padding:6px 8px;background:var(--s1);border-radius:4px;margin-top:6px">
+      💡 발행 시 <b>품번이 일치하는 제품DB의 재고에서 자동 차감</b>됩니다. 품번 없는 행은 차감 안 됨.
+    </div>
+  `;
+}
+
+function _renderInvTotalsBox(){
+  const supplyAmt = _invRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.unit||0),0);
+  const tax = Math.round(supplyAmt*0.1);
+  const total = supplyAmt + tax;
+  return `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+      <div><div style="font-size:10.5px;color:var(--t3)">공급가액</div><div style="font-size:14px;font-weight:600">₩${supplyAmt.toLocaleString()}</div></div>
+      <div><div style="font-size:10.5px;color:var(--t3)">부가세 (10%)</div><div style="font-size:14px;font-weight:600">₩${tax.toLocaleString()}</div></div>
+      <div><div style="font-size:10.5px;color:var(--gold-lt);font-weight:600">합계 (VAT 포함)</div><div style="font-size:18px;font-weight:700;color:var(--gold-lt)">₩${total.toLocaleString()}</div></div>
+    </div>`;
+}
+
+// ───────────────────────────────────────────────────────────────
+// 거래명세서 모달의 입금 이력 UI
+// ───────────────────────────────────────────────────────────────
+function _renderInvPayments(){
+  if(!_invPaymentsBuf.length){
+    return `<div style="padding:18px;text-align:center;color:var(--t3);font-size:11.5px;background:var(--s1);border:1px dashed var(--bdr);border-radius:6px">아직 입금 이력이 없습니다 — 입금이 들어오면 [+ 입금 추가]로 기록하세요</div>`;
+  }
+  return `
+    <div style="display:grid;grid-template-columns:30px 1fr 1.4fr 1fr 1.5fr 30px;gap:4px;align-items:center;font-size:10.5px;color:var(--t3);font-weight:600;padding:4px;background:var(--s1);border-radius:4px;margin-bottom:4px">
+      <div style="text-align:center">#</div><div>입금일</div><div style="text-align:right">금액</div><div>유형</div><div>메모</div><div></div>
+    </div>
+    ${_invPaymentsBuf.map((pm,i)=>{
+      const amt = +pm.amount||0;
+      return `
+      <div style="display:grid;grid-template-columns:30px 1fr 1.4fr 1fr 1.5fr 30px;gap:4px;align-items:center;margin-bottom:3px">
+        <div style="text-align:center;font-size:11px;color:var(--t3);font-weight:600">${i+1}</div>
+        <input class="fi" id="sivPmDate_${i}" type="date" value="${pm.date||''}" oninput="_invPaymentsBuf[${i}].date=this.value;_updateInvPaymentSummary()" style="font-size:11.5px;padding:4px 6px">
+        <input class="fi" id="sivPmAmt_${i}" type="number" min="0" value="${amt||''}" oninput="_onInvPaymentAmtChange(${i}, this.value)" placeholder="0" style="font-size:11.5px;padding:4px 6px;text-align:right;font-weight:600;color:var(--grn)">
+        <select class="fi" id="sivPmType_${i}" onchange="_invPaymentsBuf[${i}].type=this.value" style="font-size:11px;padding:4px 6px">
+          <option value="선금" ${pm.type==='선금'?'selected':''}>선금</option>
+          <option value="중도금" ${pm.type==='중도금'?'selected':''}>중도금</option>
+          <option value="잔금" ${pm.type==='잔금'?'selected':''}>잔금</option>
+          <option value="전액" ${pm.type==='전액'?'selected':''}>전액</option>
+        </select>
+        <input class="fi" id="sivPmMemo_${i}" value="${(pm.memo||'').replace(/"/g,'&quot;')}" oninput="_invPaymentsBuf[${i}].memo=this.value" placeholder="비고 (선택)" style="font-size:11px;padding:4px 6px">
+        <button onclick="removeInvPayment(${i})" style="padding:2px 6px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;color:var(--t3);font-size:12px" title="이 입금 이력 삭제">×</button>
+      </div>`;
+    }).join('')}
+  `;
+}
+
+function _renderInvPaymentSummary(){
+  const supplyAmt = _invRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.unit||0),0);
+  const tax = Math.round(supplyAmt*0.1);
+  const total = supplyAmt + tax;
+  const { totalPaid, ratio } = calcPaymentSummary(_invPaymentsBuf, total);
+  const remaining = total - totalPaid;
+  const isFull = ratio >= 100;
+  const isOver = ratio > 100;
+  const barColor = isOver ? 'var(--red)' : isFull ? 'var(--grn)' : ratio>=50 ? 'var(--gold-lt)' : 'var(--blu)';
+  const barWidth = Math.min(100, ratio);
+  const statusText = isOver ? `🔴 초과 입금됨 (+₩${(totalPaid-total).toLocaleString()})`
+    : isFull ? '✓ 100% 입금완료 — 청구완료 + 재고 자동 차감 처리됩니다'
+    : ratio>0 ? `진행중 — 잔금 ₩${remaining.toLocaleString()}` 
+    : '입금 대기 중';
+  return `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:8px">
+      <div><div style="font-size:10px;color:var(--t3)">총 청구액</div><div style="font-size:13px;font-weight:600">₩${total.toLocaleString()}</div></div>
+      <div><div style="font-size:10px;color:var(--t3)">입금 합계</div><div style="font-size:13px;font-weight:700;color:var(--grn)">₩${totalPaid.toLocaleString()}</div></div>
+      <div><div style="font-size:10px;color:var(--t3)">잔금</div><div style="font-size:13px;font-weight:600;color:${remaining<=0?'var(--grn)':'var(--org)'}">${remaining<=0?'₩0':'₩'+remaining.toLocaleString()}</div></div>
+      <div><div style="font-size:10px;color:var(--t3)">입금률</div><div style="font-size:14px;font-weight:700;color:${barColor};font-family:monospace">${ratio.toFixed(1)}%</div></div>
+    </div>
+    <div style="background:var(--s2);border-radius:8px;height:8px;overflow:hidden;margin-bottom:6px">
+      <div style="background:${barColor};height:100%;width:${barWidth}%;transition:width .3s"></div>
+    </div>
+    <div style="font-size:11px;color:${isOver?'var(--red)':isFull?'var(--grn)':'var(--t3)'};font-weight:${isFull||isOver?'600':'500'}">${statusText}</div>`;
+}
+
+// 입금 추가
+function addInvPayment(){
+  const today = toLocalDateStr(new Date());
+  // 첫 번째 입금이면 "선금", 그 다음은 "잔금"
+  const defaultType = _invPaymentsBuf.length === 0 ? '선금' : '잔금';
+  _invPaymentsBuf.push({
+    id: Date.now() + Math.random(),
+    date: today,
+    amount: 0,
+    type: defaultType,
+    memo: '',
+  });
+  _refreshInvPaymentsUI();
+}
+
+// 입금 삭제
+function removeInvPayment(i){
+  _invPaymentsBuf.splice(i, 1);
+  _refreshInvPaymentsUI();
+}
+
+// 입금 금액 변경 (음수 방지)
+function _onInvPaymentAmtChange(i, v){
+  let n = +v;
+  if(isNaN(n)) n = 0;
+  if(n < 0){
+    showToast('⚠ 음수 입금은 허용되지 않습니다','var(--red)', 2500);
+    n = 0;
+    const inp = document.getElementById('sivPmAmt_'+i);
+    if(inp) inp.value = '';
+  }
+  _invPaymentsBuf[i].amount = n;
+  _updateInvPaymentSummary();
+}
+
+// 입금 합계만 갱신 (포커스 보존을 위해 행은 안 다시 그림)
+function _updateInvPaymentSummary(){
+  const sumEl = document.getElementById('siv_paymentSummary');
+  if(sumEl) sumEl.innerHTML = _renderInvPaymentSummary();
+}
+
+// 입금 영역 전체 다시 그리기 (추가/삭제 시 포커스 손실 OK)
+function _refreshInvPaymentsUI(){
+  const area = document.getElementById('siv_paymentsArea');
+  if(area) area.innerHTML = _renderInvPayments();
+  _updateInvPaymentSummary();
+}
+
+function _updateInvRowCalc(i){
+  const r = _invRowsBuf[i];
+  if(!r) return;
+  const amt = (+r.qty||0) * (+r.unit||0);
+  const el = document.getElementById('sivAmt_'+i);
+  if(el) el.textContent = amt ? '₩'+amt.toLocaleString() : '-';
+  const totalsEl = document.getElementById('siv_totalsBox');
+  if(totalsEl) totalsEl.innerHTML = _renderInvTotalsBox();
+  // 총액이 바뀌면 입금률도 재계산 (입금 요약 갱신)
+  _updateInvPaymentSummary();
+  // 재고 미리보기 갱신 (포커스 잃지 않게 행 전체가 아니라 hint만 다시 그림)
+  // 행 전체를 다시 그리는 게 가장 깔끔하지만 input 포커스 잃을 위험 있어서
+  // 품번/수량이 바뀐 경우에만 행 전체를 다시 그리되, 활성 input의 selectionStart를 복원
+  const activeId = document.activeElement?.id;
+  const activeStart = document.activeElement?.selectionStart;
+  document.getElementById('siv_rowsArea').innerHTML = _renderInvRows();
+  if(activeId){
+    const restored = document.getElementById(activeId);
+    if(restored){
+      restored.focus();
+      try{
+        if(typeof activeStart === 'number'){
+          restored.setSelectionRange(activeStart, activeStart);
+        }
+      }catch(e){}
+    }
+  }
+}
+
+function addInvRow(){
+  _invRowsBuf.push({name:'', code:'', qty:1, unit:0});
+  document.getElementById('siv_rowsArea').innerHTML = _renderInvRows();
+  _updateInvRowCalc(0); // 합계 박스도 갱신
+}
+
+function removeInvRow(i){
+  if(_invRowsBuf.length<=1){
+    _invRowsBuf[0] = {name:'', code:'', qty:1, unit:0};
+  } else {
+    _invRowsBuf.splice(i,1);
+  }
+  document.getElementById('siv_rowsArea').innerHTML = _renderInvRows();
+  _updateInvRowCalc(0);
+}
+
+// 고객사 검색 (거래명세서용)
+function openClientPickerForInv(){
+  // 견적서용 고객사 picker를 재사용 — 단, 선택 결과를 거래명세서 input에 넣도록 구분
+  const html = `
+    <div style="font-size:14px;font-weight:600;margin-bottom:10px">🏢 고객사 검색</div>
+    <input class="fi search-box-tracked" id="invClientSearch" placeholder="고객사명 / 이니셜 / 담당자 / 카테고리로 검색" style="margin-bottom:8px" oninput="_renderInvClientPickerList()">
+    <div style="font-size:10.5px;color:var(--t3);margin-bottom:8px">선택한 고객사가 거래명세서에 자동 입력됩니다.</div>
+    <div id="invClientPickerList" style="max-height:55vh;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button class="btn" onclick="closeM('mClientPickInv')">닫기</button>
+    </div>
+  `;
+  let m = document.getElementById('mClientPickInv');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mClientPickInv';
+    m.className = 'ov';
+    m.innerHTML = '<div class="modal" style="max-width:600px"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mClientPickInv');
+  _renderInvClientPickerList();
+  setTimeout(()=>{
+    const inp = document.getElementById('invClientSearch');
+    if(inp) inp.focus();
+  }, 50);
+}
+
+function _renderInvClientPickerList(){
+  const q = (document.getElementById('invClientSearch')?.value||'').toLowerCase().trim();
+  let list = clients.filter(cl=>cl.status!=='inactive');
+  if(q){
+    list = list.filter(cl=>{
+      const haystack = [cl.name||'', cl.initials||'', cl.contact||'', cl.cat||'', cl.grade||''].join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  }
+  const gradeOrder = {'VIP':0, '우수':1, '일반':2};
+  list.sort((a,b)=>{
+    const ga = gradeOrder[a.grade] ?? 3;
+    const gb = gradeOrder[b.grade] ?? 3;
+    if(ga !== gb) return ga - gb;
+    return (a.name||'').localeCompare(b.name||'');
+  });
+  const el = document.getElementById('invClientPickerList');
+  if(!el) return;
+  if(!list.length){
+    el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--t3);font-size:12px">${clients.length?'검색 결과 없음':'등록된 고객사가 없습니다'}</div>`;
+    return;
+  }
+  el.innerHTML = list.slice(0,50).map(cl=>{
+    const currentVendor = (document.getElementById('siv_vendor')?.value||'').trim();
+    const isCurrent = currentVendor && currentVendor === cl.name;
+    return `
+    <div style="padding:8px 10px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;${isCurrent?'background:var(--gold-bg)':''}">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          ${cl.initials?`<span style="font-size:10px;font-weight:700;background:var(--gold);color:#fff;padding:1px 5px;border-radius:3px">${cl.initials}</span>`:''}
+          <span>${cl.name||'(이름없음)'}</span>
+          ${cl.grade==='VIP'?'<span class="chip cgold" style="font-size:9.5px">VIP</span>':cl.grade==='우수'?'<span class="chip cg" style="font-size:9.5px">우수</span>':''}
+          ${isCurrent?'<span style="font-size:9.5px;color:var(--gold-lt);font-weight:600">(현재 선택됨)</span>':''}
+        </div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:2px">
+          ${cl.contact?'담당자: '+cl.contact:''}${cl.phone?' · '+cl.phone:''}${cl.cat?' · '+cl.cat:''}
+        </div>
+      </div>
+      <button onclick="selectClientForInv('${cl.id}')" style="padding:5px 14px;font-size:11px;background:${isCurrent?'var(--s2)':'var(--blu)'};color:${isCurrent?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:pointer;font-family:inherit;flex-shrink:0">${isCurrent?'✓ 선택됨':'선택'}</button>
+    </div>`;
+  }).join('');
+}
+
+function selectClientForInv(clientId){
+  const cl = clients.find(c=>String(c.id)===String(clientId));
+  if(!cl){ showToast('⚠ 고객사를 찾을 수 없습니다','var(--red)'); return; }
+  const vendorEl = document.getElementById('siv_vendor');
+  if(vendorEl) vendorEl.value = cl.name || '';
+  closeM('mClientPickInv');
+  showToast(`✓ "${cl.name}" 선택됨`,'var(--grn)');
+}
+
+// 제품DB 검색 (거래명세서용)
+function openProductPickerForInv(){
+  const html = `
+    <div style="font-size:14px;font-weight:600;margin-bottom:10px">🔍 제품DB 검색</div>
+    <input class="fi search-box-tracked" id="invProdSearch" placeholder="품번(VTBB...) / 품명 / 소재 / 도금으로 검색" style="margin-bottom:8px" oninput="_renderInvProductPickerList()">
+    <div style="font-size:10.5px;color:var(--t3);margin-bottom:8px">선택한 품번의 정보(품명·품번·판매단가)가 거래명세서에 자동 입력됩니다.</div>
+    <div id="invProdPickerList" style="max-height:55vh;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button class="btn" onclick="closeM('mProdPickInv')">닫기</button>
+    </div>
+  `;
+  let m = document.getElementById('mProdPickInv');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mProdPickInv';
+    m.className = 'ov';
+    m.innerHTML = '<div class="modal" style="max-width:680px"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mProdPickInv');
+  _renderInvProductPickerList();
+  setTimeout(()=>{
+    const inp = document.getElementById('invProdSearch');
+    if(inp) inp.focus();
+  }, 50);
+}
+
+function _renderInvProductPickerList(){
+  const q = (document.getElementById('invProdSearch')?.value||'').toLowerCase().trim();
+  let list = [...productDB];
+  if(q){
+    list = list.filter(p=>{
+      const haystack = [p.code||'', p.name||'', p.mat||'', p.plating||'', p.size||''].join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  }
+  list.sort((a,b)=>{
+    const da = a.lastModified || a.createdDate || '';
+    const db = b.lastModified || b.createdDate || '';
+    return db.localeCompare(da);
+  });
+  const el = document.getElementById('invProdPickerList');
+  if(!el) return;
+  if(!list.length){
+    el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--t3);font-size:12px">${q?'검색 결과 없음':'등록된 품번이 없습니다'}</div>`;
+    return;
+  }
+  const shown = list.slice(0,50);
+  const total = list.length;
+  el.innerHTML = shown.map(p=>{
+    const linked = _invRowsBuf.some(r=>r.code && r.code===p.code);
+    return `
+    <div style="padding:8px 10px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;${linked?'opacity:.5;background:var(--s1)':''}">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:600">
+          <span style="font-family:monospace;color:var(--gold-lt);font-size:11px">${p.code||'(품번없음)'}</span>
+          &nbsp;·&nbsp;${p.name||'(이름없음)'}
+        </div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:2px">
+          ${p.mat||''} · ${p.plating||'무도금'} · ${p.size||''}${p.weight?' · '+p.weight+'g':''} · 재고 ${(+p.stock||0).toLocaleString()}
+        </div>
+        <div style="font-size:10px;color:var(--t3);margin-top:1px;font-family:monospace">
+          판매단가 ₩${(+p.price||0).toLocaleString()}
+        </div>
+      </div>
+      <button ${linked?'disabled':''} onclick="addProductToInv('${p.code}')" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--blu)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
+    </div>`;
+  }).join('') + (total>50?`<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1)">상위 50건만 표시 (총 ${total.toLocaleString()}건)</div>`:'');
+}
+
+function addProductToInv(code){
+  const p = productDB.find(x=>x.code===code);
+  if(!p){ showToast('⚠ 품번을 찾을 수 없습니다','var(--red)'); return; }
+  if(_invRowsBuf.some(r=>r.code===code)){
+    showToast('이미 추가된 품번입니다','var(--org)');
+    return;
+  }
+  const newRow = {
+    name: p.name||'',
+    code: p.code||'',
+    qty: 1,
+    unit: +p.price||0,
+  };
+  // 첫 행이 비어있으면 그 자리, 아니면 새 행 추가
+  if(_invRowsBuf.length===1 && !_invRowsBuf[0].name && !+_invRowsBuf[0].unit){
+    _invRowsBuf[0] = newRow;
+  } else {
+    _invRowsBuf.push(newRow);
+  }
+  document.getElementById('siv_rowsArea').innerHTML = _renderInvRows();
+  _updateInvRowCalc(0);
+  _renderInvProductPickerList();
+  showToast(`✓ ${p.code} "${p.name||'품번'}" 추가됨`,'var(--grn)');
+}
+
+// 저장
+function saveStandaloneInvoice(){
+  const vendor = (gv('siv_vendor')||'').trim();
+  if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
+  const validRows = _invRowsBuf.filter(r=>String(r.name||'').trim() && (+r.qty>0));
+  if(validRows.length===0){ showToast('⚠ 품목을 1개 이상 입력해 주세요','var(--red)'); return; }
+
+  const id = gv('siv_id');
+  const isNew = !id;
+  const issuedAt = gv('siv_issued') || toLocalDateStr(new Date());
+  const shipDate = gv('siv_ship') || issuedAt;
+  const status = gv('siv_status') || '발행완료';
+  const memo = gv('siv_memo') || '';
+
+  const supplyAmt = validRows.reduce((s,r)=>s+(+r.qty||0)*(+r.unit||0), 0);
+  const tax = Math.round(supplyAmt*0.1);
+  const total = supplyAmt + tax;
+
+  const items = validRows.map(r=>({
+    name: r.name||'',
+    code: r.code||'',
+    qty: +r.qty||0,
+    unit: +r.unit||0,
+    amt: (+r.qty||0)*(+r.unit||0),
+  }));
+  const itemSummary = items.map(r=>r.name+' ×'+r.qty).join(', ');
+
+  // 거래명세서 번호 자동 생성 (재고 판매: STOCK-YYMMDD-NNN)
+  const generateStockInvNo = ()=>{
+    const d = new Date(issuedAt);
+    const yy = String(d.getFullYear()).slice(2);
+    const mm = String(d.getMonth()+1).padStart(2,'0');
+    const dd = String(d.getDate()).padStart(2,'0');
+    const prefix = `STOCK-${yy}${mm}${dd}-`;
+    let maxN = 0;
+    invoiceHistory.forEach(v=>{
+      if(v.ordNo && v.ordNo.startsWith(prefix)){
+        const n = parseInt(v.ordNo.slice(prefix.length),10);
+        if(!isNaN(n) && n>maxN) maxN = n;
+      }
+    });
+    return prefix + String(maxN+1).padStart(3,'0');
+  };
+
+  if(isNew){
+    // 발주 기반인지 확인
+    const isFromOrder = gv('siv_isFromOrder') === '1';
+    const linkedOrdId = gv('siv_ordId') || null;
+    const linkedOrdNo = (gv('siv_ordNo') || '').trim();
+
+    // 입금 이력 + 자동 상태 결정
+    const payments = _invPaymentsBuf.map(pm=>({
+      id: pm.id || (Date.now()+Math.random()),
+      date: pm.date || toLocalDateStr(new Date()),
+      amount: +pm.amount||0,
+      type: pm.type || '선금',
+      memo: pm.memo || '',
+    })).filter(pm=>pm.amount>0);
+    const { totalPaid, ratio } = calcPaymentSummary(payments, total);
+    let finalStatus = status;
+    if(ratio >= 100 && status !== '미수') finalStatus = '청구완료';
+
+    // 발주 기반이면 발주번호 그대로 사용, 독립형이면 STOCK-... 자동 생성
+    const recOrdNo = isFromOrder ? linkedOrdNo : generateStockInvNo();
+    const recOrdId = isFromOrder ? linkedOrdId : null;
+
+    const invRec = {
+      id: Date.now(),
+      issuedAt,
+      vendor,
+      ordNo: recOrdNo,
+      ordId: recOrdId,
+      shipDate,
+      items,
+      itemSummary,
+      supplyAmt, tax, total,
+      status: finalStatus,
+      memo,
+      payments,
+      totalPaid,
+      paymentRatio: ratio,
+      _isStandalone: !isFromOrder, // 발주 기반이면 false
+      _stockApplied: false,
+    };
+
+    // 📦 재고 차감: 독립형 거래명세서 + 입금 100% 도달 시에만
+    // (발주 기반은 발주서 자체로 재고 관리되므로 거래명세서가 추가 차감 X)
+    let stockResult = { changed: [], notFound: [], negativeWarnings: [] };
+    if(!isFromOrder && ratio >= 100){
+      stockResult = applyInvoiceStockChange(items, -1);
+      invRec._stockApplied = true;
+    }
+
+    invoiceHistory.unshift(invRec);
+
+    // 📦 발주 기반 + 입금 100% 도달 → 발주서 자동 출고완료 트리거
+    let autoCompleteResult = { autoCompleted: false, order: null };
+    if(isFromOrder && ratio >= 100){
+      autoCompleteResult = checkAutoCompleteShipment(invRec);
+    }
+
+    save();
+    if(notionCfg.workerUrl && notionCfg.invDb){
+      syncInvoiceToNotion(invRec, false).catch(e=>console.warn('거래명세서 노션 sync 실패:',e));
+    }
+    closeM('mStandaloneInv');
+
+    // 토스트 메시지
+    let toastMsg = '✓ 거래명세서 발행됨';
+    if(autoCompleteResult.autoCompleted){
+      toastMsg += ` · 입금 100% · 발주서 자동 출고완료`;
+    } else if(ratio >= 100 && stockResult.changed.length){
+      toastMsg += ` · 입금 100% · 재고 ${stockResult.changed.length}건 차감`;
+    } else if(payments.length){
+      toastMsg += ` · 입금 ${ratio.toFixed(0)}% (₩${totalPaid.toLocaleString()})`;
+    }
+    showToast(toastMsg,'var(--grn)', 3500);
+
+    if(stockResult.negativeWarnings.length){
+      const warnMsg = '⚠ 재고 부족: ' + stockResult.negativeWarnings.map(w=>`${w.name}(${w.after})`).join(', ');
+      setTimeout(()=>showToast(warnMsg,'var(--red)',5000), 800);
+    }
+    if(stockResult.notFound.length){
+      const nfMsg = `ℹ ${stockResult.notFound.length}개 품번이 제품DB에 없어 재고 차감 안 됨`;
+      setTimeout(()=>showToast(nfMsg,'var(--org)',4000), 1600);
+    }
+  } else {
+    // 수정
+    const idx = invoiceHistory.findIndex(x=>String(x.id)===String(id));
+    if(idx<0){ showToast('⚠ 거래명세서를 찾을 수 없습니다','var(--red)'); return; }
+    const target = invoiceHistory[idx];
+
+    const wasStandalone = target._isStandalone === true || (target.ordNo && String(target.ordNo).startsWith('STOCK-'));
+    const wasStockApplied = !!target._stockApplied;
+
+    // 새 입금 이력 정리 (0원 제외)
+    const payments = _invPaymentsBuf.map(pm=>({
+      id: pm.id || (Date.now()+Math.random()),
+      date: pm.date || toLocalDateStr(new Date()),
+      amount: +pm.amount||0,
+      type: pm.type || '선금',
+      memo: pm.memo || '',
+    })).filter(pm=>pm.amount>0);
+    const { totalPaid, ratio } = calcPaymentSummary(payments, total);
+
+    // 새 status 결정 (사용자 선택 + 100% 자동 변환)
+    let finalStatus = status;
+    if(ratio >= 100 && status !== '미수') finalStatus = '청구완료';
+
+    // 📦 재고 차감 로직: 4가지 케이스
+    // 케이스 A: 이전 차감X + 신규 100% → 차감
+    // 케이스 B: 이전 차감O + 신규 100% → 이전 items 복구 + 새 items 차감 (이중 차감 방지)
+    // 케이스 C: 이전 차감O + 신규 100% 미달 → 이전 차감 복구 (입금 깨짐)
+    // 케이스 D: 이전 차감X + 신규 100% 미달 → 차감 안 함
+    let stockResult = { changed: [], notFound: [], negativeWarnings: [] };
+    let willStockApply = false;
+    let stockAction = ''; // 토스트용
+
+    // 발주서 기반(_isStandalone X)은 재고 차감 시스템 자체를 건드리지 않음
+    if(wasStandalone){
+      const newWillBe100 = ratio >= 100;
+      if(wasStockApplied && newWillBe100){
+        // B: 차감O → 차감O. 이전 복구 + 새 차감
+        applyInvoiceStockChange(target.items||[], +1);
+        stockResult = applyInvoiceStockChange(items, -1);
+        willStockApply = true;
+        stockAction = '재고 재계산';
+      } else if(!wasStockApplied && newWillBe100){
+        // A: 차감X → 차감O. 새 차감
+        stockResult = applyInvoiceStockChange(items, -1);
+        willStockApply = true;
+        stockAction = '재고 차감 (입금 100% 도달)';
+      } else if(wasStockApplied && !newWillBe100){
+        // C: 차감O → 차감X. 이전 복구
+        stockResult = applyInvoiceStockChange(target.items||[], +1);
+        willStockApply = false;
+        stockAction = '재고 복구 (입금 100% 미만으로 변경)';
+      }
+      // D: 차감X → 차감X. 아무것도 안 함
+    }
+
+    Object.assign(target, {
+      issuedAt, vendor, shipDate, items, itemSummary,
+      supplyAmt, tax, total, status: finalStatus, memo,
+      payments, totalPaid, paymentRatio: ratio,
+      _stockApplied: willStockApply,
+    });
+
+    // 📦 발주 기반 거래명세서이고 입금 100% 도달 → 자동 출고완료 트리거
+    let autoCompleteResult = { autoCompleted: false, order: null };
+    if(!wasStandalone && ratio >= 100){
+      autoCompleteResult = checkAutoCompleteShipment(target);
+    }
+
+    save();
+    if(notionCfg.workerUrl && notionCfg.invDb){
+      syncInvoiceToNotion(target, true).catch(e=>console.warn('거래명세서 노션 sync 실패:',e));
+    }
+    closeM('mStandaloneInv');
+    let toastMsg = '✓ 거래명세서 수정됨';
+    if(autoCompleteResult.autoCompleted){
+      toastMsg += ` · 입금 100% · 발주서 자동 출고완료`;
+    } else if(stockAction){
+      toastMsg += ` · ${stockAction}`;
+    } else if(payments.length){
+      toastMsg += ` · 입금 ${ratio.toFixed(0)}%`;
+    }
+    showToast(toastMsg,'var(--grn)', 3500);
+    if(stockResult.negativeWarnings.length){
+      const warnMsg = '⚠ 재고 부족: ' + stockResult.negativeWarnings.map(w=>`${w.name}(${w.after})`).join(', ');
+      setTimeout(()=>showToast(warnMsg,'var(--red)',5000), 800);
+    }
+  }
+  renderInvoiceHistory();
+}
+
+function deleteStandaloneInvoice(){
+  const id = gv('siv_id'); if(!id) return;
+  const v = invoiceHistory.find(x=>String(x.id)===String(id));
+  if(!v) return;
+  const wasStandalone = v._isStandalone === true || (v.ordNo && String(v.ordNo).startsWith('STOCK-'));
+  // 재고 복구는 실제로 차감된 적 있는 경우에만
+  const willRestoreStock = wasStandalone && v._stockApplied && v.items && v.items.length;
+  const stockMsg = willRestoreStock
+    ? `\n\n📦 재고가 자동 복구됩니다 (${v.items.filter(x=>x.code).length}개 품번).`
+    : '';
+  showConfirm(`거래명세서 "${v.ordNo||v.vendor||''}"를 삭제합니다.${stockMsg}`, ()=>{
+    let restoredCount = 0;
+    if(willRestoreStock){
+      const result = applyInvoiceStockChange(v.items, +1);
+      restoredCount = result.changed.length;
+    }
+    if(v._notionId && notionCfg.workerUrl && notionCfg.invDb){
+      try{ nUpdate(v._notionId, {}, true).catch(e=>console.warn('노션 archive 실패:',e)); }catch(e){}
+    }
+    invoiceHistory = invoiceHistory.filter(x=>String(x.id)!==String(id));
+    save();
+    closeM('mStandaloneInv');
+    let toastMsg = '✓ 거래명세서 삭제됨';
+    if(restoredCount > 0) toastMsg += ` · 재고 ${restoredCount}건 복구`;
+    showToast(toastMsg,'var(--grn)', 3000);
+    renderInvoiceHistory();
+  }, '거래명세서 삭제', '🗑');
 }
 
 // ────────────────────────────────────────────────
