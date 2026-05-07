@@ -6582,6 +6582,251 @@ window.fixFactShip=function(){
   }
   return fixed;
 };
+
+// === 진단 도구: 영업관리 고객사·문의가 안 보일 때 ===
+// 콘솔에서 diagSales() 입력하여 사용
+window.diagSales=async function(){
+  console.log('%c=== 영업관리 동기화 진단 ===','color:#8B6914;font-weight:bold;font-size:14px');
+
+  // 1) 로컬 데이터 상태
+  console.log('%c\n[1] 로컬 데이터 상태','color:#1A6DB5;font-weight:bold');
+  console.log('  clients (고객사):', clients.length, '건');
+  console.log('  inquiries (문의):', inquiries.length, '건');
+  if(clients.length>0){
+    console.log('  └ clients 샘플:', clients.slice(0,3).map(c=>({name:c.name, _notionId:c._notionId, hasId:!!c._notionId})));
+  }
+  if(inquiries.length>0){
+    console.log('  └ inquiries 샘플:', inquiries.slice(0,3).map(q=>({vendor:q.vendor, content:(q.content||'').slice(0,30), _notionId:q._notionId})));
+  }
+
+  // 2) localStorage 원본
+  console.log('%c\n[2] localStorage 원본','color:#1A6DB5;font-weight:bold');
+  try{
+    const lsCli=localStorage.getItem(SL_K.cli);
+    const lsInq=localStorage.getItem(SL_K.inq);
+    console.log('  ek_v9_cli (clients):', lsCli?JSON.parse(lsCli).length+'건':'없음');
+    console.log('  ek_inquiries (inquiries):', lsInq?JSON.parse(lsInq).length+'건':'없음');
+  }catch(e){ console.warn('  localStorage 읽기 오류:', e); }
+
+  // 3) Notion 설정
+  console.log('%c\n[3] Notion 설정','color:#1A6DB5;font-weight:bold');
+  console.log('  workerUrl:', notionCfg.workerUrl ? '✓ 설정됨' : '✗ 미설정');
+  console.log('  clientDb:', notionCfg.clientDb || '✗ 미설정');
+  console.log('  inqDb:', notionCfg.inqDb || '✗ 미설정');
+
+  if(!notionCfg.workerUrl){
+    console.warn('  ⚠ Worker URL이 없습니다. Notion 동기화가 작동하지 않습니다.');
+    return;
+  }
+
+  // 4) Notion 직접 쿼리 (page_size=5만 테스트)
+  console.log('%c\n[4] Notion 직접 쿼리 테스트','color:#1A6DB5;font-weight:bold');
+  if(notionCfg.clientDb){
+    try{
+      console.log('  → 고객사 DB 쿼리 중...');
+      // 코드에 정의된 nQueryAll을 사용 (Worker 형식 일치 보장)
+      const results=await nQueryAll(notionCfg.clientDb, null);  // since=null로 전체 조회
+      console.log(`  ✓ 고객사 DB 응답:`, results.length, '건 받음');
+      if(results.length>0){
+        console.log('  └ 첫 항목 properties:', Object.keys(results[0].properties||{}));
+        console.log('  └ 매핑된 결과:', mapNotionClient(results[0]));
+      }
+    }catch(e){ console.warn('  ✗ 고객사 DB 쿼리 오류:', e.message); }
+  }
+
+  if(notionCfg.inqDb){
+    try{
+      console.log('  → 문의 DB 쿼리 중...');
+      const results=await nQueryAll(notionCfg.inqDb, null);
+      console.log(`  ✓ 문의 DB 응답:`, results.length, '건 받음');
+      if(results.length>0){
+        console.log('  └ 첫 항목 properties:', Object.keys(results[0].properties||{}));
+        console.log('  └ 매핑된 결과:', mapNotionInquiry(results[0]));
+      }
+    }catch(e){ console.warn('  ✗ 문의 DB 쿼리 오류:', e.message); }
+  }
+
+  // 5) 진단 요약
+  console.log('%c\n[5] 진단 요약','color:#2E8B2C;font-weight:bold;font-size:13px');
+  if(clients.length===0 && inquiries.length===0){
+    console.log('  ⚠ 로컬에 고객사/문의가 모두 0건입니다.');
+    console.log('  → 위 [4] 결과를 확인해서 Notion에 데이터가 있는지 봐주세요.');
+    console.log('  → Notion에 있는데도 0건이면, 동기화를 강제 실행해보세요: forceFullSync()');
+  } else {
+    console.log(`  ✓ 로컬에 데이터 존재 (고객사 ${clients.length}건, 문의 ${inquiries.length}건)`);
+    console.log('  → 화면에 안 보인다면 브라우저 새로고침(F5) 후 영업관리 탭으로 다시 이동해보세요.');
+  }
+};
+
+// === 영업관리 데이터 강제 풀-동기화 ===
+// 증분 동기화의 sync time을 리셋하고 처음부터 다시 받기
+window.forceFullSync=async function(){
+  console.log('%c=== 강제 전체 동기화 시작 ===','color:#8B6914;font-weight:bold;font-size:14px');
+  // 정확한 헬퍼 사용 (메모리 캐시 + localStorage 모두 비움)
+  try{
+    if(typeof clearAllDbSyncTimes==='function') clearAllDbSyncTimes();
+    localStorage.removeItem('ek_last_full_sync_v1');
+    console.log('✓ sync time 리셋 완료');
+  }catch(e){ console.warn('sync time 리셋 실패:', e); }
+
+  if(typeof pullFromNotion==='function'){
+    console.log('→ Notion에서 전체 데이터 다시 가져오는 중...');
+    const ok=await pullFromNotion({silent:false});  // 정확한 옵션 형식
+    console.log(ok?'✓ 동기화 완료':'✗ 동기화 실패');
+    if(ok){
+      console.log('  clients:', clients.length, '건');
+      console.log('  inquiries:', inquiries.length, '건');
+      try{ if(typeof renderTab==='function') renderTab(); }catch(e){}
+    }
+    return ok;
+  } else {
+    console.warn('pullFromNotion 함수를 찾을 수 없습니다.');
+    return false;
+  }
+};
+
+// === UI용 진단 (영업관리 탭의 진단 버튼에서 호출) ===
+window.diagSalesUI=async function(){
+  // 진단 시작 안내
+  const html=`<div style="font-family:'Noto Sans KR',sans-serif;padding:16px 20px;color:#222;font-size:13px;line-height:1.7">
+    <div style="font-size:18px;font-weight:700;color:#8B6914;margin-bottom:12px">🔍 영업관리 동기화 진단</div>
+    <div id="diagSalesContent" style="background:#f9f7f2;border:1px solid #ddd;border-radius:6px;padding:14px;font-family:monospace;font-size:11.5px;white-space:pre-wrap;min-height:200px">진단 중... 잠시만 기다려주세요.</div>
+    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick="diagSalesActionForceSync()" style="padding:8px 16px;background:var(--gold);color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;font-weight:600">🔄 강제 전체 동기화 실행</button>
+      <button onclick="(function(){const b=document.querySelector('#mPrintPreview button[onclick=&quot;doPrint()&quot;]');if(b)b.style.display='';closeM('mPrintPreview');})()" style="padding:8px 16px;background:none;border:1px solid #ccc;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit">닫기</button>
+    </div>
+  </div>`;
+  if(typeof showPrintPreview==='function'){
+    showPrintPreview('🔍 동기화 진단', html);
+    // 인쇄 버튼 숨기기 (진단 모달에는 불필요)
+    setTimeout(()=>{
+      const printBtn=document.querySelector('#mPrintPreview button[onclick="doPrint()"]');
+      if(printBtn) printBtn.style.display='none';
+    },50);
+  }
+
+  // 진단 데이터 수집
+  const lines=[];
+  const log=(s)=>lines.push(s);
+
+  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  log('[1] 로컬 데이터 상태');
+  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  log(`  • clients (고객사) : ${clients.length}건`);
+  log(`  • inquiries (문의) : ${inquiries.length}건`);
+
+  let lsCli=0, lsInq=0;
+  try{
+    const a=localStorage.getItem(SL_K.cli); if(a) lsCli=JSON.parse(a).length;
+    const b=localStorage.getItem(SL_K.inq); if(b) lsInq=JSON.parse(b).length;
+  }catch(e){}
+  log(`  • localStorage 고객사: ${lsCli}건`);
+  log(`  • localStorage 문의 : ${lsInq}건`);
+
+  log('');
+  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  log('[2] Notion 설정');
+  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  log(`  • Worker URL : ${notionCfg.workerUrl ? '✓ 설정됨' : '✗ 미설정'}`);
+  log(`  • 고객사 DB ID: ${notionCfg.clientDb || '✗ 미설정'}`);
+  log(`  • 문의 DB ID  : ${notionCfg.inqDb || '✗ 미설정'}`);
+
+  // 화면 갱신 (Notion 쿼리 전 중간 결과)
+  const el=document.getElementById('diagSalesContent');
+  if(el) el.textContent=lines.join('\n');
+
+  if(!notionCfg.workerUrl){
+    log('');
+    log('⚠ Worker URL이 없어 Notion 동기화가 작동하지 않습니다.');
+    log('   ⚙ 버튼 → Notion 설정에서 Worker URL을 입력해주세요.');
+    if(el) el.textContent=lines.join('\n');
+    return;
+  }
+
+  log('');
+  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  log('[3] Notion 직접 쿼리 결과');
+  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  if(el) el.textContent=lines.join('\n')+'\n  → Notion 쿼리 중...';
+
+  let notionCli=null, notionInq=null;
+  // 고객사 DB
+  if(notionCfg.clientDb){
+    try{
+      const results=await nQueryAll(notionCfg.clientDb, null);  // since=null로 전체
+      notionCli=results.length;
+      log(`  ✓ Notion 고객사 DB: ${notionCli}건`);
+      if(results.length>0){
+        const sample=mapNotionClient(results[0]);
+        log(`     └ 첫 항목: ${sample.name||'(이름없음)'}`);
+      }
+    }catch(e){ log(`  ✗ 고객사 DB 쿼리 오류: ${e.message}`); }
+  } else {
+    log('  ⚠ 고객사 DB ID가 설정되지 않았습니다.');
+  }
+
+  // 문의 DB
+  if(notionCfg.inqDb){
+    try{
+      const results=await nQueryAll(notionCfg.inqDb, null);
+      notionInq=results.length;
+      log(`  ✓ Notion 문의 DB: ${notionInq}건`);
+      if(results.length>0){
+        const sample=mapNotionInquiry(results[0]);
+        log(`     └ 첫 항목: ${sample.vendor||'(고객사명 없음)'} - ${(sample.content||'').slice(0,30)}`);
+      }
+    }catch(e){ log(`  ✗ 문의 DB 쿼리 오류: ${e.message}`); }
+  } else {
+    log('  ⚠ 문의 DB ID가 설정되지 않았습니다.');
+  }
+
+  // 진단 요약
+  log('');
+  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  log('[4] 진단 결과');
+  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  const localEmpty=(clients.length===0 && inquiries.length===0);
+  const notionHasData=(notionCli>0 || notionInq>0);
+
+  if(localEmpty && notionHasData){
+    log('  ⚠ 핵심 문제 발견');
+    log(`     Notion에는 데이터가 있는데 (고객사 ${notionCli||0}건, 문의 ${notionInq||0}건)`);
+    log('     로컬에는 0건입니다.');
+    log('');
+    log('  → 해결 방법: 아래 "🔄 강제 전체 동기화 실행" 버튼을 눌러주세요.');
+    log('     증분 동기화 시점이 잘못 저장되어 데이터를 안 받고 있을 가능성이 큽니다.');
+  } else if(localEmpty && !notionHasData){
+    log('  ⚠ Notion과 로컬 모두 데이터가 0건입니다.');
+    log('     아직 등록된 고객사/문의가 없거나, DB ID가 잘못된 것일 수 있습니다.');
+    log('     ⚙ 설정에서 DB ID를 다시 확인해주세요.');
+  } else if(!localEmpty){
+    log(`  ✓ 로컬에 데이터가 있습니다 (고객사 ${clients.length}건, 문의 ${inquiries.length}건)`);
+    log('     화면에 안 보인다면 영업관리 → 고객사/고객사 문의 탭으로 직접 이동해보세요.');
+    if(notionCli!==null && notionCli>clients.length){
+      log('');
+      log(`  ⚠ Notion에는 ${notionCli}건이 있지만 로컬에는 ${clients.length}건만 있습니다.`);
+      log('     "🔄 강제 전체 동기화 실행"을 눌러 누락된 데이터를 받아오세요.');
+    }
+  }
+
+  if(el) el.textContent=lines.join('\n');
+};
+
+// 진단 모달의 "강제 전체 동기화" 버튼 핸들러
+window.diagSalesActionForceSync=async function(){
+  const el=document.getElementById('diagSalesContent');
+  if(el) el.textContent='🔄 강제 전체 동기화 실행 중...\n\n잠시만 기다려주세요. (Notion에서 모든 데이터를 다시 가져옵니다)';
+  const ok=await window.forceFullSync();
+  if(el){
+    if(ok){
+      el.textContent=`✓ 강제 전체 동기화 완료\n\n  • clients (고객사): ${clients.length}건\n  • inquiries (문의) : ${inquiries.length}건\n\n이제 [닫기]를 누르고 영업관리 → 고객사 / 고객사 문의 탭으로 이동해서 확인해주세요.`;
+    } else {
+      el.textContent='✗ 동기화 실패\n\nNotion 연결 상태나 Worker URL을 확인해주세요.';
+    }
+  }
+};
+
 function closeM(id){document.getElementById(id)?.classList.remove('open');}
 function openM(id){document.getElementById(id)?.classList.add('open');}
 
@@ -8816,7 +9061,7 @@ function switchTab(tab,el){
   else if(tab==='sample') acts.innerHTML='<button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 샘플 등록</button>';
   else if(tab==='order') acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button>';
   else if(tab==='schedule') acts.innerHTML='<button class="btn bp bs" onclick="openTaskModal()">+ 업무 추가</button>';
-  else if(tab==='sales') acts.innerHTML='<button class="btn bp bs" onclick="openClModal(null)">+ 고객사 등록</button><button class="btn bgo bs" onclick="openPropModal(null)">+ 영업 등록</button><button class="btn bgo bs" onclick="openClientImport()">📥 고객사 엑셀 업로드</button>';
+  else if(tab==='sales') acts.innerHTML='<button class="btn bp bs" onclick="openClModal(null)">+ 고객사 등록</button><button class="btn bgo bs" onclick="openPropModal(null)">+ 영업 등록</button><button class="btn bgo bs" onclick="openClientImport()">📥 고객사 엑셀 업로드</button><button class="btn bgo bs" onclick="diagSalesUI()" title="고객사·문의가 안 보일 때 동기화 상태 진단">🔍 동기화 진단</button>';
   renderTab();updateBadges();
   // 탭 전환 시 silent 동기화 (마지막 동기화 후 30초 이상 지났을 때만)
   if(notionCfg.workerUrl && Date.now()-_lastSyncAt > 30000){
