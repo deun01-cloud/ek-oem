@@ -2569,7 +2569,7 @@ function renderProducts(){
 
   const filters=`
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 14px;background:var(--s2);border-radius:var(--r);border:1px solid var(--bdr)">
-    <input class="search-box" placeholder="품목코드, 품목명 검색..." value="${pdSearch}" oninput="pdSearch=this.value;pdPage=1;renderProducts()" style="width:200px">
+    <input class="search-box search-box-tracked" id="srch_pdSearch" placeholder="품목코드, 품목명 검색..." value="${pdSearch}" oninput="pdSearch=this.value;pdPage=1;renderProducts()" style="width:200px">
     <div style="display:flex;gap:4px;flex-wrap:wrap">
       ${types.map(t=>`<button onclick="pdFilterType='${t}';pdPage=1;renderProducts()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdFilterType===t?'var(--gold)':'var(--bdr)'};background:${pdFilterType===t?'var(--gold-bg)':'var(--s1)'};color:${pdFilterType===t?'var(--gold-lt)':'var(--t2)'};cursor:pointer;font-family:inherit">${t}</button>`).join('')}
     </div>
@@ -3362,7 +3362,7 @@ function renderInvoiceHistory(){
   h+='<select class="fs" onchange="setInvVendor(this.value)" style="width:160px"><option value="">전체 고객사</option>';
   vendors.forEach(function(v){ h+='<option value="'+v+'"'+(invFilter.vendor===v?' selected':'')+'>'+v+'</option>'; });
   h+='</select>';
-  h+='<input class="search-box" placeholder="고객사 검색..." value="'+(invFilter.vendor||'')+'" oninput="setInvVendor(this.value)" style="width:130px">';
+  h+='<input class="search-box search-box-tracked" id="srch_invVendor" placeholder="고객사 검색..." value="'+(invFilter.vendor||'')+'" oninput="setInvVendor(this.value)" style="width:130px">';
   h+='<div style="display:flex;gap:4px">';
   statuses.forEach(function(s){
     var on=(st===s||(!st&&s==='전체'));
@@ -4159,6 +4159,12 @@ function updateNotionNavLabel(){
 let _notionFailCount=0;
 let _notionCircuitOpen=false; // 회로차단기: true면 호출 중단
 let _notionLastErrLogAt=0;
+// 실패 시각 기록 — 30초 시간 윈도우로 카운트하기 위해
+let _notionFailTimes=[];
+const _NOTION_FAIL_WINDOW_MS = 30*1000;
+const _NOTION_FAIL_THRESHOLD = 3;
+// 마지막 실패 정보 (진단·UI 표시용)
+let _notionLastError=null;  // {status, message, when}
 
 function _logNotionErr(msg){
   // 10초 내 중복 로그 스팸 방지
@@ -4167,16 +4173,30 @@ function _logNotionErr(msg){
   _notionLastErrLogAt=now;
   console.warn(msg);
 }
+// 시간 윈도우 안의 실패만 카운트 (오래된 실패는 자동 만료)
+function _recordNotionFail(info){
+  const now=Date.now();
+  _notionFailTimes=_notionFailTimes.filter(t=>now-t<_NOTION_FAIL_WINDOW_MS);
+  _notionFailTimes.push(now);
+  _notionFailCount=_notionFailTimes.length;
+  _notionLastError={...info, when:now};
+}
 function resetNotionCircuit(){
   _notionFailCount=0;
+  _notionFailTimes=[];
   _notionCircuitOpen=false;
+  _notionLastError=null;
   console.log('[Notion] 회로차단기 재설정됨');
 }
 
-async function notionCall(method, path, body){
+// notionCall(method, path, body, opts)
+//   opts.bypassCircuit: true → 회로차단기 무시하고 시도 (사용자가 명시적으로 트리거한 호출용)
+async function notionCall(method, path, body, opts){
   if(!notionCfg.workerUrl) return null;
-  // 회로차단기가 열려있으면 즉시 null 반환 (Worker 죽음 감지 시 호출 폭주 방지)
-  if(_notionCircuitOpen){
+  opts=opts||{};
+  // 회로차단기가 열려있으면 즉시 null 반환 (자동 호출 폭주 방지)
+  // 단, 사용자 액션(bypassCircuit)은 통과시킴 — 한 번의 시도가 "치유 기회"이므로
+  if(_notionCircuitOpen && !opts.bypassCircuit){
     return null;
   }
   try{
@@ -4186,18 +4206,29 @@ async function notionCall(method, path, body){
     const route=notionCfg.workerUrl+(path.startsWith('/notion')?path:'/notion'+path);
     const res=await fetch(route,{method,headers,body:body?JSON.stringify(body):undefined});
     if(!res.ok){
-      _notionFailCount++;
-      _logNotionErr('Notion API error: '+res.status);
-      if(_notionFailCount>=3) _openNotionCircuit('API '+res.status+' 반복');
+      let bodyText='';
+      try{ bodyText=(await res.text()||'').slice(0,200); }catch(e){}
+      _recordNotionFail({status:res.status, message:bodyText||res.statusText});
+      _logNotionErr('Notion API error: '+res.status+(bodyText?' '+bodyText:''));
+      if(_notionFailCount>=_NOTION_FAIL_THRESHOLD) _openNotionCircuit('API '+res.status+' 반복');
       return null;
     }
-    // 성공 시 실패 카운터 리셋
-    if(_notionFailCount>0){ _notionFailCount=0; }
+    // 성공 시: 실패 카운터·회로 모두 리셋 (한 번이라도 응답이 오면 회로는 살아난 것)
+    if(_notionFailCount>0||_notionCircuitOpen){
+      _notionFailCount=0;
+      _notionFailTimes=[];
+      _notionLastError=null;
+      if(_notionCircuitOpen){
+        _notionCircuitOpen=false;
+        console.log('[Notion] 응답 정상 — 회로차단기 자동 해제');
+        try{ updateNotionNavLabel(); }catch(e){}
+      }
+    }
     return await res.json();
   }catch(e){
-    _notionFailCount++;
+    _recordNotionFail({status:0, message:e.message||'네트워크 오류'});
     _logNotionErr('Notion sync failed: '+e.message);
-    if(_notionFailCount>=3) _openNotionCircuit(e.message);
+    if(_notionFailCount>=_NOTION_FAIL_THRESHOLD) _openNotionCircuit(e.message);
     return null;
   }
 }
@@ -4261,7 +4292,7 @@ async function archiveAllMatchingInvoices(ordNo, vendor, issuedAt){
 
 // Notion DB에서 모든 페이지를 쿼리 (페이지네이션 자동 처리, archived 제외)
 // sinceISO가 주어지면 last_edited_time > sinceISO인 페이지만 받음 (증분 동기화)
-async function nQueryAll(dbId, sinceISO){
+async function nQueryAll(dbId, sinceISO, opts){
   if(!notionCfg.workerUrl||!dbId) return [];
   const results=[];
   let cursor=undefined;
@@ -4274,7 +4305,7 @@ async function nQueryAll(dbId, sinceISO){
       body.filter={timestamp:'last_edited_time', last_edited_time:{after: sinceISO}};
       body.sorts=[{timestamp:'last_edited_time', direction:'ascending'}];
     }
-    const data=await notionCall('POST', '/databases/'+dbId.replace(/-/g,'')+'/query', body);
+    const data=await notionCall('POST', '/databases/'+dbId.replace(/-/g,'')+'/query', body, opts);
     if(!data||!data.results){break;}
     results.push(...data.results);
     cursor=data.has_more?data.next_cursor:null;
@@ -4654,35 +4685,43 @@ let _lastSyncAt=0;
 async function pullFromNotion(opts){
   opts=opts||{};
   if(!notionCfg.workerUrl){ return false; }
-  if(_notionCircuitOpen){
-    // Worker가 죽은 상태 — 로컬 데이터 보호 위해 pull 스킵
+  const silent=!!opts.silent;
+  // 사용자 액션(silent=false)이면 회로차단기 자동 해제 — "재시도하고 싶다"는 명시 신호
+  // 자동 동기화(silent=true)는 차단기 존중 (호출 폭주 방지)
+  if(!silent){
+    if(_notionCircuitOpen){
+      console.log('[pull] 사용자 액션 — 회로차단기 자동 해제 후 재시도');
+      resetNotionCircuit();
+    }
+  } else if(_notionCircuitOpen){
     return false;
   }
   if(_isSyncing){ return false; }
   _isSyncing=true;
-  const silent=!!opts.silent;
   if(!silent) setSyncState('Notion 동기화 중...','var(--org)');
 
   try{
     // 증분 동기화 결정: 풀 동기화 강제 시점이거나 처음이면 since=null (전체)
     const useIncremental = !shouldFullSync();
     const sinceFor = (dbId)=> (useIncremental && dbId) ? getDbSyncTime(dbId) : null;
+    // 사용자 액션은 회로차단기 우회 — 한 번의 일시적 실패로 영구 차단되지 않게
+    const callOpts = silent ? undefined : {bypassCircuit:true};
     if(!silent){
       console.log(`[pull] 모드: ${useIncremental?'증분 (since 기준)':'풀 (전체)'}`);
     }
 
     // 9개 DB를 병렬 쿼리 (증분 모드면 since 이후만 받음)
     const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows]=await Promise.all([
-      notionCfg.smpDb   ? nQueryAll(notionCfg.smpDb,    sinceFor(notionCfg.smpDb))    : Promise.resolve([]),
-      notionCfg.ordDb   ? nQueryAll(notionCfg.ordDb,    sinceFor(notionCfg.ordDb))    : Promise.resolve([]),
-      notionCfg.procDb  ? nQueryAll(notionCfg.procDb,   sinceFor(notionCfg.procDb))   : Promise.resolve([]),
-      notionCfg.propDb  ? nQueryAll(notionCfg.propDb,   sinceFor(notionCfg.propDb))   : Promise.resolve([]),
-      notionCfg.clientDb? nQueryAll(notionCfg.clientDb, sinceFor(notionCfg.clientDb)) : Promise.resolve([]),
-      notionCfg.taskDb  ? nQueryAll(notionCfg.taskDb,   sinceFor(notionCfg.taskDb))   : Promise.resolve([]),
-      notionCfg.asDb    ? nQueryAll(notionCfg.asDb,     sinceFor(notionCfg.asDb))     : Promise.resolve([]),
-      notionCfg.productDb ? nQueryAll(notionCfg.productDb, sinceFor(notionCfg.productDb)) : Promise.resolve([]),
-      notionCfg.invDb   ? nQueryAll(notionCfg.invDb,    sinceFor(notionCfg.invDb))    : Promise.resolve([]),
-      notionCfg.inqDb   ? nQueryAll(notionCfg.inqDb,    sinceFor(notionCfg.inqDb))    : Promise.resolve([]),
+      notionCfg.smpDb   ? nQueryAll(notionCfg.smpDb,    sinceFor(notionCfg.smpDb),   callOpts) : Promise.resolve([]),
+      notionCfg.ordDb   ? nQueryAll(notionCfg.ordDb,    sinceFor(notionCfg.ordDb),   callOpts) : Promise.resolve([]),
+      notionCfg.procDb  ? nQueryAll(notionCfg.procDb,   sinceFor(notionCfg.procDb),  callOpts) : Promise.resolve([]),
+      notionCfg.propDb  ? nQueryAll(notionCfg.propDb,   sinceFor(notionCfg.propDb),  callOpts) : Promise.resolve([]),
+      notionCfg.clientDb? nQueryAll(notionCfg.clientDb, sinceFor(notionCfg.clientDb),callOpts) : Promise.resolve([]),
+      notionCfg.taskDb  ? nQueryAll(notionCfg.taskDb,   sinceFor(notionCfg.taskDb),  callOpts) : Promise.resolve([]),
+      notionCfg.asDb    ? nQueryAll(notionCfg.asDb,     sinceFor(notionCfg.asDb),    callOpts) : Promise.resolve([]),
+      notionCfg.productDb ? nQueryAll(notionCfg.productDb, sinceFor(notionCfg.productDb),callOpts) : Promise.resolve([]),
+      notionCfg.invDb   ? nQueryAll(notionCfg.invDb,    sinceFor(notionCfg.invDb),   callOpts) : Promise.resolve([]),
+      notionCfg.inqDb   ? nQueryAll(notionCfg.inqDb,    sinceFor(notionCfg.inqDb),   callOpts) : Promise.resolve([]),
     ]);
 
     // pull 도중 회로차단기가 열린 경우 → Worker가 응답 실패 상태
@@ -4690,7 +4729,15 @@ async function pullFromNotion(opts){
     if(_notionCircuitOpen){
       console.warn('[pull] Worker 응답 실패 감지 → 로컬 데이터 보호 위해 병합 중단');
       _isSyncing=false;
-      if(!silent){ setSyncState('Notion ❌ 연결 실패','var(--red)'); }
+      if(!silent){
+        // 실패 원인을 사용자에게 직접 보여줌 (HTTP 상태 + 메시지)
+        const errInfo = _notionLastError;
+        const detail = errInfo
+          ? (errInfo.status>0 ? `(HTTP ${errInfo.status}) ${(errInfo.message||'').slice(0,100)}` : `네트워크 오류: ${(errInfo.message||'').slice(0,100)}`)
+          : 'Worker 응답 없음';
+        setSyncState('Notion ❌ 연결 실패','var(--red)');
+        showToast(`⚠ Notion 동기화 실패 — ${detail}`,'var(--red)',8000);
+      }
       return false;
     }
 
@@ -6582,251 +6629,6 @@ window.fixFactShip=function(){
   }
   return fixed;
 };
-
-// === 진단 도구: 영업관리 고객사·문의가 안 보일 때 ===
-// 콘솔에서 diagSales() 입력하여 사용
-window.diagSales=async function(){
-  console.log('%c=== 영업관리 동기화 진단 ===','color:#8B6914;font-weight:bold;font-size:14px');
-
-  // 1) 로컬 데이터 상태
-  console.log('%c\n[1] 로컬 데이터 상태','color:#1A6DB5;font-weight:bold');
-  console.log('  clients (고객사):', clients.length, '건');
-  console.log('  inquiries (문의):', inquiries.length, '건');
-  if(clients.length>0){
-    console.log('  └ clients 샘플:', clients.slice(0,3).map(c=>({name:c.name, _notionId:c._notionId, hasId:!!c._notionId})));
-  }
-  if(inquiries.length>0){
-    console.log('  └ inquiries 샘플:', inquiries.slice(0,3).map(q=>({vendor:q.vendor, content:(q.content||'').slice(0,30), _notionId:q._notionId})));
-  }
-
-  // 2) localStorage 원본
-  console.log('%c\n[2] localStorage 원본','color:#1A6DB5;font-weight:bold');
-  try{
-    const lsCli=localStorage.getItem(SL_K.cli);
-    const lsInq=localStorage.getItem(SL_K.inq);
-    console.log('  ek_v9_cli (clients):', lsCli?JSON.parse(lsCli).length+'건':'없음');
-    console.log('  ek_inquiries (inquiries):', lsInq?JSON.parse(lsInq).length+'건':'없음');
-  }catch(e){ console.warn('  localStorage 읽기 오류:', e); }
-
-  // 3) Notion 설정
-  console.log('%c\n[3] Notion 설정','color:#1A6DB5;font-weight:bold');
-  console.log('  workerUrl:', notionCfg.workerUrl ? '✓ 설정됨' : '✗ 미설정');
-  console.log('  clientDb:', notionCfg.clientDb || '✗ 미설정');
-  console.log('  inqDb:', notionCfg.inqDb || '✗ 미설정');
-
-  if(!notionCfg.workerUrl){
-    console.warn('  ⚠ Worker URL이 없습니다. Notion 동기화가 작동하지 않습니다.');
-    return;
-  }
-
-  // 4) Notion 직접 쿼리 (page_size=5만 테스트)
-  console.log('%c\n[4] Notion 직접 쿼리 테스트','color:#1A6DB5;font-weight:bold');
-  if(notionCfg.clientDb){
-    try{
-      console.log('  → 고객사 DB 쿼리 중...');
-      // 코드에 정의된 nQueryAll을 사용 (Worker 형식 일치 보장)
-      const results=await nQueryAll(notionCfg.clientDb, null);  // since=null로 전체 조회
-      console.log(`  ✓ 고객사 DB 응답:`, results.length, '건 받음');
-      if(results.length>0){
-        console.log('  └ 첫 항목 properties:', Object.keys(results[0].properties||{}));
-        console.log('  └ 매핑된 결과:', mapNotionClient(results[0]));
-      }
-    }catch(e){ console.warn('  ✗ 고객사 DB 쿼리 오류:', e.message); }
-  }
-
-  if(notionCfg.inqDb){
-    try{
-      console.log('  → 문의 DB 쿼리 중...');
-      const results=await nQueryAll(notionCfg.inqDb, null);
-      console.log(`  ✓ 문의 DB 응답:`, results.length, '건 받음');
-      if(results.length>0){
-        console.log('  └ 첫 항목 properties:', Object.keys(results[0].properties||{}));
-        console.log('  └ 매핑된 결과:', mapNotionInquiry(results[0]));
-      }
-    }catch(e){ console.warn('  ✗ 문의 DB 쿼리 오류:', e.message); }
-  }
-
-  // 5) 진단 요약
-  console.log('%c\n[5] 진단 요약','color:#2E8B2C;font-weight:bold;font-size:13px');
-  if(clients.length===0 && inquiries.length===0){
-    console.log('  ⚠ 로컬에 고객사/문의가 모두 0건입니다.');
-    console.log('  → 위 [4] 결과를 확인해서 Notion에 데이터가 있는지 봐주세요.');
-    console.log('  → Notion에 있는데도 0건이면, 동기화를 강제 실행해보세요: forceFullSync()');
-  } else {
-    console.log(`  ✓ 로컬에 데이터 존재 (고객사 ${clients.length}건, 문의 ${inquiries.length}건)`);
-    console.log('  → 화면에 안 보인다면 브라우저 새로고침(F5) 후 영업관리 탭으로 다시 이동해보세요.');
-  }
-};
-
-// === 영업관리 데이터 강제 풀-동기화 ===
-// 증분 동기화의 sync time을 리셋하고 처음부터 다시 받기
-window.forceFullSync=async function(){
-  console.log('%c=== 강제 전체 동기화 시작 ===','color:#8B6914;font-weight:bold;font-size:14px');
-  // 정확한 헬퍼 사용 (메모리 캐시 + localStorage 모두 비움)
-  try{
-    if(typeof clearAllDbSyncTimes==='function') clearAllDbSyncTimes();
-    localStorage.removeItem('ek_last_full_sync_v1');
-    console.log('✓ sync time 리셋 완료');
-  }catch(e){ console.warn('sync time 리셋 실패:', e); }
-
-  if(typeof pullFromNotion==='function'){
-    console.log('→ Notion에서 전체 데이터 다시 가져오는 중...');
-    const ok=await pullFromNotion({silent:false});  // 정확한 옵션 형식
-    console.log(ok?'✓ 동기화 완료':'✗ 동기화 실패');
-    if(ok){
-      console.log('  clients:', clients.length, '건');
-      console.log('  inquiries:', inquiries.length, '건');
-      try{ if(typeof renderTab==='function') renderTab(); }catch(e){}
-    }
-    return ok;
-  } else {
-    console.warn('pullFromNotion 함수를 찾을 수 없습니다.');
-    return false;
-  }
-};
-
-// === UI용 진단 (영업관리 탭의 진단 버튼에서 호출) ===
-window.diagSalesUI=async function(){
-  // 진단 시작 안내
-  const html=`<div style="font-family:'Noto Sans KR',sans-serif;padding:16px 20px;color:#222;font-size:13px;line-height:1.7">
-    <div style="font-size:18px;font-weight:700;color:#8B6914;margin-bottom:12px">🔍 영업관리 동기화 진단</div>
-    <div id="diagSalesContent" style="background:#f9f7f2;border:1px solid #ddd;border-radius:6px;padding:14px;font-family:monospace;font-size:11.5px;white-space:pre-wrap;min-height:200px">진단 중... 잠시만 기다려주세요.</div>
-    <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
-      <button onclick="diagSalesActionForceSync()" style="padding:8px 16px;background:var(--gold);color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;font-weight:600">🔄 강제 전체 동기화 실행</button>
-      <button onclick="(function(){const b=document.querySelector('#mPrintPreview button[onclick=&quot;doPrint()&quot;]');if(b)b.style.display='';closeM('mPrintPreview');})()" style="padding:8px 16px;background:none;border:1px solid #ccc;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit">닫기</button>
-    </div>
-  </div>`;
-  if(typeof showPrintPreview==='function'){
-    showPrintPreview('🔍 동기화 진단', html);
-    // 인쇄 버튼 숨기기 (진단 모달에는 불필요)
-    setTimeout(()=>{
-      const printBtn=document.querySelector('#mPrintPreview button[onclick="doPrint()"]');
-      if(printBtn) printBtn.style.display='none';
-    },50);
-  }
-
-  // 진단 데이터 수집
-  const lines=[];
-  const log=(s)=>lines.push(s);
-
-  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  log('[1] 로컬 데이터 상태');
-  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  log(`  • clients (고객사) : ${clients.length}건`);
-  log(`  • inquiries (문의) : ${inquiries.length}건`);
-
-  let lsCli=0, lsInq=0;
-  try{
-    const a=localStorage.getItem(SL_K.cli); if(a) lsCli=JSON.parse(a).length;
-    const b=localStorage.getItem(SL_K.inq); if(b) lsInq=JSON.parse(b).length;
-  }catch(e){}
-  log(`  • localStorage 고객사: ${lsCli}건`);
-  log(`  • localStorage 문의 : ${lsInq}건`);
-
-  log('');
-  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  log('[2] Notion 설정');
-  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  log(`  • Worker URL : ${notionCfg.workerUrl ? '✓ 설정됨' : '✗ 미설정'}`);
-  log(`  • 고객사 DB ID: ${notionCfg.clientDb || '✗ 미설정'}`);
-  log(`  • 문의 DB ID  : ${notionCfg.inqDb || '✗ 미설정'}`);
-
-  // 화면 갱신 (Notion 쿼리 전 중간 결과)
-  const el=document.getElementById('diagSalesContent');
-  if(el) el.textContent=lines.join('\n');
-
-  if(!notionCfg.workerUrl){
-    log('');
-    log('⚠ Worker URL이 없어 Notion 동기화가 작동하지 않습니다.');
-    log('   ⚙ 버튼 → Notion 설정에서 Worker URL을 입력해주세요.');
-    if(el) el.textContent=lines.join('\n');
-    return;
-  }
-
-  log('');
-  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  log('[3] Notion 직접 쿼리 결과');
-  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  if(el) el.textContent=lines.join('\n')+'\n  → Notion 쿼리 중...';
-
-  let notionCli=null, notionInq=null;
-  // 고객사 DB
-  if(notionCfg.clientDb){
-    try{
-      const results=await nQueryAll(notionCfg.clientDb, null);  // since=null로 전체
-      notionCli=results.length;
-      log(`  ✓ Notion 고객사 DB: ${notionCli}건`);
-      if(results.length>0){
-        const sample=mapNotionClient(results[0]);
-        log(`     └ 첫 항목: ${sample.name||'(이름없음)'}`);
-      }
-    }catch(e){ log(`  ✗ 고객사 DB 쿼리 오류: ${e.message}`); }
-  } else {
-    log('  ⚠ 고객사 DB ID가 설정되지 않았습니다.');
-  }
-
-  // 문의 DB
-  if(notionCfg.inqDb){
-    try{
-      const results=await nQueryAll(notionCfg.inqDb, null);
-      notionInq=results.length;
-      log(`  ✓ Notion 문의 DB: ${notionInq}건`);
-      if(results.length>0){
-        const sample=mapNotionInquiry(results[0]);
-        log(`     └ 첫 항목: ${sample.vendor||'(고객사명 없음)'} - ${(sample.content||'').slice(0,30)}`);
-      }
-    }catch(e){ log(`  ✗ 문의 DB 쿼리 오류: ${e.message}`); }
-  } else {
-    log('  ⚠ 문의 DB ID가 설정되지 않았습니다.');
-  }
-
-  // 진단 요약
-  log('');
-  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  log('[4] 진단 결과');
-  log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-  const localEmpty=(clients.length===0 && inquiries.length===0);
-  const notionHasData=(notionCli>0 || notionInq>0);
-
-  if(localEmpty && notionHasData){
-    log('  ⚠ 핵심 문제 발견');
-    log(`     Notion에는 데이터가 있는데 (고객사 ${notionCli||0}건, 문의 ${notionInq||0}건)`);
-    log('     로컬에는 0건입니다.');
-    log('');
-    log('  → 해결 방법: 아래 "🔄 강제 전체 동기화 실행" 버튼을 눌러주세요.');
-    log('     증분 동기화 시점이 잘못 저장되어 데이터를 안 받고 있을 가능성이 큽니다.');
-  } else if(localEmpty && !notionHasData){
-    log('  ⚠ Notion과 로컬 모두 데이터가 0건입니다.');
-    log('     아직 등록된 고객사/문의가 없거나, DB ID가 잘못된 것일 수 있습니다.');
-    log('     ⚙ 설정에서 DB ID를 다시 확인해주세요.');
-  } else if(!localEmpty){
-    log(`  ✓ 로컬에 데이터가 있습니다 (고객사 ${clients.length}건, 문의 ${inquiries.length}건)`);
-    log('     화면에 안 보인다면 영업관리 → 고객사/고객사 문의 탭으로 직접 이동해보세요.');
-    if(notionCli!==null && notionCli>clients.length){
-      log('');
-      log(`  ⚠ Notion에는 ${notionCli}건이 있지만 로컬에는 ${clients.length}건만 있습니다.`);
-      log('     "🔄 강제 전체 동기화 실행"을 눌러 누락된 데이터를 받아오세요.');
-    }
-  }
-
-  if(el) el.textContent=lines.join('\n');
-};
-
-// 진단 모달의 "강제 전체 동기화" 버튼 핸들러
-window.diagSalesActionForceSync=async function(){
-  const el=document.getElementById('diagSalesContent');
-  if(el) el.textContent='🔄 강제 전체 동기화 실행 중...\n\n잠시만 기다려주세요. (Notion에서 모든 데이터를 다시 가져옵니다)';
-  const ok=await window.forceFullSync();
-  if(el){
-    if(ok){
-      el.textContent=`✓ 강제 전체 동기화 완료\n\n  • clients (고객사): ${clients.length}건\n  • inquiries (문의) : ${inquiries.length}건\n\n이제 [닫기]를 누르고 영업관리 → 고객사 / 고객사 문의 탭으로 이동해서 확인해주세요.`;
-    } else {
-      el.textContent='✗ 동기화 실패\n\nNotion 연결 상태나 Worker URL을 확인해주세요.';
-    }
-  }
-};
-
 function closeM(id){document.getElementById(id)?.classList.remove('open');}
 function openM(id){document.getElementById(id)?.classList.add('open');}
 
@@ -6920,6 +6722,104 @@ function sv(id,v){if(document.getElementById(id))document.getElementById(id).val
 
 // date
 document.getElementById('topDate').textContent=`${TODAY.getFullYear()}년 ${TODAY.getMonth()+1}월 ${TODAY.getDate()}일 (${DAY_KR[TODAY.getDay()]})`;
+
+// ════════════════════════════════
+// 🔍 검색창 포커스 복원 시스템 (회귀 방지)
+// ────────────────────────────────
+// 문제: oninput에서 render()를 호출하면 input이 새 DOM으로 교체되어
+//       포커스/커서 위치가 사라짐 → 글자 1개 입력 후 다시 클릭해야 했음
+// 해결: 마지막으로 포커스됐던 검색창의 id와 selectionStart를 기억해두고,
+//       렌더 직후 같은 id의 input을 찾아 포커스+커서 위치를 복원
+// 사용법: <input id="고유아이디" class="search-box-tracked" ...>
+//        oninput 안에서 변수 갱신 → 렌더 호출 → 자동으로 포커스 복원됨
+// ════════════════════════════════
+window._lastFocusedInput = { id:null, selStart:0, selEnd:0, isComposing:false };
+
+// 페이지 어디서든 search-box-tracked 클래스 input에 포커스/입력 시 상태 기록
+document.addEventListener('focusin', function(e){
+  const t = e.target;
+  if(t && t.classList && t.classList.contains('search-box-tracked') && t.id){
+    window._lastFocusedInput.id = t.id;
+    window._lastFocusedInput.selStart = t.selectionStart || 0;
+    window._lastFocusedInput.selEnd = t.selectionEnd || 0;
+  }
+}, true);
+document.addEventListener('input', function(e){
+  const t = e.target;
+  if(t && t.classList && t.classList.contains('search-box-tracked') && t.id){
+    window._lastFocusedInput.id = t.id;
+    window._lastFocusedInput.selStart = t.selectionStart || 0;
+    window._lastFocusedInput.selEnd = t.selectionEnd || 0;
+  }
+}, true);
+// 한글 IME 조합 중에는 포커스 복원이 조합을 깨뜨릴 수 있으니 추적
+document.addEventListener('compositionstart', function(e){
+  const t = e.target;
+  if(t && t.classList && t.classList.contains('search-box-tracked')){
+    window._lastFocusedInput.isComposing = true;
+  }
+}, true);
+document.addEventListener('compositionend', function(e){
+  const t = e.target;
+  if(t && t.classList && t.classList.contains('search-box-tracked')){
+    window._lastFocusedInput.isComposing = false;
+  }
+}, true);
+
+// 렌더 직후 자동 호출되어 포커스를 복원하는 함수
+// MutationObserver로 search-box-tracked 요소 변경 감지하여 자동 복원
+(function setupSearchFocusRestore(){
+  const restore = ()=>{
+    const info = window._lastFocusedInput;
+    if(!info.id) return;
+    // IME 조합 중이면 복원 시도하지 않음 (조합 깨짐 방지)
+    if(info.isComposing) return;
+    // 사용자가 다른 input/textarea에 의도적으로 포커스를 옮긴 경우 → 빼앗지 않음
+    const active = document.activeElement;
+    if(active && active !== document.body){
+      const tag = (active.tagName||'').toLowerCase();
+      if(tag==='input' || tag==='textarea' || tag==='select'){
+        // 단, 그게 우리가 추적 중인 그 input 자체면 무시 (아래에서 재확인)
+        if(active.id !== info.id) return;
+      }
+    }
+    const el = document.getElementById(info.id);
+    if(!el || !el.classList.contains('search-box-tracked')) return;
+    // 이미 포커스되어 있으면 굳이 다시 안 함
+    if(document.activeElement === el) return;
+    try{
+      el.focus();
+      // input 타입에서만 setSelectionRange 가능
+      if(el.tagName==='INPUT' && (el.type==='text'||el.type==='search'||!el.type)){
+        const len = (el.value||'').length;
+        const s = Math.min(info.selStart, len);
+        const e = Math.min(info.selEnd, len);
+        el.setSelectionRange(s, e);
+      }
+    }catch(err){ /* 일부 input 타입은 setSelectionRange 미지원 — 무시 */ }
+  };
+
+  // body의 자식 변경 감지 → 렌더 발생 시마다 복원 시도
+  // (모든 렌더 함수를 수정하지 않고도 자동 작동)
+  const obs = new MutationObserver(()=>{
+    // 마이크로태스크로 미루기 — 같은 프레임 내 여러 mutation을 1회만 처리
+    if(setupSearchFocusRestore._scheduled) return;
+    setupSearchFocusRestore._scheduled = true;
+    Promise.resolve().then(()=>{
+      setupSearchFocusRestore._scheduled = false;
+      restore();
+    });
+  });
+  // DOM 준비되면 관찰 시작
+  const start = ()=>{
+    if(document.body){
+      obs.observe(document.body, {childList:true, subtree:true});
+    } else {
+      setTimeout(start, 50);
+    }
+  };
+  start();
+})();
 
 // ════════════════════════════════
 // DRAG & DROP ZONE HELPERS
@@ -9061,7 +8961,7 @@ function switchTab(tab,el){
   else if(tab==='sample') acts.innerHTML='<button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 샘플 등록</button>';
   else if(tab==='order') acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button>';
   else if(tab==='schedule') acts.innerHTML='<button class="btn bp bs" onclick="openTaskModal()">+ 업무 추가</button>';
-  else if(tab==='sales') acts.innerHTML='<button class="btn bp bs" onclick="openClModal(null)">+ 고객사 등록</button><button class="btn bgo bs" onclick="openPropModal(null)">+ 영업 등록</button><button class="btn bgo bs" onclick="openClientImport()">📥 고객사 엑셀 업로드</button><button class="btn bgo bs" onclick="diagSalesUI()" title="고객사·문의가 안 보일 때 동기화 상태 진단">🔍 동기화 진단</button>';
+  else if(tab==='sales') acts.innerHTML='<button class="btn bp bs" onclick="openClModal(null)">+ 고객사 등록</button><button class="btn bgo bs" onclick="openPropModal(null)">+ 영업 등록</button><button class="btn bgo bs" onclick="openClientImport()">📥 고객사 엑셀 업로드</button>';
   renderTab();updateBadges();
   // 탭 전환 시 silent 동기화 (마지막 동기화 후 30초 이상 지났을 때만)
   if(notionCfg.workerUrl && Date.now()-_lastSyncAt > 30000){
@@ -9564,7 +9464,7 @@ function renderSample(){
           title="필터 패널 ${smpAdvFilter.panelOpen?'접기':'펼치기'}">
           🔽 필터${smpAdvActiveCount()?`<span style="background:var(--gold);color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:2px">${smpAdvActiveCount()}</span>`:''}
         </button>
-        <input class="search-box" placeholder="검색..." value="${smpSearch}" oninput="smpSearch=this.value;renderSample()">
+        <input class="search-box search-box-tracked" id="srch_smpSearch" placeholder="검색..." value="${smpSearch}" oninput="smpSearch=this.value;renderSample()">
       </div>
     </div>
     ${(()=>{
@@ -11292,7 +11192,7 @@ function renderOrder(){
           title="필터 패널 ${ordAdvFilter.panelOpen?'접기':'펼치기'}">
           🔽 필터${ordAdvActiveCount()?`<span style="background:var(--gold);color:#fff;font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:2px">${ordAdvActiveCount()}</span>`:''}
         </button>
-        <input class="search-box" placeholder="업체명, 품목 검색..." value="${ordSearch}" oninput="ordSearch=this.value;renderOrder()">
+        <input class="search-box search-box-tracked" id="srch_ordSearch" placeholder="업체명, 품목 검색..." value="${ordSearch}" oninput="ordSearch=this.value;renderOrder()">
       </div>
     </div>
     ${(()=>{
@@ -12684,7 +12584,7 @@ function renderOrdRows(){
         ${r.itemCode?`<div style="font-size:9.5px;color:var(--gold-lt);margin-top:2px;font-weight:600">📌 ${r.itemCode}</div>`:''}
       </div>
       <div style="position:relative">
-        <input class="fi" value="${r.qty||''}" oninput="ordRowsBuf[${i}].qty=this.value;renderOrdRows()" placeholder="발주량" style="font-size:11.5px;padding:4px 7px;text-align:center;width:100%" title="발주 수량 (예: 80, '각 20개 (총 80개)')">
+        <input class="fi search-box-tracked" id="ordRowQty_${i}" value="${r.qty||''}" oninput="ordRowsBuf[${i}].qty=this.value;renderOrdRows()" placeholder="발주량" style="font-size:11.5px;padding:4px 7px;text-align:center;width:100%" title="발주 수량 (예: 80, '각 20개 (총 80개)')">
         ${(r.qty&&String(r.qty).trim()&&parseOrdQty(r.qty)>0&&String(parseOrdQty(r.qty))!==String(r.qty).trim())?`<div style="position:absolute;top:100%;left:0;right:0;font-size:9px;color:var(--gold-lt);text-align:center;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="잔량 계산에 사용되는 수량">= ${parseOrdQty(r.qty).toLocaleString()}개</div>`:''}
       </div>
       <input class="fi" list="ordPlatingList" value="${(r.plating||'').replace(/"/g,'&quot;')}" oninput="ordRowsBuf[${i}].plating=this.value" placeholder="도금" style="font-size:11px;padding:4px 6px" title="선택 또는 직접입력">
@@ -12727,6 +12627,7 @@ function renderOrdRows(){
             onchange="ordRowsBuf[${i}].rcvHistory[${j}].date=this.value;renderOrdRows()"
             style="border:none;background:none;font-size:11px;color:var(--t1);font-family:inherit;cursor:pointer;padding:0;width:110px">
           <input type="number" value="${h.qty||''}" min="1" max="9999"
+            class="search-box-tracked" id="ordRcvQty_${i}_${j}"
             oninput="ordRowsBuf[${i}].rcvHistory[${j}].qty=+this.value;renderOrdRows()"
             placeholder="수량" style="width:80px;padding:2px 6px;border:1px solid var(--bdr);border-radius:3px;font-size:12px;text-align:center;font-family:inherit;background:var(--s1)">
           <span style="font-size:10px;color:var(--t3)">개</span>
