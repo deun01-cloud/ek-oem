@@ -4436,6 +4436,29 @@ function shouldFullSync(){
       console.log('[shouldFullSync] 로컬 데이터 부족('+totalLocal+'건) → 풀 모드 강제');
       return true;
     }
+    // ⚠ 추가 안전장치: 개별 DB가 sync time만 있고 데이터가 0건인 경우도 풀 모드로 강제
+    // (productDB 5,967건이 totalLocal을 부풀려서 inquiries/clients가 0건이어도 증분 모드 진입하는 문제 방지)
+    const dbDataChecks = [
+      { id: notionCfg.inqDb,   data: typeof inquiries!=='undefined'?inquiries:[],    label: '고객사문의' },
+      { id: notionCfg.clientDb,data: typeof clients!=='undefined'?clients:[],        label: '고객사' },
+      { id: notionCfg.propDb,  data: typeof proposals!=='undefined'?proposals:[],    label: '영업제안' },
+      { id: notionCfg.smpDb,   data: typeof samples!=='undefined'?samples:[],        label: '샘플' },
+      { id: notionCfg.ordDb,   data: typeof orders!=='undefined'?orders:[],          label: '발주' },
+      { id: notionCfg.taskDb,  data: typeof tasks!=='undefined'?tasks:[],            label: '업무일지' },
+      { id: notionCfg.asDb,    data: typeof asItems!=='undefined'?asItems:[],        label: 'AS' },
+      { id: notionCfg.invDb,   data: typeof invoiceHistory!=='undefined'?invoiceHistory:[], label: '청구이력' },
+      { id: notionCfg.quoteDb, data: typeof quotes!=='undefined'?quotes:[],          label: '견적' },
+    ];
+    for(const c of dbDataChecks){
+      if(!c.id) continue;
+      const syncTime = getDbSyncTime(c.id);
+      // sync time은 있는데 (= 한 번 이상 동기화된 DB) 로컬 데이터가 0건이면
+      // → 노션엔 있지만 로컬엔 없음 → 풀 모드로 다시 받아야 함
+      if(syncTime && c.data.length === 0){
+        console.log(`[shouldFullSync] ${c.label}: sync time 있음 / 로컬 0건 → 풀 모드 강제`);
+        return true;
+      }
+    }
     const last=parseInt(localStorage.getItem(FULL_SYNC_AT_KEY)||'0',10);
     if(!last) return true;
     return (Date.now()-last) > FULL_SYNC_INTERVAL_MS;
