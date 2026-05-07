@@ -14790,7 +14790,10 @@ function openQuoteModal(idOrNull){
     <div style="font-size:12px;font-weight:600;color:var(--t2);margin-bottom:6px">📩 수신 (고객사 정보)</div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px">
       <div class="fg"><label>고객사 *</label>
-        <input class="fi" id="qt_vendor" list="qt_vendor_dl" value="${q?q.vendor||'':''}" placeholder="고객사명">
+        <div style="display:flex;gap:4px">
+          <input class="fi" id="qt_vendor" list="qt_vendor_dl" value="${q?q.vendor||'':''}" placeholder="고객사명 (직접 입력 또는 🔍)" style="flex:1;min-width:0">
+          <button type="button" onclick="openClientPickerForQuote()" title="고객사DB에서 검색" style="padding:0 10px;background:var(--blu-bg);border:1px solid rgba(60,108,170,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--blu);font-size:13px;flex-shrink:0">🔍</button>
+        </div>
         <datalist id="qt_vendor_dl">${vendorOpts}</datalist>
       </div>
       <div class="fg"><label>고객 담당자</label><input class="fi" id="qt_cliManager" value="${q?q.cliManager||'':''}"></div>
@@ -15163,22 +15166,57 @@ function addSampleToQuote(sid){
 // ────────────────────────────────────────────────
 // 제품DB 검색 → 견적 행에 추가 (기존 품번 재사용)
 // ────────────────────────────────────────────────
+// 품목 검색 picker - 활성 탭 상태 ('product' | 'sample')
+let _qtPickTab = 'product';
+function setQtPickTab(t){
+  _qtPickTab = t;
+  // 탭 버튼 active 갱신
+  document.querySelectorAll('.qtpick-tab').forEach(b=>{
+    b.classList.toggle('on', b.dataset.tab===t);
+  });
+  _renderQtProductPickerList();
+  // 탭 전환 후 검색창에 포커스 유지
+  const inp = document.getElementById('qtProdSearch');
+  if(inp) inp.focus();
+}
+
 function openProductPickerForQuote(){
+  const pdCount = productDB.length;
+  const smpCount = samples.filter(s=>s.status!=='취소').length;
+  // 기본 탭은 product (이전과 동일한 시작점)
+  _qtPickTab = 'product';
   const html = `
-    <div style="font-size:14px;font-weight:600;margin-bottom:10px">🔍 제품DB 검색 — 기존 품번 추가</div>
-    <input class="fi search-box-tracked" id="qtProdSearch" placeholder="품번(VTBB...) / 품명 / 소재 / 도금으로 검색" style="margin-bottom:8px" oninput="_renderQtProductPickerList()">
-    <div style="font-size:10.5px;color:var(--t3);margin-bottom:8px">선택한 품번의 정보(품명·소재·도금·중량·입고단가·시세·생산원가·판매단가)가 견적 행에 자동 입력됩니다.</div>
+    <div style="font-size:14px;font-weight:600;margin-bottom:10px">🔍 품목 검색</div>
+
+    <!-- 탭 버튼 -->
+    <div style="display:flex;gap:2px;padding:3px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px;margin-bottom:10px">
+      <button class="qtpick-tab on" data-tab="product" onclick="setQtPickTab('product')" style="flex:1;padding:7px 12px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600">
+        📦 제품DB <span style="font-size:10px;opacity:.7">${pdCount.toLocaleString()}</span>
+      </button>
+      <button class="qtpick-tab" data-tab="sample" onclick="setQtPickTab('sample')" style="flex:1;padding:7px 12px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:500">
+        📋 샘플의뢰 <span style="font-size:10px;opacity:.7">${smpCount}</span>
+      </button>
+    </div>
+
+    <input class="fi search-box-tracked" id="qtProdSearch" placeholder="품번 / 품명 / 소재 / 도금으로 검색" style="margin-bottom:8px" oninput="_renderQtProductPickerList()">
+    <div id="qtPickHint" style="font-size:10.5px;color:var(--t3);margin-bottom:8px"></div>
     <div id="qtProdPickerList" style="max-height:55vh;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px"></div>
     <div style="display:flex;justify-content:flex-end;margin-top:12px">
       <button class="btn" onclick="closeM('mProductPickQt')">닫기</button>
     </div>
+
+    <style>
+      .qtpick-tab{color:var(--t3);background:transparent;transition:.15s}
+      .qtpick-tab:hover{color:var(--t1)}
+      .qtpick-tab.on{color:var(--t1);background:var(--s1);font-weight:700}
+    </style>
   `;
   let m = document.getElementById('mProductPickQt');
   if(!m){
     m = document.createElement('div');
     m.id = 'mProductPickQt';
     m.className = 'ov';
-    m.innerHTML = '<div class="modal" style="max-width:680px"></div>';
+    m.innerHTML = '<div class="modal" style="max-width:720px"></div>';
     document.body.appendChild(m);
   }
   m.querySelector('.modal').innerHTML = html;
@@ -15193,53 +15231,116 @@ function openProductPickerForQuote(){
 
 function _renderQtProductPickerList(){
   const q = (document.getElementById('qtProdSearch')?.value||'').toLowerCase().trim();
-  let list = [...productDB];
+  const tab = _qtPickTab || 'product';
+  const el = document.getElementById('qtProdPickerList');
+  const hintEl = document.getElementById('qtPickHint');
+  if(!el) return;
+
+  if(tab === 'product'){
+    // ── 제품DB 탭 ──
+    let pdList = [...productDB];
+    if(q){
+      pdList = pdList.filter(p=>{
+        const haystack = [p.code||'', p.name||'', p.mat||'', p.plating||'', p.size||'', p.type||''].join(' ').toLowerCase();
+        return haystack.includes(q);
+      });
+    }
+    pdList.sort((a,b)=>{
+      const da = a.lastModified || a.createdDate || '';
+      const db = b.lastModified || b.createdDate || '';
+      return db.localeCompare(da);
+    });
+
+    if(hintEl){
+      hintEl.textContent = '📦 등록된 모든 품번 — 선택 시 입고단가·시세·생산원가·판매단가가 자동 입력됩니다';
+    }
+
+    if(!pdList.length){
+      el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--t3);font-size:12px">${q?'검색 결과 없음':'등록된 품번이 없습니다'}</div>`;
+      return;
+    }
+    const pdShown = pdList.slice(0, 50);
+    const total = pdList.length;
+    el.innerHTML = pdShown.map(p=>{
+      const linked = _qtRowsBuf.some(r=>r.itemCode && r.itemCode===p.code);
+      const wt = p.weight || 0;
+      const cn = p.costPrice || 0;
+      const mr = p.matRate || 0;
+      const pc = p.prodCost || 0;
+      const pr = p.price || 0;
+      return `
+      <div style="padding:8px 10px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;${linked?'opacity:.5;background:var(--s1)':''}">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600">
+            <span style="font-family:monospace;color:var(--gold-lt);font-size:11px">${p.code||'(품번없음)'}</span>
+            &nbsp;·&nbsp;${p.name||'(이름없음)'}
+          </div>
+          <div style="font-size:10.5px;color:var(--t3);margin-top:2px">
+            ${p.mat||''} · ${p.plating||'무도금'} · ${p.size||''} ${wt?'· '+wt+'g':''}
+          </div>
+          <div style="font-size:10px;color:var(--t3);margin-top:1px;font-family:monospace">
+            입고단가 ${cn||'-'} · 시세 ${mr||'-'} · 생산원가 ₩${pc.toLocaleString()} · 판매단가 ₩${pr.toLocaleString()}
+          </div>
+        </div>
+        <button ${linked?'disabled':''} onclick="addProductToQuote('${p.code}')" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--blu)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
+      </div>`;
+    }).join('') + (total>50?`<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1)">상위 50건만 표시 (총 ${total.toLocaleString()}건) — 검색어를 좁혀주세요</div>`:'');
+    return;
+  }
+
+  // ── 샘플의뢰 탭 ──
+  let smpList = samples.filter(s=>s.status!=='취소');
   if(q){
-    list = list.filter(p=>{
-      const haystack = [p.code||'', p.name||'', p.mat||'', p.plating||'', p.size||'', p.type||''].join(' ').toLowerCase();
+    smpList = smpList.filter(s=>{
+      const haystack = [s.itemCode||'', s.name||'', s.mat||'', s.plating||'', s.type||'', s.invNo||'', s.manager||''].join(' ').toLowerCase();
       return haystack.includes(q);
     });
   }
-  // 최근 수정/등록 우선
-  list.sort((a,b)=>{
-    const da = a.lastModified || a.createdDate || '';
-    const db = b.lastModified || b.createdDate || '';
+  smpList.sort((a,b)=>{
+    const da = a.reqDate || (a.createdAt||'').slice(0,10) || '';
+    const db = b.reqDate || (b.createdAt||'').slice(0,10) || '';
     return db.localeCompare(da);
   });
-  const el = document.getElementById('qtProdPickerList');
-  if(!el) return;
-  if(!list.length){
-    el.innerHTML = '<div style="padding:30px;text-align:center;color:var(--t3);font-size:12px">검색 결과 없음</div>';
+
+  if(hintEl){
+    hintEl.textContent = '📋 진행 중인 샘플 (취소 제외) — 선택 시 샘플 정보가 견적 행에 자동 입력됩니다';
+  }
+
+  if(!smpList.length){
+    el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--t3);font-size:12px">${q?'검색 결과 없음':'진행 중인 샘플이 없습니다'}</div>`;
     return;
   }
-  // 너무 많은 결과는 50개까지만
-  const shown = list.slice(0, 50);
-  const total = list.length;
-  el.innerHTML = shown.map(p=>{
-    // 견적 행에 이미 같은 품번 있는지
-    const linked = _qtRowsBuf.some(r=>r.itemCode && r.itemCode===p.code);
-    const wt = p.weight || 0;
-    const cn = p.costPrice || 0;
-    const mr = p.matRate || 0;
-    const pc = p.prodCost || 0;
-    const pr = p.price || 0;
+
+  const smpStatusColor = (st)=>{
+    if(st==='완료') return 'cg';
+    if(st==='작업중') return 'co';
+    if(st==='의뢰') return 'cb';
+    return '';
+  };
+  const smpShown = smpList.slice(0, 50);
+  const total = smpList.length;
+  el.innerHTML = smpShown.map(s=>{
+    const linked = _qtRowsBuf.some(r=>r._fromSampleId && String(r._fromSampleId)===String(s.id));
+    const wt = s.wt || '';
+    const cn = +s.costPrice || 0;
+    const pr = +s.unitPrice || 0;
     return `
     <div style="padding:8px 10px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;${linked?'opacity:.5;background:var(--s1)':''}">
       <div style="flex:1;min-width:0">
-        <div style="font-size:12px;font-weight:600">
-          <span style="font-family:monospace;color:var(--gold-lt);font-size:11px">${p.code||'(품번없음)'}</span>
-          &nbsp;·&nbsp;${p.name||'(이름없음)'}
+        <div style="font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          ${s.itemCode?`<span style="font-family:monospace;color:var(--gold-lt);font-size:11px">${s.itemCode}</span>&nbsp;·&nbsp;`:''}
+          <span>${s.name||'(이름없음)'}</span>
+          ${s.status?`<span class="chip ${smpStatusColor(s.status)}" style="font-size:9.5px">${s.status}</span>`:''}
+          ${s.invNo?`<span style="font-size:9.5px;color:var(--t3);font-family:monospace">[${s.invNo}]</span>`:''}
         </div>
         <div style="font-size:10.5px;color:var(--t3);margin-top:2px">
-          ${p.mat||''} · ${p.plating||'무도금'} · ${p.size||''} ${wt?'· '+wt+'g':''}
+          ${s.mat||''} · ${s.plating||'무도금'} · ${s.type||''} ${wt?'· '+wt+(String(wt).includes('g')?'':'g'):''} · 의뢰 ${s.reqDate||'-'}
         </div>
-        <div style="font-size:10px;color:var(--t3);margin-top:1px;font-family:monospace">
-          입고단가 ${cn||'-'} · 시세 ${mr||'-'} · 생산원가 ₩${pc.toLocaleString()} · 판매단가 ₩${pr.toLocaleString()}
-        </div>
+        ${(cn||pr)?`<div style="font-size:10px;color:var(--t3);margin-top:1px;font-family:monospace">${cn?`입고원가 ${cn} · `:''}${pr?`샘플단가 ₩${pr.toLocaleString()}`:''}</div>`:''}
       </div>
-      <button ${linked?'disabled':''} onclick="addProductToQuote('${p.code}')" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--blu)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
+      <button ${linked?'disabled':''} onclick="addSampleToQuoteRow('${s.id}')" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--gold)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
     </div>`;
-  }).join('') + (total>50?`<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1)">상위 50건만 표시 (총 ${total}건) — 검색어를 좁혀주세요</div>`:'');
+  }).join('') + (total>50?`<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1)">상위 50건만 표시 (총 ${total.toLocaleString()}건) — 검색어를 좁혀주세요</div>`:'');
 }
 
 function addProductToQuote(code){
@@ -15278,6 +15379,169 @@ function addProductToQuote(code){
   _qtRowsBuf.forEach((_,i)=>_updateQtRowCalc(i));
   _renderQtProductPickerList(); // 추가됨 표시 갱신
   showToast(`✓ ${p.code} "${p.name||'품번'}" 견적에 추가됨`,'var(--grn)');
+}
+
+// 샘플의뢰 → 견적 행에 추가
+// 같은 다이얼로그(품목 검색)에서 샘플 항목 클릭 시 호출
+function addSampleToQuoteRow(sid){
+  const s = samples.find(x=>String(x.id)===String(sid));
+  if(!s){ showToast('⚠ 샘플을 찾을 수 없습니다','var(--red)'); return; }
+  // 같은 샘플이 이미 견적에 있으면 중복 방지
+  if(_qtRowsBuf.some(r=>r._fromSampleId && String(r._fromSampleId)===String(sid))){
+    showToast('이미 추가된 샘플입니다','var(--org)');
+    return;
+  }
+
+  // 샘플의 type(영문) → 한글 spec 매핑
+  const typeKr = {EARRING:'귀걸이', RING:'반지', NECKLACE:'목걸이', BRACELET:'팔찌', BROOCH:'브로치'};
+  const specStr = typeKr[s.type] || s.type || '';
+
+  // 중량 표기: 숫자면 'g' 붙임, 이미 'g'가 있으면 그대로
+  const wtStr = s.wt ? String(s.wt) + (String(s.wt).includes('g')?'':'g') : '';
+
+  const newRow = {
+    name: s.name||'',
+    mat:  s.mat||'',
+    plating: s.plating||'무도금',
+    spec: specStr,
+    weight: wtStr,
+    qty: 1,
+    unitPrice: +s.unitPrice||0,  // 샘플단가 → 판매단가 후보
+    cnPrice:  +s.costPrice||0,    // 입고원가 → 입고단가
+    matRate:  0,                   // 시세는 견적 시점에 입력
+    note: '',
+    itemCode: s.itemCode || '',    // 샘플에 품번이 있으면 매칭
+    _fromSampleId: s.id,           // 샘플 출처 추적 (중복 방지용)
+  };
+
+  // 첫 행이 비어있으면 그 자리, 아니면 새 행 추가
+  if(_qtRowsBuf.length===1 && !_qtRowsBuf[0].name && !+_qtRowsBuf[0].unitPrice && !+_qtRowsBuf[0].cnPrice){
+    _qtRowsBuf[0] = newRow;
+  } else {
+    _qtRowsBuf.push(newRow);
+  }
+
+  // 건명이 비어있고 샘플 종류가 있으면 자동 채우기 (참고용)
+  // — 단, 고객사 이니셜 패턴(VT0507_견적서)이 우선이므로 종류 자동 채움은 빼고 단순화
+
+  // UI 갱신
+  document.getElementById('qt_rowsArea').innerHTML = _renderQtRows();
+  _qtRowsBuf.forEach((_,i)=>_updateQtRowCalc(i));
+  _renderQtProductPickerList(); // 추가됨 표시 갱신
+  showToast(`✓ "${s.name||'샘플'}" 견적에 추가됨`,'var(--grn)');
+}
+
+// ────────────────────────────────────────────────
+// 고객사DB 검색 → 견적의 고객사/담당자에 자동 입력
+// ────────────────────────────────────────────────
+function openClientPickerForQuote(){
+  const html = `
+    <div style="font-size:14px;font-weight:600;margin-bottom:10px">🏢 고객사 검색</div>
+    <input class="fi search-box-tracked" id="qtClientSearch" placeholder="고객사명 / 이니셜 / 담당자 / 카테고리로 검색" style="margin-bottom:8px" oninput="_renderQtClientPickerList()">
+    <div style="font-size:10.5px;color:var(--t3);margin-bottom:8px">선택한 고객사명·담당자가 견적서에 자동 입력됩니다.</div>
+    <div id="qtClientPickerList" style="max-height:55vh;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+      <button class="btn bp-blu bs" onclick="closeM('mClientPickQt');openM('mCl')" title="여기서 새 고객사 등록">+ 새 고객사 등록</button>
+      <button class="btn" onclick="closeM('mClientPickQt')">닫기</button>
+    </div>
+  `;
+  let m = document.getElementById('mClientPickQt');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mClientPickQt';
+    m.className = 'ov';
+    m.innerHTML = '<div class="modal" style="max-width:600px"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mClientPickQt');
+  _renderQtClientPickerList();
+  // 검색창 자동 포커스
+  setTimeout(()=>{
+    const inp = document.getElementById('qtClientSearch');
+    if(inp) inp.focus();
+  }, 50);
+}
+
+function _renderQtClientPickerList(){
+  const q = (document.getElementById('qtClientSearch')?.value||'').toLowerCase().trim();
+  let list = clients.filter(cl=>cl.status!=='inactive');
+  if(q){
+    list = list.filter(cl=>{
+      const haystack = [cl.name||'', cl.initials||'', cl.contact||'', cl.cat||'', cl.grade||'', cl.brandStyle||''].join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  }
+  // VIP/우수 → 일반 → 기타 순으로 정렬, 같은 등급 안에서는 이름순
+  const gradeOrder = {'VIP':0, '우수':1, '일반':2};
+  list.sort((a,b)=>{
+    const ga = gradeOrder[a.grade] ?? 3;
+    const gb = gradeOrder[b.grade] ?? 3;
+    if(ga !== gb) return ga - gb;
+    return (a.name||'').localeCompare(b.name||'');
+  });
+
+  const el = document.getElementById('qtClientPickerList');
+  if(!el) return;
+  if(!list.length){
+    el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--t3);font-size:12px">${clients.length?'검색 결과 없음':'등록된 고객사가 없습니다 — 아래 버튼으로 등록하세요'}</div>`;
+    return;
+  }
+  el.innerHTML = list.slice(0, 50).map(cl=>{
+    const currentVendor = (document.getElementById('qt_vendor')?.value||'').trim();
+    const isCurrent = currentVendor && currentVendor === cl.name;
+    return `
+    <div style="padding:8px 10px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;${isCurrent?'background:var(--gold-bg)':''}">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          ${cl.initials?`<span class="cl-lbl" style="font-size:10px;font-weight:700;background:var(--gold);color:#fff;padding:1px 5px;border-radius:3px">${cl.initials}</span>`:''}
+          <span>${cl.name||'(이름없음)'}</span>
+          ${cl.grade==='VIP'?'<span class="chip cgold" style="font-size:9.5px">VIP</span>':cl.grade==='우수'?'<span class="chip cg" style="font-size:9.5px">우수</span>':''}
+          ${isCurrent?'<span style="font-size:9.5px;color:var(--gold-lt);font-weight:600">(현재 선택됨)</span>':''}
+        </div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:2px">
+          ${cl.contact?'담당자: '+cl.contact:'담당자 미등록'}${cl.phone?' · '+cl.phone:''}${cl.cat?' · '+cl.cat:''}${cl.priceRange?' · '+cl.priceRange:''}
+        </div>
+        ${cl.brandStyle?`<div style="font-size:10px;color:var(--t3);margin-top:1px;font-style:italic">${cl.brandStyle}</div>`:''}
+      </div>
+      <button onclick="selectClientForQuote('${cl.id}')" style="padding:5px 14px;font-size:11px;background:${isCurrent?'var(--s2)':'var(--blu)'};color:${isCurrent?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:pointer;font-family:inherit;flex-shrink:0">${isCurrent?'✓ 선택됨':'선택'}</button>
+    </div>`;
+  }).join('') + (list.length>50?`<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1)">상위 50건만 표시 (총 ${list.length}건)</div>`:'');
+}
+
+// 견적서 파일명/건명 패턴 생성: VT0507_견적서
+// dateStr: 발행일 (YYYY-MM-DD 형식). 없으면 오늘 날짜
+function buildQuoteFileName(client, dateStr){
+  const init = String(client?.initials||'').toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
+  if(!init) return null; // 이니셜 없으면 패턴 생성 안 함 (호출자가 fallback 처리)
+  const d = dateStr ? new Date(dateStr) : new Date();
+  if(isNaN(d.getTime())) return null;
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  return `${init}${mm}${dd}_견적서`;
+}
+
+function selectClientForQuote(clientId){
+  const cl = clients.find(c=>String(c.id)===String(clientId));
+  if(!cl){ showToast('⚠ 고객사를 찾을 수 없습니다','var(--red)'); return; }
+  // 견적서 입력칸에 자동 채우기
+  const vendorEl = document.getElementById('qt_vendor');
+  const cliManagerEl = document.getElementById('qt_cliManager');
+  const subjectEl = document.getElementById('qt_subject');
+  const issuedEl = document.getElementById('qt_issued');
+  if(vendorEl) vendorEl.value = cl.name || '';
+  // 담당자가 비어있을 때만 자동 입력 (기존 입력 보호)
+  if(cliManagerEl && !cliManagerEl.value && cl.contact){
+    cliManagerEl.value = cl.contact;
+  }
+  // 건명이 비어있을 때만 자동 입력 (사용자가 이미 쓴 건명은 보호)
+  if(subjectEl && !subjectEl.value){
+    const issuedAt = issuedEl?.value || toLocalDateStr(new Date());
+    const fileName = buildQuoteFileName(cl, issuedAt);
+    if(fileName) subjectEl.value = fileName;
+  }
+  closeM('mClientPickQt');
+  showToast(`✓ "${cl.name}" 선택됨`,'var(--grn)');
 }
 
 // 저장
@@ -15401,7 +15665,17 @@ function openQuotePreview(idOrInline){
   const q = quotes.find(x=>String(x.id)===String(idOrInline));
   if(!q){ showToast('⚠ 견적서를 찾을 수 없습니다','var(--red)'); return; }
   const html = buildQuoteHtml(q);
-  showPrintPreview('견적서 미리보기', html, q.no||'견적서');
+  // PDF 파일명: 이니셜+MMDD_견적서 형식 우선 (예: VT0507_견적서)
+  // 고객사 매칭 실패 또는 이니셜 없으면 견적번호로 fallback
+  let fileName = '견적서';
+  const matchedClient = q.vendor ? clients.find(c=>c.name === q.vendor) : null;
+  const patterned = matchedClient ? buildQuoteFileName(matchedClient, q.issuedAt) : null;
+  if(patterned){
+    fileName = patterned;
+  } else if(q.no){
+    fileName = q.no;
+  }
+  showPrintPreview('견적서 미리보기', html, fileName);
 }
 
 function buildQuoteHtml(q){
