@@ -642,6 +642,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 <div class="prev-ov" id="prevOv" onclick="closePrev(event)">
   <button class="prev-close" onclick="closePrevDirect()">✕</button>
   <div id="prevSrcLabel" style="display:none;position:absolute;top:16px;left:50%;transform:translateX(-50%);background:rgba(139,105,20,.88);color:#FFF;font-size:11px;font-weight:600;padding:5px 16px;border-radius:20px;letter-spacing:.5px;pointer-events:none;white-space:nowrap;z-index:10">📋 작업지시서 원본</div>
+  <button id="prevDlBtn" onclick="event.stopPropagation();downloadCurrentPrev()" title="다운로드" style="position:absolute;top:14px;right:60px;background:rgba(255,255,255,.92);color:#222;border:none;border-radius:50%;width:36px;height:36px;font-size:15px;cursor:pointer;z-index:11;box-shadow:0 2px 6px rgba(0,0,0,.2)">⬇</button>
   <div class="prev-img-wrap">
     <img id="prevImg" src="" alt="">
   </div>
@@ -7644,6 +7645,39 @@ function prevStep(d){
 }
 function closePrev(e){if(e.target===document.getElementById('prevOv'))closePrevDirect();}
 function closePrevDirect(){document.getElementById('prevOv').classList.remove('open');}
+
+// 미리보기 중인 이미지를 다운로드 (data URL 또는 외부 URL 모두 지원)
+async function downloadCurrentPrev(){
+  const im = prevImages[prevIdx];
+  if(!im) return;
+  const url = im.url || im;
+  const name = im.name || `image_${prevIdx+1}.png`;
+  try{
+    if(typeof url === 'string' && url.startsWith('data:')){
+      // data URL은 직접 다운로드 가능
+      const a = document.createElement('a');
+      a.download = name;
+      a.href = url;
+      a.click();
+      showToast('✓ 다운로드 시작','var(--grn)', 1500);
+    } else {
+      // 외부 URL은 fetch → blob → object URL
+      const res = await fetch(url, {mode:'cors'});
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.download = name;
+      a.href = objUrl;
+      a.click();
+      setTimeout(()=>URL.revokeObjectURL(objUrl), 1000);
+      showToast('✓ 다운로드 시작','var(--grn)', 1500);
+    }
+  } catch(e){
+    // CORS 등 실패 시 새 탭에서 열기 폴백
+    window.open(url, '_blank');
+    showToast('이미지가 새 탭에서 열렸습니다 — 우클릭으로 저장하세요','var(--org)', 3000);
+  }
+}
 document.addEventListener('keydown',e=>{
   if(!document.getElementById('prevOv').classList.contains('open'))return;
   if(e.key==='ArrowLeft')prevStep(-1);
@@ -9281,26 +9315,61 @@ async function downloadSmpReqPng(){
 }
 
 // 확정 → 정식 샘플로 등록 (기존 openSmpModal에 데이터 채워서 열기)
-function confirmSmpReqAsSample(){
+// 확정 → 정식 샘플로 등록 (기존 openSmpModal에 데이터 채워서 열기)
+// 변경: async 함수로 재작성. 사진 비동기 race 해결 + 의뢰서 자체를 PNG로 캡처해 작업지시서에 저장
+async function confirmSmpReqAsSample(){
   const v=(id)=>document.getElementById(id)?.value||'';
   const name=v('sr_name')||v('sr_kind');
   if(!name){ showToast('샘플명을 입력해 주세요','var(--red)'); return; }
-  // 사진을 smpImgBuf 형식으로 옮김 (회전 적용된 이미지로 굽힘)
-  Promise.all(smpReqImgs.map(async (im)=>{
+
+  showToast('🔄 의뢰서 캡처 및 저장 준비 중...','var(--blu)', 2000);
+
+  // 1) 사진(예시 이미지) 굽기 — 회전 적용
+  const bakedImgs = await Promise.all((smpReqImgs||[]).map(async (im)=>{
     const r = Number(im.rotate||0);
     if(r){
       try{ const baked = await bakeImgRotation(im.url, r); return {url: baked, name: im.name}; }
       catch(_){ return {url: im.url, name: im.name}; }
     }
     return {url: im.url, name: im.name};
-  })).then(baked=>{
-    smpImgBuf = baked;
-  });
+  }));
+
+  // 2) 의뢰서 미리보기 자체를 PNG로 캡처해서 작업지시서(sourceDoc)에 추가
+  let reqPngEntry = null;
+  try{
+    const target = document.getElementById('smpReqPreview');
+    if(target){
+      // html2canvas 동적 로드
+      if(typeof html2canvas === 'undefined'){
+        await new Promise((res,rej)=>{
+          const s=document.createElement('script');
+          s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+          s.onload=res; s.onerror=rej;
+          document.head.appendChild(s);
+        });
+      }
+      target.classList.add('sr-capturing'); // 편집 표시 숨김
+      const canvas = await html2canvas(target, {scale:2, backgroundColor:'#fff', useCORS:true});
+      target.classList.remove('sr-capturing');
+      const dataUrl = canvas.toDataURL('image/png');
+      const safeName = (name||'샘플의뢰서').replace(/[\\\/:*?"<>|]/g,'_');
+      const dateStr = (typeof todayStr!=='undefined'?todayStr:toLocalDateStr(new Date()));
+      reqPngEntry = { url: dataUrl, name: `${safeName}_의뢰서_${dateStr}.png` };
+    }
+  } catch(e){
+    console.warn('의뢰서 PNG 캡처 실패:', e);
+    // 캡처 실패해도 샘플 등록은 진행
+  }
+
+  // 3) 버퍼에 옮겨담기 (smpImgBuf=예시이미지, smpSrcBuf=작업지시서)
+  smpImgBuf = bakedImgs;
   smpCadBuf = [];
-  smpSrcBuf = [];
+  smpSrcBuf = reqPngEntry ? [reqPngEntry] : [];
+
   closeM('mSmpReq');
   openSmpModal(null);
-  // 폼 채우기
+
+  // 4) 폼 채우기
   setTimeout(()=>{
     const set=(id,val)=>{const e=document.getElementById(id); if(e&&val) e.value=val;};
     set('s_name', name);
@@ -9335,8 +9404,13 @@ function confirmSmpReqAsSample(){
       memoEl.value=lines.join('\n');
     }
     if(typeof renderSmpPrev==='function') renderSmpPrev();
-    showToast('✓ 의뢰서 내용이 샘플 등록 폼에 채워졌습니다 — 확인 후 저장하세요','var(--grn)',3500);
+    let toastMsg = '✓ 의뢰서 내용이 샘플 등록 폼에 채워졌습니다';
+    if(reqPngEntry){
+      toastMsg += ' · 의뢰서 PNG가 작업지시서에 자동 첨부됨';
+    }
+    showToast(toastMsg, 'var(--grn)', 4000);
   }, 100);
+
   // 사진 버퍼 초기화 (드롭존)
   smpReqImgs = [];
   renderSmpReqDzThumbs();
