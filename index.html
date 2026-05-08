@@ -12387,14 +12387,18 @@ function toggleOrdChk(id,chk){
 // ── 발주 전체 선택/해제 토글 ──
 function toggleAllOrdChk(){
   if(!window._ordChecked) window._ordChecked=new Set();
-  // 현재 화면에 보이는 발주 ID들 (DOM에서 추출 — 필터·서브탭 적용된 상태)
-  // 셀렉터 ^= 매칭이 환경에 따라 안 잡히는 경우 대비해 모든 체크박스 순회 + 정규식
-  const visibleIds=[];
-  document.querySelectorAll('input[type="checkbox"]').forEach(cb=>{
-    const onch = cb.getAttribute('onchange') || '';
-    const m = onch.match(/^toggleOrdChk\((\d+)/);
-    if(m) visibleIds.push(+m[1]);
-  });
+  // 현재 화면에 보이는 발주 ID들 — renderOrder가 노출한 list에서 직접 조회
+  // (DOM querySelector 의존 안 함 — 더 견고)
+  const renderedList = window._ordRenderedList || [];
+  const visibleIds = renderedList.map(o => o.id).filter(id => id != null);
+  if(visibleIds.length === 0){
+    // 폴백: list 노출 안 됐으면 DOM에서 추출
+    document.querySelectorAll('input[type="checkbox"]').forEach(cb=>{
+      const onch = cb.getAttribute('onchange') || cb.getAttribute('onclick') || '';
+      const m = onch.match(/toggleOrdChk\((\d+)/);
+      if(m) visibleIds.push(+m[1]);
+    });
+  }
   if(visibleIds.length===0) return;
   const allChecked = visibleIds.every(id=>window._ordChecked.has(id));
   if(allChecked){
@@ -12604,6 +12608,8 @@ function renderOrder(){
     vendor_asc:(a,b)=>(a.vendor||'').localeCompare(b.vendor||'','ko'),
   };
   list=list.sort(sorters[af.sort]||sorters.date_asc);
+  // 5-A: 헤더 체크박스가 직접 참조할 수 있도록 list 노출
+  window._ordRenderedList = list;
 
   // KPI summary row
   const todayShip=procItems.filter(p=>!p.shipped&&p.due===todayStr).length;
@@ -12813,7 +12819,7 @@ function renderOrder(){
             <th style="width:32px">${(()=>{
               const filtered=list||[];
               const checked=filtered.length>0 && filtered.every(o=>window._ordChecked&&window._ordChecked.has(o.id));
-              return `<input type="checkbox" onchange="toggleAllOrdChk()" ${checked?'checked':''} title="전체선택/해제 토글">`;
+              return `<input type="checkbox" onclick="event.stopPropagation();toggleAllOrdChk()" ${checked?'checked':''} title="전체선택/해제 토글">`;
             })()}</th>
             <th>업체</th>
             <th>발주번호</th>
