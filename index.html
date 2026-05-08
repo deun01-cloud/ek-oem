@@ -1217,8 +1217,8 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>규격 / 사이즈</label><input class="fi" id="pd_size" placeholder="체인두께 2.7mm, 길이 180mm"></div>
   </div>
   <div class="fr3" style="grid-template-columns:repeat(4,1fr)">
-    <div class="fg"><label>출고단가 (원)</label><input class="fi" type="number" id="pd_price" placeholder="13000" min="0"></div>
-    <div class="fg"><label>입고단가 (원)</label><input class="fi" type="number" id="pd_costPrice" placeholder="0" min="0"></div>
+    <div class="fg"><label>출고단가 (원)</label><input class="fi" type="number" id="pd_price" placeholder="13000" min="0" oninput="onPdPriceManualEdit()"></div>
+    <div class="fg"><label>입고단가 (원)</label><input class="fi" type="number" id="pd_costPrice" placeholder="0" min="0" oninput="updatePdCostAnalysis()"></div>
     <div class="fg"><label>재고 수량</label><input class="fi" type="number" id="pd_stock" placeholder="0" min="0"></div>
     <div class="fg"><label>안전재고 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(0=알림 끔)</span></label><input class="fi" type="number" id="pd_safetyStock" placeholder="0" min="0"></div>
   </div>
@@ -1226,7 +1226,37 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>금속 종류</label><input class="fi" id="pd_metal" placeholder="브라스"></div>
     <div class="fg"><label>도금 컬러 / 스펙</label><input class="fi" id="pd_platingSpec" placeholder="로듐"></div>
   </div>
-  <div class="fg"><label>중량 (g)</label><input class="fi" type="number" id="pd_weight" placeholder="0" step="0.1"></div>
+  <div class="fr3" style="grid-template-columns:1fr 1fr 1fr">
+    <div class="fg"><label>중량 (g)</label><input class="fi" type="number" id="pd_weight" placeholder="0" step="0.1" oninput="updatePdCostAnalysis()"></div>
+    <div class="fg"><label>원자재 시세 (원/g) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(현재 시세 입력)</span></label><input class="fi" type="number" id="pd_matRate" placeholder="0" min="0" step="1" oninput="updatePdCostAnalysis()"></div>
+    <div class="fg"><label>마진 (%) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(자동 출고단가 산출)</span></label><input class="fi" type="number" id="pd_marginPct" placeholder="30" min="0" max="99" step="1" oninput="updatePdCostAnalysis()"></div>
+  </div>
+  <!-- 원가 분석 자동 표시 영역 -->
+  <div id="pd_costAnalysis" style="margin-top:8px;padding:10px 14px;background:rgba(232,200,90,.06);border:1px solid rgba(232,200,90,.3);border-radius:6px;font-size:11.5px;display:none">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="font-size:13px">🧮</span>
+      <span style="font-weight:700;color:var(--gold-lt)">원가 분석</span>
+      <span id="pd_priceLockBadge" style="display:none;font-size:9.5px;background:rgba(204,82,82,.1);color:var(--red);border:1px solid rgba(204,82,82,.3);padding:1px 7px;border-radius:8px;font-weight:600" title="출고단가를 수동 입력했습니다 — 마진 자동 계산이 비활성화됨">🔒 수동 입력</span>
+      <button type="button" id="pd_priceUnlockBtn" onclick="resetPdPriceAuto()" style="display:none;margin-left:auto;font-size:10px;padding:2px 9px;border:1px solid var(--bdr);background:var(--s1);color:var(--t2);border-radius:5px;cursor:pointer;font-family:inherit" title="마진 기반 자동 계산으로 되돌립니다">🔄 자동 계산 복귀</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px">
+      <div>
+        <div style="color:var(--t3);font-size:10px">생산원가</div>
+        <div id="pd_prodCostDisplay" style="font-weight:700;font-family:monospace;color:var(--t1)">₩0</div>
+        <div style="font-size:9px;color:var(--t3);margin-top:1px">입고×220 + 중량×시세</div>
+      </div>
+      <div>
+        <div style="color:var(--t3);font-size:10px">예상 마진</div>
+        <div id="pd_marginDisplay" style="font-weight:700;font-family:monospace;color:var(--grn)">₩0</div>
+        <div id="pd_marginPctDisplay" style="font-size:9px;color:var(--t3);margin-top:1px">0%</div>
+      </div>
+      <div>
+        <div style="color:var(--t3);font-size:10px">권장 출고단가</div>
+        <div id="pd_recommendedPrice" style="font-weight:700;font-family:monospace;color:var(--gold-lt)">₩0</div>
+        <div style="font-size:9px;color:var(--t3);margin-top:1px">생산원가 ÷ (1 - 마진/100)</div>
+      </div>
+    </div>
+  </div>
   <div class="fr2">
     <div class="fg"><label>최초 등록일</label><input class="fi" type="date" id="pd_createdDate" placeholder="이카운트 등록일"></div>
     <div class="fg"><label>최종 수정일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(마지막 생산/개발일)</span></label><input class="fi" type="date" id="pd_lastModified"></div>
@@ -3018,16 +3048,126 @@ function openProductModal(idOrNull){
   sv('pd_price',p?p.price||'':'');sv('pd_costPrice',p?p.costPrice||'':'');
   sv('pd_stock',p?p.stock||0:0);sv('pd_safetyStock',p?p.safetyStock||0:0);sv('pd_metal',p?p.metal||'':'');
   sv('pd_platingSpec',p?p.platingSpec||'':'');sv('pd_weight',p?p.weight||'':'');
+  // 원가 분석 필드 (시세, 마진)
+  sv('pd_matRate', p?p.matRate||'':'');
+  sv('pd_marginPct', p?(p.marginPct||30):30); // 디폴트 30%
   sv('pd_memo',p?p.memo||'':'');
   sv('pd_createdDate',p?p.createdDate||'':'');
   sv('pd_lastModified',p?p.lastModified||'':'');
   document.getElementById('mProduct_t').textContent=p?'📦 제품 수정':'📦 제품 등록';
   document.getElementById('pd_delBtn').style.display=p?'':'none';
+  // 가격 잠금 상태 초기화 (수동 입력 여부)
+  // 기존 제품: 출고단가가 있고 마진 자동 계산 결과와 다르면 수동 모드로 간주
+  window._pdPriceManual = !!(p && p.priceManual);
   renderPdImgPrev();
+  // 원가 분석 영역 자동 갱신
+  setTimeout(()=>{ if(typeof updatePdCostAnalysis==='function') updatePdCostAnalysis(); }, 0);
   openM('mProduct');
 }
 function handlePdImgs(e){
   Array.from(e.target.files).forEach(f=>{const r=new FileReader();r.onload=ev=>{pdImgBuf.push({name:f.name,url:ev.target.result});renderPdImgPrev();};r.readAsDataURL(f);});
+}
+
+// ════════════════════════════════════════════════════════════════
+// 제품 원가 분석 — 견적서와 동일한 공식
+//   생산원가 = 입고단가 × 220 + 중량(g) × 시세
+//   판매단가 = 생산원가 ÷ (1 - 마진/100)
+// 사용자 흐름:
+//   1. 입고단가/중량/시세/마진 입력
+//   2. 자동으로 생산원가/예상 마진/권장 출고단가 표시
+//   3. 자동 모드: 권장 출고단가가 pd_price에 자동 입력됨
+//   4. 수동 모드: 사용자가 pd_price 직접 수정 시 잠금 (자동 입력 차단)
+// ════════════════════════════════════════════════════════════════
+function updatePdCostAnalysis(){
+  const cnPriceEl = document.getElementById('pd_costPrice');
+  const weightEl = document.getElementById('pd_weight');
+  const matRateEl = document.getElementById('pd_matRate');
+  const marginPctEl = document.getElementById('pd_marginPct');
+  const priceEl = document.getElementById('pd_price');
+  const analysisEl = document.getElementById('pd_costAnalysis');
+  if(!cnPriceEl || !analysisEl) return;
+
+  const cn = +cnPriceEl.value || 0;
+  const wt = +weightEl.value || 0;
+  const mr = +matRateEl.value || 0;
+  const marginPct = Math.min(99, Math.max(0, +marginPctEl.value || 0));
+
+  // 생산원가 = 입고단가 × 220 + 중량 × 시세
+  const QUOTE_CN_RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 220;
+  const prodCost = Math.round(cn * QUOTE_CN_RATE + wt * mr);
+
+  // 입력값이 모두 0이면 분석 영역 숨김
+  if(cn === 0 && wt === 0 && mr === 0){
+    analysisEl.style.display = 'none';
+    return;
+  }
+  analysisEl.style.display = '';
+
+  // 권장 출고단가 = 생산원가 / (1 - 마진/100)
+  let recommendedPrice = 0;
+  if(prodCost > 0 && marginPct < 100){
+    recommendedPrice = Math.round(prodCost / (1 - marginPct/100));
+  }
+
+  // 현재 출고단가 기준의 실제 마진 계산
+  const currentPrice = +priceEl.value || 0;
+  const actualMargin = currentPrice - prodCost;
+  const actualMarginPct = currentPrice > 0 ? Math.round((actualMargin / currentPrice) * 1000) / 10 : 0;
+
+  // UI 갱신
+  document.getElementById('pd_prodCostDisplay').textContent = '₩' + prodCost.toLocaleString();
+  document.getElementById('pd_recommendedPrice').textContent = '₩' + recommendedPrice.toLocaleString();
+  // 마진 색상: 음수면 빨강, 0~10% 주황, 10%+ 초록
+  const marginEl = document.getElementById('pd_marginDisplay');
+  const marginPctEl2 = document.getElementById('pd_marginPctDisplay');
+  let marginColor = 'var(--grn)';
+  if(actualMargin < 0) marginColor = 'var(--red)';
+  else if(actualMarginPct < 10) marginColor = 'var(--org)';
+  marginEl.style.color = marginColor;
+  marginEl.textContent = (actualMargin < 0 ? '−' : '') + '₩' + Math.abs(actualMargin).toLocaleString();
+  marginPctEl2.textContent = currentPrice > 0 ? actualMarginPct + '%' : '— (출고단가 미입력)';
+
+  // 자동 모드: 권장 출고단가를 pd_price에 자동 입력
+  // 단, 수동 잠금 상태면 건드리지 않음
+  const lockBadge = document.getElementById('pd_priceLockBadge');
+  const unlockBtn = document.getElementById('pd_priceUnlockBtn');
+  if(window._pdPriceManual){
+    if(lockBadge) lockBadge.style.display = '';
+    if(unlockBtn) unlockBtn.style.display = '';
+  } else {
+    if(lockBadge) lockBadge.style.display = 'none';
+    if(unlockBtn) unlockBtn.style.display = 'none';
+    // 권장 출고단가가 있으면 자동 입력 (사용자가 입력하지 않은 경우만)
+    if(recommendedPrice > 0){
+      // _autoUpdating 플래그로 onPdPriceManualEdit가 잠금 트리거되지 않도록
+      window._autoUpdatingPdPrice = true;
+      priceEl.value = recommendedPrice;
+      window._autoUpdatingPdPrice = false;
+      // 다시 마진 표시 갱신 (출고단가 변경됐으니)
+      const newMargin = recommendedPrice - prodCost;
+      const newMarginPct = recommendedPrice > 0 ? Math.round((newMargin / recommendedPrice) * 1000) / 10 : 0;
+      marginEl.textContent = '₩' + newMargin.toLocaleString();
+      marginEl.style.color = newMargin < 0 ? 'var(--red)' : (newMarginPct < 10 ? 'var(--org)' : 'var(--grn)');
+      marginPctEl2.textContent = newMarginPct + '%';
+    }
+  }
+}
+
+// 출고단가 수동 입력 시 호출 — 잠금 모드로 전환
+function onPdPriceManualEdit(){
+  // 자동 갱신 중이면 무시
+  if(window._autoUpdatingPdPrice) return;
+  window._pdPriceManual = true;
+  // 분석 영역만 갱신 (출고단가는 사용자 입력값 유지)
+  updatePdCostAnalysis();
+}
+
+// 자동 계산 모드 복귀 (잠금 해제)
+function resetPdPriceAuto(){
+  window._pdPriceManual = false;
+  // 권장 출고단가로 자동 갱신
+  updatePdCostAnalysis();
+  if(typeof showToast === 'function') showToast('🔄 마진 기반 자동 계산으로 복귀','var(--grn)', 2000);
 }
 function handlePdImgDrop(e){
   e.preventDefault();dzOut(e.currentTarget);
@@ -3075,6 +3215,21 @@ function saveProduct(){
   const code=gv('pd_code'), name=gv('pd_name');
   if(!name) return showToast('⚠ 품목명을 입력해 주세요','var(--red)');
   const id=gv('pd_id');
+  // 품목코드 중복 검증 (코드가 비어있지 않을 때만)
+  // 같은 코드 가진 다른 제품(자기 자신 제외)이 있으면 거부
+  if(code && code.trim()){
+    const trimmedCode = code.trim();
+    const duplicates = productDB.filter(p =>
+      String(p.id) !== String(id) && // 자기 자신 제외
+      (p.code||'').trim() === trimmedCode
+    );
+    if(duplicates.length > 0){
+      const dup = duplicates[0];
+      const platingInfo = dup.plating ? ` (도금:${dup.plating})` : '';
+      showToast(`⚠ 품목코드 "${trimmedCode}"는 이미 등록되어 있습니다 — "${dup.name||'(이름없음)'}"${platingInfo}. 도금/사이즈가 다르면 코드에 접미사를 붙이세요 (예: ${trimmedCode}-GD)`, 'var(--red)', 6000);
+      return;
+    }
+  }
   const newStock=+gv('pd_stock')||0;
   const newSafety=+gv('pd_safetyStock')||0;
   const obj={
@@ -3082,6 +3237,17 @@ function saveProduct(){
     size:gv('pd_size'),price:+gv('pd_price')||0,costPrice:+gv('pd_costPrice')||0,
     stock:newStock,safetyStock:newSafety,metal:gv('pd_metal'),platingSpec:gv('pd_platingSpec'),
     weight:+gv('pd_weight')||0,memo:gv('pd_memo'),
+    // 원가 분석 필드 (시세, 마진, 생산원가 자동 계산)
+    matRate: +gv('pd_matRate')||0,
+    marginPct: +gv('pd_marginPct')||0,
+    prodCost: (function(){
+      const cn = +gv('pd_costPrice')||0;
+      const wt = +gv('pd_weight')||0;
+      const mr = +gv('pd_matRate')||0;
+      const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 220;
+      return Math.round(cn * RATE + wt * mr);
+    })(),
+    priceManual: !!window._pdPriceManual, // 출고단가 수동 입력 모드 여부
     createdDate:gv('pd_createdDate'),
     lastModified:gv('pd_lastModified'),
     imgs:[...pdImgBuf]
@@ -3328,6 +3494,17 @@ function confirmImport(){
   const fileName = _importFileName||'알 수 없는 파일';
   let added=0, updated=0;
   const toSync=[]; // 노션 동기화 대상
+  // 같은 import 파일 안에서 같은 코드가 여러 번 등장하는 경우 감지
+  const codeCounts = {};
+  _importRows.forEach(r => {
+    const c = (r.code||'').trim();
+    if(c) codeCounts[c] = (codeCounts[c]||0) + 1;
+  });
+  const fileDuplicates = Object.entries(codeCounts).filter(([c,n]) => n > 1);
+  if(fileDuplicates.length > 0){
+    console.warn('⚠ 업로드 파일 안에 중복 품목코드 발견:', fileDuplicates);
+    showToast(`⚠ 파일 내 중복 코드 ${fileDuplicates.length}건 — 마지막 행만 적용됨 (콘솔 확인)`, 'var(--org)', 4500);
+  }
   _importRows.forEach(row=>{
     const exist=productDB.find(p=>p.code&&p.code===row.code);
     if(exist){
@@ -5476,6 +5653,8 @@ function mapNotionProduct(row){
     costPrice:  np.number(p['입고단가']),
     matRate:    np.number(p['원자재시세']),
     prodCost:   np.number(p['생산원가']),
+    marginPct:  np.number(p['마진율']),
+    priceManual:!!np.check(p['출고단가수동']),
     stock:      np.number(p['재고수량']),
     weight:     np.number(p['중량']),
     createdDate:  np.date(p['최초등록일']),
@@ -6528,6 +6707,8 @@ async function syncProductToNotion(pd, update){
     "입고단가":{"number":+pd.costPrice||0},
     "원자재시세":{"number":+pd.matRate||0},
     "생산원가":{"number":+pd.prodCost||0},
+    "마진율":{"number":+pd.marginPct||0},
+    "출고단가수동":{"checkbox":!!pd.priceManual},
     "재고수량":{"number":+pd.stock||0},
     "중량":{"number":+pd.weight||0},
   };
@@ -15777,6 +15958,7 @@ function vClients(c){
 // 원래 공식: 생산원가 = 입고단가 × 220 + 중량 × 원자재시세
 // 220은 운송/관세/마진 포함 환산 계수. 추후 변경 시 이 한 곳만 수정.
 const QUOTE_CN_RATE = 220;
+window.QUOTE_CN_RATE = QUOTE_CN_RATE; // 제품 모달의 원가 분석에서도 사용
 
 // 중량 문자열에서 숫자 추출 ("0.5g" → 0.5, "1.3" → 1.3)
 function parseWeightNum(w){
@@ -16634,7 +16816,8 @@ function _renderQtProductPickerList(){
     const pdShown = pdList.slice(0, 50);
     const total = pdList.length;
     el.innerHTML = pdShown.map(p=>{
-      const linked = _qtRowsBuf.some(r=>r.itemCode && r.itemCode===p.code);
+      // ID 기준 중복 체크 (같은 품목코드가 도금별로 여러 개 있는 경우 — 따로 처리)
+      const linked = _qtRowsBuf.some(r=>r._pdId != null && String(r._pdId)===String(p.id));
       const wt = p.weight || 0;
       const cn = p.costPrice || 0;
       const mr = p.matRate || 0;
@@ -16654,7 +16837,7 @@ function _renderQtProductPickerList(){
             입고단가 ${cn||'-'} · 시세 ${mr||'-'} · 생산원가 ₩${pc.toLocaleString()} · 판매단가 ₩${pr.toLocaleString()}
           </div>
         </div>
-        <button ${linked?'disabled':''} onclick="addProductToQuote('${p.code}')" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--blu)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
+        <button ${linked?'disabled':''} onclick="addProductToQuote(${p.id})" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--blu)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
       </div>`;
     }).join('') + (total>50?`<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1)">상위 50건만 표시 (총 ${total.toLocaleString()}건) — 검색어를 좁혀주세요</div>`:'');
     return;
@@ -16715,11 +16898,16 @@ function _renderQtProductPickerList(){
   }).join('') + (total>50?`<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1)">상위 50건만 표시 (총 ${total.toLocaleString()}건) — 검색어를 좁혀주세요</div>`:'');
 }
 
-function addProductToQuote(code){
-  const p = productDB.find(x=>x.code===code);
+function addProductToQuote(idOrCode){
+  // id (숫자) 또는 code (문자열) 모두 받음
+  let p = null;
+  if(idOrCode != null){
+    p = productDB.find(x => String(x.id) === String(idOrCode));
+    if(!p) p = productDB.find(x => x.code === idOrCode);
+  }
   if(!p){ showToast('⚠ 품번을 찾을 수 없습니다','var(--red)'); return; }
-  // 견적 행에 이미 같은 품번이 있으면 중복 추가 방지
-  if(_qtRowsBuf.some(r=>r.itemCode===code)){
+  // ID 기준으로 중복 체크 (같은 품목코드가 도금별로 분리된 경우 별개로 처리)
+  if(_qtRowsBuf.some(r => r._pdId != null && String(r._pdId)===String(p.id))){
     showToast('이미 추가된 품번입니다','var(--org)');
     return;
   }
@@ -16737,6 +16925,7 @@ function addProductToQuote(code){
     matRate:  +p.matRate  || 0,
     note: '',
     itemCode: p.code, // ← 매칭 정보 보존 → 저장 시 신규 생성 X, 기존 품번 갱신만
+    _pdId: p.id,      // ← 제품DB ID (도금별 분리된 같은 코드 구별용)
   };
 
   // 첫 행이 비어있으면 그 자리, 아니면 새 행 추가
@@ -16750,7 +16939,9 @@ function addProductToQuote(code){
   document.getElementById('qt_rowsArea').innerHTML = _renderQtRows();
   _qtRowsBuf.forEach((_,i)=>_updateQtRowCalc(i));
   _renderQtProductPickerList(); // 추가됨 표시 갱신
-  showToast(`✓ ${p.code} "${p.name||'품번'}" 견적에 추가됨`,'var(--grn)');
+  // 도금 정보로 더 명확하게
+  const platingInfo = p.plating ? ' ('+p.plating+')' : '';
+  showToast(`✓ ${p.code}${platingInfo} "${p.name||'품번'}" 견적에 추가됨`,'var(--grn)');
 }
 
 // 샘플의뢰 → 견적 행에 추가
@@ -17666,6 +17857,256 @@ window.pushUnsyncedInquiriesToNotion = async function(){
   }
   console.log(`완료: ${success}건 성공, ${fail}건 실패`);
   if(typeof showToast==='function') showToast(`✓ ${success}건 노션 푸시됨`,'var(--grn)', 3000);
+};
+
+// ════════════════════════════════════════════════════════════════
+// 제품DB 품목코드 중복 진단 + 마이그레이션 (옵션 A: 코드 유니크 강제)
+// ════════════════════════════════════════════════════════════════
+
+// 1단계: 현재 중복 진단
+//   사용: window.diagnoseDuplicateCodes()
+window.diagnoseDuplicateCodes = function(){
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('🔍 제품DB 품목코드 중복 진단');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  if(typeof productDB==='undefined' || !Array.isArray(productDB)){
+    console.warn('⚠ productDB 없음'); return;
+  }
+  // 코드별 그룹핑
+  const byCode = {};
+  productDB.forEach(p => {
+    const c = (p.code||'').trim();
+    if(!c) return; // 코드 없는 항목은 별도 처리
+    if(!byCode[c]) byCode[c] = [];
+    byCode[c].push(p);
+  });
+  const duplicateGroups = Object.entries(byCode).filter(([c,arr]) => arr.length > 1);
+  const noCodeCount = productDB.filter(p => !(p.code||'').trim()).length;
+
+  console.log(`전체 제품: ${productDB.length}건`);
+  console.log(`코드 없음: ${noCodeCount}건`);
+  console.log(`고유 코드: ${Object.keys(byCode).length}건`);
+  console.log(`중복 코드 그룹: ${duplicateGroups.length}건`);
+  console.log();
+  if(duplicateGroups.length === 0){
+    console.log('✓ 중복 품목코드 없음 — 마이그레이션 불필요');
+    return { duplicateGroups: 0 };
+  }
+  console.log('=== 중복 그룹 상세 (최대 20그룹) ===');
+  duplicateGroups.slice(0, 20).forEach(([code, items]) => {
+    console.log(`\n[${code}] — ${items.length}건`);
+    items.forEach((p, i) => {
+      const platingInfo = p.plating || '(없음)';
+      const sizeInfo = p.size || '';
+      console.log(`  ${i+1}. id=${p.id} / "${p.name||'(이름없음)'}" / 도금=${platingInfo}${sizeInfo?' / 규격='+sizeInfo:''} / 재고 ${p.stock||0}`);
+    });
+  });
+  if(duplicateGroups.length > 20){
+    console.log(`\n... 외 ${duplicateGroups.length - 20}개 그룹 더 있음`);
+  }
+  console.log();
+  console.log('=== 다음 단계 ===');
+  console.log('1. DRY-RUN으로 변환 미리보기 (실제 변경 없음):');
+  console.log('   window.migrateDuplicateCodes({dryRun:true})');
+  console.log('2. 실제 적용 (로컬만, 노션 동기화 안 함):');
+  console.log('   window.migrateDuplicateCodes()');
+  console.log('3. 실제 적용 + 노션 동기화:');
+  console.log('   window.migrateDuplicateCodes({syncNotion:true})');
+  console.log();
+  console.log('💡 변환 규칙: 도금별이면 "-GD"/"-SV"/"-RG" 접미사,');
+  console.log('             그 외 차이는 "-2", "-3" 같은 번호 접미사');
+  return { duplicateGroups: duplicateGroups.length, total: productDB.length };
+};
+
+// 2단계: 마이그레이션 — 중복 코드 자동 변환
+//   사용:
+//     window.migrateDuplicateCodes({dryRun:true})  → 미리보기
+//     window.migrateDuplicateCodes()               → 로컬만 적용
+//     window.migrateDuplicateCodes({syncNotion:true}) → 노션도 동기화
+window.migrateDuplicateCodes = async function(opts){
+  opts = opts || {};
+  const dryRun = !!opts.dryRun;
+  const syncNotion = !!opts.syncNotion;
+  if(typeof productDB==='undefined' || !Array.isArray(productDB)){
+    console.warn('⚠ productDB 없음'); return;
+  }
+
+  // 도금명 → 접미사 매핑
+  const PLATING_SUFFIX = {
+    '골드':'GD', 'GOLD':'GD',
+    '실버':'SV', 'SILVER':'SV',
+    '로즈골드':'RG', 'ROSE GOLD':'RG', 'ROSEGOLD':'RG',
+    '건메탈':'GM', 'GUNMETAL':'GM',
+    '무도금':'NP', 'NONE':'NP', '':'NP',
+  };
+  function _platingSuffix(plating){
+    const k = String(plating||'').trim().toUpperCase();
+    return PLATING_SUFFIX[k] || PLATING_SUFFIX[plating] || null;
+  }
+
+  // 코드별 그룹핑
+  const byCode = {};
+  productDB.forEach(p => {
+    const c = (p.code||'').trim();
+    if(!c) return;
+    if(!byCode[c]) byCode[c] = [];
+    byCode[c].push(p);
+  });
+  const duplicateGroups = Object.entries(byCode).filter(([c,arr]) => arr.length > 1);
+  if(duplicateGroups.length === 0){
+    console.log('✓ 중복 코드 없음 — 마이그레이션 불필요');
+    return;
+  }
+
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log(dryRun ? '🔍 DRY-RUN: 변경 사항 미리보기 (실제 변경 안 함)'
+                     : '⚙ 실제 마이그레이션 시작');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  // 변환 계획 수립
+  const changePlan = []; // [{product, oldCode, newCode, reason}]
+  const usedCodes = new Set(productDB.map(p => (p.code||'').trim()).filter(Boolean));
+
+  duplicateGroups.forEach(([code, items]) => {
+    // 첫 번째 제품은 원본 코드 유지 (변경 안 함)
+    // 두 번째부터 접미사 부여
+    items.slice(1).forEach((p, idx) => {
+      // 1순위: 도금 접미사
+      const ps = _platingSuffix(p.plating);
+      let newCode = null;
+      let reason = '';
+      if(ps){
+        const candidate = `${code}-${ps}`;
+        if(!usedCodes.has(candidate)){
+          newCode = candidate;
+          reason = `도금별 접미사 (${p.plating} → ${ps})`;
+        }
+      }
+      // 2순위: 번호 접미사
+      if(!newCode){
+        for(let n = 2; n <= 99; n++){
+          const candidate = `${code}-${n}`;
+          if(!usedCodes.has(candidate)){
+            newCode = candidate;
+            reason = '번호 접미사 (도금 매칭 실패 또는 중복)';
+            break;
+          }
+        }
+      }
+      if(newCode){
+        usedCodes.add(newCode);
+        changePlan.push({ product: p, oldCode: code, newCode, reason });
+      } else {
+        console.warn(`⚠ ${code} (id=${p.id}): 새 코드 생성 실패 — 너무 많은 중복`);
+      }
+    });
+  });
+
+  console.log(`\n변경 예정: ${changePlan.length}건`);
+  console.table(changePlan.slice(0, 30).map(c => ({
+    품목명: c.product.name||'(없음)',
+    옛코드: c.oldCode,
+    새코드: c.newCode,
+    도금: c.product.plating||'(없음)',
+    근거: c.reason,
+  })));
+  if(changePlan.length > 30){
+    console.log(`... 외 ${changePlan.length - 30}건`);
+  }
+
+  if(dryRun){
+    console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('✓ DRY-RUN 완료 — 실제 변경 없음');
+    console.log('실제 적용하려면: window.migrateDuplicateCodes({syncNotion:true})');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    return { plan: changePlan.length, applied: 0, dryRun: true };
+  }
+
+  // 실제 적용
+  console.log('\n⚙ 적용 중...');
+  // 1. 제품DB 코드 변경
+  changePlan.forEach(c => { c.product.code = c.newCode; });
+
+  // 2. 연결 데이터 갱신 — 옛 코드 → 새 코드
+  // 단, 같은 옛 코드가 여전히 존재하므로(첫 번째 제품) ID로 더 정확히 매칭
+  // 발주서 rows[].itemCode + 거래명세서 items[].code + 견적 rows[].itemCode + 샘플의뢰 itemCode
+
+  // 매칭이 ID 기준이 아니어서 — _pdId 가 있는 행만 정확히 갱신 가능
+  // 코드만으로는 어떤 제품을 가리키는지 알 수 없음 → 첫 번째 제품(코드 유지)을 가리킨다고 가정하고 변경 안 함
+  // 즉, 옛 데이터의 itemCode는 모두 첫 번째 제품을 가리키게 됨 (안전)
+  let connectedUpdated = 0;
+  changePlan.forEach(c => {
+    const newCode = c.newCode;
+    const productId = c.product.id;
+    // 발주서 rows의 _pdId가 이 제품의 id와 같은 경우 코드 갱신
+    if(typeof orders!=='undefined'){
+      orders.forEach(o => {
+        (o.rows||[]).forEach(r => {
+          if(r._pdId != null && String(r._pdId)===String(productId)){
+            r.itemCode = newCode;
+            connectedUpdated++;
+          }
+        });
+      });
+    }
+    // 거래명세서 items의 _pdId
+    if(typeof invoiceHistory!=='undefined'){
+      invoiceHistory.forEach(v => {
+        (v.items||[]).forEach(it => {
+          if(it._pdId != null && String(it._pdId)===String(productId)){
+            it.code = newCode;
+            connectedUpdated++;
+          }
+        });
+      });
+    }
+    // 견적서 rows의 _pdId
+    if(typeof quotes!=='undefined'){
+      quotes.forEach(q => {
+        (q.rows||[]).forEach(r => {
+          if(r._pdId != null && String(r._pdId)===String(productId)){
+            r.itemCode = newCode;
+            connectedUpdated++;
+          }
+        });
+      });
+    }
+  });
+
+  if(typeof save==='function') save();
+  if(typeof slSave==='function') slSave();
+  console.log(`✓ 제품DB ${changePlan.length}건 코드 변경 완료`);
+  console.log(`✓ 연결 데이터 (발주/명세서/견적) ${connectedUpdated}건 itemCode 갱신`);
+  console.log('💡 _pdId 없는 옛 행은 첫 번째 제품(코드 유지)을 가리키도록 보존됨');
+
+  // 노션 동기화
+  if(syncNotion && typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.productDb && typeof syncProductToNotion==='function'){
+    console.log(`\n📤 노션 동기화 시작 (${changePlan.length}건)...`);
+    let nDone=0, nFail=0;
+    for(const c of changePlan){
+      try{
+        if(c.product._notionId){
+          await syncProductToNotion(c.product, true);
+          nDone++;
+        }
+      }catch(e){
+        nFail++;
+        console.warn(`실패: ${c.newCode}`, e);
+      }
+      // 속도 제한 회피
+      await new Promise(r => setTimeout(r, 100));
+    }
+    console.log(`✓ 노션 동기화: ${nDone}건 성공, ${nFail}건 실패`);
+  } else if(!syncNotion){
+    console.log('\n💡 노션도 동기화하려면 다시 실행: window.migrateDuplicateCodes({syncNotion:true})');
+    console.log('   (단, 이미 코드는 변경됐으니 노션엔 옛 코드가 남아있는 상태)');
+  }
+
+  if(typeof renderTab==='function' && typeof currentTab!=='undefined' && currentTab==='products'){
+    if(typeof renderProducts==='function') renderProducts();
+  }
+  if(typeof showToast==='function') showToast(`✓ 품목코드 ${changePlan.length}건 변환 완료`,'var(--grn)', 3500);
+  return { plan: changePlan.length, applied: changePlan.length, connectedUpdated };
 };
 
 // ════════════════════════════════════════════════════════════════
@@ -18992,7 +19433,8 @@ function _renderInvProductPickerList(){
   const shown = list.slice(0,50);
   const total = list.length;
   el.innerHTML = shown.map(p=>{
-    const linked = _invRowsBuf.some(r=>r.code && r.code===p.code);
+    // ID 기준으로 중복 체크 (같은 품목코드의 다른 제품 — 예: GD/SV — 별개로 처리)
+    const linked = _invRowsBuf.some(r=>r._pdId != null && String(r._pdId)===String(p.id));
     return `
     <div style="padding:8px 10px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;${linked?'opacity:.5;background:var(--s1)':''}">
       <div style="flex:1;min-width:0">
@@ -19007,15 +19449,23 @@ function _renderInvProductPickerList(){
           판매단가 ₩${(+p.price||0).toLocaleString()}
         </div>
       </div>
-      <button ${linked?'disabled':''} onclick="addProductToInv('${p.code}')" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--blu)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
+      <button ${linked?'disabled':''} onclick="addProductToInv(${p.id})" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--blu)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
     </div>`;
   }).join('') + (total>50?`<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1)">상위 50건만 표시 (총 ${total.toLocaleString()}건)</div>`:'');
 }
 
-function addProductToInv(code){
-  const p = productDB.find(x=>x.code===code);
+function addProductToInv(idOrCode){
+  // id (숫자) 또는 code (문자열) 모두 받음 — 우선순위: id 먼저, 그 다음 code
+  let p = null;
+  if(idOrCode != null){
+    // 숫자형 id로 먼저 찾기 (정확한 매칭)
+    p = productDB.find(x => String(x.id) === String(idOrCode));
+    // 못 찾으면 code로도 시도 (옛 호출 호환)
+    if(!p) p = productDB.find(x => x.code === idOrCode);
+  }
   if(!p){ showToast('⚠ 품번을 찾을 수 없습니다','var(--red)'); return; }
-  if(_invRowsBuf.some(r=>r.code===code)){
+  // ID 기준으로 중복 체크 (같은 품목코드의 다른 제품 — 도금별 분리 등 — 따로 추가 가능)
+  if(_invRowsBuf.some(r => r._pdId != null && String(r._pdId)===String(p.id))){
     showToast('이미 추가된 품번입니다','var(--org)');
     return;
   }
@@ -19024,6 +19474,7 @@ function addProductToInv(code){
     code: p.code||'',
     qty: 1,
     unit: +p.price||0,
+    _pdId: p.id, // 제품DB의 ID (중복 체크용)
   };
   // 첫 행이 비어있으면 그 자리, 아니면 새 행 추가
   if(_invRowsBuf.length===1 && !_invRowsBuf[0].name && !+_invRowsBuf[0].unit){
@@ -19034,7 +19485,9 @@ function addProductToInv(code){
   document.getElementById('siv_rowsArea').innerHTML = _renderInvRows();
   _updateInvRowCalc(0);
   _renderInvProductPickerList();
-  showToast(`✓ ${p.code} "${p.name||'품번'}" 추가됨`,'var(--grn)');
+  // 도금 정보로 더 명확하게 토스트
+  const platingInfo = p.plating ? ' ('+p.plating+')' : '';
+  showToast(`✓ ${p.code}${platingInfo} "${p.name||'품번'}" 추가됨`,'var(--grn)');
 }
 
 // 저장
