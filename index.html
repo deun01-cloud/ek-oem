@@ -1089,6 +1089,41 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
 </div></div>
 
+<!-- 📑 합본 청구서 작성 모달 (2-B) -->
+<div class="ov" id="mConsolidate"><div class="modal wide" style="max-width:780px">
+  <div class="mt">📑 월별 합본 청구서 작성</div>
+  <div style="padding:8px 14px 4px;background:rgba(122,77,181,.06);border:1px solid rgba(122,77,181,.20);border-radius:6px;margin-bottom:12px;font-size:11px;color:#7A4DB5;line-height:1.5">
+    한 고객사의 한 달치 거래명세서를 묶어 한 장의 청구서로 발행합니다. 받은 선금/중도금은 자동으로 차감되어 실제 청구액이 계산됩니다.
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+    <div class="fg"><label>고객사</label>
+      <select class="fs" id="cons_vendor" onchange="_resetConsSelection()"></select>
+    </div>
+    <div class="fg"><label>청구월</label>
+      <input class="fi" type="month" id="cons_month" onchange="_resetConsSelection()">
+    </div>
+  </div>
+  <div id="cons_previewArea" style="margin-bottom:12px"></div>
+  <div class="fg"><label style="font-size:11px">메모 (선택)</label>
+    <input class="fi" id="cons_memo" placeholder="합본 청구서 메모 (예: 4월분 정산)">
+  </div>
+  <div class="ma">
+    <button class="btn bgo" onclick="closeM('mConsolidate')">취소</button>
+    <button class="btn bp" id="cons_confirmBtn" onclick="confirmConsolidation()" disabled style="background:#7A4DB5;border-color:#7A4DB5">📑 합본 청구서 발행</button>
+  </div>
+</div></div>
+
+<!-- 📑 합본 청구서 상세 모달 (2-B) -->
+<div class="ov" id="mConsDetail"><div class="modal wide" style="max-width:760px">
+  <div class="mt" id="mConsDetail_t">📑 합본 청구서 상세</div>
+  <div id="mConsDetail_body"></div>
+  <div class="ma">
+    <button class="btn bgo" onclick="closeM('mConsDetail')">닫기</button>
+    <button class="btn" id="mConsDetail_unwind" onclick="confirmUnwindConsolidation()" style="background:#FFF4E6;border:1px solid var(--org);color:var(--org);font-weight:600" title="합본을 해제하고 묶인 명세서들을 다시 개별로 돌립니다">↩ 합본 해제</button>
+    <button class="btn bp" id="mConsDetail_print" style="background:#7A4DB5;border-color:#7A4DB5">🖨 합본 청구서 인쇄</button>
+  </div>
+</div></div>
+
 <!-- 인쇄 미리보기 모달 -->
 <div class="ov" id="mPrintPreview" style="z-index:400"><div class="modal wide" style="max-width:960px;max-height:90vh;overflow-y:auto;padding:0">
   <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--bdr);position:sticky;top:0;background:var(--s1);z-index:1">
@@ -3599,16 +3634,30 @@ function renderInvoiceHistory(){
   slLoad();
   var c=document.getElementById('content');
   var st=invFilter.status;
-  // 서브탭 (진행중 / 입금완료 / 전체) — 입금완료된 명세서를 별도 탭으로 분리
+  // 서브탭 (진행중 / 입금완료 / 합본 / 전체)
+  // 입금완료/합본 명세서를 별도 탭으로 분리
   var subTab = invFilter.subTab || 'inprogress';
   var list=invoiceHistory.filter(function(v){
     if(invFilter.month && v.issuedAt.indexOf(invFilter.month)!==0) return false;
     if(invFilter.vendor && v.vendor.toLowerCase().indexOf(invFilter.vendor.toLowerCase())<0) return false;
     if(st && st!=='전체' && v.status!==st) return false;
     // 서브탭 필터
-    if(subTab==='inprogress' && v.status==='입금완료') return false;
-    if(subTab==='paid' && v.status!=='입금완료') return false;
-    // 'all'은 모두 표시
+    if(subTab==='consolidated'){
+      // 합본 탭: 합본 청구서만
+      if(!v._isConsolidated) return false;
+    } else if(subTab==='inprogress'){
+      // 진행중 탭: 합본 자체 제외 + 입금완료 제외 + 합본에 묶인 일반 명세서 제외 (이미 합본으로 처리)
+      if(v._isConsolidated) return false;
+      if(v.status==='입금완료') return false;
+      if(v._consolidatedInvoiceId) return false;
+    } else if(subTab==='paid'){
+      // 입금완료 탭: 합본 자체 제외 + 입금완료만
+      if(v._isConsolidated) return false;
+      if(v.status!=='입금완료') return false;
+    } else if(subTab==='all'){
+      // 전체 탭: 합본 자체 제외 (합본 탭에서 보임)
+      if(v._isConsolidated) return false;
+    }
     return true;
   });
   // 발행일 최신순 정렬 (같은 날짜는 id 큰 순서 = 더 나중에 작성된 것이 위로)
@@ -3625,17 +3674,25 @@ function renderInvoiceHistory(){
   var months=[...new Set(invoiceHistory.map(function(v){return v.issuedAt.slice(0,7);}))].sort().reverse();
   var vendors=[...new Set(invoiceHistory.map(function(v){return v.vendor;}))].filter(Boolean).sort();
   // 서브탭별 카운트 (전체 invoiceHistory 기준 — 필터 무관)
-  var inprogressCount = invoiceHistory.filter(function(v){return v.status!=='입금완료';}).length;
-  var paidCount = invoiceHistory.filter(function(v){return v.status==='입금완료';}).length;
+  // 진행중: 합본 제외 + 입금완료 제외 + 합본에 묶인 일반 명세서 제외
+  var inprogressCount = invoiceHistory.filter(function(v){
+    return !v._isConsolidated && v.status!=='입금완료' && !v._consolidatedInvoiceId;
+  }).length;
+  var paidCount = invoiceHistory.filter(function(v){
+    return !v._isConsolidated && v.status==='입금완료';
+  }).length;
+  var consolidatedCount = invoiceHistory.filter(function(v){return v._isConsolidated;}).length;
+  var allCount = invoiceHistory.filter(function(v){return !v._isConsolidated;}).length;
   // 진행중 탭에선 입금완료 칩 제외, 입금완료 탭에선 입금완료 칩만
   var statuses = subTab==='paid' ? ['전체','입금완료'] : ['전체','발행완료','청구완료','미수'];
 
   var h='';
-  // 서브탭 (진행중 / 입금완료 / 전체)
+  // 서브탭 (진행중 / 입금완료 / 합본 / 전체)
   h+='<div style="display:flex;gap:6px;padding:6px;background:var(--s2);border-radius:8px;border:1px solid var(--bdr);margin-bottom:10px;width:max-content">';
   h+='<button onclick="setInvSubTab(\'inprogress\')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='inprogress'?'700':'500')+';background:'+(subTab==='inprogress'?'var(--s1)':'transparent')+';color:'+(subTab==='inprogress'?'var(--gold-lt)':'var(--t3)')+';'+(subTab==='inprogress'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">📝 진행중 <span style="font-size:10px;opacity:.7">'+inprogressCount+'</span></button>';
   h+='<button onclick="setInvSubTab(\'paid\')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='paid'?'700':'500')+';background:'+(subTab==='paid'?'var(--s1)':'transparent')+';color:'+(subTab==='paid'?'#7A4DB5':'var(--t3)')+';'+(subTab==='paid'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">💰 입금완료 <span style="font-size:10px;opacity:.7">'+paidCount+'</span></button>';
-  h+='<button onclick="setInvSubTab(\'all\')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='all'?'700':'500')+';background:'+(subTab==='all'?'var(--s1)':'transparent')+';color:'+(subTab==='all'?'var(--t1)':'var(--t3)')+';'+(subTab==='all'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">📋 전체 <span style="font-size:10px;opacity:.7">'+invoiceHistory.length+'</span></button>';
+  h+='<button onclick="setInvSubTab(\'consolidated\')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='consolidated'?'700':'500')+';background:'+(subTab==='consolidated'?'var(--s1)':'transparent')+';color:'+(subTab==='consolidated'?'#7A4DB5':'var(--t3)')+';'+(subTab==='consolidated'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">📑 합본 <span style="font-size:10px;opacity:.7">'+consolidatedCount+'</span></button>';
+  h+='<button onclick="setInvSubTab(\'all\')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='all'?'700':'500')+';background:'+(subTab==='all'?'var(--s1)':'transparent')+';color:'+(subTab==='all'?'var(--t1)':'var(--t3)')+';'+(subTab==='all'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'" title="합본 청구서를 제외한 모든 개별 거래명세서 (진행중/입금완료 모두 포함)">📋 모든 명세서 <span style="font-size:10px;opacity:.7">'+allCount+'</span></button>';
   h+='</div>';
   // KPI — 선금이 있으면 5칸, 없으면 4칸
   var kpiCols = tPrepaid > 0 ? 5 : 4;
@@ -3673,6 +3730,7 @@ function renderInvoiceHistory(){
     h+='<button onclick="cleanupNotionInvoiceZombies()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);font-weight:600" title="Notion에만 남아있는 좀비 페이지를 모두 archive — 로컬에 없는 페이지만 정리">🧹 Notion 좀비 정리</button>';
   }
   h+='<button onclick="openSalesExcelExport()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--grn);background:var(--grn-bg);color:var(--grn);font-weight:600">📊 매출내역 엑셀 다운로드</button>';
+  h+='<button onclick="openConsolidationModal()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid #7A4DB5;background:rgba(122,77,181,.10);color:#7A4DB5;font-weight:600" title="고객사+월 선택 → 그 달 거래명세서를 묶어 한 장의 청구서로 발행 (선금 자동 차감)">📑 합본 청구서 작성</button>';
   h+='<button onclick="openStandaloneInvoiceModal(null)" style="padding:5px 14px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--gold-line);background:var(--gold);color:#fff;font-weight:700" title="발주서 없이 재고 판매용 거래명세서 작성">+ 거래명세서 작성</button></div>';
   h+='</div>';
 
@@ -3695,24 +3753,43 @@ function renderInvoiceHistory(){
     h+='</tr></thead><tbody>';
     list.forEach(function(v){
       var sc={'발행완료':'var(--grn)','청구완료':'var(--blu)','미수':'var(--red)','입금완료':'#7A4DB5'}[v.status]||'var(--t2)';
-      h+='<tr style="border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background=\'var(--s2)\'" onmouseout="this.style.background=\'\'">';
-      h+='<td onclick="openInvDetail('+v.id+')" style="padding:8px 10px;white-space:nowrap;color:var(--t3)">'+v.issuedAt+'</td>';
-      h+='<td onclick="openInvDetail('+v.id+')" style="padding:8px 10px;font-weight:600">'+v.vendor+'</td>';
-      // 샘플 명세서면 발주번호 자리에 "🧪 샘플" 칩 표시
-      if(v._fromSample){
-        h+='<td onclick="openInvDetail('+v.id+')" style="padding:8px 10px;font-size:11px"><span style="background:rgba(122,77,181,.12);color:#7A4DB5;border:1px solid rgba(122,77,181,.3);padding:1px 7px;border-radius:9px;font-weight:700;white-space:nowrap" title="'+(v.invType||'샘플 명세서')+' / '+(v.invNo||'')+'">🧪 샘플</span></td>';
+      // 합본 행: 다른 클릭 핸들러 + 보라색 배경
+      var isCons = !!v._isConsolidated;
+      var clickFn = isCons ? 'openConsDetail('+v.id+')' : 'openInvDetail('+v.id+')';
+      var rowBg = isCons ? 'background:rgba(122,77,181,.05);' : '';
+      h+='<tr style="'+rowBg+'border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background=\'var(--s2)\'" onmouseout="this.style.background=\''+(isCons?'rgba(122,77,181,.05)':'')+'\'">';
+      h+='<td onclick="'+clickFn+'" style="padding:8px 10px;white-space:nowrap;color:var(--t3)">'+v.issuedAt+'</td>';
+      h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-weight:600">'+v.vendor+'</td>';
+      // 발주번호 컬럼 분기:
+      // - 합본: "📑 합본 (YYYY-MM)"
+      // - 샘플: "🧪 샘플"
+      // - 일반: ordNo
+      if(isCons){
+        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-size:11px"><span style="background:rgba(122,77,181,.18);color:#7A4DB5;border:1px solid #7A4DB5;padding:1px 8px;border-radius:9px;font-weight:700;white-space:nowrap" title="'+(v.includedInvoiceIds||[]).length+'건의 명세서를 묶은 합본 청구서">📑 '+(v.consolidationMonth||'합본')+' ('+(v.includedInvoiceIds||[]).length+'건)</span></td>';
+      } else if(v._fromSample){
+        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-size:11px"><span style="background:rgba(122,77,181,.12);color:#7A4DB5;border:1px solid rgba(122,77,181,.3);padding:1px 7px;border-radius:9px;font-weight:700;white-space:nowrap" title="'+(v.invType||'샘플 명세서')+' / '+(v.invNo||'')+'">🧪 샘플</span></td>';
       } else {
-        h+='<td onclick="openInvDetail('+v.id+')" style="padding:8px 10px;font-family:monospace;font-size:11px;color:var(--t3)">'+(v.ordNo||'—')+'</td>';
+        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-family:monospace;font-size:11px;color:var(--t3)">'+(v.ordNo||'—')+'</td>';
       }
-      h+='<td onclick="openInvDetail('+v.id+')" style="padding:8px 10px;font-size:11px;color:var(--t2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+v.itemSummary+'</td>';
-      h+='<td onclick="openInvDetail('+v.id+')" style="padding:8px 10px;text-align:right">'+(v.supplyAmt?v.supplyAmt.toLocaleString():'-')+'</td>';
-      h+='<td onclick="openInvDetail('+v.id+')" style="padding:8px 10px;text-align:right;color:var(--t3)">'+(v.tax?v.tax.toLocaleString():'-')+'</td>';
-      // 합계 셀 — 선금이 있으면 보라 칩으로 표시 (월말 합본에서 자동 차감됨)
-      var prepaid = getInvoicePrepaid(v);
-      var prepaidChip = prepaid > 0
-        ? '<div style="margin-top:2px;font-size:9.5px;color:#7A4DB5;font-weight:600" title="원자재 선금 — 월말 합본 청구서 작성 시 청구액에서 자동 차감됩니다">💰 선금 ₩'+prepaid.toLocaleString()+'</div>'
-        : '';
-      h+='<td onclick="openInvDetail('+v.id+')" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:var(--gold-lt)">'+(v.total?v.total.toLocaleString():'-')+'</div>'+prepaidChip+'</td>';
+      h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-size:11px;color:var(--t2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+v.itemSummary+'</td>';
+      h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right">'+(v.supplyAmt?v.supplyAmt.toLocaleString():'-')+'</td>';
+      h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right;color:var(--t3)">'+(v.tax?v.tax.toLocaleString():'-')+'</td>';
+      // 합계 셀 — 합본은 청구액(차감 후)을 강조, 일반은 합계+선금칩
+      if(isCons){
+        var deducted = +v.prepaidDeducted||0;
+        var charge = +v.chargeAmount||0;
+        var deductedNote = deducted > 0
+          ? '<div style="margin-top:2px;font-size:9.5px;color:#7A4DB5;font-weight:600" title="선금 차감됨">선금 −₩'+deducted.toLocaleString()+'</div>'
+          : '';
+        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:#7A4DB5">'+charge.toLocaleString()+'</div>'+deductedNote+'<div style="font-size:9px;color:var(--t3);margin-top:1px">합계 ₩'+(+v.total||0).toLocaleString()+'</div></td>';
+      } else {
+        var prepaid = getInvoicePrepaid(v);
+        var prepaidChip = prepaid > 0
+          ? '<div style="margin-top:2px;font-size:9.5px;color:#7A4DB5;font-weight:600" title="원자재 선금 — 월말 합본 청구서 작성 시 청구액에서 자동 차감됩니다">💰 선금 ₩'+prepaid.toLocaleString()+'</div>'
+          : '';
+        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:var(--gold-lt)">'+(v.total?v.total.toLocaleString():'-')+'</div>'+prepaidChip+'</td>';
+      }
+      // 상태 select — 합본도 동일하게 보임 (해제는 합본 상세 모달에서)
       h+='<td onclick="event.stopPropagation()" style="padding:8px 10px;text-align:center">';
       h+='<select onchange="updateInvStatus('+v.id+',this.value)" style="font-size:10.5px;padding:2px 6px;border-radius:12px;border:1px solid var(--bdr);background:var(--s1);color:'+sc+';font-family:inherit;cursor:pointer">';
       h+='<option value="발행완료"'+(v.status==='발행완료'?' selected':'')+'>발행완료</option>';
@@ -3720,9 +3797,16 @@ function renderInvoiceHistory(){
       h+='<option value="미수"'+(v.status==='미수'?' selected':'')+'>미수</option>';
       h+='<option value="입금완료"'+(v.status==='입금완료'?' selected':'')+'>입금완료</option>';
       h+='</select></td>';
+      // 액션 버튼 — 합본은 다르게 (📄 인쇄 / ↩ 해제 / 일반: 카피/삭제)
       h+='<td onclick="event.stopPropagation()" style="padding:8px 4px;text-align:center;white-space:nowrap">';
-      h+='<button onclick="showInvoiceCopy('+v.id+')" title="명세서 카피 보기" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--gold-lt)\'" onmouseout="this.style.color=\'var(--t3)\'">📄</button>';
-      h+='<button onclick="deleteInvRecord('+v.id+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button></td>';
+      if(isCons){
+        h+='<button onclick="printConsolidatedInvoice('+v.id+')" title="합본 청구서 인쇄" style="background:none;border:none;color:#7A4DB5;cursor:pointer;font-size:14px;padding:2px 4px">🖨</button>';
+        h+='<button onclick="openConsDetail('+v.id+')" title="합본 상세" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'#7A4DB5\'" onmouseout="this.style.color=\'var(--t3)\'">📑</button>';
+      } else {
+        h+='<button onclick="showInvoiceCopy('+v.id+')" title="명세서 카피 보기" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--gold-lt)\'" onmouseout="this.style.color=\'var(--t3)\'">📄</button>';
+        h+='<button onclick="deleteInvRecord('+v.id+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button>';
+      }
+      h+='</td>';
       h+='</tr>';
     });
     h+='</tbody></table></div>';
@@ -3865,6 +3949,18 @@ function openInvDetail(id){
   var sc=SC[v.status]||'var(--t2)';
   document.getElementById('mInvDetail_t').textContent='🧾 '+v.vendor+' — '+v.issuedAt;
   var b='';
+  // 합본에 묶여 있으면 잠금 안내
+  var lockInfo = isInvoiceLocked(v);
+  if(lockInfo.locked){
+    var cons = invoiceHistory.find(x => v._isConsolidated!==true && String(x.id)===String(v._consolidatedInvoiceId));
+    var consMonth = cons ? cons.consolidationMonth : '';
+    b+='<div style="margin-bottom:12px;padding:10px 14px;background:rgba(122,77,181,.08);border:1px solid rgba(122,77,181,.3);border-radius:6px;font-size:11.5px;color:#7A4DB5;display:flex;align-items:center;gap:8px;justify-content:space-between">';
+    b+='<div>🔒 <b>'+(consMonth||'합본')+' 합본 청구서</b>에 묶여있어 편집 불가 — 합본을 해제하면 다시 편집 가능합니다</div>';
+    if(v._consolidatedInvoiceId){
+      b+='<button onclick="closeM(\'mInvDetail\');openConsDetail('+v._consolidatedInvoiceId+')" style="padding:4px 10px;background:#7A4DB5;color:#fff;border:none;border-radius:4px;font-size:11px;cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">📑 합본 보기</button>';
+    }
+    b+='</div>';
+  }
   b+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px;font-size:12px">';
   b+='<div style="background:var(--s2);padding:8px 12px;border-radius:6px;border:1px solid var(--bdr)"><div style="color:var(--t3);font-size:10.5px;margin-bottom:2px">고객사</div><div style="font-weight:700;font-size:14px">'+v.vendor+'</div></div>';
   b+='<div style="background:var(--s2);padding:8px 12px;border-radius:6px;border:1px solid var(--bdr)"><div style="color:var(--t3);font-size:10.5px;margin-bottom:2px">발주번호</div><div style="font-weight:600;font-family:monospace">'+(v.ordNo||'—')+'</div></div>';
@@ -3971,6 +4067,13 @@ function openInvDetail(id){
 function updateInvStatus(id,status){
   var v=invoiceHistory.find(function(x){return x.id==id;});
   if(!v) return;
+  // 합본 묶인 명세서 잠금 — status는 합본 입금에 따라 자동 결정되어야 함
+  var lockInfo = isInvoiceLocked(v);
+  if(lockInfo.locked){
+    showToast('🔒 '+lockInfo.message,'var(--org)', 4500);
+    renderInvoiceHistory(); // dropdown 원래 값으로 복구
+    return;
+  }
   v.status=status;
   save();
   if(v._notionId&&notionCfg.workerUrl) nUpdate(v._notionId,{'상태':{'select':{'name':status}}});
@@ -3980,6 +4083,13 @@ function updateInvStatus(id,status){
 
 function deleteInvRecord(id){
   var v=invoiceHistory.find(function(x){return x.id==id;});
+  if(!v) return;
+  // 합본 묶인 명세서 잠금
+  var lockInfo = isInvoiceLocked(v);
+  if(lockInfo.locked){
+    showToast('🔒 '+lockInfo.message,'var(--org)', 4500);
+    return;
+  }
   showConfirm((v&&v.vendor||'명세서')+' 이력을 삭제합니다.\n(Notion에서 같은 발주번호의 모든 페이지가 함께 삭제됩니다)',function(){
     // 1) Notion에서 같은 발주번호/고객사/발행일을 가진 모든 페이지 archive
     //    (중복으로 생성된 좀비 페이지까지 함께 정리)
@@ -5160,6 +5270,13 @@ function mapNotionInvoice(row){
     _fromSample: !!np.check(p['샘플명세서']),
     smpIds:      parseIds(np.text(p['샘플IDs'])),
     invType:     np.text(p['명세서유형']),
+    // 합본 청구서 (2-A 단계)
+    _isConsolidated:        !!np.check(p['합본청구서']),
+    includedInvoiceIds:     parseIds(np.text(p['포함명세서IDs'])),
+    prepaidDeducted:        np.number(p['선금차감'])||0,
+    chargeAmount:           np.number(p['청구액'])||0,
+    consolidationMonth:     np.text(p['청구월']),
+    _consolidatedInvoiceId: np.text(p['합본ID']) || undefined, // 일반 명세서가 합본에 묶일 때 역참조
   };
 }
 // 견적서 매핑 (📋 견적 DB)
@@ -6294,6 +6411,13 @@ async function syncInvoiceToNotion(inv, update){
     "샘플명세서":{"checkbox":!!inv._fromSample},
     "샘플IDs":{"rich_text":[{"text":{"content":JSON.stringify(inv.smpIds||[]).slice(0,500)}}]},
     "명세서유형":{"rich_text":[{"text":{"content":(inv.invType||'').slice(0,100)}}]},
+    // 합본 청구서 (2-A 단계)
+    "합본청구서":{"checkbox":!!inv._isConsolidated},
+    "포함명세서IDs":{"rich_text":[{"text":{"content":JSON.stringify(inv.includedInvoiceIds||[]).slice(0,2000)}}]},
+    "선금차감":{"number":+inv.prepaidDeducted||0},
+    "청구액":{"number":+inv.chargeAmount||0},
+    "청구월":{"rich_text":[{"text":{"content":(inv.consolidationMonth||'').slice(0,20)}}]},
+    "합본ID":{"rich_text":[{"text":{"content":(inv._consolidatedInvoiceId||'').toString().slice(0,100)}}]},
   };
   if(inv.issuedAt) p["발행일자"]={"date":{"start":inv.issuedAt}};
   if(inv.shipDate) p["출고일자"]={"date":{"start":inv.shipDate}};
@@ -6607,6 +6731,124 @@ window.demoStatus = function(){
       발주번호: o.no, 업체: o.vendor, 상태: o.status, 발주일: o.date, 출고일: o.ship, 품목수: (o.rows||[]).length
     })));
   }
+};
+
+// ════════════════════════════════════════════════════════════════
+// 거래명세서 진단 / 복구 도구 (콘솔에서 호출)
+// 사용법:
+//   window.diagnoseInvoice("EK0413")       → 특정 발주번호로 명세서 진단
+//   window.diagnoseInvoiceById(1234567)    → 명세서 ID로 진단
+//   window.diagnoseAllZeroInvoices()       → 합계 0원 명세서 모두 진단
+//   window.recalcInvoiceTotal(invId)       → items 기반으로 합계 재계산 (단가 살아있을 때)
+// ════════════════════════════════════════════════════════════════
+window.diagnoseInvoice = function(searchKey){
+  const matches = invoiceHistory.filter(v=>{
+    if(!searchKey) return false;
+    const key = String(searchKey).toLowerCase();
+    return (v.ordNo||'').toLowerCase().includes(key)
+        || (v.vendor||'').toLowerCase().includes(key)
+        || (v.invNo||'').toLowerCase().includes(key)
+        || (v.itemSummary||'').toLowerCase().includes(key);
+  });
+  if(!matches.length){
+    console.warn(`"${searchKey}"에 해당하는 명세서를 찾을 수 없습니다`);
+    return;
+  }
+  matches.forEach(v=>_dumpInvDiagnostic(v));
+  return matches;
+};
+
+window.diagnoseInvoiceById = function(id){
+  const v = invoiceHistory.find(x=>String(x.id)===String(id));
+  if(!v){ console.warn(`ID ${id} 명세서를 찾을 수 없습니다`); return; }
+  _dumpInvDiagnostic(v);
+  return v;
+};
+
+window.diagnoseAllZeroInvoices = function(){
+  const zero = invoiceHistory.filter(v=>!v._isConsolidated && (!+v.supplyAmt && !+v.total));
+  if(!zero.length){ console.log('✓ 합계 0원 명세서 없음'); return; }
+  console.log(`⚠ 합계 0원 명세서 ${zero.length}건 발견:`);
+  console.table(zero.map(v=>({
+    ID: v.id,
+    발행일: v.issuedAt,
+    고객사: v.vendor,
+    발주번호: v.ordNo || (v._fromSample?'(샘플)':'—'),
+    품목요약: (v.itemSummary||'').slice(0,50),
+    items수: (v.items||[]).length,
+    items_단가합: (v.items||[]).reduce((s,it)=>s+(+it.unit||0)*(+it.qty||0), 0),
+  })));
+  console.log('상세 진단: window.diagnoseInvoiceById(<ID>) / 복구: window.recalcInvoiceTotal(<ID>)');
+  return zero;
+};
+
+function _dumpInvDiagnostic(v){
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log(`📄 ID: ${v.id}  |  ${v.vendor}  |  ${v.issuedAt}`);
+  console.log(`   발주번호: ${v.ordNo||'(없음)'}${v._fromSample?'  [🧪샘플]':''}${v._isConsolidated?'  [📑합본]':''}${v._consolidatedInvoiceId?'  [묶임→'+v._consolidatedInvoiceId+']':''}`);
+  console.log(`   상태: ${v.status}  |  품목요약: ${v.itemSummary||'(없음)'}`);
+  console.log(`   금액 → 공급:${(+v.supplyAmt||0).toLocaleString()} / 부가:${(+v.tax||0).toLocaleString()} / 합계:${(+v.total||0).toLocaleString()}`);
+  console.log(`   items 배열 (${(v.items||[]).length}개):`);
+  (v.items||[]).forEach((it,i)=>{
+    console.log(`     [${i}] ${it.name} × ${it.qty} @ ${(+it.unit||0).toLocaleString()} = ${(+it.amt||((+it.qty||0)*(+it.unit||0))).toLocaleString()}  (코드: ${it.code||'-'})`);
+  });
+  // 진단 결론
+  const itemsTotal = (v.items||[]).reduce((s,it)=>s+(+it.qty||0)*(+it.unit||0),0);
+  if(!(+v.supplyAmt) && itemsTotal>0){
+    console.log(`   ⚠ items에 단가가 살아있는데 supplyAmt가 0 → window.recalcInvoiceTotal(${v.id}) 호출하면 복구 가능`);
+  } else if(!(+v.supplyAmt) && itemsTotal===0 && (v.items||[]).length>0){
+    console.log(`   ⚠ items에 단가가 0원 — 발행 당시 단가가 입력되지 않았음. 명세서를 수정하여 단가 재입력 필요`);
+  } else if(!(+v.supplyAmt) && !(v.items||[]).length){
+    console.log(`   ⚠ items 배열이 비어있음 — itemSummary로 폴백되지만 합계는 복구 불가. 명세서 새로 작성 권장`);
+  } else if(+v.supplyAmt > 0){
+    console.log(`   ✓ 정상`);
+  }
+  // 발주서 매칭 시도 (단가 보강 가능성)
+  if(v.ordId || v.ordNo){
+    const o = orders.find(x => (v.ordId && String(x.id)===String(v.ordId)) || (v.ordNo && x.no===v.ordNo));
+    if(o){
+      console.log(`   📦 원본 발주서 살아있음 (${o.no}, ${(o.rows||[]).length}품목) → 단가 복구 가능`);
+    } else {
+      console.log(`   ❌ 원본 발주서를 찾을 수 없음 (ordNo: ${v.ordNo}, ordId: ${v.ordId})`);
+    }
+  }
+}
+
+// items 기반 합계 재계산 (items에 단가가 살아있을 때만 효과 있음)
+window.recalcInvoiceTotal = function(invId){
+  const v = invoiceHistory.find(x=>String(x.id)===String(invId));
+  if(!v){ console.warn(`ID ${invId} 명세서를 찾을 수 없습니다`); return; }
+  const items = v.items || [];
+  if(!items.length){
+    console.warn('items 배열이 비어있어 재계산 불가. 명세서를 새로 작성해주세요.');
+    return;
+  }
+  let supply = 0;
+  items.forEach(it=>{
+    const qty = +it.qty||0;
+    const unit = +it.unit||0;
+    const amt = qty * unit;
+    it.amt = amt;
+    supply += amt;
+  });
+  if(supply === 0){
+    console.warn('items의 단가가 모두 0원이라 재계산해도 0원입니다. 명세서를 수정하여 단가 입력 필요.');
+    return;
+  }
+  const tax = Math.round(supply * 0.1);
+  const total = supply + tax;
+  console.log(`이전: 공급 ${(+v.supplyAmt||0).toLocaleString()} / 부가 ${(+v.tax||0).toLocaleString()} / 합계 ${(+v.total||0).toLocaleString()}`);
+  v.supplyAmt = supply;
+  v.tax = tax;
+  v.total = total;
+  console.log(`이후: 공급 ${supply.toLocaleString()} / 부가 ${tax.toLocaleString()} / 합계 ${total.toLocaleString()}`);
+  if(typeof save==='function') save();
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+    syncInvoiceToNotion(v, true).then(()=>console.log('✓ Notion 동기화됨')).catch(e=>console.warn('Notion 동기화 실패:',e));
+  }
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+  if(typeof showToast==='function') showToast(`✓ 합계 재계산: ₩${total.toLocaleString()}`,'var(--grn)', 2500);
+  return v;
 };
 
 // ════════════════════════════════
@@ -16471,6 +16713,704 @@ function getInvoicePrepaid(inv){
   return calcPaymentByType(inv.payments).prepaid;
 }
 
+// ════════════════════════════════════════════════════════════════
+// 📑 월별 합본 청구서 (2-A 단계)
+// 한 고객사의 한 달 거래명세서들을 묶어 하나의 청구서로 발행
+// 받은 선금은 자동으로 차감되어 실제 청구액 계산
+// ════════════════════════════════════════════════════════════════
+
+// 합본 후보 명세서 조회
+// - 같은 고객사
+// - 발행일자가 청구월에 속함 (YYYY-MM)
+// - 아직 합본 안 됨 (_consolidatedInvoiceId 없음)
+// - 합본 청구서 자체는 제외
+function getConsolidationCandidates(vendor, month){
+  if(!vendor || !month) return [];
+  return invoiceHistory.filter(v => {
+    if(v._isConsolidated) return false;                    // 합본 자체 제외
+    if(v._consolidatedInvoiceId) return false;             // 이미 다른 합본에 묶임
+    if((v.vendor||'') !== vendor) return false;
+    if(!(v.issuedAt||'').startsWith(month)) return false;
+    return true;
+  });
+}
+
+// 후보 명세서들의 합산 정보 계산
+function calcConsolidationSummary(invoices){
+  const supplyAmt   = invoices.reduce((s,v)=>s+(+v.supplyAmt||0), 0);
+  const tax         = invoices.reduce((s,v)=>s+(+v.tax||0), 0);
+  const total       = invoices.reduce((s,v)=>s+(+v.total||0), 0);
+  const prepaidSum  = invoices.reduce((s,v)=>s+getInvoicePrepaid(v), 0);
+  const chargeAmt   = total - prepaidSum;
+  return {
+    count: invoices.length,
+    supplyAmt, tax, total,
+    prepaidDeducted: prepaidSum,
+    chargeAmount: chargeAmt,
+  };
+}
+
+// 합본 청구서 작성 (실제 발행)
+// vendor + month 조합으로 생성
+// 묶인 명세서들에 _consolidatedInvoiceId 표시 → 다른 합본에 중복 안 묶임
+// 반환: 생성된 합본 invRec
+function createConsolidatedInvoice(vendor, month, options){
+  options = options || {};
+  const candidates = getConsolidationCandidates(vendor, month);
+  if(!candidates.length) return null;
+  // 옵션으로 일부만 묶기 가능 (기본은 전체)
+  const selectedIds = options.invoiceIds && options.invoiceIds.length
+    ? new Set(options.invoiceIds.map(String))
+    : null;
+  const targets = selectedIds
+    ? candidates.filter(v => selectedIds.has(String(v.id)))
+    : candidates;
+  if(!targets.length) return null;
+  const summary = calcConsolidationSummary(targets);
+  const today = (typeof toLocalDateStr==='function') ? toLocalDateStr(new Date()) : new Date().toISOString().slice(0,10);
+  const newId = Date.now();
+  const itemSummary = `${month} 합본 (${targets.length}건) — ` + targets.map(v=>v.ordNo||(v._fromSample?'샘플':'')).filter(Boolean).join(', ').slice(0, 200);
+  const invRec = {
+    id: newId,
+    _isConsolidated: true,                    // 합본 식별 마커
+    includedInvoiceIds: targets.map(v=>v.id), // 묶인 명세서 ID들
+    consolidationMonth: month,                // 청구월
+    issuedAt: today,
+    vendor,
+    ordNo: '',
+    ordId: null,
+    shipDate: today,
+    items: [], // 합본은 행 단위 items 안 가짐 (묶인 명세서 참조)
+    itemSummary,
+    supplyAmt:        summary.supplyAmt,
+    tax:              summary.tax,
+    total:            summary.total,
+    prepaidDeducted:  summary.prepaidDeducted, // 차감된 선금 합
+    chargeAmount:     summary.chargeAmount,    // 실제 청구액
+    status: '발행완료',
+    memo: options.memo || `${month}분 ${vendor} 합본 청구서 (${targets.length}건)`,
+    payments: [],
+    totalPaid: 0,
+    paymentRatio: 0,
+  };
+  // 묶인 명세서들에 합본ID 표시 (역참조 — 중복 묶음 방지)
+  targets.forEach(v => {
+    v._consolidatedInvoiceId = String(newId);
+  });
+  // invoiceHistory 맨 앞에 추가
+  invoiceHistory.unshift(invRec);
+  if(typeof save==='function') save();
+  // 노션 동기화 — 합본 + 묶인 명세서들 모두
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && typeof syncInvoiceToNotion==='function'){
+    syncInvoiceToNotion(invRec, false).catch(e=>console.warn('합본 청구서 노션 저장 실패:',e));
+    targets.forEach(v=>{
+      syncInvoiceToNotion(v, !!v._notionId).catch(e=>console.warn('명세서 합본ID 갱신 실패:',e));
+    });
+  }
+  return invRec;
+}
+
+// 합본 청구서 해제 (잘못 발행한 경우)
+// 묶인 명세서들의 _consolidatedInvoiceId 제거 + 합본 자체 삭제
+function unwindConsolidatedInvoice(consolidatedId){
+  const cons = invoiceHistory.find(v => String(v.id)===String(consolidatedId) && v._isConsolidated);
+  if(!cons) return false;
+  // 묶인 명세서들의 역참조 제거
+  (cons.includedInvoiceIds||[]).forEach(invId => {
+    const v = invoiceHistory.find(x => String(x.id)===String(invId));
+    if(v){
+      delete v._consolidatedInvoiceId;
+      v._consolidatedInvoiceId = '';
+      // 노션 갱신
+      if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+        syncInvoiceToNotion(v, true).catch(e=>console.warn('합본 해제 명세서 갱신 실패:',e));
+      }
+    }
+  });
+  // 합본 자체 제거
+  const idx = invoiceHistory.findIndex(v => String(v.id)===String(consolidatedId));
+  if(idx >= 0) invoiceHistory.splice(idx, 1);
+  // 노션에서도 삭제
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && cons._notionId && typeof nDelete==='function'){
+    nDelete(cons._notionId).catch(e=>console.warn('합본 노션 삭제 실패:',e));
+  }
+  if(typeof save==='function') save();
+  return true;
+}
+
+// 한 명세서가 어느 합본에 속하는지 (합본 객체 반환)
+function findConsolidationOfInvoice(inv){
+  if(!inv || !inv._consolidatedInvoiceId) return null;
+  return invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(inv._consolidatedInvoiceId));
+}
+
+// 합본의 입금률 계산 (청구액 chargeAmount 기준)
+// 합본의 total은 합계지만, 실제 입금 받을 금액은 chargeAmount(차감 후)임
+function calcConsolidationPaymentSummary(cons){
+  const totalPaid = (cons.payments||[]).reduce((s,pm)=>s+(+pm.amount||0), 0);
+  const charge = +cons.chargeAmount||0;
+  const ratio = charge>0 ? Math.round((totalPaid/charge)*1000)/10 : 0;
+  return { totalPaid, ratio, chargeAmount:charge };
+}
+
+// 합본 입금 처리 — 묶인 명세서들과 연관된 발주에 자동 연쇄
+// 1. 합본 자체의 totalPaid/paymentRatio/status 갱신
+// 2. 100% 입금 시:
+//    - 합본 status → '입금완료'
+//    - 묶인 모든 명세서 status → '입금완료' (개별 명세서의 payments는 건드리지 않음)
+//    - 그 명세서들이 가리키는 발주도 자동 출고완료 시도
+// 3. 부분 입금 시:
+//    - 합본 status → '발행완료'
+//    - 묶인 명세서는 그대로 유지 (선금 입금 외에 합본 잔금은 합본에서만 추적)
+function processConsolidationPayment(consId){
+  const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
+  if(!cons) return null;
+  const { totalPaid, ratio } = calcConsolidationPaymentSummary(cons);
+  cons.totalPaid = totalPaid;
+  cons.paymentRatio = ratio;
+  // status 자동 결정 (사용자가 '미수'로 강제한 경우 존중)
+  if(cons.status !== '미수'){
+    if(ratio >= 100) cons.status = '입금완료';
+    else if(totalPaid > 0) cons.status = '발행완료';
+    // 입금 0건이면 status 그대로
+  }
+  // 100% 입금 시 묶인 명세서들 자동 입금완료 처리 + 발주 연쇄
+  const includedIds = cons.includedInvoiceIds || [];
+  const ordersToCheck = new Set();
+  if(ratio >= 100){
+    includedIds.forEach(invId => {
+      const inv = invoiceHistory.find(v => String(v.id)===String(invId));
+      if(!inv) return;
+      if(inv.status !== '미수' && inv.status !== '입금완료'){
+        inv.status = '입금완료';
+        // paymentRatio도 100으로 강제 (UI에서 일관되게 보이도록)
+        // 단, payments 배열은 건드리지 않음 (선금 등 보존)
+        inv.paymentRatio = Math.max(inv.paymentRatio||0, 100);
+        // 노션 동기화
+        if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && inv._notionId && typeof syncInvoiceToNotion==='function'){
+          syncInvoiceToNotion(inv, true).catch(e=>console.warn('합본 연쇄 - 명세서 갱신 실패:',e));
+        }
+        // 그 명세서가 가리키는 발주도 검사 대상에 추가
+        if(inv.ordId) ordersToCheck.add(String(inv.ordId));
+      }
+    });
+  }
+  // 합본 자체 노션 동기화
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && cons._notionId && typeof syncInvoiceToNotion==='function'){
+    syncInvoiceToNotion(cons, true).catch(e=>console.warn('합본 갱신 실패:',e));
+  }
+  if(typeof save==='function') save();
+  // 발주 자동 출고완료 검사
+  // (모든 명세서가 입금완료인 발주는 자동 출고완료 처리)
+  ordersToCheck.forEach(ordId => {
+    const o = orders.find(x => String(x.id)===String(ordId));
+    if(o && typeof autoCompleteOrderShipment==='function'){
+      autoCompleteOrderShipment(o);
+    }
+  });
+  return { totalPaid, ratio, status: cons.status, autoCompletedInvoices: ratio>=100 ? includedIds.length : 0 };
+}
+
+// 합본이 묶고 있는 명세서를 수정/삭제로부터 보호하는 헬퍼
+// 사용처: 명세서 편집/삭제/입금 추가 시 호출 → 잠겨있으면 안내 후 차단
+// 반환: { locked: boolean, consId?: string, message?: string }
+function isInvoiceLocked(inv){
+  if(!inv) return { locked:false };
+  if(inv._isConsolidated) return { locked:false }; // 합본 자체는 합본 모달에서 처리
+  if(inv._consolidatedInvoiceId){
+    const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(inv._consolidatedInvoiceId));
+    return {
+      locked: true,
+      consId: inv._consolidatedInvoiceId,
+      message: cons
+        ? `이 명세서는 ${cons.consolidationMonth} 합본 청구서 (${cons.vendor})에 묶여있어 편집할 수 없습니다. 먼저 합본을 해제해야 합니다.`
+        : `이 명세서는 합본 청구서에 묶여있어 편집할 수 없습니다.`
+    };
+  }
+  return { locked:false };
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📑 합본 청구서 UI (2-B 단계)
+// ════════════════════════════════════════════════════════════════
+
+// 합본 작성 모달 — 선택된 명세서 ID 집합 (Set)
+// null = 모달 안 열린 상태, Set 인스턴스 = 열린 상태
+let _consSelectedIds = null;
+
+// 합본 작성 모달 열기
+function openConsolidationModal(){
+  // 합본 후보가 있는 고객사들만 옵션으로
+  const eligibleVendors = [...new Set(
+    invoiceHistory
+      .filter(v => !v._isConsolidated && !v._consolidatedInvoiceId)
+      .map(v => v.vendor)
+      .filter(Boolean)
+  )].sort();
+  if(!eligibleVendors.length){
+    showToast('⚠ 합본할 명세서가 없습니다 (모두 이미 합본되었거나 명세서가 없음)', 'var(--org)', 3500);
+    return;
+  }
+  // 가장 최근 발행 월을 기본값으로
+  const allMonths = [...new Set(
+    invoiceHistory
+      .filter(v => !v._isConsolidated && !v._consolidatedInvoiceId)
+      .map(v => (v.issuedAt||'').slice(0,7))
+      .filter(Boolean)
+  )].sort().reverse();
+  const defaultMonth = allMonths[0] || (new Date().toISOString().slice(0,7));
+
+  // 고객사 select 채우기
+  const vendorSel = document.getElementById('cons_vendor');
+  vendorSel.innerHTML = '<option value="">— 선택 —</option>' +
+    eligibleVendors.map(v => `<option value="${v.replace(/"/g,'&quot;')}">${v}</option>`).join('');
+  vendorSel.value = eligibleVendors[0] || '';
+
+  document.getElementById('cons_month').value = defaultMonth;
+  document.getElementById('cons_memo').value = '';
+
+  // 후보 변경 시 자동으로 모두 선택되도록 초기화
+  _consSelectedIds = null;
+  _refreshConsolidationPreview();
+  openM('mConsolidate');
+}
+
+// 후보 변경 시 호출 — 새로운 후보 기준으로 선택 집합 재초기화
+function _resetConsSelection(){
+  const vendor = document.getElementById('cons_vendor').value;
+  const month = document.getElementById('cons_month').value;
+  const candidates = (vendor && month) ? getConsolidationCandidates(vendor, month) : [];
+  // 기본: 모두 선택
+  _consSelectedIds = new Set(candidates.map(v => String(v.id)));
+  _refreshConsolidationPreview();
+}
+
+// 명세서 선택 토글
+function toggleConsItem(invId){
+  if(!_consSelectedIds) _consSelectedIds = new Set();
+  const key = String(invId);
+  if(_consSelectedIds.has(key)) _consSelectedIds.delete(key);
+  else _consSelectedIds.add(key);
+  _refreshConsolidationPreview();
+}
+
+// 전체 선택 / 전체 해제
+function toggleConsSelectAll(){
+  const vendor = document.getElementById('cons_vendor').value;
+  const month = document.getElementById('cons_month').value;
+  if(!vendor || !month) return;
+  const candidates = getConsolidationCandidates(vendor, month);
+  if(!_consSelectedIds) _consSelectedIds = new Set();
+  // 모두 선택돼 있으면 해제, 아니면 모두 선택
+  const allSelected = candidates.length>0 && candidates.every(v => _consSelectedIds.has(String(v.id)));
+  if(allSelected){
+    _consSelectedIds.clear();
+  } else {
+    candidates.forEach(v => _consSelectedIds.add(String(v.id)));
+  }
+  _refreshConsolidationPreview();
+}
+
+// 모달의 미리보기 갱신 (고객사/월/선택 변경 시)
+function _refreshConsolidationPreview(){
+  const vendor = document.getElementById('cons_vendor').value;
+  const month = document.getElementById('cons_month').value; // YYYY-MM
+  const area = document.getElementById('cons_previewArea');
+  const btn = document.getElementById('cons_confirmBtn');
+  if(!vendor || !month){
+    area.innerHTML = '<div style="padding:14px;text-align:center;color:var(--t3);background:var(--s2);border-radius:6px;border:1px dashed var(--bdr);font-size:11.5px">고객사와 청구월을 선택하세요</div>';
+    btn.disabled = true;
+    return;
+  }
+  const candidates = getConsolidationCandidates(vendor, month);
+  if(!candidates.length){
+    area.innerHTML = '<div style="padding:14px;text-align:center;color:var(--org);background:rgba(232,144,32,.08);border-radius:6px;border:1px solid rgba(232,144,32,.2);font-size:11.5px">⚠ <b>'+vendor+'</b>의 <b>'+month+'</b> 미합본 명세서가 없습니다</div>';
+    btn.disabled = true;
+    return;
+  }
+  // 후보가 바뀐 첫 호출이면 모두 선택으로 초기화
+  if(_consSelectedIds === null){
+    _consSelectedIds = new Set(candidates.map(v => String(v.id)));
+  } else {
+    // 후보 목록이 바뀌었을 수 있으니 — 이전 선택 중 후보에 없는 건 제거
+    const candIds = new Set(candidates.map(v => String(v.id)));
+    [..._consSelectedIds].forEach(id => { if(!candIds.has(id)) _consSelectedIds.delete(id); });
+    // 후보에 새로 들어온 건 자동 추가 (vendor/month 동일)
+    candidates.forEach(v => { if(!_consSelectedIds.has(String(v.id))) _consSelectedIds.add(String(v.id)); });
+  }
+  // 선택된 것만 합산
+  const selected = candidates.filter(v => _consSelectedIds.has(String(v.id)));
+  const summary = calcConsolidationSummary(selected);
+  // 후보 명세서 행 HTML (체크박스 포함)
+  const allSelected = candidates.length>0 && selected.length === candidates.length;
+  const selectAllLabel = allSelected ? '☑ 전체 해제' : '☐ 전체 선택';
+  const rowsHtml = candidates.map(v => {
+    const prepaid = getInvoicePrepaid(v);
+    const isSample = v._fromSample;
+    const ordLabel = isSample ? '🧪 샘플' : (v.ordNo || '—');
+    const ordColor = isSample ? '#7A4DB5' : 'var(--t3)';
+    const checked = _consSelectedIds.has(String(v.id));
+    const rowOpacity = checked ? '1' : '0.5';
+    const rowBg = checked ? 'rgba(122,77,181,.04)' : 'transparent';
+    return `<div onclick="toggleConsItem('${v.id}')" style="display:grid;grid-template-columns:30px 90px 1fr 110px 110px;gap:8px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--bdr);font-size:11.5px;cursor:pointer;opacity:${rowOpacity};background:${rowBg}" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${rowBg}'">
+      <input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation();toggleConsItem('${v.id}')" style="width:14px;height:14px;cursor:pointer;accent-color:#7A4DB5">
+      <span style="color:var(--t3)">${v.issuedAt}</span>
+      <span style="color:${ordColor};font-family:monospace;font-size:10.5px">${ordLabel}${v.itemSummary?'<span style="margin-left:6px;color:var(--t3);font-family:inherit;font-size:10px">— '+v.itemSummary.slice(0,40)+(v.itemSummary.length>40?'...':'')+'</span>':''}</span>
+      <span style="text-align:right;font-weight:600">₩${(+v.total||0).toLocaleString()}</span>
+      <span style="text-align:right;color:#7A4DB5;font-weight:${prepaid>0?'700':'400'}">${prepaid>0?'-₩'+prepaid.toLocaleString():'—'}</span>
+    </div>`;
+  }).join('');
+  area.innerHTML = `
+    <div style="border:1px solid var(--bdr);border-radius:6px;overflow:hidden">
+      <div style="padding:7px 10px;background:var(--s2);font-size:11px;font-weight:700;display:grid;grid-template-columns:30px 90px 1fr 110px 110px;gap:8px;align-items:center">
+        <button onclick="toggleConsSelectAll()" title="전체 선택/해제" style="border:none;background:none;cursor:pointer;font-size:13px;padding:0;color:#7A4DB5;font-family:inherit">${allSelected?'☑':'☐'}</button>
+        <span>발행일</span>
+        <span>발주/구분 · 품목</span>
+        <span style="text-align:right">합계</span>
+        <span style="text-align:right;color:#7A4DB5">선금</span>
+      </div>
+      ${rowsHtml}
+    </div>
+    <div style="margin-top:6px;padding:5px 10px;font-size:10.5px;color:var(--t3);display:flex;justify-content:space-between;align-items:center">
+      <span><b style="color:#7A4DB5">${selected.length}건 선택됨</b> / 후보 ${candidates.length}건</span>
+      <button onclick="toggleConsSelectAll()" style="padding:3px 10px;font-size:10.5px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">${selectAllLabel}</button>
+    </div>
+    <div style="margin-top:10px;padding:12px 14px;background:rgba(122,77,181,.06);border:1.5px solid rgba(122,77,181,.25);border-radius:6px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;font-size:11.5px">
+        <div><div style="color:var(--t3);font-size:10px">묶을 명세서</div><div style="font-weight:700;font-size:13px">${summary.count}건</div></div>
+        <div><div style="color:var(--t3);font-size:10px">합계금액</div><div style="font-weight:700;font-size:13px">₩${summary.total.toLocaleString()}</div></div>
+        <div><div style="color:#7A4DB5;font-size:10px">선금 차감</div><div style="font-weight:700;font-size:13px;color:#7A4DB5">−₩${summary.prepaidDeducted.toLocaleString()}</div></div>
+        <div style="text-align:right"><div style="color:var(--gold-lt);font-size:10px;font-weight:600">실제 청구액</div><div style="font-weight:700;font-size:15px;color:var(--gold-lt)">₩${summary.chargeAmount.toLocaleString()}</div></div>
+      </div>
+    </div>
+  `;
+  // 선택 0건이면 발행 비활성
+  btn.disabled = selected.length === 0;
+}
+
+// 합본 발행 확정
+function confirmConsolidation(){
+  const vendor = document.getElementById('cons_vendor').value;
+  const month = document.getElementById('cons_month').value;
+  const memo = document.getElementById('cons_memo').value;
+  if(!vendor || !month) return;
+  const candidates = getConsolidationCandidates(vendor, month);
+  if(!candidates.length){
+    showToast('⚠ 합본 대상 명세서가 없습니다','var(--red)');
+    return;
+  }
+  // 선택된 것만 묶기
+  const selectedIds = _consSelectedIds ? [..._consSelectedIds] : [];
+  const selected = candidates.filter(v => selectedIds.includes(String(v.id)));
+  if(!selected.length){
+    showToast('⚠ 묶을 명세서를 1건 이상 선택해주세요','var(--red)');
+    return;
+  }
+  // 확인 (사용자에게 한 번 더 안내)
+  const summary = calcConsolidationSummary(selected);
+  const skipped = candidates.length - selected.length;
+  let msg = `${vendor}의 ${month}분 명세서 ${summary.count}건을 묶어 합본 청구서를 발행하시겠습니까?\n\n합계: ₩${summary.total.toLocaleString()}\n선금 차감: −₩${summary.prepaidDeducted.toLocaleString()}\n실제 청구액: ₩${summary.chargeAmount.toLocaleString()}`;
+  if(skipped > 0){
+    msg += `\n\n※ 제외된 ${skipped}건은 합본에 들어가지 않습니다 (개별 상태로 남음)`;
+  }
+  if(!confirm(msg)) return;
+  // createConsolidatedInvoice에 invoiceIds 옵션 전달 (선택된 것만 묶음)
+  const cons = createConsolidatedInvoice(vendor, month, { memo, invoiceIds: selectedIds });
+  if(!cons){
+    showToast('❌ 합본 발행 실패','var(--red)');
+    return;
+  }
+  _consSelectedIds = null; // 다음 모달 열림 시 재초기화
+  closeM('mConsolidate');
+  showToast(`✓ ${month} ${vendor} 합본 청구서 발행됨 (${cons.includedInvoiceIds.length}건)`,'#7A4DB5', 3500);
+  // 거래명세서 탭이면 새로고침
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+}
+
+// 합본 청구서 상세 보기
+let _currentConsId = null;
+function openConsDetail(consId){
+  const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
+  if(!cons){ showToast('⚠ 합본 청구서를 찾을 수 없습니다','var(--red)'); return; }
+  _currentConsId = consId;
+  // 묶인 명세서들 조회
+  const includedInvs = (cons.includedInvoiceIds||[]).map(id =>
+    invoiceHistory.find(v => String(v.id)===String(id))
+  ).filter(Boolean);
+
+  document.getElementById('mConsDetail_t').textContent = `📑 ${cons.vendor} — ${cons.consolidationMonth} 합본 청구서`;
+
+  // 명세서 행
+  const rowsHtml = includedInvs.length ? includedInvs.map(v => {
+    const prepaid = getInvoicePrepaid(v);
+    const isSample = v._fromSample;
+    const ordLabel = isSample ? '🧪 샘플' : (v.ordNo || '—');
+    return `<div style="display:grid;grid-template-columns:90px 1fr 110px 110px;gap:8px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--bdr);font-size:11.5px;cursor:pointer" onclick="closeM('mConsDetail');openInvDetail(${v.id})">
+      <span style="color:var(--t3)">${v.issuedAt}</span>
+      <span style="color:${isSample?'#7A4DB5':'var(--t2)'};font-family:monospace;font-size:10.5px">${ordLabel}</span>
+      <span style="text-align:right;font-weight:600">₩${(+v.total||0).toLocaleString()}</span>
+      <span style="text-align:right;color:#7A4DB5;font-weight:${prepaid>0?'700':'400'}">${prepaid>0?'-₩'+prepaid.toLocaleString():'—'}</span>
+    </div>`;
+  }).join('') : '<div style="padding:14px;text-align:center;color:var(--red);font-size:11px">묶인 명세서가 없습니다 (이미 삭제됨?)</div>';
+
+  let body = '';
+  body += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:12px;font-size:12px">';
+  body += '<div style="background:var(--s2);padding:8px 12px;border-radius:6px;border:1px solid var(--bdr)"><div style="color:var(--t3);font-size:10.5px;margin-bottom:2px">고객사</div><div style="font-weight:700;font-size:14px">'+cons.vendor+'</div></div>';
+  body += '<div style="background:var(--s2);padding:8px 12px;border-radius:6px;border:1px solid var(--bdr)"><div style="color:var(--t3);font-size:10.5px;margin-bottom:2px">청구월</div><div style="font-weight:700">'+cons.consolidationMonth+'</div></div>';
+  body += '<div style="background:var(--s2);padding:8px 12px;border-radius:6px;border:1px solid var(--bdr)"><div style="color:var(--t3);font-size:10.5px;margin-bottom:2px">발행일</div><div style="font-weight:600">'+cons.issuedAt+'</div></div>';
+  body += '<div style="background:var(--s2);padding:8px 12px;border-radius:6px;border:1px solid var(--bdr)"><div style="color:var(--t3);font-size:10.5px;margin-bottom:2px">묶인 명세서</div><div style="font-weight:700">'+includedInvs.length+'건</div></div>';
+  body += '</div>';
+
+  body += '<div style="font-size:11.5px;color:var(--t2);font-weight:700;margin-bottom:6px">📋 묶인 거래명세서 <span style="font-size:10px;color:var(--t3);font-weight:400">(클릭하여 개별 명세서 보기)</span></div>';
+  body += '<div style="border:1px solid var(--bdr);border-radius:6px;overflow:hidden;margin-bottom:14px">';
+  body += '<div style="padding:7px 10px;background:var(--s2);font-size:10.5px;font-weight:700;display:grid;grid-template-columns:90px 1fr 110px 110px;gap:8px"><span>발행일</span><span>발주/구분</span><span style="text-align:right">합계</span><span style="text-align:right;color:#7A4DB5">선금</span></div>';
+  body += rowsHtml;
+  body += '</div>';
+
+  // 합계 박스
+  body += '<div style="display:flex;justify-content:flex-end;margin-bottom:14px"><div style="min-width:280px">';
+  body += '<div style="display:flex;justify-content:space-between;padding:6px 12px;background:var(--s2);border-radius:5px 5px 0 0;border:1px solid var(--bdr)"><span style="font-size:12px">공급가액 합</span><span style="font-size:12px;font-weight:600">₩'+(+cons.supplyAmt||0).toLocaleString()+'</span></div>';
+  body += '<div style="display:flex;justify-content:space-between;padding:6px 12px;background:var(--s2);border:1px solid var(--bdr);border-top:none"><span style="font-size:12px">부가세 합</span><span style="font-size:12px;color:var(--t3)">₩'+(+cons.tax||0).toLocaleString()+'</span></div>';
+  body += '<div style="display:flex;justify-content:space-between;padding:6px 12px;background:var(--s2);border:1px solid var(--bdr);border-top:none"><span style="font-size:12px;font-weight:600">합계금액</span><span style="font-size:12px;font-weight:700">₩'+(+cons.total||0).toLocaleString()+'</span></div>';
+  if((+cons.prepaidDeducted||0) > 0){
+    body += '<div style="display:flex;justify-content:space-between;padding:6px 12px;background:rgba(122,77,181,.08);border:1px solid rgba(122,77,181,.25);border-top:none"><span style="font-size:12px;color:#7A4DB5;font-weight:600">선금 차감</span><span style="font-size:12px;color:#7A4DB5;font-weight:700">−₩'+(+cons.prepaidDeducted).toLocaleString()+'</span></div>';
+  }
+  body += '<div style="display:flex;justify-content:space-between;padding:9px 12px;background:rgba(122,77,181,.15);border:1.5px solid #7A4DB5;border-radius:0 0 5px 5px"><span style="font-size:13px;font-weight:700;color:#7A4DB5">실제 청구액</span><span style="font-size:15px;font-weight:700;color:#7A4DB5">₩'+(+cons.chargeAmount||0).toLocaleString()+'</span></div>';
+  body += '</div></div>';
+
+  // 합본 입금 이력 영역 (3단계)
+  const consPmts = cons.payments || [];
+  const consPmSummary = calcConsolidationPaymentSummary(cons);
+  const consRemaining = consPmSummary.chargeAmount - consPmSummary.totalPaid;
+  const consBarColor = consPmSummary.ratio >= 100 ? 'var(--grn)' : consPmSummary.ratio>=50 ? '#7A4DB5' : 'var(--blu)';
+  const consBarWidth = Math.min(100, consPmSummary.ratio);
+  body += '<div style="margin-bottom:14px;padding:12px 14px;background:var(--s2);border-radius:6px;border:1px solid var(--bdr)">';
+  body += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+  body += '<div style="font-size:11.5px;color:var(--t3);font-weight:600">💵 합본 입금 이력 (청구액 ₩'+consPmSummary.chargeAmount.toLocaleString()+' 기준)</div>';
+  body += '<button onclick="addConsPayment('+consId+')" style="padding:4px 10px;font-size:11px;background:rgba(122,77,181,.10);border:1px solid rgba(122,77,181,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:#7A4DB5;font-weight:600">+ 입금 추가</button>';
+  body += '</div>';
+  // 입금 행
+  if(consPmts.length){
+    body += '<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px">';
+    consPmts.forEach((pm, idx) => {
+      body += '<div style="display:grid;grid-template-columns:90px 1fr 110px auto;gap:8px;align-items:center;font-size:11.5px;padding:5px 8px;background:var(--s1);border-radius:4px;border:1px solid var(--bdr)">';
+      body += '<span style="color:var(--t3)">'+(pm.date||'')+'</span>';
+      body += '<span style="color:var(--t3);font-size:10.5px">'+((pm.memo||'').replace(/</g,'&lt;'))+'</span>';
+      body += '<span style="font-weight:700;color:var(--grn);text-align:right">₩'+(+pm.amount||0).toLocaleString()+'</span>';
+      body += '<button onclick="removeConsPayment('+consId+','+idx+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:2px 4px">×</button>';
+      body += '</div>';
+    });
+    body += '</div>';
+  } else {
+    body += '<div style="padding:12px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1);border:1px dashed var(--bdr);border-radius:4px;margin-bottom:8px">아직 입금 이력이 없습니다</div>';
+  }
+  // 진행률
+  body += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:6px;font-size:11.5px">';
+  body += '<div><div style="color:var(--t3);font-size:10px">청구액</div><div style="font-weight:700">₩'+consPmSummary.chargeAmount.toLocaleString()+'</div></div>';
+  body += '<div><div style="color:var(--t3);font-size:10px">입금합계</div><div style="font-weight:700;color:var(--grn)">₩'+consPmSummary.totalPaid.toLocaleString()+'</div></div>';
+  body += '<div style="text-align:right"><div style="color:var(--t3);font-size:10px">잔금</div><div style="font-weight:700;color:'+(consRemaining<=0?'var(--grn)':'var(--org)')+'">'+(consRemaining<=0?'₩0':'₩'+consRemaining.toLocaleString())+'</div></div>';
+  body += '</div>';
+  body += '<div style="background:var(--s1);border-radius:8px;height:8px;overflow:hidden;margin-bottom:4px"><div style="background:'+consBarColor+';height:100%;width:'+consBarWidth+'%;transition:width .3s"></div></div>';
+  body += '<div style="font-size:10.5px;color:'+consBarColor+';font-weight:600">'+consPmSummary.ratio.toFixed(1)+'%'+(consPmSummary.ratio>=100?' — ✓ 입금완료 (묶인 명세서 자동 입금완료 처리됨)':'')+'</div>';
+  body += '</div>';
+
+  if(cons.memo){
+    body += '<div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:9px 12px;font-size:11.5px;color:var(--t2);margin-bottom:8px"><b style="color:var(--t3);font-size:10.5px">메모: </b>'+cons.memo+'</div>';
+  }
+
+  document.getElementById('mConsDetail_body').innerHTML = body;
+
+  // 인쇄 버튼 핸들러
+  document.getElementById('mConsDetail_print').onclick = function(){
+    printConsolidatedInvoice(consId);
+  };
+
+  openM('mConsDetail');
+}
+
+// 합본 해제 (확인 후)
+function confirmUnwindConsolidation(){
+  if(!_currentConsId) return;
+  const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(_currentConsId));
+  if(!cons) return;
+  const count = (cons.includedInvoiceIds||[]).length;
+  if(!confirm(`이 합본 청구서를 해제하시겠습니까?\n\n묶인 ${count}건의 명세서가 다시 개별 상태로 돌아가며, 합본 청구서는 삭제됩니다.\n\n(이 작업은 취소할 수 없습니다)`)) return;
+  unwindConsolidatedInvoice(_currentConsId);
+  _currentConsId = null;
+  closeM('mConsDetail');
+  showToast('✓ 합본 청구서 해제됨','var(--grn)', 2500);
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+}
+
+// 합본에 입금 추가 (간단한 prompt 입력)
+// 사용자 흐름:
+//   1. 입금일 → 기본값 오늘
+//   2. 금액 → 숫자 입력 (음수 거부, 청구액 초과 시 경고만 하고 진행)
+//   3. 메모 → 선택
+// 추가 후 자동으로 processConsolidationPayment 호출 → 100% 시 묶인 명세서들 자동 입금완료
+function addConsPayment(consId){
+  const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
+  if(!cons){ showToast('⚠ 합본을 찾을 수 없습니다','var(--red)'); return; }
+  const today = (typeof toLocalDateStr==='function')?toLocalDateStr(new Date()):new Date().toISOString().slice(0,10);
+  // 입금일
+  const date = prompt('입금일 (YYYY-MM-DD)', today);
+  if(date===null) return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){ showToast('⚠ 날짜 형식이 잘못되었습니다 (YYYY-MM-DD)','var(--red)'); return; }
+  // 금액
+  const summary = calcConsolidationPaymentSummary(cons);
+  const remaining = Math.max(0, summary.chargeAmount - summary.totalPaid);
+  const amtStr = prompt(`입금 금액 (잔여: ₩${remaining.toLocaleString()})`, String(remaining||''));
+  if(amtStr===null) return;
+  const amount = +amtStr.replace(/[^\d.-]/g, '');
+  if(isNaN(amount) || amount <= 0){ showToast('⚠ 금액을 정확히 입력해주세요','var(--red)'); return; }
+  if(amount < 0){ showToast('⚠ 음수 입금은 허용되지 않습니다','var(--red)'); return; }
+  // 청구액 초과 경고 (진행은 가능)
+  if(summary.totalPaid + amount > summary.chargeAmount * 1.05){
+    if(!confirm(`청구액(${summary.chargeAmount.toLocaleString()}원)을 초과하는 입금입니다. 그래도 추가하시겠습니까?`)) return;
+  }
+  // 메모
+  const memo = prompt('메모 (선택, 비워두기 가능)', '') || '';
+  // payments에 추가
+  if(!cons.payments) cons.payments = [];
+  cons.payments.push({
+    id: Date.now() + Math.random(),
+    date,
+    amount,
+    type: '잔금', // 합본은 청구액에 대한 잔금
+    memo: memo.slice(0, 200),
+  });
+  // 처리 (status 갱신 + 묶인 명세서/발주 연쇄)
+  const result = processConsolidationPayment(consId);
+  // 사용자 피드백
+  if(result && result.ratio >= 100){
+    showToast(`✓ 입금 완료 — 묶인 명세서 ${result.autoCompletedInvoices}건 자동 입금완료 처리됨`,'var(--grn)', 4000);
+  } else {
+    showToast(`✓ 입금 추가됨 (${(result?result.ratio:0).toFixed(1)}%)`,'#7A4DB5', 2500);
+  }
+  // 모달 다시 그리기 + 거래명세서 탭 갱신
+  openConsDetail(consId);
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+}
+
+// 합본 입금 삭제
+function removeConsPayment(consId, idx){
+  const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
+  if(!cons || !cons.payments || !cons.payments[idx]) return;
+  const pm = cons.payments[idx];
+  if(!confirm(`이 입금 기록을 삭제하시겠습니까?\n\n${pm.date} · ₩${(+pm.amount||0).toLocaleString()}`)) return;
+  cons.payments.splice(idx, 1);
+  // 100%였다가 떨어지면 묶인 명세서 status도 되돌림 (작성자가 명시적으로 미수로 안 했으면)
+  const wasFullyPaid = (cons.paymentRatio||0) >= 100;
+  const result = processConsolidationPayment(consId);
+  if(wasFullyPaid && result.ratio < 100){
+    // 입금완료 → 발행완료로 떨어짐 → 묶인 명세서들도 되돌리기
+    (cons.includedInvoiceIds||[]).forEach(invId => {
+      const inv = invoiceHistory.find(v => String(v.id)===String(invId));
+      if(!inv) return;
+      if(inv.status === '입금완료' && inv.status !== '미수'){
+        inv.status = '발행완료';
+        // payments 자체 입금률은 그대로 (선금 등)
+        if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && inv._notionId && typeof syncInvoiceToNotion==='function'){
+          syncInvoiceToNotion(inv, true).catch(e=>console.warn(e));
+        }
+      }
+    });
+    if(typeof save==='function') save();
+  }
+  showToast('✓ 입금 삭제됨','var(--grn)', 2000);
+  openConsDetail(consId);
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+}
+
+// 합본 청구서 PDF 인쇄
+function printConsolidatedInvoice(consId){
+  const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
+  if(!cons) return;
+  const includedInvs = (cons.includedInvoiceIds||[]).map(id =>
+    invoiceHistory.find(v => String(v.id)===String(id))
+  ).filter(Boolean);
+  const co = (typeof company!=='undefined'?company:{}) || {};
+  const today = (typeof toLocalDateStr==='function')?toLocalDateStr(new Date()):cons.issuedAt;
+  // 명세서 행
+  const rowsHtml = includedInvs.map((v,i)=>{
+    const prepaid = getInvoicePrepaid(v);
+    const isSample = v._fromSample;
+    const ordLabel = isSample ? '샘플 ('+(v.invType||'개발비')+')' : (v.ordNo||'—');
+    return `<tr>
+      <td style="text-align:center;padding:6px 8px;border:1px solid #ddd">${i+1}</td>
+      <td style="padding:6px 8px;border:1px solid #ddd;color:#666">${v.issuedAt||''}</td>
+      <td style="padding:6px 8px;border:1px solid #ddd;font-family:monospace;font-size:9pt">${ordLabel}</td>
+      <td style="padding:6px 8px;border:1px solid #ddd;font-size:9pt;color:#555">${(v.itemSummary||'').slice(0,80)}${(v.itemSummary||'').length>80?'...':''}</td>
+      <td style="text-align:right;padding:6px 8px;border:1px solid #ddd">${(+v.supplyAmt||0).toLocaleString()}</td>
+      <td style="text-align:right;padding:6px 8px;border:1px solid #ddd;color:#888">${(+v.tax||0).toLocaleString()}</td>
+      <td style="text-align:right;padding:6px 8px;border:1px solid #ddd;font-weight:700">${(+v.total||0).toLocaleString()}</td>
+      <td style="text-align:right;padding:6px 8px;border:1px solid #ddd;color:#7A4DB5;font-weight:${prepaid>0?'700':'400'}">${prepaid>0?'-'+prepaid.toLocaleString():'—'}</td>
+    </tr>`;
+  }).join('');
+  const html = `
+    <div style="font-family:'Noto Sans KR',sans-serif;max-width:920px;margin:0 auto;padding:20px;color:#222">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #7A4DB5">
+        <div>
+          <div style="font-size:22pt;font-weight:700;color:#7A4DB5;letter-spacing:2px">월 별 합 본 청 구 서</div>
+          <div style="font-size:10pt;color:#888;margin-top:4px">CONSOLIDATED INVOICE — ${cons.consolidationMonth}</div>
+        </div>
+        <div style="text-align:right;font-size:10pt">
+          <div style="font-weight:700;font-size:12pt">${co.name||'이케이아이엔티'}</div>
+          ${co.brn?'<div>사업자번호: '+co.brn+'</div>':''}
+          ${co.tel?'<div>Tel: '+co.tel+'</div>':''}
+          ${co.addr?'<div>'+co.addr+'</div>':''}
+        </div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:18px;font-size:10pt">
+        <tr>
+          <td style="background:#F5EBFF;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">공급받는자</td>
+          <td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:11pt">${cons.vendor}</td>
+          <td style="background:#F5EBFF;padding:7px 10px;border:1px solid #ddd;width:100px;font-weight:600">청구월</td>
+          <td style="padding:7px 10px;border:1px solid #ddd;font-weight:700">${cons.consolidationMonth}</td>
+        </tr>
+        <tr>
+          <td style="background:#F5EBFF;padding:7px 10px;border:1px solid #ddd;font-weight:600">발행일자</td>
+          <td style="padding:7px 10px;border:1px solid #ddd">${cons.issuedAt}</td>
+          <td style="background:#F5EBFF;padding:7px 10px;border:1px solid #ddd;font-weight:600;color:#7A4DB5">청구액</td>
+          <td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:13pt;color:#7A4DB5">₩${(+cons.chargeAmount||0).toLocaleString()}</td>
+        </tr>
+      </table>
+      <div style="font-size:10.5pt;font-weight:700;color:#444;margin-bottom:6px">📋 포함된 거래명세서 (${includedInvs.length}건)</div>
+      <table style="width:100%;border-collapse:collapse;font-size:9pt;margin-bottom:18px">
+        <thead><tr style="background:#7A4DB5;color:#fff">
+          <th style="padding:7px 6px;border:1px solid #5C3994;width:32px">No</th>
+          <th style="padding:7px 6px;border:1px solid #5C3994;width:90px">발행일</th>
+          <th style="padding:7px 6px;border:1px solid #5C3994;width:120px">발주/구분</th>
+          <th style="padding:7px 8px;border:1px solid #5C3994">품목내역</th>
+          <th style="padding:7px 6px;border:1px solid #5C3994;width:90px;text-align:right">공급가액</th>
+          <th style="padding:7px 6px;border:1px solid #5C3994;width:80px;text-align:right">부가세</th>
+          <th style="padding:7px 6px;border:1px solid #5C3994;width:95px;text-align:right">합계</th>
+          <th style="padding:7px 6px;border:1px solid #5C3994;width:90px;text-align:right">선금</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:14px">
+        <table style="border-collapse:collapse;font-size:11pt;min-width:340px">
+          <tr><td style="padding:6px 14px;border:1px solid #ddd;background:#F8F7F4">공급가액 합</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;font-weight:600">₩${(+cons.supplyAmt||0).toLocaleString()}</td></tr>
+          <tr><td style="padding:6px 14px;border:1px solid #ddd;background:#F8F7F4">부가세 합</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;color:#888">₩${(+cons.tax||0).toLocaleString()}</td></tr>
+          <tr><td style="padding:6px 14px;border:1px solid #ddd;background:#F8F7F4;font-weight:700">합계금액</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;font-weight:700">₩${(+cons.total||0).toLocaleString()}</td></tr>
+          ${(+cons.prepaidDeducted||0) > 0 ? `<tr><td style="padding:6px 14px;border:1px solid #ddd;background:#F5EBFF;color:#7A4DB5;font-weight:600">선금 차감</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;color:#7A4DB5;font-weight:700">−₩${(+cons.prepaidDeducted).toLocaleString()}</td></tr>` : ''}
+          <tr style="background:#7A4DB5;color:#fff"><td style="padding:9px 14px;border:1.5px solid #5C3994;font-size:13pt;font-weight:700">실제 청구액</td><td style="padding:9px 14px;border:1.5px solid #5C3994;text-align:right;font-size:14pt;font-weight:700">₩${(+cons.chargeAmount||0).toLocaleString()}</td></tr>
+        </table>
+      </div>
+      ${cons.memo?`<div style="background:#F8F7F4;border:1px solid #ddd;border-radius:5px;padding:9px 12px;font-size:10pt;color:#555;margin-bottom:12px"><b>메모:</b> ${cons.memo}</div>`:''}
+      <div style="margin-top:18px;display:flex;justify-content:flex-end;align-items:center;gap:10px;border-top:1px solid #ddd;padding-top:10px">
+        <span style="font-size:11pt;color:#555">${co.name||''} 대표 ${co.ceo||''} (인)</span>
+        <div style="width:56px;height:48px;border:1px solid #CCC;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9pt;color:#AAA">(인)</div>
+      </div>
+      <div style="margin-top:8px;font-size:8.5pt;color:#AAA;text-align:center">본 청구서는 EK OEM 통합관리 시스템에서 자동 생성되었습니다 · 발행일 ${today}</div>
+    </div>
+  `;
+  if(typeof showPrintPreview==='function'){
+    showPrintPreview('📑 합본 청구서', html, `합본_${cons.vendor}_${cons.consolidationMonth}`);
+  }
+}
+
 // 입금 이력에 따라 status 자동 결정
 // - 입금 100% 이상 → "청구완료"
 // - 1건 이상 입금 (100% 미만) → "발행완료" 유지 (선금 입금 상태)
@@ -16620,6 +17560,14 @@ function openInvoiceForOrder(ordId){
 
 function openStandaloneInvoiceModal(idOrNull, prefill){
   const inv = idOrNull ? invoiceHistory.find(x=>String(x.id)===String(idOrNull)) : null;
+  // 합본에 묶인 명세서는 편집 차단
+  if(inv){
+    const lockInfo = isInvoiceLocked(inv);
+    if(lockInfo.locked){
+      showToast('🔒 '+lockInfo.message,'var(--org)', 4500);
+      return;
+    }
+  }
   // 임시 버퍼 초기화 — 수정 / prefill / 빈 상태 3가지 케이스
   if(inv){
     _invRowsBuf = inv.items && inv.items.length
