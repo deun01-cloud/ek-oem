@@ -165,7 +165,10 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .ov.open{display:flex}
 .modal{background:var(--s1);border:1px solid var(--bdr2);border-radius:12px;width:640px;max-width:96vw;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.2);margin-bottom:24px;position:relative}
 .modal.wide{width:780px}
-.mt{font-family:'Cormorant Garamond',serif;font-size:18px;color:var(--gold-lt);font-weight:600;margin-bottom:14px}
+.mt{font-family:'Cormorant Garamond',serif;font-size:18px;color:var(--gold-lt);font-weight:600;margin-bottom:14px;cursor:move;user-select:none;padding:4px 8px;margin:-4px -8px 14px -8px;border-radius:6px;transition:background .15s}
+.mt:hover{background:rgba(192,144,32,.04)}
+.modal.dragging{transition:none;will-change:transform;box-shadow:0 30px 80px rgba(0,0,0,.3)}
+.modal.dragging .mt{background:rgba(192,144,32,.08)}
 .fg{margin-bottom:9px}
 .fg label{font-size:9.5px;color:var(--t3);display:block;margin-bottom:3px;font-weight:500;text-transform:uppercase;letter-spacing:.5px}
 .fi,.fs,.fta{width:100%;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);padding:6px 9px;font-size:12px;font-family:inherit;outline:none;transition:.15s}
@@ -8086,8 +8089,90 @@ window.fixFactShip=function(){
   }
   return fixed;
 };
-function closeM(id){document.getElementById(id)?.classList.remove('open');}
-function openM(id){document.getElementById(id)?.classList.add('open');}
+function closeM(id){
+  const ov = document.getElementById(id);
+  if(!ov) return;
+  ov.classList.remove('open');
+  // 닫을 때 모달 위치 리셋 (다음에 열 때 가운데로)
+  const modal = ov.querySelector('.modal');
+  if(modal){
+    modal.style.transform = '';
+    modal.classList.remove('dragging');
+  }
+}
+function openM(id){
+  const ov = document.getElementById(id);
+  if(!ov) return;
+  ov.classList.add('open');
+  // 위치 리셋 (이전에 드래그된 상태 초기화)
+  const modal = ov.querySelector('.modal');
+  if(modal){
+    modal.style.transform = '';
+    modal.classList.remove('dragging');
+    // 드래그 핸들러 부착 (한 번만)
+    if(!modal._dragInited){
+      _attachModalDrag(modal);
+      modal._dragInited = true;
+    }
+  }
+}
+
+// 모달에 드래그 핸들러 부착 — .mt(제목) 영역을 핸들로 사용
+// 입력 필드/버튼 위에서 드래그 시작은 안 됨 (입력 방해 방지)
+function _attachModalDrag(modal){
+  const handle = modal.querySelector('.mt');
+  if(!handle) return; // 제목 없는 모달은 드래그 안 함
+  let startX = 0, startY = 0, baseX = 0, baseY = 0, dragging = false;
+  function onDown(e){
+    // 입력 필드/버튼/select 등 인터랙티브 요소 위에서 시작하면 무시
+    if(e.target.closest('input,textarea,select,button,a,[contenteditable="true"]')) return;
+    // 좌클릭만
+    if(e.button !== undefined && e.button !== 0) return;
+    dragging = true;
+    modal.classList.add('dragging');
+    const point = e.touches ? e.touches[0] : e;
+    startX = point.clientX;
+    startY = point.clientY;
+    // 현재 transform 값 파싱
+    const m = (modal.style.transform || '').match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
+    baseX = m ? +m[1] : 0;
+    baseY = m ? +m[2] : 0;
+    e.preventDefault();
+  }
+  function onMove(e){
+    if(!dragging) return;
+    const point = e.touches ? e.touches[0] : e;
+    const dx = point.clientX - startX;
+    const dy = point.clientY - startY;
+    let newX = baseX + dx;
+    let newY = baseY + dy;
+    // 화면 밖으로 너무 멀리 못 가게 (헤더가 안 보이면 다시 못 끌어옴)
+    const rect = modal.getBoundingClientRect();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const minVisible = 80; // 최소 보여야 할 px
+    // 우측: 모달의 좌측이 화면 우측에 닿기 전까지
+    if(rect.left + dx > vw - minVisible) newX = baseX + (vw - minVisible - rect.left);
+    // 좌측: 모달의 우측이 화면 좌측에 닿기 전까지
+    if(rect.right + dx < minVisible) newX = baseX + (minVisible - rect.right);
+    // 위: 헤더가 가려지지 않게 (음수 너무 크게 못 가게)
+    if(rect.top + dy < 0) newY = baseY + (0 - rect.top);
+    // 아래: 모달 헤더가 화면 안에 보이게
+    if(rect.top + dy > vh - minVisible) newY = baseY + (vh - minVisible - rect.top);
+    modal.style.transform = `translate(${newX}px, ${newY}px)`;
+  }
+  function onUp(){
+    if(!dragging) return;
+    dragging = false;
+    modal.classList.remove('dragging');
+  }
+  handle.addEventListener('mousedown', onDown);
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+  // 터치도 지원
+  handle.addEventListener('touchstart', onDown, { passive: false });
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('touchend', onUp);
+}
 
 // 편집용 모달들 — 바깥 클릭이나 ESC로 실수로 닫히지 않게 보호
 // (저장/취소 버튼을 통해서만 닫혀야 하는 모달들)
