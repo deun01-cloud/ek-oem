@@ -3866,6 +3866,7 @@ function renderInvoiceHistory(){
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">공급가액</th>';
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">부가세</th>';
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">합계금액</th>';
+    h+='<th style="padding:8px 8px;text-align:center;font-weight:600;white-space:nowrap" title="명세서별 출고완료 여부">출고</th>';
     h+='<th onclick="invToggleSort(\'status\')" style="padding:8px 10px;text-align:center;font-weight:600;cursor:pointer;user-select:none" title="클릭하여 상태 정렬 (위급도 순: 미수→발행완료→청구완료→입금완료→발송→작성중)">상태'+_invSortIndicator('status')+'</th>';
     h+='<th style="padding:8px 4px;width:64px"></th>';
     h+='</tr></thead><tbody>';
@@ -3918,6 +3919,32 @@ function renderInvoiceHistory(){
           : '';
         h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:var(--gold-lt)">'+(v.total?v.total.toLocaleString():'-')+'</div>'+prepaidChip+'</td>';
       }
+      // 5-A: 출고완료 토글 셀
+      // - 합본: 표시 안 함 (— 처리)
+      // - 합본에 묶인 명세서: 잠금 표시
+      // - 샘플: "—" (개념 없음)
+      // - 입금완료: 잠금 (이미 done)
+      // - 일반: 클릭 가능한 토글
+      h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center;white-space:nowrap">';
+      if(isCons){
+        h+='<span style="color:var(--t3);font-size:11px">—</span>';
+      } else if(v._fromSample){
+        h+='<span style="color:var(--t3);font-size:11px" title="샘플 명세서는 발행 시점에 자동 청구 단계">—</span>';
+      } else if(v._consolidatedInvoiceId){
+        h+='<span style="font-size:13px" title="합본에 묶여있어 변경 불가">🔒</span>';
+      } else if(v.status === '입금완료'){
+        h+='<span style="font-size:13px;color:var(--grn)" title="이미 입금완료">✓</span>';
+      } else {
+        // 일반 명세서: 토글 가능
+        var isShipped = v._shipped === true;
+        var btnBg = isShipped ? 'var(--grn-bg)' : 'var(--s1)';
+        var btnBorder = isShipped ? 'var(--grn)' : 'var(--bdr)';
+        var btnColor = isShipped ? 'var(--grn)' : 'var(--t3)';
+        var btnText = isShipped ? '✓ 출고됨' : '출고 전';
+        var btnTitle = isShipped ? '클릭하면 출고완료를 해제합니다 (작성중/선금 단계로 되돌림)' : '클릭하면 이 명세서를 출고완료 처리합니다 (청구 단계로 이동)';
+        h+='<button onclick="markInvoiceShipped('+v.id+','+(!isShipped)+')" title="'+btnTitle+'" style="padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid '+btnBorder+';background:'+btnBg+';color:'+btnColor+';cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">'+btnText+'</button>';
+      }
+      h+='</td>';
       // 상태 select — 합본도 동일하게 보임 (해제는 합본 상세 모달에서)
       h+='<td onclick="event.stopPropagation()" style="padding:8px 10px;text-align:center">';
       h+='<select onchange="updateInvStatus('+v.id+',this.value)" style="font-size:10.5px;padding:2px 6px;border-radius:12px;border:1px solid var(--bdr);background:var(--s1);color:'+sc+';font-family:inherit;cursor:pointer">';
@@ -5421,6 +5448,8 @@ function mapNotionInvoice(row){
       const stageMap = { '작성중':'draft', '청구':'billing', '완료':'done' };
       return stageMap[stageName] || null; // null이면 inferInvStage가 채움
     })(),
+    // 5-A: 명세서별 출고완료 플래그 (사용자가 행에서 토글)
+    _shipped: !!np.check(p['명세서출고완료']),
   };
 }
 // 견적서 매핑 (📋 견적 DB)
@@ -6562,6 +6591,8 @@ async function syncInvoiceToNotion(inv, update){
     "청구액":{"number":+inv.chargeAmount||0},
     "청구월":{"rich_text":[{"text":{"content":(inv.consolidationMonth||'').slice(0,20)}}]},
     "합본ID":{"rich_text":[{"text":{"content":(inv._consolidatedInvoiceId||'').toString().slice(0,100)}}]},
+    // 5-A: 명세서별 출고완료 플래그
+    "명세서출고완료":{"checkbox":!!inv._shipped},
   };
   // 4-A: 청구단계 (작성중/청구/완료) — 합본은 stage 없음
   if(!inv._isConsolidated && inv._invStage){
@@ -12963,6 +12994,21 @@ function showOrdFiles(ordId){
 function completeOrd(ordId){
   const o=orders.find(x=>x.id==ordId);
   if(!o) return;
+  // 5-A: 가드 — 묶인 명세서 중 미출고가 있으면 거부
+  // (단, 발주에 명세서가 0건이면 통과 — 옛 흐름 유지)
+  const linkedInvs = invoiceHistory.filter(v =>
+    !v._isConsolidated && String(v.ordId)===String(ordId)
+  );
+  if(linkedInvs.length > 0){
+    const unshippedInvs = linkedInvs.filter(v => !v._shipped && !v._consolidatedInvoiceId);
+    if(unshippedInvs.length > 0){
+      showToast(
+        `⚠ 발주를 출고완료할 수 없습니다 — 미출고 명세서 ${unshippedInvs.length}건이 있습니다. 거래명세서 탭에서 각 명세서를 출고완료 처리한 후 다시 시도하세요.`,
+        'var(--red)', 5000
+      );
+      return;
+    }
+  }
   // 사용자 확인
   showConfirm(
     `"${o.vendor||'발주서'}"를 출고완료 처리합니다.\n연결된 공정도 모두 출고 완료로 변경됩니다.`,
@@ -16888,18 +16934,123 @@ function inferInvStage(v){
   if(v._isConsolidated) return null; // 합본은 stage 없음
   // status가 '입금완료'면 무조건 done
   if(v.status === '입금완료') return 'done';
-  // 발주가 출고완료면 billing
+  // 5-A: 명세서별 출고완료 플래그가 핵심 기준
+  // _shipped=true → billing (청구 단계)
+  if(v._shipped === true) return 'billing';
+  // 발주가 이미 출고완료된 케이스 (옛 데이터 호환 — _shipped가 미설정이지만 발주는 출고완료)
+  // 이 경우 자동으로 _shipped=true로 보고 billing
   if(v.ordId){
     const o = orders.find(x => String(x.id)===String(v.ordId));
     if(o && o.status === '출고완료') return 'billing';
   }
-  // 샘플 명세서는 발주 없음 → status 기준
+  // 샘플 명세서는 발주 없음 → status 기준 (발행되면 자동 billing)
   if(v._fromSample){
     return (v.status === '발행완료' || v.status === '청구완료' || v.status === '미수')
       ? 'billing' : 'draft';
   }
-  // 그 외는 draft (작성중/선금 단계)
+  // 그 외는 draft (작성중/선금 단계 — 아직 출고 전)
   return 'draft';
+}
+
+// 5-A: 명세서 단위 출고완료 토글
+// 사용자가 거래명세서 행에서 직접 출고완료/해제 처리
+// 효과:
+//   - _shipped 플래그 갱신
+//   - _invStage 자동 재계산 (draft ↔ billing)
+//   - 노션 동기화
+//   - 같은 발주의 모든 명세서가 출고완료되면 자동 발주 출고완료 처리
+//   - 출고완료 해제 시 발주가 출고완료 상태였으면 발주도 진행중으로 되돌림
+function markInvoiceShipped(invId, shipped){
+  const v = invoiceHistory.find(x => String(x.id)===String(invId));
+  if(!v){ showToast('⚠ 명세서를 찾을 수 없습니다','var(--red)'); return false; }
+  // 가드: 합본 자체나 합본에 묶인 명세서는 차단
+  if(v._isConsolidated){
+    showToast('⚠ 합본 청구서는 출고완료를 직접 변경할 수 없습니다','var(--org)', 3500);
+    return false;
+  }
+  if(v._consolidatedInvoiceId){
+    showToast('🔒 합본에 묶여있어 출고완료 상태를 변경할 수 없습니다 — 먼저 합본을 해제하세요','var(--org)', 4500);
+    return false;
+  }
+  // 가드: 입금완료 상태는 변경 불가 (이미 done 단계)
+  if(v.status === '입금완료'){
+    showToast('⚠ 이미 입금완료된 명세서는 출고완료를 되돌릴 수 없습니다','var(--org)', 3500);
+    return false;
+  }
+  // 샘플 명세서는 _shipped 개념 안 씀 (발행 자체가 billing)
+  if(v._fromSample){
+    showToast('⚠ 샘플 명세서는 발행 시점에 자동 청구 단계입니다','var(--org)', 3000);
+    return false;
+  }
+  // 토글
+  v._shipped = !!shipped;
+  // _invStage 자동 재계산
+  v._invStage = inferInvStage(v);
+  if(typeof save === 'function') save();
+  // 노션 동기화
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+    syncInvoiceToNotion(v, true).catch(e=>console.warn('명세서 출고완료 동기화 실패:',e));
+  }
+  // 발주 자동 처리 — 같은 발주의 모든 명세서가 출고완료되면 발주도 출고완료
+  if(v.ordId){
+    const o = orders.find(x => String(x.id)===String(v.ordId));
+    if(o){
+      if(shipped){
+        // 출고완료로 변경 — 모든 명세서 출고완료인지 확인
+        if(typeof areAllInvoicesShipped === 'function' && areAllInvoicesShipped(o)){
+          if(o.status !== '출고완료' && o.status !== '취소'){
+            o.status = '출고완료';
+            o.completedAt = new Date().toISOString();
+            // 연결 공정 출고
+            if(typeof procItems !== 'undefined'){
+              procItems.filter(p=>p.orderId===o.id).forEach(p=>{
+                p.shipped = true;
+                if(p._notionId && typeof debouncedSync === 'function') debouncedSync('proc', p, true);
+              });
+            }
+            // 재고 차감
+            if(typeof applyOrderShipToStock === 'function') applyOrderShipToStock(o);
+            if(typeof save === 'function') save();
+            if(o._notionId && typeof debouncedSync === 'function') debouncedSync('order', o, true);
+            showToast(`✓ 명세서 출고완료 — 발주 ${o.no||''} 모든 명세서 출고완료, 발주서도 자동 출고완료 처리됨`,'var(--grn)', 4500);
+            return true;
+          }
+        }
+      } else {
+        // 출고완료 해제 — 발주가 출고완료 상태였으면 진행중으로 되돌림
+        if(o.status === '출고완료'){
+          o.status = '진행중';
+          o.completedAt = null;
+          // 연결 공정 출고 해제
+          if(typeof procItems !== 'undefined'){
+            procItems.filter(p=>p.orderId===o.id).forEach(p=>{
+              p.shipped = false;
+              if(p._notionId && typeof debouncedSync === 'function') debouncedSync('proc', p, true);
+            });
+          }
+          if(typeof save === 'function') save();
+          if(o._notionId && typeof debouncedSync === 'function') debouncedSync('order', o, true);
+          showToast(`↩ 명세서 출고완료 해제 — 발주 ${o.no||''}도 진행중으로 되돌림`,'var(--org)', 4500);
+          return true;
+        }
+      }
+    }
+  }
+  // 일반 토스트
+  showToast(shipped ? `✓ 출고완료 — 청구 단계로 이동` : `↩ 출고완료 해제 — 작성중/선금 단계로 되돌림`, shipped?'var(--grn)':'var(--org)', 3000);
+  return true;
+}
+
+// 발주의 모든 명세서가 출고완료(또는 합본에 묶임 = 이미 출고됨)인지 검사
+// 합본에 묶여있다는 건 그 명세서가 이미 청구 단계를 넘어간 것이므로 출고완료로 간주
+function areAllInvoicesShipped(o){
+  if(!o) return false;
+  const invs = invoiceHistory.filter(v =>
+    !v._isConsolidated &&
+    String(v.ordId)===String(o.id)
+  );
+  if(!invs.length) return false; // 명세서 없으면 자동 출고완료 안 함 (수동만)
+  return invs.every(v => v._shipped === true || v._consolidatedInvoiceId);
 }
 
 // 단일 명세서의 _invStage 갱신 (status 변경 또는 발주 출고완료 후 호출)
@@ -17751,6 +17902,17 @@ function autoCompleteOrderShipment(o){
   if(!o) return { changed: false, reason: 'no order' };
   if(o.status === '출고완료') return { changed: false, reason: 'already completed' };
   if(o.status === '취소') return { changed: false, reason: 'canceled' };
+  // 5-A: 가드 — 묶인 명세서 중 미출고가 있으면 자동 출고완료 안 함
+  // 입금 100%여도 명세서 출고완료가 우선
+  if(typeof areAllInvoicesShipped === 'function'){
+    const linkedInvs = invoiceHistory.filter(v =>
+      !v._isConsolidated && String(v.ordId)===String(o.id)
+    );
+    // 명세서가 1건 이상이고 모두 출고완료가 아니면 자동 출고완료 거부
+    if(linkedInvs.length > 0 && !areAllInvoicesShipped(o)){
+      return { changed: false, reason: 'some invoices not yet shipped' };
+    }
+  }
   o.status = '출고완료';
   o.completedAt = new Date().toISOString();
   // 연결 공정도 출고처리
@@ -17769,7 +17931,7 @@ function autoCompleteOrderShipment(o){
   if(typeof refreshInvStagesForOrder === 'function'){
     refreshInvStagesForOrder(o.id);
   }
-  return { changed: true, reason: 'all invoices paid in full' };
+  return { changed: true, reason: 'all invoices shipped' };
 }
 
 // 거래명세서 입금 이력 변경 후 호출 — 자동 출고완료 트리거 체크
