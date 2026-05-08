@@ -3617,7 +3617,7 @@ function doPrint(){
 // ════════════════════════════════
 // 거래명세서 이력 탭
 // ════════════════════════════════
-var invFilter = {month:'', vendor:'', status:'전체', subTab:'inprogress'};
+var invFilter = {month:'', vendor:'', status:'전체', subTab:'inprogress', sort:'default'};
 
 function setInvStatus(s){ invFilter.status=s; renderInvoiceHistory(); }
 function setInvVendor(v){ invFilter.vendor=v; renderInvoiceHistory(); }
@@ -3628,43 +3628,140 @@ function setInvSubTab(t){
   invFilter.status='전체';
   renderInvoiceHistory();
 }
-function resetInvFilter(){ invFilter={month:'',vendor:'',status:'전체',subTab:invFilter.subTab||'inprogress'}; renderInvoiceHistory(); }
+function resetInvFilter(){ invFilter={month:'',vendor:'',status:'전체',subTab:invFilter.subTab||'inprogress',sort:'default'}; renderInvoiceHistory(); }
+
+// 정렬 토글 — 컬럼 헤더 클릭 시
+// field: 'date' (발행일) | 'vendor' (고객사) | 'status' (상태)
+// 3-step 토글 패턴:
+//   1) 다른 컬럼/초기 → 그 컬럼 기본 방향
+//   2) 같은 컬럼 기본 → 반대 방향
+//   3) 같은 컬럼 반대 → default(발행일 desc 자동)
+// 기본 방향: date=desc(최신순), vendor=asc(가나다), status=custom(미수→입금완료 위급도 순)
+function invToggleSort(field){
+  const defaultDir = { date:'desc', vendor:'asc', status:'asc' };
+  const cur = invFilter.sort || 'default';
+  const def = defaultDir[field];
+  const primaryKey = field+'_'+def;          // 그 컬럼 기본 방향
+  const oppositeKey = field+'_'+(def==='desc'?'asc':'desc'); // 그 컬럼 반대 방향
+
+  if(cur === primaryKey) invFilter.sort = oppositeKey;
+  else if(cur === oppositeKey) invFilter.sort = 'default';
+  else invFilter.sort = primaryKey;
+  renderInvoiceHistory();
+}
+
+// 정렬 표시기 (헤더에 표시할 화살표/기호)
+function _invSortIndicator(field){
+  const cur = invFilter.sort || 'default';
+  if(cur === field+'_asc') return ' <span style="color:var(--gold-lt);font-weight:700">▲</span>';
+  if(cur === field+'_desc') return ' <span style="color:var(--gold-lt);font-weight:700">▼</span>';
+  return ' <span style="color:var(--t3);opacity:.4;font-size:10px">⇅</span>';
+}
+
+// 상태별 위급도 순서 (작은 값일수록 위급)
+const _INV_STATUS_PRIORITY = {
+  '미수':       1,
+  '발행완료':   2,
+  '청구완료':   3,
+  '입금완료':   4,
+  '발송':       5,
+  '작성중':     6,
+};
+function _invStatusOrder(s){ return _INV_STATUS_PRIORITY[s] || 99; }
 
 function renderInvoiceHistory(){
   slLoad();
+  // 4-A: _invStage 자동 마이그레이션 (1회 — 한 번 처리하면 그 후 새 명세서는 저장 시점에 분류됨)
+  if(!window._invStageMigrated){
+    if(typeof window.migrateInvoiceStages === 'function'){
+      // 조용히 — 이미 분류된 명세서가 있으면 토스트 안 띄우고 진행
+      let migrated = 0;
+      invoiceHistory.forEach(v => {
+        if(v._isConsolidated) return;
+        if(typeof v._invStage === 'string' && v._invStage) return;
+        v._invStage = inferInvStage(v);
+        migrated++;
+      });
+      if(migrated > 0 && typeof save==='function') save();
+    }
+    window._invStageMigrated = true;
+  }
   var c=document.getElementById('content');
   var st=invFilter.status;
-  // 서브탭 (진행중 / 입금완료 / 합본 / 전체)
-  // 입금완료/합본 명세서를 별도 탭으로 분리
-  var subTab = invFilter.subTab || 'inprogress';
+  // 서브탭 (작성중/선금 → 청구 → 완료 + 합본 + 모든 명세서)
+  var subTab = invFilter.subTab || 'billing';
+  // 옛 subTab 값 마이그레이션 (localStorage 호환)
+  if(subTab === 'inprogress') subTab = 'billing';
+  if(subTab === 'paid') subTab = 'done';
+  invFilter.subTab = subTab;
   var list=invoiceHistory.filter(function(v){
     if(invFilter.month && v.issuedAt.indexOf(invFilter.month)!==0) return false;
     if(invFilter.vendor && v.vendor.toLowerCase().indexOf(invFilter.vendor.toLowerCase())<0) return false;
     if(st && st!=='전체' && v.status!==st) return false;
-    // 서브탭 필터
+    // 서브탭 필터 (단계 기반)
     if(subTab==='consolidated'){
       // 합본 탭: 합본 청구서만
       if(!v._isConsolidated) return false;
-    } else if(subTab==='inprogress'){
-      // 진행중 탭: 합본 자체 제외 + 입금완료 제외 + 합본에 묶인 일반 명세서 제외 (이미 합본으로 처리)
+    } else if(subTab==='draft'){
+      // 작성중/선금 탭: _invStage='draft' (출고 전)
       if(v._isConsolidated) return false;
-      if(v.status==='입금완료') return false;
       if(v._consolidatedInvoiceId) return false;
-    } else if(subTab==='paid'){
-      // 입금완료 탭: 합본 자체 제외 + 입금완료만
+      if(v._invStage !== 'draft') return false;
+    } else if(subTab==='billing'){
+      // 청구 탭: _invStage='billing' (출고완료, 합본 대상)
       if(v._isConsolidated) return false;
-      if(v.status!=='입금완료') return false;
+      if(v._consolidatedInvoiceId) return false;
+      if(v._invStage !== 'billing') return false;
+    } else if(subTab==='done'){
+      // 완료 탭: _invStage='done' (입금완료)
+      if(v._isConsolidated) return false;
+      if(v._invStage !== 'done') return false;
     } else if(subTab==='all'){
-      // 전체 탭: 합본 자체 제외 (합본 탭에서 보임)
+      // 모든 명세서 탭: 합본 자체 제외
       if(v._isConsolidated) return false;
     }
     return true;
   });
-  // 발행일 최신순 정렬 (같은 날짜는 id 큰 순서 = 더 나중에 작성된 것이 위로)
+  // 정렬 — 사용자가 헤더 클릭으로 정한 sort에 따라
+  // default: 발행일 최신순 (같은 날짜는 id 큰 순서)
+  const sortKey = invFilter.sort || 'default';
   list.sort(function(a,b){
-    var da=a.issuedAt||'', db=b.issuedAt||'';
-    if(da!==db) return db.localeCompare(da); // 발행일 내림차순
-    // 같은 발행일이면 id(생성 순서, Date.now() 기반) 내림차순
+    if(sortKey === 'date_asc'){
+      const da=a.issuedAt||'', db=b.issuedAt||'';
+      if(da!==db) return da.localeCompare(db);
+      return (a.id||0) - (b.id||0);
+    }
+    if(sortKey === 'date_desc'){
+      const da=a.issuedAt||'', db=b.issuedAt||'';
+      if(da!==db) return db.localeCompare(da);
+      return (b.id||0) - (a.id||0);
+    }
+    if(sortKey === 'vendor_asc'){
+      const va=(a.vendor||'').trim(), vb=(b.vendor||'').trim();
+      if(va!==vb) return va.localeCompare(vb,'ko');
+      // 같은 고객사면 발행일 내림차순(최신 위)
+      return (b.issuedAt||'').localeCompare(a.issuedAt||'');
+    }
+    if(sortKey === 'vendor_desc'){
+      const va=(a.vendor||'').trim(), vb=(b.vendor||'').trim();
+      if(va!==vb) return vb.localeCompare(va,'ko');
+      return (b.issuedAt||'').localeCompare(a.issuedAt||'');
+    }
+    if(sortKey === 'status_asc'){
+      // 위급도 작은 게 위로 (미수→발행완료→청구완료→입금완료→발송→작성중)
+      const sa = _invStatusOrder(a.status), sb = _invStatusOrder(b.status);
+      if(sa!==sb) return sa - sb;
+      return (b.issuedAt||'').localeCompare(a.issuedAt||'');
+    }
+    if(sortKey === 'status_desc'){
+      // 위급도 큰 게 위로 (작성중→발송→입금완료→...→미수)
+      const sa = _invStatusOrder(a.status), sb = _invStatusOrder(b.status);
+      if(sa!==sb) return sb - sa;
+      return (b.issuedAt||'').localeCompare(a.issuedAt||'');
+    }
+    // default: 발행일 최신순 (같은 날짜는 id 큰 순서 = 더 나중에 작성된 것이 위로)
+    const da=a.issuedAt||'', db=b.issuedAt||'';
+    if(da!==db) return db.localeCompare(da);
     return (b.id||0) - (a.id||0);
   });
   var tSup=list.reduce(function(s,v){return s+v.supplyAmt;},0);
@@ -3674,26 +3771,47 @@ function renderInvoiceHistory(){
   var months=[...new Set(invoiceHistory.map(function(v){return v.issuedAt.slice(0,7);}))].sort().reverse();
   var vendors=[...new Set(invoiceHistory.map(function(v){return v.vendor;}))].filter(Boolean).sort();
   // 서브탭별 카운트 (전체 invoiceHistory 기준 — 필터 무관)
-  // 진행중: 합본 제외 + 입금완료 제외 + 합본에 묶인 일반 명세서 제외
-  var inprogressCount = invoiceHistory.filter(function(v){
-    return !v._isConsolidated && v.status!=='입금완료' && !v._consolidatedInvoiceId;
+  // 작성중/선금: 출고 전 (draft) + 합본에 안 묶임
+  var draftCount = invoiceHistory.filter(function(v){
+    return !v._isConsolidated && !v._consolidatedInvoiceId && v._invStage === 'draft';
   }).length;
-  var paidCount = invoiceHistory.filter(function(v){
-    return !v._isConsolidated && v.status==='입금완료';
+  // 청구: 출고완료 후 (billing) + 합본에 안 묶임
+  var billingCount = invoiceHistory.filter(function(v){
+    return !v._isConsolidated && !v._consolidatedInvoiceId && v._invStage === 'billing';
+  }).length;
+  // 완료: 입금완료 (done) — 합본에 묶인 것도 포함 (합본 입금 100% 시 함께 done 됨)
+  var doneCount = invoiceHistory.filter(function(v){
+    return !v._isConsolidated && v._invStage === 'done';
   }).length;
   var consolidatedCount = invoiceHistory.filter(function(v){return v._isConsolidated;}).length;
   var allCount = invoiceHistory.filter(function(v){return !v._isConsolidated;}).length;
   // 진행중 탭에선 입금완료 칩 제외, 입금완료 탭에선 입금완료 칩만
-  var statuses = subTab==='paid' ? ['전체','입금완료'] : ['전체','발행완료','청구완료','미수'];
+  var statuses = subTab==='done' ? ['전체','입금완료'] : ['전체','발행완료','청구완료','미수'];
 
   var h='';
-  // 서브탭 (진행중 / 입금완료 / 합본 / 전체)
-  h+='<div style="display:flex;gap:6px;padding:6px;background:var(--s2);border-radius:8px;border:1px solid var(--bdr);margin-bottom:10px;width:max-content">';
-  h+='<button onclick="setInvSubTab(\'inprogress\')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='inprogress'?'700':'500')+';background:'+(subTab==='inprogress'?'var(--s1)':'transparent')+';color:'+(subTab==='inprogress'?'var(--gold-lt)':'var(--t3)')+';'+(subTab==='inprogress'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">📝 진행중 <span style="font-size:10px;opacity:.7">'+inprogressCount+'</span></button>';
-  h+='<button onclick="setInvSubTab(\'paid\')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='paid'?'700':'500')+';background:'+(subTab==='paid'?'var(--s1)':'transparent')+';color:'+(subTab==='paid'?'#7A4DB5':'var(--t3)')+';'+(subTab==='paid'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">💰 입금완료 <span style="font-size:10px;opacity:.7">'+paidCount+'</span></button>';
-  h+='<button onclick="setInvSubTab(\'consolidated\')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='consolidated'?'700':'500')+';background:'+(subTab==='consolidated'?'var(--s1)':'transparent')+';color:'+(subTab==='consolidated'?'#7A4DB5':'var(--t3)')+';'+(subTab==='consolidated'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">📑 합본 <span style="font-size:10px;opacity:.7">'+consolidatedCount+'</span></button>';
-  h+='<button onclick="setInvSubTab(\'all\')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='all'?'700':'500')+';background:'+(subTab==='all'?'var(--s1)':'transparent')+';color:'+(subTab==='all'?'var(--t1)':'var(--t3)')+';'+(subTab==='all'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'" title="합본 청구서를 제외한 모든 개별 거래명세서 (진행중/입금완료 모두 포함)">📋 모든 명세서 <span style="font-size:10px;opacity:.7">'+allCount+'</span></button>';
+  // 서브탭 (작성중/선금 → 청구 → 완료 + 합본 + 모든 명세서)
+  h+='<div style="display:flex;gap:6px;padding:6px;background:var(--s2);border-radius:8px;border:1px solid var(--bdr);margin-bottom:10px;width:max-content;flex-wrap:wrap">';
+  // 작성중/선금 — 회색 (출고 전)
+  h+='<button onclick="setInvSubTab(\'draft\')" title="발주 출고 전 명세서 — 단발 선금 청구 가능" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='draft'?'700':'500')+';background:'+(subTab==='draft'?'var(--s1)':'transparent')+';color:'+(subTab==='draft'?'var(--t1)':'var(--t3)')+';'+(subTab==='draft'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">📋 작성중/선금 <span style="font-size:10px;opacity:.7">'+draftCount+'</span></button>';
+  // 청구 — 파랑 (월말 합본 대상)
+  h+='<button onclick="setInvSubTab(\'billing\')" title="출고완료 후 청구 단계 — 월말 합본 청구 대상" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='billing'?'700':'500')+';background:'+(subTab==='billing'?'var(--s1)':'transparent')+';color:'+(subTab==='billing'?'var(--blu)':'var(--t3)')+';'+(subTab==='billing'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">🧾 청구 <span style="font-size:10px;opacity:.7">'+billingCount+'</span></button>';
+  // 완료 — 초록 (입금까지 끝남)
+  h+='<button onclick="setInvSubTab(\'done\')" title="입금까지 끝난 보관용 명세서" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='done'?'700':'500')+';background:'+(subTab==='done'?'var(--s1)':'transparent')+';color:'+(subTab==='done'?'var(--grn)':'var(--t3)')+';'+(subTab==='done'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">✓ 완료 <span style="font-size:10px;opacity:.7">'+doneCount+'</span></button>';
+  // 구분선
+  h+='<div style="width:1px;background:var(--bdr);margin:0 4px"></div>';
+  // 합본 — 보라
+  h+='<button onclick="setInvSubTab(\'consolidated\')" title="월별 합본 청구서" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='consolidated'?'700':'500')+';background:'+(subTab==='consolidated'?'var(--s1)':'transparent')+';color:'+(subTab==='consolidated'?'#7A4DB5':'var(--t3)')+';'+(subTab==='consolidated'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">📑 합본 <span style="font-size:10px;opacity:.7">'+consolidatedCount+'</span></button>';
+  // 모든 명세서
+  h+='<button onclick="setInvSubTab(\'all\')" title="합본 청구서를 제외한 모든 개별 거래명세서" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='all'?'700':'500')+';background:'+(subTab==='all'?'var(--s1)':'transparent')+';color:'+(subTab==='all'?'var(--t1)':'var(--t3)')+';'+(subTab==='all'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">📋 모든 명세서 <span style="font-size:10px;opacity:.7">'+allCount+'</span></button>';
   h+='</div>';
+  // 탭별 컨텍스트 안내 박스
+  if(subTab==='draft'){
+    h+='<div style="margin-bottom:10px;padding:8px 14px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;font-size:11px;color:var(--t2);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">📋</span><span>이 탭의 명세서들은 <b>발주가 아직 출고 전</b>입니다. <b style="color:#7A4DB5">원자재 선금</b>은 여기서 청구하세요. 발주가 출고완료되면 자동으로 <b style="color:var(--blu)">청구</b> 탭으로 이동합니다.</span></div>';
+  } else if(subTab==='billing'){
+    h+='<div style="margin-bottom:10px;padding:8px 14px;background:rgba(26,109,181,.06);border:1px solid rgba(26,109,181,.2);border-radius:6px;font-size:11px;color:var(--blu);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">🧾</span><span>출고완료 명세서들 — <b>월말 합본 청구 대상</b>입니다. 우측 상단 <b>📑 합본 청구서 작성</b>으로 같은 고객사의 명세서를 묶어 한 장으로 발행하세요.</span></div>';
+  } else if(subTab==='done'){
+    h+='<div style="margin-bottom:10px;padding:8px 14px;background:rgba(46,139,44,.06);border:1px solid rgba(46,139,44,.2);border-radius:6px;font-size:11px;color:var(--grn);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">✓</span><span>입금까지 끝난 보관용 명세서들입니다. 회계 안정성을 위해 편집은 권장하지 않습니다.</span></div>';
+  }
   // KPI — 선금이 있으면 5칸, 없으면 4칸
   var kpiCols = tPrepaid > 0 ? 5 : 4;
   h+='<div style="display:grid;grid-template-columns:repeat('+kpiCols+',1fr);gap:10px">';
@@ -3741,14 +3859,14 @@ function renderInvoiceHistory(){
   if(list.length){
     h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">';
     h+='<thead><tr style="background:var(--s2);border-bottom:2px solid var(--bdr)">';
-    h+='<th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap">발행일</th>';
-    h+='<th style="padding:8px 10px;text-align:left;font-weight:600">고객사</th>';
+    h+='<th onclick="invToggleSort(\'date\')" style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" title="클릭하여 발행일 정렬">발행일'+_invSortIndicator('date')+'</th>';
+    h+='<th onclick="invToggleSort(\'vendor\')" style="padding:8px 10px;text-align:left;font-weight:600;cursor:pointer;user-select:none" title="클릭하여 고객사 정렬">고객사'+_invSortIndicator('vendor')+'</th>';
     h+='<th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap">발주번호</th>';
     h+='<th style="padding:8px 10px;text-align:left;font-weight:600">품목내역</th>';
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">공급가액</th>';
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">부가세</th>';
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">합계금액</th>';
-    h+='<th style="padding:8px 10px;text-align:center;font-weight:600">상태</th>';
+    h+='<th onclick="invToggleSort(\'status\')" style="padding:8px 10px;text-align:center;font-weight:600;cursor:pointer;user-select:none" title="클릭하여 상태 정렬 (위급도 순: 미수→발행완료→청구완료→입금완료→발송→작성중)">상태'+_invSortIndicator('status')+'</th>';
     h+='<th style="padding:8px 4px;width:64px"></th>';
     h+='</tr></thead><tbody>';
     list.forEach(function(v){
@@ -3757,8 +3875,19 @@ function renderInvoiceHistory(){
       var isCons = !!v._isConsolidated;
       var clickFn = isCons ? 'openConsDetail('+v.id+')' : 'openInvDetail('+v.id+')';
       var rowBg = isCons ? 'background:rgba(122,77,181,.05);' : '';
+      // 단계 칩 (4-B): "모든 명세서" 탭에서만 표시 (다른 탭은 단계로 필터됨)
+      var stageChip = '';
+      if(subTab === 'all' && !isCons && v._invStage){
+        var stageLabel = { 'draft':'작성중', 'billing':'청구', 'done':'완료' }[v._invStage];
+        var stageColor = { 'draft':'var(--t3)', 'billing':'var(--blu)', 'done':'var(--grn)' }[v._invStage];
+        var stageBg = { 'draft':'var(--s2)', 'billing':'rgba(26,109,181,.10)', 'done':'rgba(46,139,44,.08)' }[v._invStage];
+        var stageBd = { 'draft':'var(--bdr)', 'billing':'rgba(26,109,181,.3)', 'done':'rgba(46,139,44,.25)' }[v._invStage];
+        if(stageLabel){
+          stageChip = '<span style="display:inline-block;margin-top:3px;padding:1px 6px;font-size:9.5px;font-weight:600;background:'+stageBg+';color:'+stageColor+';border:1px solid '+stageBd+';border-radius:8px">'+stageLabel+'</span>';
+        }
+      }
       h+='<tr style="'+rowBg+'border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background=\'var(--s2)\'" onmouseout="this.style.background=\''+(isCons?'rgba(122,77,181,.05)':'')+'\'">';
-      h+='<td onclick="'+clickFn+'" style="padding:8px 10px;white-space:nowrap;color:var(--t3)">'+v.issuedAt+'</td>';
+      h+='<td onclick="'+clickFn+'" style="padding:8px 10px;white-space:nowrap;color:var(--t3)"><div>'+v.issuedAt+'</div>'+stageChip+'</td>';
       h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-weight:600">'+v.vendor+'</td>';
       // 발주번호 컬럼 분기:
       // - 합본: "📑 합본 (YYYY-MM)"
@@ -4075,8 +4204,17 @@ function updateInvStatus(id,status){
     return;
   }
   v.status=status;
+  // 4-A: status 변경에 따라 _invStage도 자동 갱신 (단계만 갱신, 동기화는 아래서 1회)
+  if(!v._isConsolidated && typeof inferInvStage === 'function'){
+    v._invStage = inferInvStage(v);
+  }
   save();
-  if(v._notionId&&notionCfg.workerUrl) nUpdate(v._notionId,{'상태':{'select':{'name':status}}});
+  // 노션 동기화 — 전체 필드 1회 (status + 청구단계 + 모든 필드)
+  if(v._notionId && notionCfg.workerUrl && typeof syncInvoiceToNotion === 'function'){
+    syncInvoiceToNotion(v, true).catch(e=>console.warn('명세서 status 동기화 실패:',e));
+  } else if(v._notionId && notionCfg.workerUrl){
+    nUpdate(v._notionId,{'상태':{'select':{'name':status}}});
+  }
   renderInvoiceHistory();
   showToast('✓ '+v.vendor+' → '+status,'var(--grn)');
 }
@@ -5277,6 +5415,12 @@ function mapNotionInvoice(row){
     chargeAmount:           np.number(p['청구액'])||0,
     consolidationMonth:     np.text(p['청구월']),
     _consolidatedInvoiceId: np.text(p['합본ID']) || undefined, // 일반 명세서가 합본에 묶일 때 역참조
+    // 4-A: 청구단계 (작성중/청구/완료)
+    _invStage: (function(){
+      const stageName = np.select(p['청구단계']);
+      const stageMap = { '작성중':'draft', '청구':'billing', '완료':'done' };
+      return stageMap[stageName] || null; // null이면 inferInvStage가 채움
+    })(),
   };
 }
 // 견적서 매핑 (📋 견적 DB)
@@ -6419,6 +6563,12 @@ async function syncInvoiceToNotion(inv, update){
     "청구월":{"rich_text":[{"text":{"content":(inv.consolidationMonth||'').slice(0,20)}}]},
     "합본ID":{"rich_text":[{"text":{"content":(inv._consolidatedInvoiceId||'').toString().slice(0,100)}}]},
   };
+  // 4-A: 청구단계 (작성중/청구/완료) — 합본은 stage 없음
+  if(!inv._isConsolidated && inv._invStage){
+    const stageMap = { 'draft':'작성중', 'billing':'청구', 'done':'완료' };
+    const stageName = stageMap[inv._invStage];
+    if(stageName) p["청구단계"] = { "select": { "name": stageName } };
+  }
   if(inv.issuedAt) p["발행일자"]={"date":{"start":inv.issuedAt}};
   if(inv.shipDate) p["출고일자"]={"date":{"start":inv.shipDate}};
   if(inv.status)   p["상태"]={"select":{"name":inv.status}};
@@ -12826,6 +12976,9 @@ function completeOrd(ordId){
       const stockResult=applyOrderShipToStock(o);
       // 발주 이미지 → 제품DB 자동 동기화 (품번 매칭 + 기존 사진 없는 경우만)
       const imgResult=syncOrderImagesToProducts(o);
+      // 4-A: 거래명세서 단계 자동 이동 (draft → billing)
+      const stagedCount = (typeof refreshInvStagesForOrder==='function')
+        ? refreshInvStagesForOrder(ordId) : 0;
       save();
       // Notion 동기화 — 상태를 '출고완료'로
       debouncedSync('order', o, true);
@@ -16714,6 +16867,140 @@ function getInvoicePrepaid(inv){
 }
 
 // ════════════════════════════════════════════════════════════════
+// 📋 거래명세서 워크플로우 단계 (4-A 단계)
+// _invStage: 'draft' | 'billing' | 'done'
+//
+//   draft   = 작성중/선금 — 발주 출고 전, 단발 선금 청구 가능
+//   billing = 청구 거래명세서 — 출고완료, 월말 합본 대상
+//   done    = 완료 명세서 — 입금완료, 보관용
+//
+// 자동 이동 규칙:
+//   draft → billing : 발주서 출고완료 시점 (autoCompleteOrderShipment)
+//   billing → done  : 명세서 status가 '입금완료'로 전환되는 시점
+//                     (단일 입금 100% / 합본 입금 100% 두 경로)
+//
+// 합본 청구서 자체는 _invStage 사용 안 함 (별도 합본 탭에서 표시)
+// ════════════════════════════════════════════════════════════════
+
+// 명세서의 _invStage를 자동 추론 (마이그레이션용 + 신규 명세서 기본값)
+function inferInvStage(v){
+  if(!v) return 'draft';
+  if(v._isConsolidated) return null; // 합본은 stage 없음
+  // status가 '입금완료'면 무조건 done
+  if(v.status === '입금완료') return 'done';
+  // 발주가 출고완료면 billing
+  if(v.ordId){
+    const o = orders.find(x => String(x.id)===String(v.ordId));
+    if(o && o.status === '출고완료') return 'billing';
+  }
+  // 샘플 명세서는 발주 없음 → status 기준
+  if(v._fromSample){
+    return (v.status === '발행완료' || v.status === '청구완료' || v.status === '미수')
+      ? 'billing' : 'draft';
+  }
+  // 그 외는 draft (작성중/선금 단계)
+  return 'draft';
+}
+
+// 단일 명세서의 _invStage 갱신 (status 변경 또는 발주 출고완료 후 호출)
+// 다른 곳에서 명세서를 편집한 후 호출하면 자동으로 적절한 단계로 이동
+function refreshInvStage(v){
+  if(!v) return;
+  if(v._isConsolidated){ v._invStage = null; return; } // 합본은 stage 없음
+  const newStage = inferInvStage(v);
+  if(v._invStage !== newStage){
+    v._invStage = newStage;
+    // 노션 동기화
+    if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+      syncInvoiceToNotion(v, true).catch(e=>console.warn('명세서 단계 동기화 실패:',e));
+    }
+  }
+}
+
+// 발주의 모든 명세서 단계를 일괄 갱신 (출고완료/취소 등 발주 status 변경 후 호출)
+function refreshInvStagesForOrder(orderId){
+  if(!orderId) return 0;
+  let n = 0;
+  invoiceHistory.forEach(v => {
+    if(v._isConsolidated) return;
+    if(String(v.ordId)!==String(orderId)) return;
+    const newStage = inferInvStage(v);
+    if(v._invStage !== newStage){
+      v._invStage = newStage;
+      n++;
+      if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+        syncInvoiceToNotion(v, true).catch(e=>console.warn('명세서 단계 동기화 실패:',e));
+      }
+    }
+  });
+  if(n > 0 && typeof save==='function') save();
+  return n;
+}
+
+// 일괄 마이그레이션 — 옛 명세서들 _invStage 채우기 (load 후 1회 또는 콘솔 호출)
+window.migrateInvoiceStages = function(opts){
+  opts = opts || {};
+  const syncToNotion = !!opts.syncNotion;
+  let migrated = 0, skipped = 0;
+  const toSync = [];
+  invoiceHistory.forEach(v => {
+    if(v._isConsolidated){ skipped++; return; }
+    if(typeof v._invStage === 'string' && v._invStage){ skipped++; return; }
+    v._invStage = inferInvStage(v);
+    migrated++;
+    if(v._notionId) toSync.push(v);
+  });
+  if(migrated > 0 && typeof save==='function') save();
+  console.log(`✓ 거래명세서 단계 마이그레이션: ${migrated}건 처리됨 (${skipped}건 스킵)`);
+  if(migrated > 0 && typeof showToast==='function') showToast(`✓ 명세서 ${migrated}건 단계 자동 분류됨`,'var(--grn)', 2500);
+  // 노션 일괄 동기화 옵션 — opts.syncNotion=true 시 실행
+  if(syncToNotion && toSync.length){
+    if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && typeof syncInvoiceToNotion==='function'){
+      console.log(`📤 Notion 동기화 시작 (${toSync.length}건)...`);
+      let done = 0, fail = 0;
+      const promises = toSync.map(v =>
+        syncInvoiceToNotion(v, true).then(()=>done++).catch(()=>fail++)
+      );
+      Promise.all(promises).then(()=>{
+        console.log(`✓ Notion 동기화 완료: ${done}건 성공, ${fail}건 실패`);
+        if(typeof showToast==='function') showToast(`✓ Notion 동기화: ${done}/${toSync.length}건`,'var(--grn)', 3000);
+      });
+    } else {
+      console.warn('⚠ Notion 설정이 없어 동기화 건너뜀');
+    }
+  }
+  return { migrated, skipped, notionSyncQueued: syncToNotion ? toSync.length : 0 };
+};
+
+// 모든 명세서를 노션에 일괄 강제 동기화 (콘솔에서 호출)
+// 사용: window.forceNotionSyncAllInvoices()
+window.forceNotionSyncAllInvoices = function(){
+  if(typeof notionCfg==='undefined' || !notionCfg.workerUrl || !notionCfg.invDb){
+    console.warn('⚠ Notion 설정이 없습니다');
+    return;
+  }
+  if(typeof syncInvoiceToNotion !== 'function'){
+    console.warn('⚠ syncInvoiceToNotion 함수를 찾을 수 없습니다');
+    return;
+  }
+  const targets = invoiceHistory.filter(v => v._notionId);
+  if(!targets.length){
+    console.log('동기화할 명세서가 없습니다 (모두 _notionId 없음)');
+    return;
+  }
+  console.log(`📤 Notion 일괄 동기화 시작 (${targets.length}건)...`);
+  let done = 0, fail = 0;
+  const promises = targets.map(v =>
+    syncInvoiceToNotion(v, true).then(()=>done++).catch(e=>{ fail++; console.warn('실패:', v.vendor, v.id, e); })
+  );
+  Promise.all(promises).then(()=>{
+    console.log(`✓ Notion 동기화 완료: ${done}건 성공, ${fail}건 실패`);
+    if(typeof showToast==='function') showToast(`✓ Notion 동기화: ${done}/${targets.length}건`,'var(--grn)', 3000);
+  });
+  return { total: targets.length };
+};
+
+// ════════════════════════════════════════════════════════════════
 // 📑 월별 합본 청구서 (2-A 단계)
 // 한 고객사의 한 달 거래명세서들을 묶어 하나의 청구서로 발행
 // 받은 선금은 자동으로 차감되어 실제 청구액 계산
@@ -16886,6 +17173,8 @@ function processConsolidationPayment(consId){
         // paymentRatio도 100으로 강제 (UI에서 일관되게 보이도록)
         // 단, payments 배열은 건드리지 않음 (선금 등 보존)
         inv.paymentRatio = Math.max(inv.paymentRatio||0, 100);
+        // 4-A: 단계 자동 이동 → done
+        inv._invStage = 'done';
         // 노션 동기화
         if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && inv._notionId && typeof syncInvoiceToNotion==='function'){
           syncInvoiceToNotion(inv, true).catch(e=>console.warn('합본 연쇄 - 명세서 갱신 실패:',e));
@@ -17475,6 +17764,10 @@ function autoCompleteOrderShipment(o){
   }
   if(o._notionId && typeof debouncedSync === 'function'){
     debouncedSync('order', o, true);
+  }
+  // 4-A: 거래명세서 단계 자동 이동 (draft → billing)
+  if(typeof refreshInvStagesForOrder === 'function'){
+    refreshInvStagesForOrder(o.id);
   }
   return { changed: true, reason: 'all invoices paid in full' };
 }
@@ -18160,10 +18453,15 @@ function saveStandaloneInvoice(){
 
     invoiceHistory.unshift(invRec);
 
+    // 4-A: 명세서 단계 자동 분류 (draft/billing/done)
+    invRec._invStage = inferInvStage(invRec);
+
     // 📦 발주 기반 + 입금 100% 도달 → 발주서 자동 출고완료 트리거
     let autoCompleteResult = { autoCompleted: false, order: null };
     if(isFromOrder && ratio >= 100){
       autoCompleteResult = checkAutoCompleteShipment(invRec);
+      // 100% 입금이면 그 명세서는 done으로
+      invRec._invStage = 'done';
     }
 
     save();
@@ -18258,6 +18556,9 @@ function saveStandaloneInvoice(){
     if(!wasStandalone && ratio >= 100){
       autoCompleteResult = checkAutoCompleteShipment(target);
     }
+
+    // 4-A: 단계 자동 갱신 (status/입금률 변경 반영)
+    if(typeof refreshInvStage === 'function') refreshInvStage(target);
 
     save();
     if(notionCfg.workerUrl && notionCfg.invDb){
