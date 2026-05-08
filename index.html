@@ -3617,18 +3617,34 @@ function doPrint(){
 // ════════════════════════════════
 // 거래명세서 이력 탭
 // ════════════════════════════════
-var invFilter = {month:'', vendor:'', status:'전체', subTab:'inprogress', sort:'default'};
+// 초기값: localStorage에서 마지막 서브탭 복원, 없으면 'draft' (작성중/선금)
+var invFilter = (function(){
+  let subTab = 'draft'; // 기본값: 작성중/선금 (사용자 첫 진입 시 가장 자주 보는 탭)
+  try{
+    const stored = localStorage.getItem('ek3_invSubTab');
+    const valid = ['draft','billing','done','consolidated','all'];
+    // 옛 값 매핑 (localStorage에 옛 값이 있으면 변환)
+    const oldToNew = {'inprogress':'billing','paid':'done'};
+    if(stored){
+      if(valid.includes(stored)) subTab = stored;
+      else if(oldToNew[stored]) subTab = oldToNew[stored];
+    }
+  }catch(e){}
+  return {month:'', vendor:'', status:'전체', subTab, sort:'default'};
+})();
 
 function setInvStatus(s){ invFilter.status=s; renderInvoiceHistory(); }
 function setInvVendor(v){ invFilter.vendor=v; renderInvoiceHistory(); }
 function setInvMonth(m){ invFilter.month=m; renderInvoiceHistory(); }
 function setInvSubTab(t){
   invFilter.subTab=t;
+  // 새로고침 후에도 마지막 서브탭 유지
+  try{ localStorage.setItem('ek3_invSubTab', t); }catch(e){}
   // 서브탭 변경 시 status 필터 리셋 (충돌 방지)
   invFilter.status='전체';
   renderInvoiceHistory();
 }
-function resetInvFilter(){ invFilter={month:'',vendor:'',status:'전체',subTab:invFilter.subTab||'inprogress',sort:'default'}; renderInvoiceHistory(); }
+function resetInvFilter(){ invFilter={month:'',vendor:'',status:'전체',subTab:invFilter.subTab||'draft',sort:'default'}; renderInvoiceHistory(); }
 
 // 정렬 토글 — 컬럼 헤더 클릭 시
 // field: 'date' (발행일) | 'vendor' (고객사) | 'status' (상태)
@@ -3689,7 +3705,7 @@ function renderInvoiceHistory(){
   var c=document.getElementById('content');
   var st=invFilter.status;
   // 서브탭 (작성중/선금 → 청구 → 완료 + 합본 + 모든 명세서)
-  var subTab = invFilter.subTab || 'billing';
+  var subTab = invFilter.subTab || 'draft';
   // 옛 subTab 값 마이그레이션 (localStorage 호환)
   if(subTab === 'inprogress') subTab = 'billing';
   if(subTab === 'paid') subTab = 'done';
@@ -10393,6 +10409,8 @@ function getTabBtn(tabName){
 
 function switchTab(tab,el){
   currentTab=tab;
+  // 마지막 활성 탭 저장 (새로고침 후 복원용)
+  try{ localStorage.setItem('ek3_lastTab', tab); }catch(e){}
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('on'));
   if(el)el.classList.add('on');
   document.getElementById('subTitle').textContent=TAB_TITLES[tab]||tab;
@@ -14922,7 +14940,18 @@ document.querySelectorAll('.ov').forEach(ov=>{
   ov.addEventListener('click',e=>{if(e.target===ov)ov.classList.remove('open');});
 });
 
-switchTab('dash',document.querySelector('.tab-btn'));
+// 초기 탭 진입 — localStorage에 저장된 마지막 탭 복원 (없으면 대시보드)
+(function initLastTab(){
+  let lastTab = 'dash';
+  try{
+    const stored = localStorage.getItem('ek3_lastTab');
+    // 유효한 탭 이름인지 확인
+    const validTabs = ['dash','sample','order','schedule','as','products','sales','invoices'];
+    if(stored && validTabs.includes(stored)) lastTab = stored;
+  }catch(e){}
+  const tabBtn = document.querySelector('.tab-btn[data-tab="'+lastTab+'"]') || document.querySelector('.tab-btn');
+  switchTab(lastTab, tabBtn);
+})();
 
 // ════════════════════════════════
 // ORDER FILE ATTACHMENT
