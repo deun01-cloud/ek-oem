@@ -19092,16 +19092,48 @@ function openStandaloneInvoiceModal(idOrNull, prefill){
   // 발주 연결 정보
   const linkedOrdId = inv ? (inv.ordId||'') : (prefill?.ordId||'');
   const linkedOrdNo = inv ? (inv.ordNo||'') : (prefill?.ordNo||'');
-  const isFromOrder = !!(prefill?.fromOrder) || !!(inv && (inv.ordId || inv.ordNo) && !inv._isStandalone);
+  const isFromOrder = !!(prefill?.fromOrder) || !!(inv && (inv.ordId || inv.ordNo) && !inv._isStandalone && !inv._fromSample);
+  // 샘플 명세서 여부 (수정 케이스에만 의미 있음)
+  const isFromSample = !!(inv && inv._fromSample);
+  const sampleInvType = isFromSample ? (inv.invType || '샘플 명세서') : '';
+
+  // 헤더 제목 + 유형 칩
+  let titleHtml;
+  if(inv){
+    // 수정 모드 — 실제 명세서 유형에 따라 칩 표시
+    let chip = '';
+    if(isFromSample){
+      // 샘플 명세서
+      let typeShort = '';
+      if(sampleInvType.includes('개발비 청구')) typeShort = '개발비';
+      else if(sampleInvType.includes('거래명세서')) typeShort = '거래명세서';
+      else if(sampleInvType.includes('세금계산서')) typeShort = '세금계산서';
+      chip = `<span style="margin-left:10px;font-size:11px;background:rgba(122,77,181,.12);color:#7A4DB5;border:1px solid rgba(122,77,181,.3);padding:2px 9px;border-radius:10px;font-weight:700;vertical-align:middle">🧪 샘플${typeShort?' · '+typeShort:''}</span>`;
+    } else if(linkedOrdNo){
+      // 발주 기반
+      chip = `<span style="margin-left:10px;font-size:11px;background:rgba(192,144,32,.10);color:var(--gold-lt);border:1px solid rgba(192,144,32,.3);padding:2px 9px;border-radius:10px;font-weight:700;vertical-align:middle;font-family:monospace">📦 발주 ${linkedOrdNo}</span>`;
+    } else {
+      // 자체 발행 (재고 판매)
+      chip = `<span style="margin-left:10px;font-size:11px;background:var(--s2);color:var(--t3);border:1px solid var(--bdr);padding:2px 9px;border-radius:10px;font-weight:600;vertical-align:middle">🛒 자체 발행</span>`;
+    }
+    titleHtml = `🧾 거래명세서 수정${chip}`;
+  } else if(isFromOrder){
+    titleHtml = '🧾 거래명세서 작성 (발주 기반)';
+  } else {
+    titleHtml = '🧾 거래명세서 작성';
+  }
 
   const html = `
-    <h3 class="mh">${inv?'🧾 거래명세서 수정':isFromOrder?'🧾 거래명세서 작성 (발주 기반)':'🧾 거래명세서 작성'}</h3>
+    <h3 class="mh">${titleHtml}</h3>
     <input type="hidden" id="siv_id" value="${id}">
     <input type="hidden" id="siv_ordId" value="${linkedOrdId}">
     <input type="hidden" id="siv_ordNo" value="${(linkedOrdNo||'').replace(/"/g,'&quot;')}">
     <input type="hidden" id="siv_isFromOrder" value="${isFromOrder?'1':'0'}">
 
-    ${isFromOrder ? `
+    ${isFromSample ? `
+    <div style="background:rgba(122,77,181,.06);border:1px solid rgba(122,77,181,.3);border-radius:6px;padding:10px 13px;margin-bottom:14px;font-size:11.5px;color:#7A4DB5">
+      🧪 <b>샘플 명세서</b> (${sampleInvType}) — 샘플의뢰에서 발행된 명세서입니다. ${(inv.smpIds||[]).length>1?`<b>${inv.smpIds.length}개 샘플 묶음</b>.`:''} 더 자세한 편집은 [샘플의뢰 → 명세서 발행]에서 가능합니다.
+    </div>` : isFromOrder ? `
     <div style="background:var(--blu-bg);border:1px solid rgba(60,108,170,.3);border-radius:6px;padding:10px 13px;margin-bottom:14px;font-size:11.5px;color:var(--blu)">
       📦 <b>발주서 ${linkedOrdNo||'(번호없음)'}</b> 기반 거래명세서입니다. 입금 100% 도달 시 <b>발주서가 자동 출고완료 처리</b>됩니다.
     </div>` : `
