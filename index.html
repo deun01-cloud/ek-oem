@@ -903,6 +903,21 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </table></div>
   <button onclick="addInvRow()" style="font-size:11px;color:var(--gold-lt);cursor:pointer;padding:5px 0;background:none;border:none;font-family:inherit;margin-top:4px">＋ 행 추가</button>
   <div id="invTotal" style="margin-top:10px;padding-top:10px;border-top:2px solid var(--t1)"></div>
+  <!-- 원자재 선금 입력 (옵션) — 입력 시 PDF에 표시 + 명세서에 선금 입금 기록 -->
+  <div style="margin-top:10px;padding:10px 14px;background:rgba(122,77,181,.05);border:1px solid rgba(122,77,181,.25);border-radius:6px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="font-size:14px">💰</span>
+      <span style="font-size:11.5px;color:#7A4DB5;font-weight:700">받은 선금 (선택)</span>
+      <span style="font-size:10px;color:var(--t3)">— 선금을 받았다면 입력하세요. PDF에 합계/선금/잔금이 함께 표시됩니다.</span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div style="flex:1;position:relative">
+        <input type="text" id="inv_prepaid" placeholder="0 (비워두면 선금 표시 안 함)" inputmode="numeric" oninput="updateInvPrepaidPreview()" style="width:100%;padding:7px 36px 7px 12px;font-size:13px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;background:var(--s1);box-sizing:border-box">
+        <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--t3);pointer-events:none">원</span>
+      </div>
+      <div id="inv_balancePreview" style="font-size:11px;color:var(--t3);min-width:140px;text-align:right"></div>
+    </div>
+  </div>
   <div class="fg" style="margin-top:10px"><label>비고 / 안내 문구</label><textarea class="fta" id="inv_note" rows="2"></textarea></div>
   <div class="ma">
     <button class="btn bgo" onclick="closeM('mInv')">닫기</button>
@@ -4054,6 +4069,11 @@ function renderInvoiceCopyHtml(v){
   var manager = (o && o.manager) || '';
   var memo = (o && o.memo) || v.memo || '';
 
+  // 선금 정보 (PDF에 표시) — 합계 박스 아래에 별도 행으로
+  var prepaid = (typeof getInvoicePrepaid === 'function') ? getInvoicePrepaid(v) : 0;
+  var totalAmt = +v.total||0;
+  var balance = totalAmt - prepaid; // 잔금 (전체 - 선금)
+
   return '<div style="font-family:\'Noto Sans KR\',sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#222">' +
     '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #8B6914">' +
       '<div><div style="font-size:22pt;font-weight:700;color:#8B6914;letter-spacing:2px">거 래 명 세 서</div>' +
@@ -4077,8 +4097,8 @@ function renderInvoiceCopyHtml(v){
       '<td style="padding:7px 10px;border:1px solid #ddd;font-weight:700">'+(v.shipDate||'')+'</td></tr>' +
       '<tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">발행일자</td>' +
       '<td style="padding:7px 10px;border:1px solid #ddd">'+(v.issuedAt||'')+'</td>' +
-      '<td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600;color:#c03030">합계금액</td>' +
-      '<td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:12pt;color:#c03030">'+(v.total?'₩'+v.total.toLocaleString():'-')+'</td></tr>' +
+      '<td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600;color:#c03030">'+(prepaid>0?'잔금':'합계금액')+'</td>' +
+      '<td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:12pt;color:'+(prepaid>0?'#7A4DB5':'#c03030')+'">'+(v.total?(prepaid>0?'₩'+balance.toLocaleString()+' <span style="font-size:9pt;color:#888;font-weight:400">(전체 ₩'+v.total.toLocaleString()+')</span>':'₩'+v.total.toLocaleString()):'-')+'</td></tr>' +
     '</table>' +
     '<table style="width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:16px">' +
       '<thead><tr style="background:#8B6914;color:#fff">' +
@@ -4093,13 +4113,20 @@ function renderInvoiceCopyHtml(v){
         '<th style="padding:8px 8px;border:1px solid #6B4E0A;width:90px;text-align:right">금액</th>' +
       '</tr></thead><tbody>'+rowsHtml+'</tbody>' +
     '</table>' +
-    '<table style="width:300px;margin-left:auto;border-collapse:collapse;font-size:10pt;margin-bottom:20px">' +
+    '<table style="width:340px;margin-left:auto;border-collapse:collapse;font-size:10pt;margin-bottom:20px">' +
       '<tr><td style="padding:7px 12px;border:1px solid #ddd;background:#f7f3eb;font-weight:600">공급가액</td>' +
       '<td style="padding:7px 12px;border:1px solid #ddd;text-align:right">'+(v.supplyAmt?'₩'+v.supplyAmt.toLocaleString():'-')+'</td></tr>' +
       '<tr><td style="padding:7px 12px;border:1px solid #ddd;background:#f7f3eb;font-weight:600">부가세 (10%)</td>' +
       '<td style="padding:7px 12px;border:1px solid #ddd;text-align:right">'+(v.tax?'₩'+v.tax.toLocaleString():'-')+'</td></tr>' +
       '<tr style="background:#8B6914;color:#fff"><td style="padding:9px 12px;border:1px solid #6B4E0A;font-weight:700;font-size:11pt">합 계</td>' +
       '<td style="padding:9px 12px;border:1px solid #6B4E0A;text-align:right;font-weight:700;font-size:11pt">'+(v.total?'₩'+v.total.toLocaleString():'-')+'</td></tr>' +
+      // 선금이 있으면 추가 행 표시
+      (prepaid > 0 ? (
+        '<tr><td style="padding:7px 12px;border:1px solid #ddd;background:#F5EBFF;color:#7A4DB5;font-weight:600">받은 선금</td>' +
+        '<td style="padding:7px 12px;border:1px solid #ddd;text-align:right;color:#7A4DB5;font-weight:700">−₩'+prepaid.toLocaleString()+'</td></tr>' +
+        '<tr style="background:#7A4DB5;color:#fff"><td style="padding:9px 12px;border:1px solid #5C3994;font-weight:700;font-size:11pt">잔 금</td>' +
+        '<td style="padding:9px 12px;border:1px solid #5C3994;text-align:right;font-weight:700;font-size:11pt">₩'+balance.toLocaleString()+'</td></tr>'
+      ) : '') +
     '</table>' +
     (memo?'<div style="background:#f9f7f2;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:10pt;color:#555"><b>메모:</b> '+memo+'</div>':'') +
     (!o?'<div style="margin-top:14px;padding:8px 12px;background:#FFF8E6;border:1px solid #E8D89A;border-radius:6px;font-size:9.5pt;color:#7A4F00">📌 원본 발주서를 찾을 수 없어 일부 정보(소재/도금/규격/담당자/메모)는 빈 칸일 수 있습니다.</div>':'') +
@@ -4162,24 +4189,34 @@ function openInvDetail(id){
   b+='</div></div>';
   // 입금 요약 (있는 경우만) — 1-B 단계: 선금 별도 강조
   var pmts = v.payments || [];
+  // 잠금 여부 (합본에 묶임 / 입금완료 / 합본 자체)
+  var isPaymentLocked = !!v._consolidatedInvoiceId || v.status === '입금완료' || !!v._isConsolidated;
   if(pmts.length){
     var byType = calcPaymentByType(pmts);
     var totalPaid = byType.total;
     b+='<div style="margin-bottom:14px;padding:12px 14px;background:var(--s2);border-radius:6px;border:1px solid var(--bdr)">';
-    b+='<div style="font-size:11.5px;color:var(--t3);font-weight:600;margin-bottom:8px">💵 입금 이력 ('+pmts.length+'건)</div>';
+    b+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+    b+='<div style="font-size:11.5px;color:var(--t3);font-weight:600">💵 입금 이력 ('+pmts.length+'건)</div>';
+    b+='</div>';
     // 입금 행들
     b+='<div style="display:flex;flex-direction:column;gap:5px;margin-bottom:8px">';
-    pmts.forEach(function(pm){
+    pmts.forEach(function(pm, pmIdx){
       var pmType = pm.type || '잔금';
       var isPrepaid = (pmType==='선금' || pmType==='중도금');
       var typeColor = isPrepaid ? '#7A4DB5' : 'var(--grn)';
       var typeBg = isPrepaid ? 'rgba(122,77,181,.10)' : 'rgba(46,139,44,.08)';
       var typeBd = isPrepaid ? 'rgba(122,77,181,.3)' : 'rgba(46,139,44,.25)';
-      b+='<div style="display:grid;grid-template-columns:90px 80px 1fr auto;gap:8px;align-items:center;font-size:11.5px">';
+      b+='<div style="display:grid;grid-template-columns:90px 80px 1fr auto auto;gap:8px;align-items:center;font-size:11.5px;padding:4px 6px;background:var(--s1);border-radius:4px">';
       b+='<span style="color:var(--t3)">'+(pm.date||'')+'</span>';
       b+='<span style="background:'+typeBg+';color:'+typeColor+';border:1px solid '+typeBd+';padding:1px 7px;border-radius:9px;font-weight:700;font-size:10px;text-align:center">'+pmType+'</span>';
       b+='<span style="color:var(--t3);font-size:10.5px">'+((pm.memo||'').replace(/</g,'&lt;'))+'</span>';
-      b+='<span style="font-weight:700;color:'+typeColor+';text-align:right">₩'+(+pm.amount||0).toLocaleString()+'</span>';
+      b+='<span style="font-weight:700;color:'+typeColor+';text-align:right;min-width:90px">₩'+(+pm.amount||0).toLocaleString()+'</span>';
+      // 삭제 버튼 (잠금 안 됐을 때만)
+      if(!isPaymentLocked){
+        b+='<button onclick="removeInvoicePayment('+v.id+','+pmIdx+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:2px 4px;line-height:1" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">×</button>';
+      } else {
+        b+='<span style="color:var(--t3);font-size:11px">🔒</span>';
+      }
       b+='</div>';
     });
     b+='</div>';
@@ -4198,6 +4235,27 @@ function openInvDetail(id){
     b+='<div style="text-align:right"><div style="color:var(--t2);font-weight:600">입금 합계</div><div style="font-weight:700;font-size:13px">₩'+totalPaid.toLocaleString()+'</div></div>';
     b+='</div>';
     b+='</div>';
+  }
+  // ✨ 빠른 선금 입력 영역 — 잠금 안 됐을 때만
+  if(!isPaymentLocked){
+    b+='<div style="margin-bottom:14px;padding:12px 14px;background:rgba(122,77,181,.05);border:1px solid rgba(122,77,181,.25);border-radius:6px">';
+    b+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
+    b+='<span style="font-size:14px">💰</span>';
+    b+='<span style="font-size:11.5px;color:#7A4DB5;font-weight:700">원자재 선금 입력</span>';
+    b+='<span style="font-size:10px;color:var(--t3)">— 발주 시점에 받은 선금을 기록하세요. 월말 합본 청구서 발행 시 자동 차감됩니다.</span>';
+    b+='</div>';
+    b+='<div style="display:flex;gap:8px;align-items:center">';
+    b+='<div style="flex:1;position:relative">';
+    b+='<input type="text" id="quickPrepay_amount" placeholder="금액 입력 (예: 800000)" inputmode="numeric" onkeydown="if(event.key===\'Enter\'){addQuickPrepayment('+v.id+');}" style="width:100%;padding:8px 36px 8px 12px;font-size:13px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;background:var(--s1);box-sizing:border-box">';
+    b+='<span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--t3);pointer-events:none">원</span>';
+    b+='</div>';
+    b+='<button onclick="addQuickPrepayment('+v.id+')" style="padding:8px 16px;font-size:12px;border:1px solid #7A4DB5;background:#7A4DB5;color:#fff;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">+ 선금 추가</button>';
+    b+='</div>';
+    b+='</div>';
+  } else if(v._consolidatedInvoiceId){
+    b+='<div style="margin-bottom:14px;padding:8px 14px;background:rgba(122,77,181,.06);border:1px solid rgba(122,77,181,.2);border-radius:6px;font-size:11px;color:#7A4DB5">🔒 합본에 묶여있어 선금 입력 불가 — 합본 해제 후 가능</div>';
+  } else if(v.status === '입금완료'){
+    b+='<div style="margin-bottom:14px;padding:8px 14px;background:rgba(46,139,44,.06);border:1px solid rgba(46,139,44,.2);border-radius:6px;font-size:11px;color:var(--grn)">✓ 입금완료된 명세서 — 더 이상 입금을 추가할 수 없습니다</div>';
   }
   // 상태
   b+='<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--s2);border-radius:6px;border:1px solid var(--bdr)">';
@@ -11380,13 +11438,15 @@ function openBulkInvoice(){
   document.getElementById('inv_clientName').textContent=clientName;
   document.getElementById('inv_clientSub').textContent=selected.length+'개 샘플 항목';
   const invNo='INV-'+new Date().getFullYear()+'-'+String(Date.now()).slice(-4);
-  sv('inv_no',invNo);sv('inv_date',todayStr);sv('inv_note','');
-  // Clear and pre-fill rows
+  sv('inv_no',invNo);sv('inv_date',todayStr);sv('inv_note','');sv('inv_prepaid','');
+  // Clear and pre-fill rows: 개발비 + 샘플 단가 (둘 다 항상 표시 — 단가는 모달에서 입력 가능)
   const tbody=document.getElementById('invBody');tbody.innerHTML='';
   selected.forEach(s=>{
-    if(s.devCost)addInvRowData(s.name+' 개발비','1','식',s.devCost);
-    if(s.unitPrice&&s.qty){const qty=parseInt(s.qty)||1;addInvRowData(s.name+' 단가',qty,'개',s.unitPrice);}
-    if(!s.devCost&&!s.unitPrice)addInvRowData(s.name,'1','식',0);
+    // 개발비 행: 항상 추가
+    addInvRowData(s.name+' 개발비','1','식', +s.devCost||0);
+    // 샘플 단가 행: 항상 추가 (수량은 s.qty 또는 1)
+    const sampleQty = parseInt(s.qty) || 1;
+    addInvRowData(s.name+' 샘플 단가', sampleQty, '개', +s.unitPrice||0);
   });
   calcInvTotal();
   // store selected ids for auto itemCode generation
@@ -14691,17 +14751,14 @@ function openInvoice(smpId){
   sv('inv_no', s.invNo||invNo);
   sv('inv_date',todayStr);
   sv('inv_note','');
-  // Pre-fill rows: 개발비 + 단가
+  sv('inv_prepaid','');
+  // Pre-fill rows: 개발비 + 샘플 단가 (둘 다 항상 표시 — 단가는 사용자가 모달에서 입력 가능)
   const tbody=document.getElementById('invBody');tbody.innerHTML='';
-  if(s.devCost){
-    addInvRowData(s.name+' 개발비','1','식',s.devCost);
-  } else {
-    addInvRowData(s.name+' 개발비','1','식',0);
-  }
-  if(s.unitPrice&&s.qty){
-    const qty=parseInt(s.qty)||1;
-    addInvRowData(s.name+' 샘플 단가',qty,'개',s.unitPrice);
-  }
+  // 개발비 행: 항상 추가
+  addInvRowData(s.name+' 개발비','1','식', +s.devCost||0);
+  // 샘플 단가 행: 항상 추가 (수량은 s.qty 또는 1, 단가는 s.unitPrice 또는 0)
+  const sampleQty = parseInt(s.qty) || 1;
+  addInvRowData(s.name+' 샘플 단가', sampleQty, '개', +s.unitPrice||0);
   calcInvTotal();
   openM('mInv');
 }
@@ -14740,7 +14797,33 @@ function calcInvTotal(){
       <div style="display:flex;gap:20px;font-size:12px;color:var(--t2)"><span>부가세 (10%)</span><span>${vat.toLocaleString()} 원</span></div>
       <div style="display:flex;gap:20px;font-size:15px;font-weight:700;color:var(--gold-lt)"><span>합 계</span><span>${total.toLocaleString()} 원</span></div>
     </div>`;
+  // 합계 변경 시 잔금 미리보기도 동시 갱신
+  if(typeof updateInvPrepaidPreview === 'function') updateInvPrepaidPreview();
   return{supply,vat,total};
+}
+
+// 선금 입력 미리보기 — 입력값 변경 시 옆에 "잔금 ₩X" 표시
+function updateInvPrepaidPreview(){
+  const previewEl = document.getElementById('inv_balancePreview');
+  const inputEl = document.getElementById('inv_prepaid');
+  if(!previewEl || !inputEl) return;
+  // 합계 재계산 (calcInvTotal이 innerHTML 갱신했으니 인풋에서 다시 합산)
+  let supply=0;
+  const tbody=document.getElementById('invBody');
+  if(tbody){
+    tbody.querySelectorAll('tr').forEach(tr=>{
+      const ins=tr.querySelectorAll('input[type=number]');
+      if(ins.length>=2) supply += (+(ins[0].value)||0)*(+(ins[1].value)||0);
+    });
+  }
+  const total = supply + Math.round(supply*0.1);
+  const prepaid = +(inputEl.value||'').replace(/[^\d.-]/g,'') || 0;
+  if(prepaid <= 0){
+    previewEl.innerHTML = '<span style="color:var(--t3);font-size:10.5px">잔금 = 합계</span>';
+    return;
+  }
+  const balance = total - prepaid;
+  previewEl.innerHTML = `<span style="font-size:10.5px;color:var(--t3)">잔금 </span><b style="color:#7A4DB5;font-size:13px">₩${balance.toLocaleString()}</b>`;
 }
 
 function printInvoice(){
@@ -14807,6 +14890,10 @@ function printInvoice(){
   //   - invType ('샘플 개발비 청구서' 등)을 메모에 보존
   // 동일 invNo(품번/명세서번호)로 이미 발행한 적 있으면 덮어쓰기 (재발행 케이스)
   // ─────────────────────────────────────────────────
+  // 모달에서 입력된 선금 — invoiceHistory 저장 + PDF 표시 양쪽에서 사용
+  const prepaidInput = +(gv('inv_prepaid')||'').replace(/[^\d.-]/g,'') || 0;
+  const balanceAmount = total - prepaidInput;
+
   if(items.length > 0){
     const firstSmp = samples.find(x=>x.id==smpIds[0]) || {};
     const vendor = (firstSmp.client && firstSmp.client.name) || firstSmp.manager || firstSmp.brand || '샘플';
@@ -14814,6 +14901,35 @@ function printInvoice(){
     const today = invDate || (new Date().toISOString().slice(0,10));
     // 같은 invNo가 이미 invoiceHistory에 있으면 그것을 갱신 (재발행)
     const existingIdx = invoiceHistory.findIndex(v=>v._fromSample && v.invNo===invNo);
+    // (prepaidInput은 if 블록 위에서 정의됨 — PDF에서도 사용)
+    let payments = existingIdx >= 0 ? [...(invoiceHistory[existingIdx].payments||[])] : [];
+    if(prepaidInput > 0){
+      // 재발행 시: 기존 '원자재 선금' 메모를 가진 선금 1건은 새 값으로 교체
+      const existingPrepayIdx = payments.findIndex(pm =>
+        pm.type === '선금' && (pm.memo||'').includes('원자재')
+      );
+      const newPayment = {
+        id: Date.now() + Math.random(),
+        date: today,
+        amount: prepaidInput,
+        type: '선금',
+        memo: '원자재 선금',
+      };
+      if(existingPrepayIdx >= 0){
+        payments[existingPrepayIdx] = newPayment;
+      } else {
+        payments.push(newPayment);
+      }
+    }
+    // 입금 합계 / 입금률 재계산
+    const totalPaid = payments.reduce((s,pm)=>s+(+pm.amount||0), 0);
+    const paymentRatio = total > 0 ? Math.round((totalPaid/total)*1000)/10 : 0;
+    // status 자동 결정 (선금만이면 발행완료 그대로, 100%면 입금완료)
+    let invStatus = '발행완료';
+    if(typeof determineStatusFromPayments === 'function'){
+      invStatus = determineStatusFromPayments(invStatus, payments, total);
+    }
+
     const invRec = {
       id: existingIdx >= 0 ? invoiceHistory[existingIdx].id : Date.now(),
       _fromSample: true,        // 샘플 명세서 마커
@@ -14830,13 +14946,17 @@ function printInvoice(){
       supplyAmt: supply,
       tax: vat,
       total,
-      status: '발행완료',
+      status: invStatus,
       memo: note || invType,    // 메모에 invType 보존
-      payments: existingIdx >= 0 ? (invoiceHistory[existingIdx].payments||[]) : [],
-      totalPaid: existingIdx >= 0 ? (invoiceHistory[existingIdx].totalPaid||0) : 0,
-      paymentRatio: existingIdx >= 0 ? (invoiceHistory[existingIdx].paymentRatio||0) : 0,
+      payments,
+      totalPaid,
+      paymentRatio,
       _notionId: existingIdx >= 0 ? invoiceHistory[existingIdx]._notionId : undefined,
     };
+    // _invStage 자동 결정 (4-A — 샘플 명세서는 발행 시점에 자동 billing)
+    if(typeof inferInvStage === 'function'){
+      invRec._invStage = inferInvStage(invRec);
+    }
     if(existingIdx >= 0){
       invoiceHistory[existingIdx] = invRec;
     } else {
@@ -14896,6 +15016,10 @@ function printInvoice(){
       <div style="display:flex;gap:24px;font-size:11pt"><span>공급가액</span><span>${supply.toLocaleString()} 원</span></div>
       <div style="display:flex;gap:24px;font-size:11pt"><span>부가세 (10%)</span><span>${vat.toLocaleString()} 원</span></div>
       <div style="display:flex;gap:24px;font-size:14pt;font-weight:700;color:#6B4E0A"><span>합 계</span><span>${total.toLocaleString()} 원</span></div>
+      ${prepaidInput > 0 ? `
+      <div style="display:flex;gap:24px;font-size:11pt;color:#7A4DB5;margin-top:4px;padding-top:4px;border-top:1px solid #E0D5F0"><span>받은 선금</span><span>−${prepaidInput.toLocaleString()} 원</span></div>
+      <div style="display:flex;gap:24px;font-size:14pt;font-weight:700;color:#7A4DB5;background:#F5EBFF;padding:6px 10px;border-radius:4px;margin-top:2px"><span>잔 금</span><span>${balanceAmount.toLocaleString()} 원</span></div>
+      ` : ''}
     </div>
     ${note?`<div style="background:#F8F7F4;border:1px solid #E2DAC8;border-radius:4px;padding:9px 12px;font-size:9.5pt;color:#555;margin-bottom:12px">${note}</div>`:''}
     ${imgHtml}
@@ -14941,7 +15065,8 @@ document.querySelectorAll('.ov').forEach(ov=>{
 });
 
 // 초기 탭 진입 — localStorage에 저장된 마지막 탭 복원 (없으면 대시보드)
-(function initLastTab(){
+// DOMContentLoaded 이후 실행 — 모든 var 호이스팅이 끝났음을 보장 (TDZ 안전)
+function initLastTab(){
   let lastTab = 'dash';
   try{
     const stored = localStorage.getItem('ek3_lastTab');
@@ -14949,9 +15074,20 @@ document.querySelectorAll('.ov').forEach(ov=>{
     const validTabs = ['dash','sample','order','schedule','as','products','sales','invoices'];
     if(stored && validTabs.includes(stored)) lastTab = stored;
   }catch(e){}
-  const tabBtn = document.querySelector('.tab-btn[data-tab="'+lastTab+'"]') || document.querySelector('.tab-btn');
-  switchTab(lastTab, tabBtn);
-})();
+  try{
+    const tabBtn = document.querySelector('.tab-btn[data-tab="'+lastTab+'"]') || document.querySelector('.tab-btn');
+    switchTab(lastTab, tabBtn);
+  }catch(e){
+    console.warn('탭 복원 실패, 대시보드로 폴백:', e);
+    try{ switchTab('dash', document.querySelector('.tab-btn')); }catch(e2){}
+  }
+}
+// DOM이 이미 ready 면 즉시, 아니면 이벤트 후
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', initLastTab);
+} else {
+  initLastTab();
+}
 
 // ════════════════════════════════
 // ORDER FILE ATTACHMENT
@@ -15866,7 +16002,8 @@ function qtStatusChip(status){
 }
 
 // 목록 렌더
-let _qtFilter='all'; // all / draft / sent / won / lost
+// var: TDZ 회피 — 영업관리 탭이 마지막 탭이었을 때 새로고침 시 vQuotes()가 호출됨
+var _qtFilter='all'; // all / draft / sent / won / lost
 function setQtFilter(v){ _qtFilter=v; renderSalesSubTab(); }
 
 function vQuotes(c){
@@ -16947,6 +17084,117 @@ function getInvoicePrepaid(inv){
   return calcPaymentByType(inv.payments).prepaid;
 }
 
+// 거래명세서 상세 모달의 빠른 선금 입력
+// 사용자 흐름:
+//   1. 입력 필드에 금액 입력
+//   2. [추가] 버튼 클릭 또는 Enter
+//   3. payments에 {type:'선금'} 자동 추가 + 모달 새로고침
+// 제한:
+//   - 합본에 묶임 / 입금완료 / 합본 자체 → 차단
+function addQuickPrepayment(invId){
+  const v = invoiceHistory.find(x => String(x.id)===String(invId));
+  if(!v){ showToast('⚠ 명세서를 찾을 수 없습니다','var(--red)'); return; }
+  // 잠금 체크
+  if(v._isConsolidated){
+    showToast('⚠ 합본 청구서는 선금 입력 대상이 아닙니다','var(--org)', 3000);
+    return;
+  }
+  if(v._consolidatedInvoiceId){
+    showToast('🔒 합본에 묶여있어 선금 입력 불가 — 합본 해제 후 가능','var(--org)', 4000);
+    return;
+  }
+  if(v.status === '입금완료'){
+    showToast('⚠ 이미 입금완료된 명세서입니다','var(--org)', 3000);
+    return;
+  }
+  // 입력값 추출
+  const input = document.getElementById('quickPrepay_amount');
+  if(!input){ showToast('⚠ 입력 필드를 찾을 수 없습니다','var(--red)'); return; }
+  const raw = (input.value||'').replace(/[^\d.-]/g, '');
+  const amount = +raw;
+  if(!amount || amount <= 0){
+    showToast('⚠ 금액을 입력해주세요','var(--org)', 2500);
+    input.focus();
+    return;
+  }
+  // 음수 거부
+  if(amount < 0){
+    showToast('⚠ 음수 입력은 허용되지 않습니다','var(--red)');
+    return;
+  }
+  // 청구액 초과 경고
+  const total = +v.total||0;
+  const currentPaid = (v.payments||[]).reduce((s,pm)=>s+(+pm.amount||0), 0);
+  if(currentPaid + amount > total * 1.05 && total > 0){
+    if(!confirm(`청구액(₩${total.toLocaleString()})을 초과하는 입금입니다.\n\n현재 입금합계: ₩${currentPaid.toLocaleString()}\n추가 입금: ₩${amount.toLocaleString()}\n예상 입금합계: ₩${(currentPaid+amount).toLocaleString()}\n\n그래도 추가하시겠습니까?`)) return;
+  }
+  // 오늘 날짜
+  const today = (typeof toLocalDateStr==='function') ? toLocalDateStr(new Date()) : new Date().toISOString().slice(0,10);
+  // payments에 추가
+  if(!v.payments) v.payments = [];
+  v.payments.push({
+    id: Date.now() + Math.random(),
+    date: today,
+    amount,
+    type: '선금',
+    memo: '원자재 선금',
+  });
+  // 입금률/합계 갱신
+  const summary = calcPaymentSummary(v.payments, total);
+  v.totalPaid = summary.totalPaid;
+  v.paymentRatio = summary.ratio;
+  // status 자동 결정
+  if(typeof determineStatusFromPayments === 'function'){
+    v.status = determineStatusFromPayments(v.status, v.payments, total);
+  }
+  // _invStage 자동 갱신 (선금만 들어가면 보통 그대로지만, 100% 도달 시 done으로)
+  if(typeof inferInvStage === 'function' && !v._isConsolidated){
+    v._invStage = inferInvStage(v);
+  }
+  if(typeof save === 'function') save();
+  // 노션 동기화
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+    syncInvoiceToNotion(v, true).catch(e=>console.warn('선금 추가 동기화 실패:',e));
+  }
+  showToast(`✓ 선금 ₩${amount.toLocaleString()} 추가됨`,'#7A4DB5', 2500);
+  // 모달 새로고침 + 거래명세서 탭 갱신
+  openInvDetail(invId);
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+}
+
+// 명세서 상세에서 선금(또는 모든 입금) 삭제
+function removeInvoicePayment(invId, paymentIdx){
+  const v = invoiceHistory.find(x => String(x.id)===String(invId));
+  if(!v || !v.payments || !v.payments[paymentIdx]) return;
+  // 잠금 체크
+  if(v._consolidatedInvoiceId){
+    showToast('🔒 합본에 묶여있어 변경 불가','var(--org)', 3000);
+    return;
+  }
+  const pm = v.payments[paymentIdx];
+  if(!confirm(`이 입금 기록을 삭제하시겠습니까?\n\n${pm.date} · ${pm.type||'잔금'} · ₩${(+pm.amount||0).toLocaleString()}`)) return;
+  v.payments.splice(paymentIdx, 1);
+  // 입금률/합계 갱신
+  const total = +v.total||0;
+  const summary = calcPaymentSummary(v.payments, total);
+  v.totalPaid = summary.totalPaid;
+  v.paymentRatio = summary.ratio;
+  // status 자동 결정
+  if(typeof determineStatusFromPayments === 'function'){
+    v.status = determineStatusFromPayments(v.status, v.payments, total);
+  }
+  if(typeof inferInvStage === 'function' && !v._isConsolidated){
+    v._invStage = inferInvStage(v);
+  }
+  if(typeof save === 'function') save();
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+    syncInvoiceToNotion(v, true).catch(e=>console.warn(e));
+  }
+  showToast('✓ 입금 삭제됨','var(--grn)', 2000);
+  openInvDetail(invId);
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+}
+
 // ════════════════════════════════════════════════════════════════
 // 📋 거래명세서 워크플로우 단계 (4-A 단계)
 // _invStage: 'draft' | 'billing' | 'done'
@@ -17184,6 +17432,240 @@ window.forceNotionSyncAllInvoices = function(){
     if(typeof showToast==='function') showToast(`✓ Notion 동기화: ${done}/${targets.length}건`,'var(--grn)', 3000);
   });
   return { total: targets.length };
+};
+
+// ════════════════════════════════════════════════════════════════
+// 영업관리 데이터 진단 (콘솔에서 호출)
+// 사용법:
+//   window.diagnoseSalesData()        → 모든 영업관리 데이터 상태 확인
+//   window.recoverInquiriesFromNotion() → 노션에서 고객사 문의 다시 가져오기
+// ════════════════════════════════════════════════════════════════
+window.diagnoseSalesData = function(){
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('📊 영업관리 데이터 진단');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  const SL_KEYS = {
+    cli: 'ek_v9_cli',
+    prop: 'ek_v9_prop',
+    prj: 'ek_v9_prj',
+    inq: 'ek_inquiries',
+    nd: 'ek_newdesigns',
+    qt: 'ek_quotes',
+  };
+
+  console.log();
+  console.log('=== localStorage 직접 조회 ===');
+  Object.entries(SL_KEYS).forEach(([label, key])=>{
+    const raw = localStorage.getItem(key);
+    let count = 0, info = '없음';
+    if(raw){
+      try{
+        const arr = JSON.parse(raw);
+        count = Array.isArray(arr) ? arr.length : -1;
+        info = `${count}건 (${(raw.length/1024).toFixed(1)}KB)`;
+      }catch(e){ info = `파싱 실패: ${e.message}`; }
+    }
+    console.log(`  ${label.padEnd(5)} (${key.padEnd(18)}): ${info}`);
+  });
+
+  console.log();
+  console.log('=== 메모리 변수 상태 ===');
+  console.log(`  clients   : ${typeof clients!=='undefined'?clients.length:'undefined'}건`);
+  console.log(`  proposals : ${typeof proposals!=='undefined'?proposals.length:'undefined'}건`);
+  console.log(`  projects  : ${typeof projects!=='undefined'?projects.length:'undefined'}건`);
+  console.log(`  inquiries : ${typeof inquiries!=='undefined'?inquiries.length:'undefined'}건`);
+  console.log(`  newDesigns: ${typeof newDesigns!=='undefined'?newDesigns.length:'undefined'}건`);
+  console.log(`  quotes    : ${typeof quotes!=='undefined'?quotes.length:'undefined'}건`);
+
+  if(typeof inquiries!=='undefined' && inquiries.length>0){
+    console.log();
+    console.log('=== 고객사 문의 상세 (최대 5건) ===');
+    inquiries.slice(0,5).forEach((q,i)=>{
+      console.log(`  [${i}] ${q.client||'(고객사 없음)'} - ${q.status||'(상태 없음)'} - ${q.date||q.createdAt||''}`);
+    });
+  } else {
+    console.log();
+    console.log('⚠ 메모리에 고객사 문의 0건');
+    const inqRaw = localStorage.getItem(SL_KEYS.inq);
+    if(inqRaw && inqRaw !== '[]'){
+      console.log('   하지만 localStorage에는 데이터가 있음! → slLoad() 호출 필요');
+      console.log('   해결: 콘솔에서 slLoad(); renderTab(); 실행');
+    } else {
+      console.log('   localStorage도 비어있음 → 데이터가 저장 안 됐거나 삭제됨');
+      console.log('   복구: 노션에 데이터가 있다면 window.recoverInquiriesFromNotion() 호출');
+    }
+  }
+
+  console.log();
+  console.log('=== Notion 설정 ===');
+  if(typeof notionCfg!=='undefined'){
+    console.log(`  workerUrl : ${notionCfg.workerUrl?'설정됨':'❌ 없음'}`);
+    console.log(`  inqDb     : ${notionCfg.inqDb?notionCfg.inqDb.slice(0,12)+'...':'❌ 없음'}`);
+    console.log(`  cliDb     : ${notionCfg.cliDb?notionCfg.cliDb.slice(0,12)+'...':'❌ 없음'}`);
+    console.log(`  propDb    : ${notionCfg.propDb?notionCfg.propDb.slice(0,12)+'...':'❌ 없음'}`);
+  } else {
+    console.log('  ⚠ notionCfg 없음');
+  }
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+};
+
+window.recoverInquiriesFromNotion = async function(){
+  if(typeof notionCfg==='undefined' || !notionCfg.workerUrl || !notionCfg.inqDb){
+    console.warn('⚠ Notion 설정이 없습니다 (workerUrl 또는 inqDb 누락)');
+    return;
+  }
+  if(typeof nQueryAll!=='function' || typeof mapNotionInquiry!=='function'){
+    console.warn('⚠ 필요한 함수가 없습니다');
+    return;
+  }
+  console.log('📥 노션에서 고객사 문의 가져오는 중...');
+  try{
+    const rows = await nQueryAll(notionCfg.inqDb);
+    console.log(`✓ 노션에서 ${rows.length}건 발견`);
+    if(rows.length === 0){
+      console.warn('⚠ 노션에도 데이터가 없습니다');
+      return;
+    }
+    const recovered = rows.map(mapNotionInquiry);
+    if(typeof inquiries==='undefined') window.inquiries = [];
+    inquiries.length = 0;
+    recovered.forEach(q => inquiries.push(q));
+    if(typeof slSave==='function') slSave();
+    console.log(`✓ 메모리 + localStorage에 ${recovered.length}건 복구됨`);
+    if(typeof renderTab==='function') renderTab();
+    if(typeof showToast==='function') showToast(`✓ 고객사 문의 ${recovered.length}건 복구됨`,'var(--grn)', 3000);
+  }catch(e){
+    console.error('❌ 복구 실패:', e);
+  }
+};
+
+// 노션 vs 로컬 비교 — 어디에 더 많은 데이터가 있는지 확인
+// 사용: window.compareInquiriesNotionVsLocal()
+window.compareInquiriesNotionVsLocal = async function(){
+  if(typeof notionCfg==='undefined' || !notionCfg.workerUrl || !notionCfg.inqDb){
+    console.warn('⚠ Notion 설정 없음'); return;
+  }
+  if(typeof nQueryAll!=='function' || typeof mapNotionInquiry!=='function'){
+    console.warn('⚠ 함수 없음'); return;
+  }
+  console.log('📊 노션 vs 로컬 비교 중...');
+  try{
+    const remoteRows = await nQueryAll(notionCfg.inqDb);
+    const remoteMapped = remoteRows.map(mapNotionInquiry);
+    const local = (typeof inquiries!=='undefined') ? inquiries : [];
+
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`로컬:  ${local.length}건`);
+    console.log(`노션:  ${remoteMapped.length}건`);
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    // _notionId 기준으로 비교
+    const localNotionIds = new Set(local.map(q => q._notionId).filter(Boolean));
+    const remoteNotionIds = new Set(remoteMapped.map(q => q._notionId).filter(Boolean));
+
+    // 노션에만 있는 것 (로컬에 안 끌어와짐)
+    const onlyInRemote = remoteMapped.filter(q => !localNotionIds.has(q._notionId));
+    // 로컬에만 있는 것 (노션에 동기화 안 됨)
+    const onlyInLocal = local.filter(q => !q._notionId || !remoteNotionIds.has(q._notionId));
+
+    console.log();
+    console.log('=== 노션에만 있음 (로컬에 풀 안 됨, ' + onlyInRemote.length + '건) ===');
+    onlyInRemote.slice(0,10).forEach(q => {
+      console.log(`  - ${q.client||'?'} / ${q.status||'?'} / ${q.date||q.createdAt||''}`);
+    });
+
+    console.log();
+    console.log('=== 로컬에만 있음 (노션에 동기화 안 됨, ' + onlyInLocal.length + '건) ===');
+    onlyInLocal.slice(0,10).forEach(q => {
+      const reason = !q._notionId ? '_notionId 없음 (저장 시 노션 송신 실패?)' : '노션에서 삭제됨?';
+      console.log(`  - ${q.client||'?'} / ${q.status||'?'} (${reason})`);
+    });
+
+    console.log();
+    console.log('=== 권장 조치 ===');
+    if(onlyInRemote.length > 0 && onlyInLocal.length === 0){
+      console.log('→ 노션이 마스터: window.smartSyncInquiries() 실행 (로컬에 노션 데이터 추가 — 로컬은 안 잃음)');
+    } else if(onlyInRemote.length === 0 && onlyInLocal.length > 0){
+      console.log('→ 로컬이 마스터: 로컬 데이터를 노션에 푸시 필요 (각 항목 _notionId 없음)');
+      console.log('   해결: 로컬 데이터를 다시 저장 (저장 버튼 눌러서 노션 송신)');
+    } else if(onlyInRemote.length > 0 && onlyInLocal.length > 0){
+      console.log('→ 양쪽에 다른 데이터가 있음: window.smartSyncInquiries() 실행 — 양쪽 모두 보존');
+    } else {
+      console.log('→ 동기화 상태 양호 — 양쪽이 동일');
+    }
+    return { local: local.length, remote: remoteMapped.length, onlyInRemote: onlyInRemote.length, onlyInLocal: onlyInLocal.length };
+  }catch(e){
+    console.error('❌ 비교 실패:', e);
+  }
+};
+
+// 안전한 머지 — 로컬 보존 + 노션에서 부족한 것만 추가
+// (recoverInquiriesFromNotion은 로컬 통째로 덮어쓰기 — 위험)
+// 이 함수는 로컬은 그대로 두고 노션에만 있는 것을 추가함
+window.smartSyncInquiries = async function(){
+  if(typeof notionCfg==='undefined' || !notionCfg.workerUrl || !notionCfg.inqDb){
+    console.warn('⚠ Notion 설정 없음'); return;
+  }
+  if(typeof nQueryAll!=='function' || typeof mapNotionInquiry!=='function'){
+    console.warn('⚠ 함수 없음'); return;
+  }
+  console.log('🔄 안전 머지 시작 (로컬 보존)...');
+  try{
+    const remoteRows = await nQueryAll(notionCfg.inqDb);
+    const remoteMapped = remoteRows.map(mapNotionInquiry);
+    const local = (typeof inquiries!=='undefined') ? inquiries : (window.inquiries = []);
+
+    const localNotionIds = new Set(local.map(q => q._notionId).filter(Boolean));
+    const onlyInRemote = remoteMapped.filter(q => !localNotionIds.has(q._notionId));
+
+    if(onlyInRemote.length === 0){
+      console.log('✓ 추가할 데이터 없음 (로컬이 노션의 모든 데이터를 가지고 있음)');
+      return;
+    }
+    console.log(`📥 노션에만 있는 ${onlyInRemote.length}건을 로컬에 추가 중...`);
+    onlyInRemote.forEach(q => local.push(q));
+    if(typeof slSave==='function') slSave();
+    console.log(`✓ 추가 완료 — 로컬 총 ${local.length}건`);
+    if(typeof renderTab==='function') renderTab();
+    if(typeof showToast==='function') showToast(`✓ ${onlyInRemote.length}건 추가됨 (총 ${local.length}건)`,'var(--grn)', 3000);
+    return { added: onlyInRemote.length, total: local.length };
+  }catch(e){
+    console.error('❌ 머지 실패:', e);
+  }
+};
+
+// 로컬에만 있는 데이터를 노션에 푸시 (반대 방향)
+// _notionId가 없는 항목 = 노션에 송신 안 된 항목
+window.pushUnsyncedInquiriesToNotion = async function(){
+  if(typeof notionCfg==='undefined' || !notionCfg.workerUrl || !notionCfg.inqDb){
+    console.warn('⚠ Notion 설정 없음'); return;
+  }
+  const local = (typeof inquiries!=='undefined') ? inquiries : [];
+  const unsynced = local.filter(q => !q._notionId);
+  if(unsynced.length === 0){
+    console.log('✓ 모든 항목이 이미 노션에 동기화됨');
+    return;
+  }
+  console.log(`📤 동기화 안 된 ${unsynced.length}건을 노션에 푸시 중...`);
+  let success = 0, fail = 0;
+  for(const q of unsynced){
+    try{
+      // 기존 저장 함수가 있다면 사용 (보통 저장 시 자동으로 노션 송신)
+      if(typeof saveInquiry === 'function'){
+        await saveInquiry(q, false); // false = 새로 만들기
+        success++;
+      } else {
+        console.warn('⚠ saveInquiry 함수 없음 — 수동 저장 필요');
+        fail++;
+      }
+    }catch(e){
+      fail++;
+      console.warn('실패:', q.client, e);
+    }
+  }
+  console.log(`완료: ${success}건 성공, ${fail}건 실패`);
+  if(typeof showToast==='function') showToast(`✓ ${success}건 노션 푸시됨`,'var(--grn)', 3000);
 };
 
 // ════════════════════════════════════════════════════════════════
@@ -18934,13 +19416,17 @@ function escHtml(s){
 // ════════════════════════════════════════════════════════════════
 // 📬 고객사 문의 관리
 // ════════════════════════════════════════════════════════════════
-let _inqFilter='all';
-let _inqImgBuf=[];
-let _inqFileBuf=[];
+// var 사용: TDZ(Temporal Dead Zone) 회피 — switchTab이 스크립트 평가 완료 전에
+// 호출돼도 vInquiry 안에서 안전하게 접근 가능 (let은 접근 시 ReferenceError)
+var _inqFilter='all';
+var _inqImgBuf=[];
+var _inqFileBuf=[];
 function setInqFilter(v){ _inqFilter=v; renderSalesSubTab(); }
 
 function vInquiry(c){
-  let list=[...inquiries];
+  // var 사용으로 TDZ는 회피했지만, 한 번 더 안전망: undefined면 'all' 폴백
+  if(typeof _inqFilter === 'undefined') _inqFilter = 'all';
+  let list=[...(typeof inquiries!=='undefined'?inquiries:[])];
   if(_inqFilter==='open') list=list.filter(q=>q.status!=='완료'&&q.status!=='취소');
   if(_inqFilter==='closed') list=list.filter(q=>q.status==='완료'||q.status==='취소');
   list.sort((a,b)=>(b.receivedAt||'').localeCompare(a.receivedAt||''));
@@ -19238,12 +19724,13 @@ function deleteInq(id){
 // ════════════════════════════════
 // 💡 신규 디자인 제안 관리
 // ════════════════════════════════
-let _ndFilter='all';
-let _ndImgBuf=[];
-let _ndFileBuf=[];
-let _ndViewMode='grid'; // 'grid' | 'cards'
-let _ndCellVendor=null; // 셀 클릭 시 상세 패널
-let _ndCellMonth=null;
+// var: TDZ 회피 (위 _inqFilter와 동일 이유)
+var _ndFilter='all';
+var _ndImgBuf=[];
+var _ndFileBuf=[];
+var _ndViewMode='grid'; // 'grid' | 'cards'
+var _ndCellVendor=null; // 셀 클릭 시 상세 패널
+var _ndCellMonth=null;
 function setNdFilter(v){ _ndFilter=v; renderSalesSubTab(); }
 function setNdViewMode(v){ _ndViewMode=v; _ndCellVendor=null; _ndCellMonth=null; renderSalesSubTab(); }
 function openNdCell(vendor, month){
