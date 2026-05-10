@@ -15749,10 +15749,19 @@ function vMonthly(c){
     // 2) 없으면 품목 단가×수량 합계
     return(o.rows||[]).reduce((s,r)=>s+(+(r.unitPrice||0))*(+(r.qty||1)),0);
   }
-  const mOrdAmt=months.map(m=>({
-    amt: orders.filter(o=>o.date&&o.date.startsWith(m)).reduce((s,o)=>s+ordAmt(o),0),
-    cnt: orders.filter(o=>o.date&&o.date.startsWith(m)).length
-  }));
+  const mOrdAmt=months.map(m=>{
+    const monthOrds=orders.filter(o=>o.date&&o.date.startsWith(m));
+    const doneOrds=monthOrds.filter(o=>o.status==='출고완료');
+    const pendOrds=monthOrds.filter(o=>{ const st=o.status||'진행중'; return st!=='출고완료' && st!=='취소'; });
+    return {
+      amt: monthOrds.reduce((s,o)=>s+ordAmt(o),0),
+      amtDone: doneOrds.reduce((s,o)=>s+ordAmt(o),0),
+      amtPend: pendOrds.reduce((s,o)=>s+ordAmt(o),0),
+      cnt: monthOrds.length,
+      cntDone: doneOrds.length,
+      cntPend: pendOrds.length
+    };
+  });
   const mSmpCnt=months.map(m=>samples.filter(s=>s.reqDate&&s.reqDate.startsWith(m)).length);
   const mSmpDone=months.map(m=>samples.filter(s=>s.reqDate&&s.reqDate.startsWith(m)&&s.status==='확정').length);
 
@@ -15893,17 +15902,34 @@ function vMonthly(c){
         <div class="bar-chart" style="height:100px">
           ${mOrdAmt.map((m,i)=>{
             const h=Math.max(Math.round(m.cnt/(Math.max(...mOrdAmt.map(x=>x.cnt),1))*100),m.cnt>0?8:0);
+            const donePct=m.cnt?Math.round(m.cntDone/m.cnt*100):0;
             return`<div class="bar-col">
               <div class="bar-val">${m.cnt||''}</div>
               <div class="bar-area">
-                <div class="bar" style="height:${h}%;background:${i===5?'var(--t1)':'var(--s3)'};border:1px solid ${i===5?'var(--t1)':'var(--bdr)'}"></div>
+                <div class="bar" style="height:${h}%;background:${i===5?'var(--t1)':'var(--s3)'};border:1px solid ${i===5?'var(--t1)':'var(--bdr)'};position:relative">
+                  ${m.cntDone>0?`<div style="position:absolute;bottom:0;left:0;right:0;height:${donePct}%;background:var(--grn);opacity:.7"></div>`:''}
+                </div>
               </div>
               <div class="bar-lbl" style="${i===5?'font-weight:700;color:var(--t1)':''}">${mLabels[i]}</div>
             </div>`;
           }).join('')}
         </div>
         <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:10.5px;color:var(--t3);border-top:1px solid var(--bdr);padding-top:8px">
-          ${mOrdAmt.map((m,i)=>`<div style="text-align:center;${i===5?'color:var(--t1);font-weight:700':''}">${m.cnt}건</div>`).join('')}
+          ${mOrdAmt.map((m,i)=>`<div style="text-align:center;${i===5?'color:var(--t1);font-weight:700':''}">
+            ${m.cnt}건${m.cntDone>0?`<div style="color:var(--grn)">${m.cntDone}출고</div>`:''}
+          </div>`).join('')}
+        </div>
+        <div style="margin-top:6px;display:flex;justify-content:space-between;font-size:10px;color:var(--t3);padding-top:4px">
+          ${mOrdAmt.map((m,i)=>`<div style="text-align:center;flex:1;${i===5?'color:var(--t1);font-weight:700':''}" title="${m.amt.toLocaleString()}원">
+            ${m.amt>=10000000?`${(m.amt/10000000).toFixed(1)}천만`:m.amt>=10000?`${Math.round(m.amt/10000)}만`:m.amt>0?m.amt.toLocaleString():'-'}
+          </div>`).join('')}
+        </div>
+        <div style="margin-top:6px;display:flex;gap:10px;font-size:10px;color:var(--t3);flex-wrap:wrap;align-items:center">
+          <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--s3);border:1px solid var(--bdr);border-radius:1px"></span>진행</span>
+          <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--grn);border-radius:1px;opacity:.7"></span>출고완료</span>
+          <span style="margin-left:auto;font-size:10.5px;color:var(--t2)">
+            6개월 합계: <b style="color:var(--t1)">${mOrdAmt.reduce((s,m)=>s+m.amt,0).toLocaleString()}원</b>
+          </span>
         </div>
       </div>
     </div>
