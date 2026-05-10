@@ -15744,10 +15744,19 @@ function vMonthly(c){
       (o.no && v.ordNo && v.ordNo===o.no)
     );
     if(invs.length){
-      return invs.reduce((s,v)=>s+(+v.supplyAmt||0),0);
+      const sum = invs.reduce((s,v)=>{
+        const n = Number(v.supplyAmt);
+        return s + (isFinite(n) ? n : 0);
+      },0);
+      return isFinite(sum) ? sum : 0;
     }
     // 2) 없으면 품목 단가×수량 합계
-    return(o.rows||[]).reduce((s,r)=>s+(+(r.unitPrice||0))*(+(r.qty||1)),0);
+    const sum = (o.rows||[]).reduce((s,r)=>{
+      const u = Number(r.unitPrice)||0;
+      const q = Number(r.qty); const qty = isFinite(q)&&q>0 ? q : 1;
+      return s + u*qty;
+    },0);
+    return isFinite(sum) ? sum : 0;
   }
   const mOrdAmt=months.map(m=>{
     const monthOrds=orders.filter(o=>o.date&&o.date.startsWith(m));
@@ -15920,15 +15929,17 @@ function vMonthly(c){
           </div>`).join('')}
         </div>
         <div style="margin-top:6px;display:flex;justify-content:space-between;font-size:10px;color:var(--t3);padding-top:4px">
-          ${mOrdAmt.map((m,i)=>`<div style="text-align:center;flex:1;${i===5?'color:var(--t1);font-weight:700':''}" title="${m.amt.toLocaleString()}원">
-            ${m.amt>=10000000?`${(m.amt/10000000).toFixed(1)}천만`:m.amt>=10000?`${Math.round(m.amt/10000)}만`:m.amt>0?m.amt.toLocaleString():'-'}
-          </div>`).join('')}
+          ${mOrdAmt.map((m,i)=>{
+            const amt=isFinite(m.amt)?m.amt:0;
+            const disp=amt>=10000000?`${(amt/10000000).toFixed(1)}천만`:amt>=10000?`${Math.round(amt/10000)}만`:amt>0?amt.toLocaleString():'-';
+            return`<div style="text-align:center;flex:1;${i===5?'color:var(--t1);font-weight:700':''}" title="${amt.toLocaleString()}원">${disp}</div>`;
+          }).join('')}
         </div>
         <div style="margin-top:6px;display:flex;gap:10px;font-size:10px;color:var(--t3);flex-wrap:wrap;align-items:center">
           <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--s3);border:1px solid var(--bdr);border-radius:1px"></span>진행</span>
           <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--grn);border-radius:1px;opacity:.7"></span>출고완료</span>
           <span style="margin-left:auto;font-size:10.5px;color:var(--t2)">
-            6개월 합계: <b style="color:var(--t1)">${mOrdAmt.reduce((s,m)=>s+m.amt,0).toLocaleString()}원</b>
+            6개월 합계: <b style="color:var(--t1)">${mOrdAmt.reduce((s,m)=>s+(isFinite(m.amt)?m.amt:0),0).toLocaleString()}원</b>
           </span>
         </div>
       </div>
