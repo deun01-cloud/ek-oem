@@ -3812,19 +3812,9 @@ function doPrint(){
 // ════════════════════════════════
 // 거래명세서 이력 탭
 // ════════════════════════════════
-// 초기값: localStorage에서 마지막 서브탭 복원, 없으면 'draft' (작성중/선금)
+// 초기값: 페이지 진입 시 항상 'draft' (미청구) 탭부터 시작
 var invFilter = (function(){
-  let subTab = 'draft'; // 기본값: 작성중/선금 (사용자 첫 진입 시 가장 자주 보는 탭)
-  try{
-    const stored = localStorage.getItem('ek3_invSubTab');
-    const valid = ['draft','billing','done','consolidated','all'];
-    // 옛 값 매핑 (localStorage에 옛 값이 있으면 변환)
-    const oldToNew = {'inprogress':'billing','paid':'done'};
-    if(stored){
-      if(valid.includes(stored)) subTab = stored;
-      else if(oldToNew[stored]) subTab = oldToNew[stored];
-    }
-  }catch(e){}
+  let subTab = 'draft'; // 페이지 진입 시 기본값: 미청구 탭 고정
   return {month:'', vendor:'', status:'전체', subTab, sort:'default'};
 })();
 
@@ -3833,8 +3823,7 @@ function setInvVendor(v){ invFilter.vendor=v; renderInvoiceHistory(); }
 function setInvMonth(m){ invFilter.month=m; renderInvoiceHistory(); }
 function setInvSubTab(t){
   invFilter.subTab=t;
-  // 새로고침 후에도 마지막 서브탭 유지
-  try{ localStorage.setItem('ek3_invSubTab', t); }catch(e){}
+  // 페이지 새로고침 시 항상 '미청구'(draft) 탭으로 시작하도록 localStorage 저장은 안 함
   // 서브탭 변경 시 status 필터 리셋 (충돌 방지)
   invFilter.status='전체';
   renderInvoiceHistory();
@@ -3899,7 +3888,7 @@ function renderInvoiceHistory(){
   }
   var c=document.getElementById('content');
   var st=invFilter.status;
-  // 서브탭 (작성중/선금 → 청구 → 완료 + 합본 + 모든 명세서)
+  // 서브탭 (미청구 → 청구 → 완료 + 합본 + 모든 명세서)
   var subTab = invFilter.subTab || 'draft';
   // 옛 subTab 값 마이그레이션 (localStorage 호환)
   if(subTab === 'inprogress') subTab = 'billing';
@@ -3914,7 +3903,7 @@ function renderInvoiceHistory(){
       // 합본 탭: 합본 청구서만
       if(!v._isConsolidated) return false;
     } else if(subTab==='draft'){
-      // 작성중/선금 탭: _invStage='draft' (출고 전)
+      // 미청구 탭: _invStage='draft' (출고 전)
       if(v._isConsolidated) return false;
       if(v._consolidatedInvoiceId) return false;
       if(v._invStage !== 'draft') return false;
@@ -3982,7 +3971,7 @@ function renderInvoiceHistory(){
   var months=[...new Set(invoiceHistory.map(function(v){return v.issuedAt.slice(0,7);}))].sort().reverse();
   var vendors=[...new Set(invoiceHistory.map(function(v){return v.vendor;}))].filter(Boolean).sort();
   // 서브탭별 카운트 (전체 invoiceHistory 기준 — 필터 무관)
-  // 작성중/선금: 출고 전 (draft) + 합본에 안 묶임
+  // 미청구: 출고 전 (draft) + 합본에 안 묶임
   var draftCount = invoiceHistory.filter(function(v){
     return !v._isConsolidated && !v._consolidatedInvoiceId && v._invStage === 'draft';
   }).length;
@@ -4000,10 +3989,10 @@ function renderInvoiceHistory(){
   var statuses = subTab==='done' ? ['전체','입금완료'] : ['전체','발행완료','청구완료','미수'];
 
   var h='';
-  // 서브탭 (작성중/선금 → 청구 → 완료 + 합본 + 모든 명세서)
+  // 서브탭 (미청구 → 청구 → 완료 + 합본 + 모든 명세서)
   h+='<div style="display:flex;gap:6px;padding:6px;background:var(--s2);border-radius:8px;border:1px solid var(--bdr);margin-bottom:10px;width:max-content;flex-wrap:wrap">';
-  // 작성중/선금 — 회색 (출고 전)
-  h+='<button onclick="setInvSubTab(\'draft\')" title="발주 출고 전 명세서 — 단발 선금 청구 가능" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='draft'?'700':'500')+';background:'+(subTab==='draft'?'var(--s1)':'transparent')+';color:'+(subTab==='draft'?'var(--t1)':'var(--t3)')+';'+(subTab==='draft'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">📋 작성중/선금 <span style="font-size:10px;opacity:.7">'+draftCount+'</span></button>';
+  // 미청구 — 회색 (출고 전)
+  h+='<button onclick="setInvSubTab(\'draft\')" title="발주 출고 전 명세서 — 단발 선금 청구 가능" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='draft'?'700':'500')+';background:'+(subTab==='draft'?'var(--s1)':'transparent')+';color:'+(subTab==='draft'?'var(--t1)':'var(--t3)')+';'+(subTab==='draft'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">📋 미청구 <span style="font-size:10px;opacity:.7">'+draftCount+'</span></button>';
   // 청구 — 파랑 (월말 합본 대상)
   h+='<button onclick="setInvSubTab(\'billing\')" title="출고완료 후 청구 단계 — 월말 합본 청구 대상" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(subTab==='billing'?'700':'500')+';background:'+(subTab==='billing'?'var(--s1)':'transparent')+';color:'+(subTab==='billing'?'var(--blu)':'var(--t3)')+';'+(subTab==='billing'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">🧾 청구 <span style="font-size:10px;opacity:.7">'+billingCount+'</span></button>';
   // 완료 — 초록 (입금까지 끝남)
@@ -4152,7 +4141,7 @@ function renderInvoiceHistory(){
         var btnBorder = isShipped ? 'var(--grn)' : 'var(--bdr)';
         var btnColor = isShipped ? 'var(--grn)' : 'var(--t3)';
         var btnText = isShipped ? '✓ 출고됨' : '출고 전';
-        var btnTitle = isShipped ? '클릭하면 출고완료를 해제합니다 (작성중/선금 단계로 되돌림)' : '클릭하면 이 명세서를 출고완료 처리합니다 (청구 단계로 이동)';
+        var btnTitle = isShipped ? '클릭하면 출고완료를 해제합니다 (미청구 단계로 되돌림)' : '클릭하면 이 명세서를 출고완료 처리합니다 (청구 단계로 이동)';
         h+='<button onclick="markInvoiceShipped('+v.id+','+(!isShipped)+')" title="'+btnTitle+'" style="padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid '+btnBorder+';background:'+btnBg+';color:'+btnColor+';cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">'+btnText+'</button>';
       }
       h+='</td>';
@@ -4424,10 +4413,15 @@ function openInvDetail(id){
     b+='<span style="font-size:11.5px;color:#7A4DB5;font-weight:700">원자재 선금 입력</span>';
     b+='<span style="font-size:10px;color:var(--t3)">— 발주 시점에 받은 선금을 기록하세요. 월말 합본 청구서 발행 시 자동 차감됩니다.</span>';
     b+='</div>';
-    b+='<div style="display:flex;gap:8px;align-items:center">';
-    b+='<div style="flex:1;position:relative">';
+    b+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
+    b+='<div style="flex:1;min-width:180px;position:relative">';
     b+='<input type="text" id="quickPrepay_amount" placeholder="금액 입력 (예: 800000)" inputmode="numeric" onkeydown="if(event.key===\'Enter\'){addQuickPrepayment('+v.id+');}" style="width:100%;padding:8px 36px 8px 12px;font-size:13px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;background:var(--s1);box-sizing:border-box">';
     b+='<span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--t3);pointer-events:none">원</span>';
+    b+='</div>';
+    var _todayStr=(typeof toLocalDateStr==="function")?toLocalDateStr(new Date()):new Date().toISOString().slice(0,10);
+    b+='<div style="position:relative;display:flex;align-items:center;gap:4px">';
+    b+='<span style="font-size:11px;color:var(--t3);white-space:nowrap">입금일</span>';
+    b+='<input type="date" id="quickPrepay_date" value="'+_todayStr+'" onkeydown="if(event.key===\'Enter\'){addQuickPrepayment('+v.id+');}" style="padding:8px 10px;font-size:13px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;background:var(--s1);box-sizing:border-box">';
     b+='</div>';
     b+='<button onclick="addQuickPrepayment('+v.id+')" style="padding:8px 16px;font-size:12px;border:1px solid #7A4DB5;background:#7A4DB5;color:#fff;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">+ 선금 추가</button>';
     b+='</div>';
@@ -17404,13 +17398,21 @@ function addQuickPrepayment(invId){
   if(currentPaid + amount > total * 1.05 && total > 0){
     if(!confirm(`청구액(₩${total.toLocaleString()})을 초과하는 입금입니다.\n\n현재 입금합계: ₩${currentPaid.toLocaleString()}\n추가 입금: ₩${amount.toLocaleString()}\n예상 입금합계: ₩${(currentPaid+amount).toLocaleString()}\n\n그래도 추가하시겠습니까?`)) return;
   }
-  // 오늘 날짜
+  // 오늘 날짜 (사용자 입력 우선)
   const today = (typeof toLocalDateStr==='function') ? toLocalDateStr(new Date()) : new Date().toISOString().slice(0,10);
+  const dateInput = document.getElementById('quickPrepay_date');
+  let payDate = today;
+  if(dateInput && dateInput.value){
+    // YYYY-MM-DD 형식 검증
+    if(/^\d{4}-\d{2}-\d{2}$/.test(dateInput.value)){
+      payDate = dateInput.value;
+    }
+  }
   // payments에 추가
   if(!v.payments) v.payments = [];
   v.payments.push({
     id: Date.now() + Math.random(),
-    date: today,
+    date: payDate,
     amount,
     type: '선금',
     memo: '원자재 선금',
@@ -17432,7 +17434,7 @@ function addQuickPrepayment(invId){
   if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
     syncInvoiceToNotion(v, true).catch(e=>console.warn('선금 추가 동기화 실패:',e));
   }
-  showToast(`✓ 선금 ₩${amount.toLocaleString()} 추가됨`,'#7A4DB5', 2500);
+  showToast(`✓ 선금 ₩${amount.toLocaleString()} 추가됨 (${payDate})`,'#7A4DB5', 2500);
   // 모달 새로고침 + 거래명세서 탭 갱신
   openInvDetail(invId);
   if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
@@ -17475,7 +17477,7 @@ function removeInvoicePayment(invId, paymentIdx){
 // 📋 거래명세서 워크플로우 단계 (4-A 단계)
 // _invStage: 'draft' | 'billing' | 'done'
 //
-//   draft   = 작성중/선금 — 발주 출고 전, 단발 선금 청구 가능
+//   draft   = 미청구 — 발주 출고 전, 단발 선금 청구 가능
 //   billing = 청구 거래명세서 — 출고완료, 월말 합본 대상
 //   done    = 완료 명세서 — 입금완료, 보관용
 //
@@ -17507,7 +17509,7 @@ function inferInvStage(v){
     return (v.status === '발행완료' || v.status === '청구완료' || v.status === '미수')
       ? 'billing' : 'draft';
   }
-  // 그 외는 draft (작성중/선금 단계 — 아직 출고 전)
+  // 그 외는 draft (미청구 단계 — 아직 출고 전)
   return 'draft';
 }
 
@@ -17596,7 +17598,7 @@ function markInvoiceShipped(invId, shipped){
     }
   }
   // 일반 토스트
-  showToast(shipped ? `✓ 출고완료 — 청구 단계로 이동` : `↩ 출고완료 해제 — 작성중/선금 단계로 되돌림`, shipped?'var(--grn)':'var(--org)', 3000);
+  showToast(shipped ? `✓ 출고완료 — 청구 단계로 이동` : `↩ 출고완료 해제 — 미청구 단계로 되돌림`, shipped?'var(--grn)':'var(--org)', 3000);
   return true;
 }
 
