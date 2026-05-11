@@ -3222,6 +3222,19 @@ async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
 // ════════════════════════════════
 let pdImgBuf=[], _importRows=[];
 let pdSearch='', pdFilterType='전체', pdFilterMat='전체', pdPage=1, pdLowOnly=false;
+
+// 한글 IME 안전 + 디바운스 검색 (250ms — 입력 중 매 글자마다 렌더링 안 함)
+let _pdSearchTimer = null;
+function _debouncedPdSearch(val){
+  pdSearch = val;
+  pdPage = 1;
+  // 입력 도중 잦은 재렌더링이 한글 IME를 깨므로 디바운스
+  if(_pdSearchTimer) clearTimeout(_pdSearchTimer);
+  _pdSearchTimer = setTimeout(()=>{
+    _pdSearchTimer = null;
+    if(typeof renderProducts === 'function') renderProducts();
+  }, 250);
+}
 // 최종수정일 필터: 'all' / 'today' / 'week' / 'month' / 'quarter' / 'year' / 'custom' (custom일 땐 pdDateFrom/To 사용)
 let pdDateFilter='all', pdDateFrom='', pdDateTo='';
 let pdSortKey=null, pdSortDir='asc'; // 정렬 상태: key=null이면 기본순서, dir='asc'(오름)/'desc'(내림)
@@ -3360,7 +3373,17 @@ function renderProducts(){
       });
     }
   }
-  if(pdSearch) list=list.filter(p=>(p.code+p.name+(p.memo||'')).toLowerCase().includes(pdSearch.toLowerCase()));
+  if(pdSearch){
+    const q = pdSearch.toLowerCase().trim();
+    list = list.filter(p => {
+      // 한글·영어 모두 검색 가능: 코드, 품명, 메모, 소재, 도금, 사이즈, 유형까지
+      const hay = [
+        p.code||'', p.name||'', p.memo||'',
+        p.mat||'', p.plating||'', p.size||'', p.type||''
+      ].join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
   if(pdLowOnly){
     list=list.filter(p=>{
       const stock=+p.stock||0,safety=+p.safetyStock||0;
@@ -3419,7 +3442,11 @@ function renderProducts(){
 
   const filters=`
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 14px;background:var(--s2);border-radius:var(--r);border:1px solid var(--bdr)">
-    <input class="search-box search-box-tracked" id="srch_pdSearch" placeholder="품목코드, 품목명 검색..." value="${pdSearch}" oninput="pdSearch=this.value;pdPage=1;renderProducts()" style="width:200px">
+    <input class="search-box search-box-tracked" id="srch_pdSearch" placeholder="품목코드 · 품명 · 소재 · 도금 · 사이즈 검색 (한/영)" value="${pdSearch}"
+      oncompositionstart="this._composing=true"
+      oncompositionend="this._composing=false;_debouncedPdSearch(this.value)"
+      oninput="if(!this._composing)_debouncedPdSearch(this.value)"
+      style="width:240px">
     <div style="display:flex;gap:4px;flex-wrap:wrap">
       ${types.map(t=>`<button onclick="pdFilterType='${t}';pdPage=1;renderProducts()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdFilterType===t?'var(--gold)':'var(--bdr)'};background:${pdFilterType===t?'var(--gold-bg)':'var(--s1)'};color:${pdFilterType===t?'var(--gold-lt)':'var(--t2)'};cursor:pointer;font-family:inherit">${t}</button>`).join('')}
     </div>
@@ -15105,29 +15132,56 @@ function renderSmMultiRows(){
         <div class="fg">
           <label style="font-size:10.5px">샘플명 *</label>
           <div style="display:flex;gap:4px;align-items:stretch">
-            <input class="fi" placeholder="11mm 원형 스톤 원터치" value="${safeEsc(r.name)}" oninput="smMultiSetField(${i},'name',this.value)" style="flex:1">
+            <input class="fi" placeholder="11mm 원형 스톤 원터치" value="${safeEsc(r.name)}"
+              oncompositionstart="this._composing=true"
+              oncompositionend="this._composing=false;smMultiSetField(${i},'name',this.value)"
+              oninput="if(!this._composing)smMultiSetField(${i},'name',this.value)" style="flex:1">
             <button onclick="openSmRowProductPicker(${i})" title="제품DB·샘플의뢰에서 검색해서 정보 채우기" style="padding:0 10px;background:var(--blu-bg);border:1px solid rgba(60,108,170,.3);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--blu);font-size:13px;flex-shrink:0">🔍</button>
           </div>
         </div>
         <div class="fg"><label style="font-size:10.5px">아이템 유형</label>
-          <input class="fi" list="smpTypeList" placeholder="EARRING / RING / NECKLACE..." value="${safeEsc(r.type)}" oninput="smMultiSetField(${i},'type',this.value)">
+          <input class="fi" list="smpTypeList" placeholder="EARRING / RING / NECKLACE..." value="${safeEsc(r.type)}"
+            oncompositionstart="this._composing=true"
+            oncompositionend="this._composing=false;smMultiSetField(${i},'type',this.value)"
+            oninput="if(!this._composing)smMultiSetField(${i},'type',this.value)">
         </div>
-        <div class="fg"><label style="font-size:10.5px">발주량</label><input class="fi" placeholder="1EA" value="${safeEsc(r.qty)}" oninput="smMultiSetField(${i},'qty',this.value)"></div>
+        <div class="fg"><label style="font-size:10.5px">발주량</label><input class="fi" placeholder="1EA" value="${safeEsc(r.qty)}"
+          oncompositionstart="this._composing=true"
+          oncompositionend="this._composing=false;smMultiSetField(${i},'qty',this.value)"
+          oninput="if(!this._composing)smMultiSetField(${i},'qty',this.value)"></div>
       </div>
 
       <div class="fr4" style="margin-bottom:8px">
-        <div class="fg"><label style="font-size:10.5px">외경 / 길이</label><input class="fi" placeholder="11mm" value="${safeEsc(r.sz1)}" oninput="smMultiSetField(${i},'sz1',this.value)"></div>
-        <div class="fg"><label style="font-size:10.5px">호수</label><input class="fi" placeholder="13호" value="${safeEsc(r.sz2)}" oninput="smMultiSetField(${i},'sz2',this.value)"></div>
-        <div class="fg"><label style="font-size:10.5px">중량(g)</label><input class="fi" placeholder="g" value="${safeEsc(r.wt)}" oninput="smMultiSetField(${i},'wt',this.value)"></div>
-        <div class="fg"><label style="font-size:10.5px">각인</label><input class="fi" placeholder="이미지 참고" value="${safeEsc(r.engr)}" oninput="smMultiSetField(${i},'engr',this.value)"></div>
+        <div class="fg"><label style="font-size:10.5px">외경 / 길이</label><input class="fi" placeholder="11mm" value="${safeEsc(r.sz1)}"
+          oncompositionstart="this._composing=true"
+          oncompositionend="this._composing=false;smMultiSetField(${i},'sz1',this.value)"
+          oninput="if(!this._composing)smMultiSetField(${i},'sz1',this.value)"></div>
+        <div class="fg"><label style="font-size:10.5px">호수</label><input class="fi" placeholder="13호" value="${safeEsc(r.sz2)}"
+          oncompositionstart="this._composing=true"
+          oncompositionend="this._composing=false;smMultiSetField(${i},'sz2',this.value)"
+          oninput="if(!this._composing)smMultiSetField(${i},'sz2',this.value)"></div>
+        <div class="fg"><label style="font-size:10.5px">중량(g)</label><input class="fi" placeholder="g" value="${safeEsc(r.wt)}"
+          oncompositionstart="this._composing=true"
+          oncompositionend="this._composing=false;smMultiSetField(${i},'wt',this.value)"
+          oninput="if(!this._composing)smMultiSetField(${i},'wt',this.value)"></div>
+        <div class="fg"><label style="font-size:10.5px">각인</label><input class="fi" placeholder="이미지 참고" value="${safeEsc(r.engr)}"
+          oncompositionstart="this._composing=true"
+          oncompositionend="this._composing=false;smMultiSetField(${i},'engr',this.value)"
+          oninput="if(!this._composing)smMultiSetField(${i},'engr',this.value)"></div>
       </div>
 
       <div class="fr3" style="margin-bottom:8px">
         <div class="fg"><label style="font-size:10.5px">소재 *</label>
-          <input class="fi" list="smpMatList" value="${safeEsc(r.mat)}" oninput="smMultiSetField(${i},'mat',this.value)">
+          <input class="fi" list="smpMatList" value="${safeEsc(r.mat)}"
+            oncompositionstart="this._composing=true"
+            oncompositionend="this._composing=false;smMultiSetField(${i},'mat',this.value)"
+            oninput="if(!this._composing)smMultiSetField(${i},'mat',this.value)">
         </div>
         <div class="fg"><label style="font-size:10.5px">도금</label>
-          <input class="fi" list="smpPlatingList" value="${safeEsc(r.plating)}" oninput="smMultiSetField(${i},'plating',this.value)">
+          <input class="fi" list="smpPlatingList" value="${safeEsc(r.plating)}"
+            oncompositionstart="this._composing=true"
+            oncompositionend="this._composing=false;smMultiSetField(${i},'plating',this.value)"
+            oninput="if(!this._composing)smMultiSetField(${i},'plating',this.value)">
         </div>
         <div class="fg"><label style="font-size:10.5px">입고원가(원)</label>
           <input class="fi" id="sm_row_cost_${i}" type="number" placeholder="0" value="${r.costPrice||''}" oninput="smMultiSetField(${i},'costPrice',+this.value||0)">
@@ -15142,7 +15196,10 @@ function renderSmMultiRows(){
           <input class="fi" type="number" placeholder="0" value="${r.devCost||''}" oninput="smMultiSetField(${i},'devCost',+this.value||0)">
         </div>
         <div class="fg"><label style="font-size:10.5px">행별 메모</label>
-          <input class="fi" placeholder="이 품목만의 메모" value="${safeEsc(r.memo)}" oninput="smMultiSetField(${i},'memo',this.value)">
+          <input class="fi" placeholder="이 품목만의 메모" value="${safeEsc(r.memo)}"
+            oncompositionstart="this._composing=true"
+            oncompositionend="this._composing=false;smMultiSetField(${i},'memo',this.value)"
+            oninput="if(!this._composing)smMultiSetField(${i},'memo',this.value)">
         </div>
       </div>
 
@@ -15338,7 +15395,10 @@ function openSmRowProductPicker(rowIdx){
       </button>
     </div>
 
-    <input class="fi search-box-tracked" id="smProdSearch" placeholder="품번 / 품명 / 소재 / 도금으로 검색" style="margin-bottom:8px" oninput="_renderSmProductPickerList()">
+    <input class="fi search-box-tracked" id="smProdSearch" placeholder="품번 · 품명 · 소재 · 도금 검색 (한/영)" style="margin-bottom:8px"
+      oncompositionstart="this._composing=true"
+      oncompositionend="this._composing=false;_renderSmProductPickerList()"
+      oninput="if(!this._composing)_renderSmProductPickerList()">
     <div id="smPickHint" style="font-size:10.5px;color:var(--t3);margin-bottom:8px"></div>
     <div id="smProdPickerList" style="max-height:55vh;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px"></div>
     <div style="display:flex;justify-content:flex-end;margin-top:12px">
