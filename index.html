@@ -10339,7 +10339,11 @@ function renderSmpComposeView(){
   </div>
   `;
   // 이미 사진이 올라가있으면 썸네일 갱신
-  setTimeout(()=>{ if(typeof renderSmpReqDzThumbs==='function') renderSmpReqDzThumbs(); }, 50);
+  setTimeout(()=>{
+    if(typeof renderSmpReqDzThumbs==='function') renderSmpReqDzThumbs();
+    // 누적된 의뢰 행이 있으면 상단에 패널 표시
+    if(typeof _renderSmStackStatus === 'function') _renderSmStackStatus();
+  }, 50);
 }
 
 // 붙여넣기(Ctrl+V)도 지원 — 단, 매우 엄격한 조건에서만 동작
@@ -13441,9 +13445,21 @@ function showTabParseResult(parsed,imgs,resultEl,tabType,srcLabel){
     +hd+body+itemImgsHtml+thumbsHtml+'</div>';
 
   // Action bar: separate div below card, always in normal flow
+  // 샘플의뢰의 경우 — 누적 모드 버튼 추가 (여러 작지서를 묶어서 한 의뢰서로 등록)
+  var accumBtn = '';
+  if(isSample){
+    const stackedCount = (window._smStackedRows && window._smStackedRows.length) || 0;
+    accumBtn = '<button class="btn bgo" onclick="addParsedToSmStack();document.getElementById(\''+resultId+'\').innerHTML=\'\'" style="font-size:12px;padding:5px 14px" title="이 결과를 의뢰서 행으로 누적 — 여러 작지서를 묶어서 한 번에 등록">📚 의뢰서에 누적 추가</button>';
+    // 누적된 게 있으면 "묶음 등록" 버튼도 함께 표시
+    if(stackedCount > 0){
+      accumBtn += '<button class="btn bp" onclick="openSmpMultiFromStack()" style="background:var(--gold);font-size:12px;padding:6px 18px;font-weight:600" title="누적된 '+stackedCount+'개를 다중 행 모달로 열어 등록">📋 묶음 등록 ('+stackedCount+'+1개)</button>';
+    }
+  }
+
   var actions='<div style="padding:12px 14px;border:1px solid rgba(46,139,44,.3);border-top:none;border-radius:0 0 var(--r) var(--r);display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--grn-bg)">'
     +'<span style="font-size:11px;color:var(--teal);margin-right:auto;font-weight:500">✅ 인식 완료 — 내용 확인 후 등록하세요</span>'
     +'<button class="btn bgo" onclick="'+editFn+'" style="font-size:12px;padding:5px 14px">✎ 폼에서 수정 후 등록</button>'
+    +accumBtn
     +'<button class="btn bp" style="background:'+regColor+';font-size:12px;padding:6px 18px;font-weight:600" onclick="'+regFn+'">✓ 바로 등록</button>'
     +'</div>';
 
@@ -15086,7 +15102,13 @@ function renderSmMultiRows(){
       </div>
 
       <div class="fr3" style="margin-bottom:8px">
-        <div class="fg"><label style="font-size:10.5px">샘플명 *</label><input class="fi" placeholder="11mm 원형 스톤 원터치" value="${safeEsc(r.name)}" oninput="smMultiSetField(${i},'name',this.value)"></div>
+        <div class="fg">
+          <label style="font-size:10.5px">샘플명 *</label>
+          <div style="display:flex;gap:4px;align-items:stretch">
+            <input class="fi" placeholder="11mm 원형 스톤 원터치" value="${safeEsc(r.name)}" oninput="smMultiSetField(${i},'name',this.value)" style="flex:1">
+            <button onclick="openSmRowProductPicker(${i})" title="제품DB·샘플의뢰에서 검색해서 정보 채우기" style="padding:0 10px;background:var(--blu-bg);border:1px solid rgba(60,108,170,.3);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--blu);font-size:13px;flex-shrink:0">🔍</button>
+          </div>
+        </div>
         <div class="fg"><label style="font-size:10.5px">아이템 유형</label>
           <input class="fi" list="smpTypeList" placeholder="EARRING / RING / NECKLACE..." value="${safeEsc(r.type)}" oninput="smMultiSetField(${i},'type',this.value)">
         </div>
@@ -15124,57 +15146,580 @@ function renderSmMultiRows(){
         </div>
       </div>
 
-      <!-- 행별 파일 첨부 -->
+      <!-- 행별 파일 첨부 (드래그앤드롭 + 카피앤페이스트 지원) -->
       <div style="border-top:1px dashed var(--bdr);padding-top:10px;margin-top:8px">
-        <div style="font-size:10.5px;color:var(--t3);margin-bottom:6px">📎 파일 첨부 <span style="font-size:9.5px;color:var(--t3)">— 이미지·작지서·CAD를 이 품목에 첨부</span></div>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="font-size:10.5px;color:var(--t3);margin-bottom:6px">📎 파일 첨부 <span style="font-size:9.5px;color:var(--t3)">— 이미지·작지서·CAD를 이 품목에 첨부 (드래그·붙여넣기 가능)</span></div>
+        <div id="smRow_dz_${i}" class="sm-row-dz"
+          ondrop="smRowDrop(event, ${i})"
+          ondragover="smRowDragOver(event, this)"
+          ondragleave="smRowDragLeave(this)"
+          onclick="document.getElementById('smRow_file_${i}').click()"
+          tabindex="0"
+          onfocus="window._smPasteTargetRow=${i};this.style.borderColor='var(--gold)'"
+          onblur="this.style.borderColor='var(--bdr)'"
+          style="border:1.5px dashed var(--bdr);border-radius:6px;padding:14px 12px;cursor:pointer;text-align:center;background:var(--s2);transition:.15s;outline:none"
+          title="클릭·드래그·붙여넣기(Ctrl+V) 모두 가능">
           <input type="file" id="smRow_file_${i}" multiple accept="*/*" style="display:none" onchange="smMultiRowFileInput(${i}, event)">
-          <button class="btn bgo bs" onclick="document.getElementById('smRow_file_${i}').click()" style="font-size:11px">📎 파일 선택</button>
-          <span style="font-size:10.5px;color:var(--t3)" id="smRow_fileStat_${i}">${(r.imgs?.length||0)+(r.sourceDoc?.length||0)+(r.cadFiles?.length||0)}개 첨부됨</span>
+          <div style="display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap">
+            <span style="font-size:18px">📎</span>
+            <span style="font-size:11.5px;color:var(--t2)">파일 드래그 · 클릭 · 붙여넣기 (Ctrl+V)</span>
+            <span style="font-size:10.5px;color:var(--gold-lt);font-weight:600" id="smRow_fileStat_${i}">${(r.imgs?.length||0)+(r.sourceDoc?.length||0)+(r.cadFiles?.length||0)}개 첨부됨</span>
+          </div>
+          <div style="font-size:9.5px;color:var(--t3);margin-top:4px">🖼 이미지 → 예시 · 📄 PDF/엑셀 → 작지서 · 📐 AI/DXF/DWG/STL → CAD</div>
         </div>
+        ${(r.imgs?.length||0)+(r.sourceDoc?.length||0)+(r.cadFiles?.length||0) > 0 ? `
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;font-size:10.5px">
+          ${(r.imgs||[]).map((f,j)=>`<span style="background:rgba(46,139,44,.08);border:1px solid rgba(46,139,44,.25);color:var(--grn);padding:3px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:5px">🖼 ${(f.name||'image').slice(0,18)} <button onclick="event.stopPropagation();smRowRemoveFile(${i},'imgs',${j})" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0;font-size:13px;line-height:1">×</button></span>`).join('')}
+          ${(r.sourceDoc||[]).map((f,j)=>`<span style="background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);padding:3px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:5px">📄 ${(f.name||'doc').slice(0,18)} <button onclick="event.stopPropagation();smRowRemoveFile(${i},'sourceDoc',${j})" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0;font-size:13px;line-height:1">×</button></span>`).join('')}
+          ${(r.cadFiles||[]).map((f,j)=>`<span style="background:rgba(60,108,170,.08);border:1px solid rgba(60,108,170,.3);color:var(--blu);padding:3px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:5px">📐 ${(f.name||'cad').slice(0,18)} <button onclick="event.stopPropagation();smRowRemoveFile(${i},'cadFiles',${j})" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0;font-size:13px;line-height:1">×</button></span>`).join('')}
+        </div>` : ''}
       </div>
     </div>`;
   }).join('');
   _updateSmMultiSummary();
 }
 
-// 행별 파일 입력 처리 — 자동 분류 (이미지/PDF·엑셀/CAD)
-function smMultiRowFileInput(idx, event){
-  const files = Array.from(event.target.files || []);
-  if(!files.length) return;
+// 행 파일을 분류해서 행 객체에 추가 (공통 로직)
+function _smRowAddFiles(idx, files){
   const r = _smRowsBuf[idx];
   if(!r) return;
   if(!r.imgs) r.imgs = [];
   if(!r.sourceDoc) r.sourceDoc = [];
   if(!r.cadFiles) r.cadFiles = [];
-
   let pending = files.length;
+  if(!pending){ return; }
+  let added = 0;
   files.forEach(file => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const data = e.target.result;
-      const obj = { name: file.name, url: data, type: file.type, size: file.size };
+      const obj = { name: file.name, url: data, type: file.type || '', size: file.size };
       const ext = (file.name.split('.').pop() || '').toLowerCase();
       // 분류 규칙
-      if(file.type.startsWith('image/')){
-        if(r.imgs.length < 4) r.imgs.push(obj);
+      if((file.type||'').startsWith('image/')){
+        if(r.imgs.length < 4){ r.imgs.push(obj); added++; }
       } else if(['ai','dxf','dwg','stl','step','iges','3dm'].includes(ext)){
-        r.cadFiles.push(obj);
+        r.cadFiles.push(obj); added++;
       } else {
         // PDF/엑셀/기타 → 작지서
-        r.sourceDoc.push(obj);
+        r.sourceDoc.push(obj); added++;
       }
       pending--;
       if(pending === 0){
         renderSmMultiRows();
+        if(added > 0 && typeof showToast === 'function'){
+          showToast(`✓ 행 ${idx+1}에 ${added}개 파일 첨부됨`, 'var(--grn)', 2200);
+        }
       }
+    };
+    reader.onerror = () => {
+      pending--;
+      if(pending === 0) renderSmMultiRows();
     };
     reader.readAsDataURL(file);
   });
+}
+
+// 행별 파일 입력 처리 (파일 선택 버튼 — input change)
+function smMultiRowFileInput(idx, event){
+  const files = Array.from(event.target.files || []);
+  if(!files.length) return;
+  _smRowAddFiles(idx, files);
   event.target.value = ''; // 같은 파일 다시 선택 가능하게
 }
 
+// 행 dropzone 드래그앤드롭
+function smRowDrop(event, idx){
+  event.preventDefault();
+  event.stopPropagation();
+  const dz = event.currentTarget;
+  if(dz){
+    dz.style.borderColor = 'var(--bdr)';
+    dz.style.background = 'var(--s2)';
+  }
+  const files = Array.from(event.dataTransfer?.files || []);
+  if(!files.length) return;
+  _smRowAddFiles(idx, files);
+}
+function smRowDragOver(event, dz){
+  event.preventDefault();
+  event.stopPropagation();
+  if(event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  dz.style.borderColor = 'var(--gold)';
+  dz.style.background = 'rgba(167,131,57,.06)';
+}
+function smRowDragLeave(dz){
+  dz.style.borderColor = 'var(--bdr)';
+  dz.style.background = 'var(--s2)';
+}
+
+// 행에서 파일 1개 제거
+function smRowRemoveFile(rowIdx, field, fileIdx){
+  const r = _smRowsBuf[rowIdx];
+  if(!r || !Array.isArray(r[field])) return;
+  r[field].splice(fileIdx, 1);
+  renderSmMultiRows();
+}
+
+// 모달 전체 카피앤페이스트 핸들러 (포커스된 행 또는 마지막 클릭 행에 첨부)
+// openSmpMultiModal 호출 시 등록, closeM 시 해제
+function _smMultiPasteHandler(e){
+  // 모달이 열려있어야 함
+  const m = document.getElementById('mSmpMulti');
+  if(!m || !m.classList.contains('on')) return;
+  // 텍스트 입력 중이면 무시 (단, dropzone에 포커스됐을 때만 가로챔)
+  const ae = document.activeElement;
+  const tag = ae?.tagName;
+  // 입력 필드에 포커스 중이고 그게 dropzone이 아니면 → 일반 텍스트 붙여넣기로 두기
+  if((tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT') &&
+     !(ae.classList && ae.classList.contains('sm-row-dz'))){
+    return;
+  }
+  // 클립보드 파일/이미지 확인
+  const items = Array.from(e.clipboardData?.items || []);
+  const files = [];
+  items.forEach(it => {
+    if(it.kind === 'file'){
+      const f = it.getAsFile();
+      if(f) files.push(f);
+    }
+  });
+  if(!files.length) return;
+  // 어느 행에 붙일지: 포커스된 dropzone의 행 우선, 없으면 _smPasteTargetRow
+  let targetRow = -1;
+  if(ae && ae.id && ae.id.startsWith('smRow_dz_')){
+    targetRow = parseInt(ae.id.replace('smRow_dz_',''),10);
+  } else if(typeof window._smPasteTargetRow === 'number'){
+    targetRow = window._smPasteTargetRow;
+  } else {
+    // 행이 1개뿐이면 자동으로 그 행에
+    if(_smRowsBuf.length === 1) targetRow = 0;
+  }
+  if(targetRow < 0 || !_smRowsBuf[targetRow]){
+    if(typeof showToast === 'function'){
+      showToast('⚠ 어느 행에 붙여넣을지 선택하세요 — 행의 파일 영역을 한 번 클릭하세요','var(--org)', 4000);
+    }
+    return;
+  }
+  e.preventDefault();
+  _smRowAddFiles(targetRow, files);
+}
+
 // 새 의뢰서 모달 열기
+// ════════════════════════════════════════════════════════════════
+// 다중 행 모달 — 행별 제품DB/샘플의뢰 검색 picker
+// ════════════════════════════════════════════════════════════════
+let _smPickTab = 'product'; // 'product' or 'sample'
+let _smPickRowIdx = 0;      // 어느 행에 적용할지
+
+function setSmPickTab(tab){
+  _smPickTab = tab;
+  // 탭 버튼 활성화 상태
+  document.querySelectorAll('.smpick-tab').forEach(b=>{
+    b.classList.toggle('on', b.dataset.tab === tab);
+  });
+  _renderSmProductPickerList();
+}
+
+function openSmRowProductPicker(rowIdx){
+  _smPickRowIdx = rowIdx;
+  _smPickTab = 'product';
+  const pdCount = productDB.length;
+  const smpCount = samples.filter(s => s.status !== '취소').length;
+  const html = `
+    <div style="font-size:14px;font-weight:600;margin-bottom:10px">🔍 품목 검색 → 행 ${rowIdx+1}에 채우기</div>
+
+    <div style="display:flex;gap:2px;padding:3px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px;margin-bottom:10px">
+      <button class="smpick-tab on" data-tab="product" onclick="setSmPickTab('product')" style="flex:1;padding:7px 12px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600">
+        📦 제품DB <span style="font-size:10px;opacity:.7">${pdCount.toLocaleString()}</span>
+      </button>
+      <button class="smpick-tab" data-tab="sample" onclick="setSmPickTab('sample')" style="flex:1;padding:7px 12px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:500">
+        📋 샘플의뢰 <span style="font-size:10px;opacity:.7">${smpCount}</span>
+      </button>
+    </div>
+
+    <input class="fi search-box-tracked" id="smProdSearch" placeholder="품번 / 품명 / 소재 / 도금으로 검색" style="margin-bottom:8px" oninput="_renderSmProductPickerList()">
+    <div id="smPickHint" style="font-size:10.5px;color:var(--t3);margin-bottom:8px"></div>
+    <div id="smProdPickerList" style="max-height:55vh;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button class="btn" onclick="closeM('mProductPickSm')">닫기</button>
+    </div>
+
+    <style>
+      .smpick-tab{color:var(--t3);background:transparent;transition:.15s}
+      .smpick-tab:hover{color:var(--t1)}
+      .smpick-tab.on{color:var(--t1);background:var(--s1);font-weight:700}
+    </style>
+  `;
+  let m = document.getElementById('mProductPickSm');
+  if(!m){
+    m = document.createElement('div');
+    m.id = 'mProductPickSm';
+    m.className = 'ov';
+    m.innerHTML = '<div class="modal" style="max-width:760px"></div>';
+    document.body.appendChild(m);
+  }
+  m.querySelector('.modal').innerHTML = html;
+  openM('mProductPickSm');
+  _renderSmProductPickerList();
+  setTimeout(()=>{
+    const inp = document.getElementById('smProdSearch');
+    if(inp){
+      // 현재 행에 입력된 샘플명이 있으면 그걸 검색어로 미리 채워서 빠르게 매칭
+      const currentName = (_smRowsBuf[_smPickRowIdx]?.name || '').trim();
+      if(currentName){
+        inp.value = currentName;
+        _renderSmProductPickerList();
+      }
+      inp.focus();
+      inp.select();
+    }
+  }, 50);
+}
+
+function _renderSmProductPickerList(){
+  const q = (document.getElementById('smProdSearch')?.value || '').toLowerCase().trim();
+  const tab = _smPickTab || 'product';
+  const el = document.getElementById('smProdPickerList');
+  const hintEl = document.getElementById('smPickHint');
+  if(!el) return;
+
+  if(tab === 'product'){
+    // ── 제품DB 탭 ──
+    let pdList = [...productDB];
+    if(q){
+      pdList = pdList.filter(p=>{
+        const hay = [p.code||'', p.name||'', p.mat||'', p.plating||'', p.size||'', p.type||''].join(' ').toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    pdList.sort((a,b)=>{
+      const da = a.lastModified || a.createdDate || '';
+      const db = b.lastModified || b.createdDate || '';
+      return db.localeCompare(da);
+    });
+
+    if(hintEl) hintEl.textContent = '📦 등록된 제품 — 선택 시 품명·소재·도금·사이즈·중량·단가가 자동 입력됩니다';
+
+    if(!pdList.length){
+      el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--t3);font-size:12px">${q?'검색 결과 없음':'등록된 품번이 없습니다'}</div>`;
+      return;
+    }
+    const shown = pdList.slice(0, 50);
+    const total = pdList.length;
+    el.innerHTML = shown.map(p=>{
+      const wt = p.weight || 0;
+      const cn = p.costPrice || 0;
+      const pr = p.price || 0;
+      const platBadge = p.plating ? `<span style="background:var(--gold-bg);color:var(--gold-lt);padding:2px 6px;border-radius:3px;font-size:10px;margin-left:4px">${p.plating}</span>` : '';
+      const matBadge = p.mat ? `<span style="background:rgba(60,108,170,.08);color:var(--blu);padding:2px 6px;border-radius:3px;font-size:10px;margin-left:4px">${p.mat}</span>` : '';
+      // 첫 이미지 썸네일
+      const thumb = (Array.isArray(p.imgs) && p.imgs[0]?.url)
+        ? `<img src="${p.imgs[0].url}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0">`
+        : `<div style="width:36px;height:36px;background:var(--s2);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:14px;flex-shrink:0">📦</div>`;
+      return `<div onclick="pickSmProduct('pd',${p.id})" style="padding:9px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;display:flex;align-items:center;gap:10px;transition:.15s" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='transparent'">
+        ${thumb}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:var(--t1)">
+            ${p.code ? `<span style="color:var(--gold-lt)">${p.code}</span> · ` : ''}${p.name || '(이름없음)'}
+            ${matBadge}${platBadge}
+          </div>
+          <div style="font-size:10.5px;color:var(--t3);margin-top:2px">
+            ${p.size?`사이즈 ${p.size} · `:''}${wt?`중량 ${wt}g · `:''}입고 ${cn.toLocaleString()}원 · 판매 ${pr.toLocaleString()}원
+          </div>
+        </div>
+        <div style="color:var(--blu);font-size:18px;flex-shrink:0">›</div>
+      </div>`;
+    }).join('') + (total > 50 ? `<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s2)">총 ${total}건 중 상위 50건 표시 — 검색어를 좁혀 주세요</div>` : '');
+  } else {
+    // ── 샘플의뢰 탭 ──
+    let smpList = samples.filter(s => s.status !== '취소');
+    if(q){
+      smpList = smpList.filter(s => {
+        const hay = [s.name||'', s.mat||'', s.plating||'', s.sz1||'', s.sz2||'', s.type||'', s.manager||'', s.itemCode||''].join(' ').toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    smpList.sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''));
+
+    if(hintEl) hintEl.textContent = '📋 등록된 샘플의뢰 — 같은 디자인 재의뢰 시 빠르게 채우기 가능';
+
+    if(!smpList.length){
+      el.innerHTML = `<div style="padding:30px;text-align:center;color:var(--t3);font-size:12px">${q?'검색 결과 없음':'등록된 샘플의뢰가 없습니다'}</div>`;
+      return;
+    }
+    const shown = smpList.slice(0, 50);
+    const total = smpList.length;
+    el.innerHTML = shown.map(s=>{
+      const thumb = (Array.isArray(s.imgs) && s.imgs[0]?.url)
+        ? `<img src="${s.imgs[0].url}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0">`
+        : `<div style="width:36px;height:36px;background:var(--s2);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:14px;flex-shrink:0">🔬</div>`;
+      const platBadge = s.plating ? `<span style="background:var(--gold-bg);color:var(--gold-lt);padding:2px 6px;border-radius:3px;font-size:10px;margin-left:4px">${s.plating}</span>` : '';
+      const matBadge = s.mat ? `<span style="background:rgba(60,108,170,.08);color:var(--blu);padding:2px 6px;border-radius:3px;font-size:10px;margin-left:4px">${s.mat}</span>` : '';
+      const statusBadge = `<span style="background:var(--s2);color:var(--t2);padding:2px 6px;border-radius:3px;font-size:10px;margin-left:4px">${s.status||'의뢰'}</span>`;
+      return `<div onclick="pickSmProduct('smp',${s.id})" style="padding:9px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;display:flex;align-items:center;gap:10px;transition:.15s" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='transparent'">
+        ${thumb}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:var(--t1)">
+            ${s.name || '(이름없음)'}
+            ${matBadge}${platBadge}${statusBadge}
+          </div>
+          <div style="font-size:10.5px;color:var(--t3);margin-top:2px">
+            ${s.manager?`${s.manager} · `:''}${s.sz1?`외경 ${s.sz1} · `:''}${s.sz2?`호수 ${s.sz2} · `:''}${s.unitPrice?`단가 ${(+s.unitPrice).toLocaleString()}원 · `:''}${s.reqDate||''}
+          </div>
+        </div>
+        <div style="color:var(--blu);font-size:18px;flex-shrink:0">›</div>
+      </div>`;
+    }).join('') + (total > 50 ? `<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s2)">총 ${total}건 중 상위 50건 표시 — 검색어를 좁혀 주세요</div>` : '');
+  }
+}
+
+// 검색 결과에서 클릭 — 행에 채우기
+function pickSmProduct(kind, id){
+  const rowIdx = _smPickRowIdx;
+  const row = _smRowsBuf[rowIdx];
+  if(!row){
+    showToast('⚠ 행을 찾을 수 없습니다','var(--red)');
+    return;
+  }
+
+  if(kind === 'pd'){
+    const p = productDB.find(x => String(x.id) === String(id));
+    if(!p) return;
+    // 제품DB → 행 채우기
+    row.name = p.name || '';
+    row.type = p.type || '';
+    row.sz1 = p.size || '';
+    // 호수는 별도 필드 — 사이즈에서 추출 시도
+    if(/호/.test(p.size||'')){
+      row.sz2 = (p.size||'').match(/(\d+호[~\d]*)/)?.[1] || '';
+      row.sz1 = (p.size||'').replace(row.sz2, '').trim();
+    }
+    row.mat = p.mat || '브라스 (BRASS)';
+    row.plating = p.plating || '실버';
+    row.wt = p.weight || '';
+    row.costPrice = +p.costPrice || 0;
+    row.unitPrice = +p.price || 0;  // 제품DB 판매가 → 샘플단가
+    row._unitAutoSet = false; // 명시적으로 가져온 단가니까 자동 ×2 안 함
+    // 이미지가 있으면 첫 1장 가져옴
+    if(Array.isArray(p.imgs) && p.imgs.length){
+      row.imgs = [...p.imgs.slice(0, 4)];
+    }
+    showToast(`✓ "${p.code||p.name}" 정보로 행 ${rowIdx+1} 채움`,'var(--grn)', 3000);
+  } else if(kind === 'smp'){
+    const s = samples.find(x => String(x.id) === String(id));
+    if(!s) return;
+    // 샘플의뢰 → 행 채우기 (재의뢰)
+    row.name = s.name || '';
+    row.type = s.type || '';
+    row.qty = s.qty || '1EA';
+    row.sz1 = s.sz1 || '';
+    row.sz2 = s.sz2 || '';
+    row.mat = s.mat || '브라스 (BRASS)';
+    row.plating = s.plating || '실버';
+    row.wt = s.wt || '';
+    row.engr = s.engr || '';
+    row.costPrice = +s.costPrice || 0;
+    row.unitPrice = +s.unitPrice || 0;
+    row.devCost = +s.devCost || 0;
+    row._unitAutoSet = false;
+    // 메모: 기존 디자인설명 가져옴
+    if(s.devNote || s.caution){
+      row.memo = [s.devNote, s.caution].filter(Boolean).join(' · ');
+    }
+    // 이미지·작지서·CAD도 함께 가져옴 (재의뢰니까)
+    if(Array.isArray(s.imgs) && s.imgs.length){
+      row.imgs = [...s.imgs.slice(0, 4)];
+    }
+    if(Array.isArray(s.sourceDoc) && s.sourceDoc.length){
+      row.sourceDoc = [...s.sourceDoc];
+    }
+    if(Array.isArray(s.cadFiles) && s.cadFiles.length){
+      row.cadFiles = [...s.cadFiles];
+    }
+    showToast(`✓ 샘플의뢰 "${s.name}" 정보로 행 ${rowIdx+1} 채움 (이미지·작지서·CAD 포함)`,'var(--grn)', 4000);
+  }
+
+  closeM('mProductPickSm');
+  renderSmMultiRows();
+}
+
+// ════════════════════════════════════════════════════════════════
+// AI 인식 결과 누적 (여러 작지서를 묶어서 한 의뢰서로)
+// ════════════════════════════════════════════════════════════════
+// window._smStackedRows: 누적된 행 배열
+// window._smStackedFiles: 누적된 원본 파일들 (행과 1:1 매칭, 행별 작지서로 사용)
+
+// 현재 AI 파싱 결과를 행으로 변환해서 스택에 추가
+function addParsedToSmStack(){
+  const parsed = window._pSmp;
+  if(!parsed || !parsed.sample){
+    showToast('⚠ 인식된 데이터가 없습니다','var(--red)');
+    return;
+  }
+  const s = parsed.sample;
+  if(!s.name || !s.name.trim()){
+    showToast('⚠ 샘플명이 비어있어 추가할 수 없습니다 — 폼에서 수정 후 추가하세요','var(--org)');
+    return;
+  }
+
+  // 누적된 원본 파일 (이 작지서의 파일들) — 행별 첨부로 활용
+  const origFiles = Array.isArray(parsed._origFiles) ? [...parsed._origFiles] : [];
+  // 인식 결과의 이미지 (Anthropic API로 전달된 이미지) 들도 행 첨부에 포함
+  const imgList = window['_pImgList_sample'] || [];
+
+  // 파일들을 분류 (이미지/PDF·엑셀/CAD)
+  const rowImgs = [], rowSrc = [], rowCad = [];
+  // imgList(파싱 입력 이미지) → 예시 이미지
+  imgList.forEach(im => {
+    if(im && im.url) rowImgs.push({name: im.name || '이미지', url: im.url, type: 'image/jpeg'});
+  });
+  // origFiles → 타입별 분류 (작지서로 들어온 PDF/엑셀)
+  origFiles.forEach(f => {
+    const ext = (f.name||'').split('.').pop().toLowerCase();
+    if(['ai','dxf','dwg','stl','step','iges','3dm'].includes(ext)){
+      rowCad.push(f);
+    } else if(f.type && f.type.startsWith('image/')){
+      // 이미지면 imgList에 이미 들어갔을 가능성 — 중복 방지
+      if(!rowImgs.find(x => x.name === f.name)){
+        rowImgs.push(f);
+      }
+    } else {
+      rowSrc.push(f); // PDF, 엑셀, 기타 → 작지서
+    }
+  });
+
+  // 행 객체 생성
+  const row = {
+    name: (s.name || '').trim(),
+    type: s.type || '',
+    qty: s.qty || '1EA',
+    sz1: s.sz1 || '',
+    sz2: s.sz2 || '',
+    mat: s.mat || '브라스 (BRASS)',
+    plating: s.plating || '실버',
+    wt: s.wt || '',
+    engr: s.engr || '',
+    costPrice: 0, unitPrice: 0, devCost: 0,
+    // 디자인설명, 개발사항, 주의사항을 행별 메모로 합침
+    memo: [s.desc, s.devNote, s.caution].filter(Boolean).join(' · '),
+    imgs: rowImgs.slice(0, 4),
+    sourceDoc: rowSrc,
+    cadFiles: rowCad,
+    // AI 인식 결과임을 표시 (등록 시 aiParsed:true로 저장 가능)
+    _fromAI: true
+  };
+
+  // 첫 행이면 공통 정보도 함께 스택에 저장 (의뢰서 단위 정보)
+  if(!window._smStackedRows || !window._smStackedRows.length){
+    window._smStackedCommon = {
+      vendor: s.manager || '',  // AI가 인식한 담당자/고객사
+      reqDate: s.reqDate || toLocalDateStr(new Date()),
+      due: s.due || '',
+      factShip: '',
+      status: '의뢰',
+      commonMemo: ''
+    };
+    window._smStackedRows = [];
+  }
+  window._smStackedRows.push(row);
+
+  // 파싱 결과/파일 버퍼 클리어 (다음 작지서 업로드 위해)
+  window._pSmp = null;
+  window._pSmpFiles = [];
+  window['_pImgList_sample'] = [];
+
+  // 누적 상태 표시 UI 갱신
+  _renderSmStackStatus();
+  showToast(`✓ "${row.name}" 의뢰서에 추가됨 (현재 ${window._smStackedRows.length}개) — 다음 작지서를 업로드하거나 묶음 등록을 누르세요`, 'var(--grn)', 4500);
+}
+
+// 누적 상태 패널 렌더링 (AI 의뢰서 작성 카드 위에 표시)
+function _renderSmStackStatus(){
+  let panel = document.getElementById('smStackPanel');
+  const stack = window._smStackedRows || [];
+  if(stack.length === 0){
+    if(panel) panel.remove();
+    return;
+  }
+  // 패널 없으면 생성 (AI 의뢰서 작성 화면 상단에)
+  if(!panel){
+    // AI 의뢰서 작성 화면의 컨테이너 찾기 — content div 또는 적절한 위치
+    const container = document.querySelector('#content .card') || document.getElementById('content');
+    if(!container) return;
+    panel = document.createElement('div');
+    panel.id = 'smStackPanel';
+    panel.style.cssText = 'background:rgba(167,131,57,.08);border:1px solid var(--gold-line);border-radius:8px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+    container.parentNode.insertBefore(panel, container);
+  }
+  const rowsHtml = stack.map((r, i) => `<span style="display:inline-flex;align-items:center;gap:4px;background:var(--s1);padding:4px 10px;border-radius:5px;font-size:11.5px;border:1px solid var(--bdr)">
+    <b style="color:var(--gold-lt)">${i+1}.</b> ${r.name}
+    <button onclick="removeFromSmStack(${i})" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 0 0 4px;line-height:1" title="제거">×</button>
+  </span>`).join('');
+
+  panel.innerHTML = `<div style="display:flex;align-items:center;gap:8px;flex:1;flex-wrap:wrap">
+    <span style="font-size:12.5px;font-weight:600;color:var(--gold-lt)">📚 누적된 의뢰 품목 (${stack.length}개)</span>
+    ${rowsHtml}
+  </div>
+  <div style="display:flex;gap:6px">
+    <button class="btn bgo bs" onclick="clearSmStack()" style="font-size:11px" title="누적된 행 모두 삭제">초기화</button>
+    <button class="btn bp" onclick="openSmpMultiFromStack()" style="background:var(--gold);font-size:11.5px;font-weight:600">📋 묶음 등록 (${stack.length}개)</button>
+  </div>`;
+}
+
+// 누적 스택에서 특정 행 제거
+function removeFromSmStack(idx){
+  if(!window._smStackedRows) return;
+  window._smStackedRows.splice(idx, 1);
+  _renderSmStackStatus();
+  showToast(`✓ 행 제거됨 (남은 ${window._smStackedRows.length}개)`, 'var(--blu)', 2000);
+}
+
+// 누적 스택 초기화
+function clearSmStack(){
+  showConfirm(
+    '누적된 모든 의뢰 품목을 삭제합니다.\n실제 등록된 샘플은 영향 없습니다.',
+    () => {
+      window._smStackedRows = [];
+      window._smStackedCommon = null;
+      _renderSmStackStatus();
+      showToast('✓ 누적 초기화됨', 'var(--grn)');
+    },
+    '누적 초기화', '🗑'
+  );
+}
+
+// 누적 스택을 다중 행 모달로 열기
+function openSmpMultiFromStack(){
+  // 현재 화면에 보이는 AI 파싱 결과도 있으면 자동으로 추가 (사용자 편의)
+  if(window._pSmp && window._pSmp.sample && window._pSmp.sample.name){
+    addParsedToSmStack();
+  }
+  const stack = window._smStackedRows || [];
+  if(!stack.length){
+    showToast('⚠ 누적된 의뢰 품목이 없습니다','var(--red)');
+    return;
+  }
+  // 다중 모달 열고 채우기
+  openSmpMultiModal(stack);
+  // 공통 정보도 채움
+  const common = window._smStackedCommon || {};
+  setTimeout(() => {
+    const setVal = (id, val) => { const el = document.getElementById(id); if(el && val) el.value = val; };
+    setVal('sm_vendor', common.vendor || '');
+    setVal('sm_reqDate', common.reqDate || toLocalDateStr(new Date()));
+    setVal('sm_due', common.due || '');
+    setVal('sm_factShip', common.factShip || '');
+    setVal('sm_status', common.status || '의뢰');
+    setVal('sm_commonMemo', common.commonMemo || '');
+    renderSmMultiRows();
+  }, 150);
+  // 누적 스택 비움 (모달 저장 후 또 누르지 않도록)
+  window._smStackedRows = [];
+  window._smStackedCommon = null;
+  _renderSmStackStatus();
+}
+
 function openSmpMultiModal(prefillRows){
   if(!requireNotion('smpDb', '샘플의뢰')) return;
   // 기본 1행
@@ -15192,6 +15737,22 @@ function openSmpMultiModal(prefillRows){
     renderSmMultiRows();
   }, 50);
   openM('mSmpMulti');
+  // 카피앤페이스트 핸들러 등록 (중복 방지 위해 먼저 제거)
+  document.removeEventListener('paste', _smMultiPasteHandler);
+  document.addEventListener('paste', _smMultiPasteHandler);
+  // 모달이 닫힐 때 자동으로 해제하도록 한 번만 감시
+  const mEl = document.getElementById('mSmpMulti');
+  if(mEl && !mEl._closeWatcherAttached){
+    mEl._closeWatcherAttached = true;
+    // mutationObserver로 클래스 변화 감지
+    const obs = new MutationObserver(()=>{
+      if(!mEl.classList.contains('on')){
+        document.removeEventListener('paste', _smMultiPasteHandler);
+        window._smPasteTargetRow = null;
+      }
+    });
+    obs.observe(mEl, {attributes:true, attributeFilter:['class']});
+  }
 }
 
 // 고객사 드롭다운 (mSmp의 renderSmpMgrDropdown 재활용 — 함수 구조 비슷)
