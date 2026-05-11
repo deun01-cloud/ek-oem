@@ -496,18 +496,18 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
   <div class="fg"><label>📬 고객사 문의 DB ID</label><input class="fi" id="notion_inq_db" placeholder="28ad79cef0bc4895..."></div>
   <div class="fg"><label>📋 주간/월간 업무 목표 DB ID <span style="font-size:9.5px;color:var(--t3)">(신규 — 비워두면 동기화 안 함)</span></label><input class="fi" id="notion_checklist_db" placeholder="Notion에서 DB 생성 후 ID 입력"></div>
-  <div style="margin-top:10px;padding:12px 14px;background:rgba(192,48,48,.06);border:1px solid rgba(192,48,48,.25);border-radius:6px">
-    <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12px">
-      <input type="checkbox" id="notion_strict_mode" style="margin-top:2px;flex-shrink:0">
-      <span>
-        <b style="color:var(--red)">🔒 노션 진실의 원천 모드 (Strict Mode)</b><br>
-        <span style="font-size:11px;color:var(--t2);line-height:1.5">
-          켜면 <b>노션 DB에 등록된 항목만</b> 화면에 표시됩니다.<br>
-          노션과 동기화되지 않은 로컬 전용 항목(다른 기기에서 만든 캐시 등)은 자동으로 화면에서 제외되어, 다른 기기 간 일관성이 보장됩니다.<br>
-          <span style="color:var(--red)">⚠ 모드 변경 후 다음 동기화 시 적용되며, 로컬 전용 데이터는 보이지 않게 됩니다 (노션 DB의 데이터는 안전).</span>
-        </span>
+  <div style="margin-top:10px;padding:12px 14px;background:rgba(46,139,44,.06);border:1px solid rgba(46,139,44,.3);border-radius:6px">
+    <div style="font-size:12px">
+      <b style="color:var(--grn)">🔒 노션-우선 모드 (항상 적용)</b><br>
+      <span style="font-size:11px;color:var(--t2);line-height:1.5">
+        모든 데이터(샘플의뢰·발주서·AS·거래명세서·제품DB·고객사·업무일지·영업제안)는<br>
+        <b>노션 동기화 성공 후에만 화면에 표시</b>됩니다.<br>
+        · 모든 기기가 동일한 노션 데이터를 봄 (완전 일관성)<br>
+        · 노션 미연결 시 신규 등록 불가<br>
+        · 노션 동기화 실패 시 등록 자체가 실패 (rollback)<br>
+        <input type="checkbox" id="notion_strict_mode" style="display:none">
       </span>
-    </label>
+    </div>
   </div>
   <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;padding:10px 13px;margin-top:10px;font-size:11px;color:var(--gold-lt)">
     <b>📌 미리 생성된 Notion DB (모두 자동 연결됨)</b><br>
@@ -2277,12 +2277,14 @@ function asParseToggleAll(checked){
   renderASParseTable();
 }
 
-function applyASParseAll(){
+async function applyASParseAll(){
   const parsed=window._asParsed;
   if(!parsed||!Array.isArray(parsed.items)||!parsed.items.length){
     showToast('⚠ 추출된 항목이 없습니다','var(--red)');
     return;
   }
+  // 🔒 노션-우선: AS 일괄 등록도 노션 연결 필수
+  if(!requireNotion('asDb', 'AS 일괄 등록')) return;
   // 체크된 항목만 필터
   const checkedItems = parsed.items.filter(it=>it._checked!==false);
   if(!checkedItems.length){
@@ -2298,10 +2300,11 @@ function applyASParseAll(){
   }
   const now=new Date().toISOString();
   const todayS=toLocalDateStr(new Date());
-  let added=0;
-  // 노션 동기화 — 본 forEach 끝난 후 일괄 시작 (race condition 방지)
-  const toSync=[];
-  checkedItems.forEach((it,i)=>{
+  let added=0, failed=0;
+  // 🔒 노션-우선: 각 항목을 노션에 push → 성공한 것만 asItems에 추가
+  showToast(`🔄 Notion에 ${checkedItems.length}건 등록 중...`, 'var(--blu)', 3000);
+  for(let i=0; i<checkedItems.length; i++){
+    const it = checkedItems[i];
     // defectType은 사용자가 편집했으면 그 값, 아니면 reason에서 자동 판단
     const reason = (it.reason||'').trim();
     let defectType = it.defectType || '';
@@ -2310,7 +2313,7 @@ function applyASParseAll(){
       else if(reason.includes('고객불량')) defectType = '고객불량';
     }
     const obj={
-      id: Date.now()+Math.random(), // unique ID 충돌 방지
+      id: Date.now()+Math.random()+i, // unique ID 충돌 방지
       createdAt: now,
       client: vendor,
       date: it.date || todayS,
@@ -2324,21 +2327,27 @@ function applyASParseAll(){
       unitCost: 0,
       aiParsed: true
     };
-    asItems.unshift(obj);
-    added++;
-    toSync.push(obj);
-  });
-  // localStorage 저장 먼저 (노션 동기화 실패해도 로컬에는 남음)
-  save();
-  // 노션 동기화 — 충분한 간격으로 직렬 실행 (각 호출이 saveNotionId를 안전히 마치도록)
-  if(notionCfg.workerUrl && notionCfg.asDb){
-    toSync.forEach((obj,i)=>{
-      setTimeout(()=>syncASToNotion(obj,false).catch(()=>{}), 200*i);
-    });
+    try{
+      await syncASToNotion(obj, false);
+      asItems.unshift(obj);
+      added++;
+    }catch(e){
+      console.warn('AS 일괄 등록 실패:', obj.item, e);
+      failed++;
+    }
+    // 속도 제한 대비 100ms 간격
+    if(i < checkedItems.length - 1){
+      await new Promise(r=>setTimeout(r,100));
+    }
   }
+  save();
   _asAIPasteCleanup();
   closeM('mAS');
-  showToast(`✓ AS ${added}건 등록 완료`,'var(--grn)',3500);
+  if(failed > 0){
+    showToast(`⚠ AS 등록 결과 — 성공 ${added}건 / 실패 ${failed}건 (Notion 동기화 실패)`, 'var(--org)', 6000);
+  } else {
+    showToast(`✓ AS ${added}건 등록 완료`,'var(--grn)',3500);
+  }
   if(currentTab==='as') renderTab();
   updateBadges();
   window._asParsed=null;
@@ -2369,9 +2378,11 @@ function openASModal(idOrNull){
   else _asAIPasteCleanup();
 }
 
-function saveAS(){
+async function saveAS(){
   const client=gv('as_client');if(!client)return showToast('⚠ 고객사를 입력해 주세요','var(--red)');
   const id=gv('as_id');
+  // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
+  if(!id && !requireNotion('asDb', 'AS')) return;
   const obj={
     client,date:gv('as_date'),due:gv('as_due'),
     shipDate:gv('as_shipDate')||'', // 출고일 (청구서 그룹 기준)
@@ -2381,8 +2392,18 @@ function saveAS(){
     defectType:gv('as_defectType'),
     billing:gv('as_billing'),status:gv('as_status')
   };
-  if(id){const i=asItems.findIndex(x=>x.id==id);if(i>=0){asItems[i]={...asItems[i],...obj};debouncedSync('as',asItems[i],true);}}
-  else{const na={id:Date.now(),createdAt:new Date().toISOString(),...obj};asItems.push(na);setTimeout(()=>syncASToNotion(na,false),50);}
+  if(id){
+    const i=asItems.findIndex(x=>x.id==id);
+    if(i>=0){
+      asItems[i]={...asItems[i],...obj};
+      debouncedSync('as',asItems[i],true);
+    }
+  } else {
+    // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
+    const na={id:Date.now(),createdAt:new Date().toISOString(),...obj};
+    const ok = await createWithNotion(asItems, na, syncASToNotion, 'AS');
+    if(!ok) return; // 실패 — 모달 유지
+  }
   save();_asAIPasteCleanup();closeM('mAS');renderTab();updateBadges();
   showToast('✓ AS 저장됨','var(--grn)');
 }
@@ -3046,7 +3067,9 @@ function confirmASInvoice(){
   );
 }
 
-function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
+async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
+  // 🔒 노션-우선: 거래명세서 발행이므로 노션 연결 필수
+  if(!requireNotion('invDb', 'AS 거래명세서')) return;
   const issuedAt = ctx.asOfDate || toLocalDateStr(new Date());
   // 출고일은 선택된 AS들 중 가장 최근 shipDate, 없으면 청구일
   const shipDates = selected.map(a => a.shipDate).filter(Boolean).sort();
@@ -3109,11 +3132,23 @@ function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
     _stockApplied: false, // AS는 재고와 무관 (이미 출고된 상품의 수리)
   };
 
+  // 🔒 노션-우선: 노션 push 성공 후에만 invoiceHistory + AS 상태 업데이트
+  try{
+    if(typeof showToast === 'function') showToast('🔄 Notion에 AS 거래명세서 등록 중...', 'var(--blu)', 1500);
+    await syncInvoiceToNotion(invRec, false);
+  } catch(e){
+    console.error('AS 거래명세서 노션 등록 실패:', e);
+    if(typeof showToast === 'function'){
+      showToast(`❌ AS 거래명세서 발행 실패: Notion에 저장할 수 없습니다 (${e.message||'네트워크/권한 오류'}) — 다시 시도해주세요`, 'var(--red)', 7000);
+    }
+    return; // 모달 유지
+  }
+
   invoiceHistory.unshift(invRec);
   // 명세서 단계: 출고일이 이미 있으니 청구 단계로 (월말 합본 대상)
   invRec._invStage = (typeof inferInvStage === 'function') ? inferInvStage(invRec) : 'billing';
 
-  // 선택된 AS들의 청구상태 → '청구 완료' 일괄 변경
+  // 선택된 AS들의 청구상태 → '청구 완료' 일괄 변경 (노션 성공 후에만)
   let updated = 0;
   selected.forEach(sa => {
     const idx = asItems.findIndex(x => x.id === sa.id);
@@ -3128,12 +3163,7 @@ function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
   });
 
   save();
-  // 노션 거래명세서 동기화
-  if(typeof notionCfg !== 'undefined' && notionCfg.workerUrl && notionCfg.invDb){
-    if(typeof syncInvoiceToNotion === 'function'){
-      syncInvoiceToNotion(invRec, false).catch(e=>console.warn('AS 거래명세서 노션 sync 실패:',e));
-    }
-  }
+  // (노션 동기화는 위에서 await로 처리됨)
   closeM('mASInvoice');
   renderTab();
   if(typeof updateBadges === 'function') updateBadges();
@@ -5691,7 +5721,7 @@ let notionCfg = {
   inqDb:   '28ad79cef0bc4895a4815827f3cb7da2', // 고객사 문의
   quoteDb: 'eeda4d95607c411da6b3a69bb6a732cc', // 📋 견적 DB
   checklistDb: '', // 📋 주간/월간 업무 목표 — 사용자가 노션 설정에서 DB ID 입력
-  strictMode: false, // 🔒 노션 진실의 원천 모드 — 켜면 노션에 없는 로컬 전용 항목 자동 제거
+  strictMode: true, // 🔒 노션 진실의 원천 모드 — 항상 ON (모든 데이터 적용)
 };
 
 function loadNotionCfg(){
@@ -5715,7 +5745,7 @@ function saveNotionSettings(){
     inqDb:   document.getElementById('notion_inq_db')?.value.trim()||notionCfg.inqDb,
     quoteDb: notionCfg.quoteDb, // 견적서 DB (UI 입력 필드 없음 — 기존 값 유지)
     checklistDb: document.getElementById('notion_checklist_db')?.value.trim()||notionCfg.checklistDb,
-    strictMode: !!document.getElementById('notion_strict_mode')?.checked,
+    strictMode: true, // 🔒 노션-우선 모드는 항상 ON (모든 데이터에 적용)
   };
   try{ localStorage.setItem(NOTION_CFG_KEY, JSON.stringify(notionCfg)); }catch(e){}
   closeM('mNotion'); updateNotionNavLabel();
@@ -5764,11 +5794,10 @@ function updateNotionNavLabel(){
   const lbl=document.getElementById('notionSyncLabel');
   const ico=document.getElementById('notionSyncIcon');
   if(!lbl||!ico) return;
-  const strictBadge = notionCfg.strictMode ? ' 🔒' : '';
-  const strictTitle = notionCfg.strictMode ? ' · 🔒 Strict 모드 (노션만 표시)' : '';
-  if(notionCfg.workerUrl){ lbl.textContent='Notion 🟢'+strictBadge; lbl.style.color='var(--grn)'; ico.textContent='☁'; lbl.title='Notion 동기화 활성 (Worker 연결됨)'+strictTitle; }
+  // 모든 데이터가 노션-우선 모드 — 항상 자물쇠 표시
+  if(notionCfg.workerUrl){ lbl.textContent='Notion 🟢 🔒'; lbl.style.color='var(--grn)'; ico.textContent='☁'; lbl.title='Notion 동기화 활성 (Worker 연결됨) · 🔒 노션-우선 모드 (모든 데이터)'; }
   else if(notionCfg.token){ lbl.textContent='Notion ⚠'; lbl.style.color='var(--org)'; ico.textContent='🔄'; lbl.title='Notion 토큰은 있지만 Worker URL이 없음 — 동기화 불가'; }
-  else { lbl.textContent='Notion ❌'; lbl.style.color='var(--red)'; ico.textContent='⚠'; lbl.title='Notion 미연결 — 로컬에만 저장됨. 클릭해서 설정하세요'; }
+  else { lbl.textContent='Notion ❌'; lbl.style.color='var(--red)'; ico.textContent='⚠'; lbl.title='Notion 미연결 — 모든 등록이 불가합니다. 클릭해서 설정하세요'; }
 }
 
 // ── Worker API 호출 코어 ──
@@ -6468,7 +6497,9 @@ async function pullFromNotion(opts){
   try{
     // 증분 동기화 결정: 풀 동기화 강제 시점이거나 처음이면 since=null (전체)
     // 🔒 strict 모드면 항상 전체 풀 — 로컬 전용 데이터가 살아남지 않도록
-    const useIncremental = !shouldFullSync() && !(notionCfg && notionCfg.strictMode);
+    // 🔒 모든 데이터가 노션-우선이므로 항상 전체 풀
+    // (증분 모드는 일부 옛 로컬 데이터가 화면에서 안 사라지는 위험이 있어 비활성화)
+    const useIncremental = false;
     const sinceFor = (dbId)=> (useIncremental && dbId) ? getDbSyncTime(dbId) : null;
     // 사용자 액션은 회로차단기 우회 — 한 번의 일시적 실패로 영구 차단되지 않게
     const callOpts = silent ? undefined : {bypassCircuit:true};
@@ -6573,15 +6604,14 @@ async function pullFromNotion(opts){
       });
 
       // 3단계: 로컬 전용 데이터 보존. 단, merged에 같은 내용이 있으면 제외
-      // 🔒 strict 모드가 켜져있으면 로컬 전용 데이터 자체를 제외 (노션 = 진실의 원천)
-      // 🔒 제품DB는 항상 노션-우선 (사용자 결정 — 일관성 보장)
-      const isProductDB = (label === '제품DB');
-      const strict = isProductDB || !!(notionCfg && notionCfg.strictMode);
+      // 🔒 모든 데이터가 노션-우선 모드로 통일됨 — 노션에 없는 로컬 전용 항목은 항상 제외
+      // (모든 신규 등록은 노션 push 성공 후에만 로컬에 반영되므로 _notionId 없는 항목은 사고로 남은 고스트)
+      const strict = true;
       const mergedKeys=new Set(merged.map(dupKey).filter(Boolean));
       const localOnly = strict ? [] : local.filter(x=>{
-        if(x._notionId) return false; // 이미 위에서 처리됨
+        if(x._notionId) return false;
         const xKey=dupKey(x);
-        if(!xKey) return true; // 키 생성 불가 → 그대로 보존
+        if(!xKey) return true;
         if(mergedKeys.has(xKey)){
           console.warn('[merge] 로컬 고스트 중복 제거:', xKey);
           return false;
@@ -6591,7 +6621,7 @@ async function pullFromNotion(opts){
       if(strict){
         const dropped = local.filter(x => !x._notionId).length;
         if(dropped > 0){
-          console.log(`[strict] 노션 미동기 로컬 항목 ${dropped}건 제외 (${label}${isProductDB?' — 항상 적용':''})`);
+          console.log(`[notion-first] 노션 미동기 로컬 항목 ${dropped}건 제외 (${label})`);
         }
       }
 
@@ -7037,7 +7067,9 @@ window.pendingSyncs = ()=>{
 // 1. 샘플의뢰 ↔ Notion
 // ══════════════════════════════════
 async function syncSampleToNotion(s, update){
-  if(!notionCfg.workerUrl||!notionCfg.smpDb) return;
+  if(!notionCfg.workerUrl||!notionCfg.smpDb){
+    throw new Error('Notion 미연결: 샘플의뢰 DB');
+  }
   // notes 체크리스트를 JSON으로 "개발사항" 필드에 저장 (하위 호환 위해 "주의사항"은 빈 값)
   const notesJson = Array.isArray(s.notes) && s.notes.length
     ? 'JSON::'+JSON.stringify(s.notes) // prefix로 JSON임을 표시 (plaintext와 구분)
@@ -7087,7 +7119,12 @@ async function syncSampleToNotion(s, update){
   p["예시이미지JSON"] = {"rich_text":[{"text":{"content": filesForNotion(s.imgs).slice(0, 2000)}}]};
   p["CAD파일JSON"]   = {"rich_text":[{"text":{"content": filesForNotion(s.cadFiles).slice(0, 2000)}}]};
   if(s._notionId){ await nUpdate(s._notionId,p); }
-  else{ const r=await nCreate(notionCfg.smpDb,p); if(r?.id) saveNotionId(samples,s.id,r.id,SK.s); }
+  else{
+    const r=await nCreate(notionCfg.smpDb,p);
+    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (샘플의뢰)');
+    saveNotionId(samples,s.id,r.id,SK.s);
+    s._notionId = r.id;
+  }
 }
 async function deleteSampleFromNotion(s){
   if(s._notionId) await nDelete(s._notionId);
@@ -7097,7 +7134,9 @@ async function deleteSampleFromNotion(s){
 // 2. 발주서 ↔ Notion
 // ══════════════════════════════════
 async function syncOrderToNotion(o, update){
-  if(!notionCfg.workerUrl||!notionCfg.ordDb) return;
+  if(!notionCfg.workerUrl||!notionCfg.ordDb){
+    throw new Error('Notion 미연결: 발주서 DB');
+  }
   const items=(o.rows||[]).map(r=>`${r.name} ×${r.qty||1}`).join(', ');
   // 긴 텍스트를 2000자 단위로 잘라 여러 rich_text 요소로 만드는 헬퍼
   // (Notion API: 요소당 2000자, 배열은 여러 개 가능)
@@ -7145,7 +7184,9 @@ async function syncOrderToNotion(o, update){
     await nUpdate(o._notionId,p);
   } else {
     const r=await nCreate(notionCfg.ordDb,p);
-    if(r?.id) saveNotionId(orders,o.id,r.id,SK.o);
+    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (발주서)');
+    saveNotionId(orders,o.id,r.id,SK.o);
+    o._notionId = r.id;
   }
 }
 async function deleteOrderFromNotion(o){
@@ -7157,7 +7198,9 @@ async function deleteOrderFromNotion(o){
 // ══════════════════════════════════
 const STAGES_N=['주물','도금','검품','포장','출고'];
 async function syncProcToNotion(proc, update){
-  if(!notionCfg.workerUrl||!notionCfg.procDb) return;
+  if(!notionCfg.workerUrl||!notionCfg.procDb){
+    throw new Error('Notion 미연결: 공정관리 DB');
+  }
   const ord=orders.find(o=>o.id==proc.orderId);
   const p={
     "공정명":{"title":[{"text":{"content":proc.name||''}}]},
@@ -7173,7 +7216,12 @@ async function syncProcToNotion(proc, update){
   const stageName=STAGES_N[proc.stageIdx||0];
   if(stageName) p["단계"]={"select":{"name":stageName}};
   if(proc._notionId){ await nUpdate(proc._notionId,p); }
-  else{ const r=await nCreate(notionCfg.procDb,p); if(r?.id) saveNotionId(procItems,proc.id,r.id,SK.p); }
+  else{
+    const r=await nCreate(notionCfg.procDb,p);
+    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (공정)');
+    saveNotionId(procItems,proc.id,r.id,SK.p);
+    proc._notionId = r.id;
+  }
 }
 async function deleteProcFromNotion(proc){
   if(proc._notionId) await nDelete(proc._notionId);
@@ -7183,7 +7231,9 @@ async function deleteProcFromNotion(proc){
 // 4. 영업제안 ↔ Notion
 // ══════════════════════════════════
 async function syncProposalToNotion(prop, update){
-  if(!notionCfg.workerUrl||!notionCfg.propDb) return;
+  if(!notionCfg.workerUrl||!notionCfg.propDb){
+    throw new Error('Notion 미연결: 영업제안 DB');
+  }
   const cl=clients.find(c=>c.id==prop.clientId);
   const p={
     "제안내용":{"title":[{"text":{"content":prop.name||''}}]},
@@ -7195,7 +7245,12 @@ async function syncProposalToNotion(prop, update){
   if(prop.date)     p["제안일"]={"date":{"start":prop.date}};
   if(prop.nextDate) p["다음제안예정"]={"date":{"start":prop.nextDate}};
   if(prop._notionId){ await nUpdate(prop._notionId,p); }
-  else{ const r=await nCreate(notionCfg.propDb,p); if(r?.id) saveNotionId(proposals,prop.id,r.id,SL_K.prop); }
+  else{
+    const r=await nCreate(notionCfg.propDb,p);
+    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (영업제안)');
+    saveNotionId(proposals,prop.id,r.id,SL_K.prop);
+    prop._notionId = r.id;
+  }
 }
 async function deleteProposalFromNotion(prop){
   if(prop._notionId) await nDelete(prop._notionId);
@@ -7262,11 +7317,7 @@ async function deleteNewDesignFromNotion(nd){
 // ══════════════════════════════════
 async function syncClientToNotion(cl, update){
   if(!notionCfg.workerUrl||!notionCfg.clientDb){
-    // 조용히 실패하지 않고 사용자에게 알림
-    if(!notionCfg.workerUrl){
-      showToast('⚠ Notion 미연결 — 로컬에만 저장됨 (설정에서 Worker URL 입력 필요)','var(--org)',3500);
-    }
-    return;
+    throw new Error('Notion 미연결: 고객사 DB');
   }
   const p={
     "고객사명":{"title":[{"text":{"content":cl.name||''}}]},
@@ -7283,22 +7334,13 @@ async function syncClientToNotion(cl, update){
   };
   if(cl.cat)   p["카테고리"]={"select":{"name":cl.cat}};
   if(cl.grade) p["등급"]={"select":{"name":cl.grade}};
-  try{
-    if(cl._notionId){
-      const r=await nUpdate(cl._notionId,p);
-      if(r && !r.error) showToast('☁ Notion 동기화됨','var(--grn)',1500);
-    } else {
-      const r=await nCreate(notionCfg.clientDb,p);
-      if(r?.id){
-        saveNotionId(clients,cl.id,r.id,SL_K.cli);
-        showToast('☁ Notion에 저장됨','var(--grn)',1800);
-      } else {
-        showToast('⚠ Notion 저장 실패 — 로컬에는 저장됨','var(--red)',3500);
-      }
-    }
-  }catch(e){
-    console.error('syncClientToNotion error:',e);
-    showToast('⚠ Notion 통신 오류 — 로컬에는 저장됨','var(--red)',3500);
+  if(cl._notionId){
+    await nUpdate(cl._notionId,p);
+  } else {
+    const r=await nCreate(notionCfg.clientDb,p);
+    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (고객사)');
+    saveNotionId(clients,cl.id,r.id,SL_K.cli);
+    cl._notionId = r.id;
   }
 }
 async function deleteClientFromNotion(cl){
@@ -7309,14 +7351,8 @@ async function deleteClientFromNotion(cl){
 // 6. 업무일지 ↔ Notion
 // ══════════════════════════════════
 async function syncTaskToNotion(task, update){
-  if(!notionCfg.workerUrl){
-    // 조용히 실패하면 사용자가 Notion 미저장 상태를 모름 → 명시적으로 알려줌
-    showToast('⚠ Notion 미연결 — 업무는 브라우저에만 저장됨 (설정에서 Worker URL 연결 필요)','var(--org)',4000);
-    return;
-  }
-  if(!notionCfg.taskDb){
-    showToast('⚠ 업무 DB 미설정','var(--org)',3000);
-    return;
+  if(!notionCfg.workerUrl || !notionCfg.taskDb){
+    throw new Error('Notion 미연결: 업무일지 DB');
   }
   const p={
     "업무내용":{"title":[{"text":{"content":task.cont||''}}]},
@@ -7326,22 +7362,13 @@ async function syncTaskToNotion(task, update){
   if(task.date) p["날짜"]={"date":{"start":task.date}};
   if(task.ap)   p["오전오후"]={"select":{"name":task.ap}};
   if(task.cat)  p["카테고리"]={"select":{"name":task.cat}};
-  try{
-    if(task._notionId){
-      const r=await nUpdate(task._notionId,p);
-      if(r && !r.error && !update) showToast('☁ Notion 저장됨','var(--grn)',1500);
-    } else {
-      const r=await nCreate(notionCfg.taskDb,p);
-      if(r?.id){
-        saveNotionId(tasks,task.id,r.id,SK.t);
-        showToast('☁ Notion 저장됨','var(--grn)',1500);
-      } else {
-        showToast('⚠ Notion 저장 실패 — 로컬에만 저장됨','var(--org)',3500);
-      }
-    }
-  }catch(e){
-    console.warn('syncTaskToNotion 실패:',e);
-    showToast('⚠ Notion 저장 실패 — 로컬에만 저장됨','var(--org)',3500);
+  if(task._notionId){
+    await nUpdate(task._notionId,p);
+  } else {
+    const r=await nCreate(notionCfg.taskDb,p);
+    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (업무일지)');
+    saveNotionId(tasks,task.id,r.id,SK.t);
+    task._notionId = r.id;
   }
 }
 async function deleteTaskFromNotion(task){
@@ -7352,7 +7379,9 @@ async function deleteTaskFromNotion(task){
 // 7. AS관리 ↔ Notion
 // ══════════════════════════════════
 async function syncASToNotion(a, update){
-  if(!notionCfg.workerUrl||!notionCfg.asDb) return;
+  if(!notionCfg.workerUrl||!notionCfg.asDb){
+    throw new Error('Notion 미연결: AS관리 DB');
+  }
   const total=(a.qty||1)*(a.unitCost||0);
   const p={
     "품목":{"title":[{"text":{"content":a.item||''}}]},
@@ -7369,7 +7398,12 @@ async function syncASToNotion(a, update){
   if(a.status)  p["진행상태"]={"select":{"name":a.status}};
   if(a.billing) p["청구상태"]={"select":{"name":a.billing}};
   if(a._notionId){ await nUpdate(a._notionId,p); }
-  else{ const r=await nCreate(notionCfg.asDb,p); if(r?.id) saveNotionId(asItems,a.id,r.id,SK.a); }
+  else{
+    const r=await nCreate(notionCfg.asDb,p);
+    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (AS)');
+    saveNotionId(asItems,a.id,r.id,SK.a);
+    a._notionId = r.id;
+  }
 }
 async function deleteASFromNotion(a){
   if(a._notionId) await nDelete(a._notionId);
@@ -7379,7 +7413,9 @@ async function deleteASFromNotion(a){
 // 8.5 고객사 문의 ↔ Notion
 // ══════════════════════════════════
 async function syncInqToNotion(q, update){
-  if(!notionCfg.workerUrl||!notionCfg.inqDb) return;
+  if(!notionCfg.workerUrl||!notionCfg.inqDb){
+    throw new Error('Notion 미연결: 고객사 문의 DB');
+  }
   const safeJson=(arr)=>{
     try{
       const lite=(arr||[]).map(x=>({name:x.name||'',url:x.url||'',type:x.type||'',size:x.size||0}));
@@ -7398,10 +7434,61 @@ async function syncInqToNotion(q, update){
   if(q.category)   p["카테고리"]={"select":{"name":q.category}};
   if(q.status)     p["상태"]={"select":{"name":q.status}};
   if(q._notionId){ await nUpdate(q._notionId,p); }
-  else{ const r=await nCreate(notionCfg.inqDb,p); if(r?.id){ q._notionId=r.id; try{ slSave(); }catch(e){} } }
+  else{
+    const r=await nCreate(notionCfg.inqDb,p);
+    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (고객사 문의)');
+    q._notionId=r.id;
+    try{ slSave(); }catch(e){}
+  }
 }
 async function deleteInqFromNotion(q){
   if(q && q._notionId) await nDelete(q._notionId);
+}
+
+// ══════════════════════════════════
+// 🔒 Notion-우선 모드 공통 헬퍼
+// ══════════════════════════════════
+// 노션 연결 + 해당 DB ID 설정 여부 체크. 미연결이면 토스트 띄우고 false 반환.
+function requireNotion(dbKey, label){
+  if(!notionCfg.workerUrl || !notionCfg[dbKey]){
+    if(typeof showToast === 'function'){
+      showToast(
+        `⚠ ${label||'데이터'} 등록은 Notion 연결이 필요합니다 — 우측 상단 ⚙ Notion 설정에서 Worker URL과 DB ID를 먼저 설정하세요`,
+        'var(--red)', 5000
+      );
+    }
+    return false;
+  }
+  return true;
+}
+
+// 노션-우선 신규 항목 생성 헬퍼
+// - syncFn(newObj, false) 호출 → 성공 시 localArray에 push
+// - 실패 시 사용자에게 알리고 호출자에 false 반환 (localArray는 건드리지 않음)
+// - useUnshift=true면 push 대신 unshift (거래명세서 같은 흐름)
+async function createWithNotion(localArray, newObj, syncFn, label, opts){
+  opts = opts || {};
+  try{
+    if(typeof showToast === 'function'){
+      showToast(`🔄 Notion에 ${label||'항목'} 등록 중...`, 'var(--blu)', 1500);
+    }
+    await syncFn(newObj, false);
+    if(opts.useUnshift){
+      localArray.unshift(newObj);
+    } else {
+      localArray.push(newObj);
+    }
+    return true;
+  } catch(e){
+    console.error(`[notion-first] ${label||'항목'} 등록 실패:`, e);
+    if(typeof showToast === 'function'){
+      showToast(
+        `❌ ${label||'항목'} 등록 실패: Notion에 저장할 수 없습니다 (${e.message||'네트워크/권한 오류'}) — 다시 시도해주세요`,
+        'var(--red)', 7000
+      );
+    }
+    return false;
+  }
 }
 
 // ══════════════════════════════════
@@ -7546,7 +7633,9 @@ async function syncAllProductsToNotion(){
 // 9. 거래명세서 이력 ↔ Notion (update + pull 지원)
 // ══════════════════════════════════
 async function syncInvoiceToNotion(inv, update){
-  if(!notionCfg.workerUrl||!notionCfg.invDb) return;
+  if(!notionCfg.workerUrl||!notionCfg.invDb){
+    throw new Error('Notion 미연결: 거래명세서 DB');
+  }
   const p={
     "고객사":{"title":[{"text":{"content":inv.vendor||''}}]},
     "발주번호":{"rich_text":[{"text":{"content":inv.ordNo||''}}]},
@@ -7617,7 +7706,8 @@ async function syncInvoiceToNotion(inv, update){
     }catch(e){ console.warn('중복 검사 실패, 신규 생성으로 진행:',e); }
   }
   const r=await nCreate(notionCfg.invDb,p);
-  if(r?.id){ inv._notionId=r.id; save(); }
+  if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (거래명세서)');
+  inv._notionId=r.id; save();
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -13328,10 +13418,11 @@ async function quickRegSample(){
     sourceDoc: origFiles.length ? origFiles : uploadedImgs,
     cadFiles:[]
   };
-  samples.push(newSmp);
+  // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
+  if(!requireNotion('smpDb', 'AI 자동 샘플 등록')) return;
+  const ok = await createWithNotion(samples, newSmp, syncSampleToNotion, '샘플의뢰');
+  if(!ok) return;
   save();
-  // Notion 동기화
-  setTimeout(()=>syncSampleToNotion(newSmp,false),50);
   window._pSmpFiles=[];
   // Show toast immediately, defer re-render so onclick can clear result div first
   showRegToast(s.name,'sample');
@@ -13401,7 +13492,11 @@ async function quickRegOrder(){
     no:genOrderNo(o.vendor, o.date||todayStr),memo:'',rows:rows,
     files:origFiles
   };
-  orders.push(newOrd);
+  // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
+  if(!requireNotion('ordDb', 'AI 자동 발주 등록')) return;
+  const okOrd = await createWithNotion(orders, newOrd, syncOrderToNotion, '발주서');
+  if(!okOrd) return;
+  // procItems 자동 생성 — 발주 성공 후에만
   if(o.shipDate){
     rows.forEach(function(r,i){
       if(r.name)procItems.push({
@@ -13411,10 +13506,15 @@ async function quickRegOrder(){
         stageIdx:0,note:'발주서 AI 자동',shipped:false
       });
     });
+    // procItems도 백그라운드 동기화 (실패는 무시 — 발주가 본체)
+    if(notionCfg.workerUrl && notionCfg.procDb){
+      const newProcs = procItems.filter(p => p.orderId === ordId);
+      newProcs.forEach(np => {
+        syncProcToNotion(np, false).catch(e=>console.warn('공정 sync 실패 (백그라운드):', e));
+      });
+    }
   }
   save();
-  // Notion 동기화
-  setTimeout(()=>syncOrderToNotion(newOrd,false),50);
   // 다음 파일 업로드를 위해 버퍼 비움
   window._pOrdFiles=[];
   showRegToast(o.vendor,'order');
@@ -14822,6 +14922,8 @@ let _smpPasteHandler=null;
 function saveSmp(){
   const name=gv('s_name');if(!name)return showToast('⚠ 샘플명을 입력해 주세요','var(--red)');
   const id=gv('s_id');
+  // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
+  if(!id && !requireNotion('smpDb', '샘플의뢰')) return;
   const now=new Date().toISOString();
   const isAi=document.getElementById('s_aiParsed')?.value==='1';
   const obj={
@@ -14860,11 +14962,18 @@ function saveSmp(){
         samples[i]={...samples[i],...finalObj};
       }
     } else {
-      samples.push({id:Date.now(),createdAt:now,aiParsed:isAi,...finalObj});
+      // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
+      const newSmp = {id:Date.now(),createdAt:now,aiParsed:isAi,...finalObj};
+      const ok = await createWithNotion(samples, newSmp, syncSampleToNotion, '샘플의뢰');
+      if(!ok) return; // 실패 — 모달 유지, 사용자가 다시 시도하거나 닫음
     }
     save();closeM('mSmp');renderTab();updateBadges();
-    if(!id){showRegToast(finalObj.name,'sample');setTimeout(()=>{const ns=samples[samples.length-1];syncSampleToNotion(ns||finalObj,false);},50);}
-    else{const us=samples.find(x=>x.id==id);debouncedSync('sample', us||finalObj, true);}
+    if(!id){
+      showRegToast(finalObj.name,'sample');
+    } else {
+      const us=samples.find(x=>x.id==id);
+      debouncedSync('sample', us||finalObj, true);
+    }
   };
   // 모든 파일(예시이미지/작업지시서/CAD)에 base64 데이터가 있으면 R2에 업로드
   const hasAnyLocalFile =
@@ -15405,6 +15514,8 @@ function applyItemToRow(smpId){
 async function saveOrd(forceOverwrite){
   const vendor=gv('o_vendor');if(!vendor)return showToast('⚠ 업체명을 입력해 주세요','var(--red)');
   const id=gv('o_id');const isNew=!id;
+  // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
+  if(isNew && !requireNotion('ordDb', '발주서')) return;
   // ── 다중 사용자 충돌 감지 (수정 케이스만, 강제 저장이 아닐 때만)
   if(!isNew && !forceOverwrite){
     const existing = orders.find(x=>x.id==id);
@@ -15516,8 +15627,11 @@ async function saveOrd(forceOverwrite){
     if(obj.ship){procItems.filter(p=>p.orderId===ordId).forEach(p=>{p.due=obj.ship;});}
   } else {
     ordId=Date.now();
-    orders.push({id:ordId,createdAt:now,...obj});
-    // Auto-create proc for each row, all linked to this order
+    const newOrd = {id:ordId,createdAt:now,...obj};
+    // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
+    const ok = await createWithNotion(orders, newOrd, syncOrderToNotion, '발주서');
+    if(!ok) return; // 실패 — 모달 유지
+    // Auto-create proc for each row, all linked to this order (성공 후에만)
     if(gchk('o_toProc')&&obj.ship){
       ordRowsBuf.forEach((r,i)=>{
         if(r.name)procItems.push({
@@ -15532,14 +15646,21 @@ async function saveOrd(forceOverwrite){
           shipped:false
         });
       });
+      // procItems도 노션 동기화 (실패는 백그라운드 — 발주가 본체이므로 procItems sync 실패해도 발주는 유지)
+      if(notionCfg.workerUrl && notionCfg.procDb){
+        const newProcs = procItems.filter(p => p.orderId === ordId);
+        newProcs.forEach(np => {
+          syncProcToNotion(np, false).catch(e=>console.warn('공정 sync 실패 (백그라운드):', e));
+        });
+      }
     }
   }
   save();
-  // 저장된 최신 order를 _notionId 포함해서 정확히 찾아서 sync — 수정은 디바운싱, 신규는 즉시
+  // 저장된 최신 order를 _notionId 포함해서 정확히 찾아서 sync — 수정만 디바운싱
+  // (신규는 위에서 createWithNotion이 이미 동기 처리함)
   const so=orders.find(x=>x.id===ordId);
   if(so){
-    if(isNew) setTimeout(()=>syncOrderToNotion(so, false), 50);
-    else debouncedSync('order', so, true);
+    if(!isNew) debouncedSync('order', so, true);
     // 충돌 감지 스냅샷 정리 (다음 편집 시 새로 기록되도록)
     if(so._notionId) delete window._editStartSnapshots[so._notionId];
   }
@@ -15556,14 +15677,25 @@ async function saveOrd(forceOverwrite){
 // ════════════════════════════════
 // CRUD: PROCESS
 // ════════════════════════════════
-function saveProc(){
+async function saveProc(){
   const name=gv('p_name');if(!name)return showToast('⚠ 품목명을 입력해 주세요','var(--red)');
   const id=gv('p_id');
+  // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
+  if(!id && !requireNotion('procDb', '공정')) return;
   const ordId=gv('p_ordId')||null;
   const obj={name,vendor:gv('p_vendor'),qty:gv('p_qty'),due:gv('p_due'),stageIdx:+gv('p_stage')||0,note:gv('p_note'),orderId:ordId?+ordId:null,
     ordQty:+gv('p_ordQty')||0, rcvQty:+gv('p_rcvQty')||0};
-  if(id){const i=procItems.findIndex(x=>x.id==id);if(i>=0){procItems[i]={...procItems[i],...obj};debouncedSync('proc',procItems[i],true);}}
-  else{const np={id:Date.now(),...obj,shipped:false};procItems.push(np);setTimeout(()=>syncProcToNotion(np,false),50);}
+  if(id){
+    const i=procItems.findIndex(x=>x.id==id);
+    if(i>=0){
+      procItems[i]={...procItems[i],...obj};
+      debouncedSync('proc',procItems[i],true);
+    }
+  } else {
+    const np={id:Date.now(),...obj,shipped:false};
+    const ok = await createWithNotion(procItems, np, syncProcToNotion, '공정');
+    if(!ok) return;
+  }
   save();closeM('mProc');renderTab();updateBadges();
 }
 // deleteProc defined above
@@ -15633,6 +15765,8 @@ function renderTaskFilePrev(){
 async function saveTask(){
   const cont=gv('t_cont');if(!cont)return showToast('⚠ 내용을 입력해 주세요','var(--red)');
   const id=gv('t_id');
+  // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
+  if(!id && !requireNotion('taskDb', '업무일지')) return;
 
   // 첨부 파일 중 base64 데이터가 있으면 R2에 업로드
   let filesToSave=[...taskFileBuf];
@@ -15644,8 +15778,17 @@ async function saveTask(){
   }
 
   const obj={cont,date:gv('t_date'),ap:gv('t_ap'),cat:gv('t_cat'),note:gv('t_note'),files:filesToSave};
-  if(id){const i=tasks.findIndex(x=>x.id==id);if(i>=0){tasks[i]={...tasks[i],...obj};debouncedSync('task',tasks[i],true);}}
-  else{const nt={id:Date.now(),done:false,...obj};tasks.push(nt);setTimeout(()=>syncTaskToNotion(nt,false),50);}
+  if(id){
+    const i=tasks.findIndex(x=>x.id==id);
+    if(i>=0){
+      tasks[i]={...tasks[i],...obj};
+      debouncedSync('task',tasks[i],true);
+    }
+  } else {
+    const nt={id:Date.now(),done:false,...obj};
+    const ok = await createWithNotion(tasks, nt, syncTaskToNotion, '업무일지');
+    if(!ok) return;
+  }
   save();closeM('mTask');
   if(currentTab==='schedule')renderSchedContent();
   if(currentTab==='dash')renderDash();
@@ -15856,9 +15999,11 @@ function updateInvPrepaidPreview(){
   previewEl.innerHTML = `<span style="font-size:10.5px;color:var(--t3)">잔금 </span><b style="color:#7A4DB5;font-size:13px">₩${balance.toLocaleString()}</b>`;
 }
 
-function printInvoice(opts){
+async function printInvoice(opts){
   // mode: 'print' (PDF 인쇄), 'issue' (발행만, 인쇄 없이) — 기본은 'print' (호환성)
   const mode = (opts && opts.mode) || 'print';
+  // 🔒 노션-우선: 거래명세서 등록이 일어나므로 노션 연결 필수
+  if(!requireNotion('invDb', '샘플 거래명세서')) return;
   const smpId=gv('inv_smpId');
   const s=samples.find(x=>x.id==smpId)||{};
   const {supply,vat,total}=calcInvTotal();
@@ -15989,20 +16134,23 @@ function printInvoice(opts){
     if(typeof inferInvStage === 'function'){
       invRec._invStage = inferInvStage(invRec);
     }
+    // 🔒 노션-우선: push 시도 → 성공해야만 invoiceHistory에 반영
+    try{
+      if(typeof showToast === 'function') showToast('🔄 Notion에 샘플 명세서 등록 중...', 'var(--blu)', 1500);
+      await syncInvoiceToNotion(invRec, false);
+    } catch(e){
+      console.error('샘플 거래명세서 노션 등록 실패:', e);
+      if(typeof showToast === 'function'){
+        showToast(`❌ 샘플 거래명세서 발행 실패: Notion에 저장할 수 없습니다 (${e.message||'네트워크/권한 오류'}) — 다시 시도해주세요`, 'var(--red)', 7000);
+      }
+      return; // 모달 유지
+    }
     if(existingIdx >= 0){
       invoiceHistory[existingIdx] = invRec;
     } else {
       invoiceHistory.unshift(invRec);
     }
     save();
-    // 노션 동기화 (워커 + invDb 설정 시에만)
-    if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && typeof syncInvoiceToNotion==='function'){
-      syncInvoiceToNotion(invRec, false).then(()=>{
-        if(invRec._notionId && typeof showToast==='function'){
-          showToast('✓ 샘플 명세서 Notion 저장됨','var(--grn)',2000);
-        }
-      }).catch(e=>console.warn('샘플 명세서 노션 저장 실패:',e));
-    }
   }
   // ─────────────────────────────────────────────────
 
@@ -16467,6 +16615,8 @@ function openClModal(idOrNull){
 async function saveCl(){
   const nm=gv('cl_nm'); if(!nm) return showToast('⚠ 고객사명 필수','var(--red)');
   const id=gv('cl_id');
+  // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
+  if(!id && !requireNotion('clientDb', '고객사')) return;
   const init=gv('cl_init').toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
   const obj={
     name:nm, initials:init, contact:gv('cl_ct'), phone:gv('cl_ph'), email:gv('cl_em'),
@@ -16488,9 +16638,9 @@ async function saveCl(){
     _doSaveCl(id, obj);
   } else {
     const nc={id:Date.now(),...obj};
-    clients.push(nc);
+    const ok = await createWithNotion(clients, nc, syncClientToNotion, '고객사');
+    if(!ok) return;
     slSave();
-    setTimeout(()=>syncClientToNotion(nc,false),50);
     showToast('✓ 고객사 등록됨','var(--grn)');
     document.getElementById('mCl').classList.remove('open');
     sv('cl_id',''); sv('cl_init','');
@@ -20537,7 +20687,7 @@ function addProductToInv(idOrCode){
 }
 
 // 저장
-function saveStandaloneInvoice(){
+async function saveStandaloneInvoice(){
   const vendor = (gv('siv_vendor')||'').trim();
   if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
   const validRows = _invRowsBuf.filter(r=>String(r.name||'').trim() && (+r.qty>0));
@@ -20545,6 +20695,8 @@ function saveStandaloneInvoice(){
 
   const id = gv('siv_id');
   const isNew = !id;
+  // 🔒 노션-우선: 신규 발행 시 노션 연결 필수
+  if(isNew && !requireNotion('invDb', '거래명세서')) return;
   const issuedAt = gv('siv_issued') || toLocalDateStr(new Date());
   const shipDate = gv('siv_ship') || issuedAt;
   const status = gv('siv_status') || '발행완료';
@@ -20621,6 +20773,19 @@ function saveStandaloneInvoice(){
       _stockApplied: false,
     };
 
+    // 🔒 노션-우선: 노션 push 성공 후에만 invoiceHistory에 unshift 및 부수효과 적용
+    // 재고 차감과 발주 자동 출고완료는 노션 성공 후로 미룸
+    try{
+      if(typeof showToast === 'function') showToast('🔄 Notion에 거래명세서 등록 중...', 'var(--blu)', 1500);
+      await syncInvoiceToNotion(invRec, false);
+    } catch(e){
+      console.error('거래명세서 노션 등록 실패:', e);
+      if(typeof showToast === 'function'){
+        showToast(`❌ 거래명세서 발행 실패: Notion에 저장할 수 없습니다 (${e.message||'네트워크/권한 오류'}) — 다시 시도해주세요`, 'var(--red)', 7000);
+      }
+      return; // 모달 유지 — 사용자가 다시 시도하거나 닫음
+    }
+
     // 📦 재고 차감: 독립형 거래명세서 + 입금 100% 도달 시에만
     // (발주 기반은 발주서 자체로 재고 관리되므로 거래명세서가 추가 차감 X)
     let stockResult = { changed: [], notFound: [], negativeWarnings: [] };
@@ -20643,9 +20808,6 @@ function saveStandaloneInvoice(){
     }
 
     save();
-    if(notionCfg.workerUrl && notionCfg.invDb){
-      syncInvoiceToNotion(invRec, false).catch(e=>console.warn('거래명세서 노션 sync 실패:',e));
-    }
     closeM('mStandaloneInv');
 
     // 토스트 메시지
@@ -22101,8 +22263,11 @@ function openPropModal(idOrNull){
 
 function editPropModal(id){openPropModal(id);}
 
-function saveProp(){
+async function saveProp(){
   const nm=gv('prop_nm');if(!nm)return showToast('⚠ 제안 내용을 입력해 주세요','var(--red)');
+  const existId=gv('prop_id');
+  // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
+  if(!existId && !requireNotion('propDb', '영업제안')) return;
   let clientId=null, clientName='';
   if(_propClDirectMode){
     // 직접입력 모드: 이름으로 기존 고객사 찾거나 신규 생성
@@ -22112,9 +22277,12 @@ function saveProp(){
     if(exist){
       clientId=exist.id;
     } else {
-      // 신규 고객사 자동 생성
+      // 신규 고객사 자동 생성 — 노션-우선
+      if(!requireNotion('clientDb', '자동 생성될 고객사')) return;
       clientId=Date.now();
-      clients.push({id:clientId,name:clientName,contact:'',phone:'',email:'',cat:'기타',grade:'일반',cycle:4,brandStyle:'',materials:'',priceRange:'',status:'active',memo:''});
+      const newCl = {id:clientId,name:clientName,contact:'',phone:'',email:'',cat:'기타',grade:'일반',cycle:4,brandStyle:'',materials:'',priceRange:'',status:'active',memo:''};
+      const okCl = await createWithNotion(clients, newCl, syncClientToNotion, '고객사');
+      if(!okCl) return; // 고객사 등록 실패 → 영업제안도 진행 안 함
       slSave();
       showToast(`✓ "${clientName}" 고객사 자동 등록`,'var(--grn)',2000);
     }
@@ -22123,7 +22291,6 @@ function saveProp(){
     if(!clientId)return showToast('⚠ 고객사를 선택해 주세요','var(--red)');
     clientName=(clients.find(c=>c.id===clientId)||{}).name||'';
   }
-  const existId=gv('prop_id');
   const obj={
     clientId,clientName,date:gv('prop_date'),name:nm,
     type:gv('prop_type'),reaction:gv('prop_reaction'),
@@ -22132,16 +22299,19 @@ function saveProp(){
     memo:gv('prop_mo'),
     images:[...propImgFiles]
   };
-  if(existId){const i=proposals.findIndex(p=>p.id==existId);if(i>=0)proposals[i]={...proposals[i],...obj};}
-  else proposals.push({id:Date.now(),...obj});
-  slSave();
-  propImgFiles=[];
-  // 신규 등록은 즉시 (ID 받기), 수정은 디바운싱
   if(existId){
+    const i=proposals.findIndex(p=>p.id==existId);
+    if(i>=0) proposals[i]={...proposals[i],...obj};
+    slSave();
+    propImgFiles=[];
     const sp=proposals.find(p=>p.id==existId);
     if(sp) debouncedSync('proposal', sp, true);
   } else {
-    setTimeout(()=>{const sp=proposals[proposals.length-1];if(sp)syncProposalToNotion(sp,false);},50);
+    const newProp = {id:Date.now(),...obj};
+    const ok = await createWithNotion(proposals, newProp, syncProposalToNotion, '영업제안');
+    if(!ok) return;
+    slSave();
+    propImgFiles=[];
   }
   document.getElementById('mProp').classList.remove('open');
   renderSalesSubTab();
