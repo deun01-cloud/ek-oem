@@ -4040,9 +4040,61 @@ function saveProduct(){
         });
       }
     }
+    // 출고단가 변경 시: 진행 중 발주서의 같은 품번 행 단가 자동 동기화 (안전 모드)
+    // 잠금 조건: status가 '출고완료' 또는 '취소'면 제외 (이미 확정된 거래는 보호)
+    let orderPriceSyncedCount = 0;
+    if(id && savedProduct && obj.price !== prevPrice){
+      const newPrice = +obj.price||0;
+      const code = (savedProduct.code||'').trim();
+      if(code && Array.isArray(orders)){
+        orders.forEach(o=>{
+          const st = o.status||'진행중';
+          if(st === '출고완료' || st === '취소') return; // 잠금
+          if(!Array.isArray(o.rows)) return;
+          let touched = false;
+          o.rows.forEach(r=>{
+            if((r.itemCode||'').trim() === code && (+r.unitPrice||0) !== newPrice){
+              r.unitPrice = newPrice;
+              touched = true;
+            }
+          });
+          if(touched){
+            orderPriceSyncedCount++;
+            // 노션 동기화 (디바운스)
+            if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.ordDb && o._notionId && typeof debouncedSync==='function'){
+              debouncedSync('order', o, true);
+            }
+          }
+        });
+      }
+    }
+    // 출고단가 변경 시: 단가가 비어있는(0) 샘플의뢰의 같은 품번 단가 자동 채움 (안전 모드)
+    // 잠금 조건: s.unitPrice가 이미 입력되어 있으면 제외 (수동 입력값 보호)
+    let samplePriceSyncedCount = 0;
+    if(id && savedProduct && (+obj.price||0) > 0){
+      const newPrice = +obj.price||0;
+      const code = (savedProduct.code||'').trim();
+      if(code && Array.isArray(samples)){
+        samples.forEach(s=>{
+          if((s.itemCode||'').trim() !== code) return;
+          if((+s.unitPrice||0) > 0) return; // 이미 단가 있음 → 보호
+          s.unitPrice = newPrice;
+          samplePriceSyncedCount++;
+          if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.smpDb && s._notionId && typeof debouncedSync==='function'){
+            debouncedSync('sample', s, true);
+          }
+        });
+      }
+    }
     save();closeM('mProduct');renderTab();
-    if(priceSyncedCount > 0){
-      showToast(`✓ 제품 저장됨 — 진행 중 거래명세서 ${priceSyncedCount}건 단가 자동 동기화`,'var(--grn)', 4000);
+    // 동기화 결과 토스트: 거래명세서·발주서·샘플 합쳐서 표시
+    const totalSynced = priceSyncedCount + orderPriceSyncedCount + samplePriceSyncedCount;
+    if(totalSynced > 0){
+      const parts = [];
+      if(priceSyncedCount > 0) parts.push(`거래명세서 ${priceSyncedCount}건`);
+      if(orderPriceSyncedCount > 0) parts.push(`발주서 ${orderPriceSyncedCount}건`);
+      if(samplePriceSyncedCount > 0) parts.push(`샘플 ${samplePriceSyncedCount}건`);
+      showToast(`✓ 제품 저장됨 — ${parts.join(' · ')} 단가 자동 동기화`,'var(--grn)', 4000);
     } else {
       showToast('✓ 제품 저장됨','var(--grn)');
     }
