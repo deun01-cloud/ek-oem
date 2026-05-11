@@ -8366,6 +8366,25 @@ function autoFillItemCodesFromDB(rows){
   return {matched, total:rows.length};
 }
 
+// 발주서 rows의 단가가 비어있거나 0인 행을 productDB에서 자동으로 채워줌
+// (itemCode 유무와 상관없이) — 발주서 모달 열 때 자동 호출
+// 안전 보장: 단가가 이미 0보다 큰 값이면 절대 안 건드림 (수동 입력값 보호)
+function autoFillPricesFromDB(rows){
+  if(!Array.isArray(rows)||!rows.length) return {filled:0};
+  let filled=0;
+  rows.forEach(r=>{
+    if((+r.unitPrice||0) > 0) return; // 이미 단가 있음 → 보호
+    const p=findProductByOrderRow(r);
+    if(p && (+p.price||0) > 0){
+      r.unitPrice = +p.price;
+      filled++;
+      // 매칭은 됐는데 itemCode가 비어있으면 같이 채워줌
+      if(!r.itemCode && p.code) r.itemCode = p.code;
+    }
+  });
+  return {filled};
+}
+
 // AI 프롬프트에 주입할 productDB 슬림 카탈로그 생성
 // — 코드, 이름, 도금만 포함 (토큰 절약)
 // — 코드가 있는 항목 우선
@@ -16223,6 +16242,17 @@ function openOrdModal(idOrNull){
   document.getElementById('o_delBtn').style.display=o?'':'none';
   document.getElementById('ord_ai_badge').style.display='none';
   if(!ordRowsBuf||!ordRowsBuf.length)ordRowsBuf=o?(o.rows||[]).map(r=>({...r})):[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];
+  // 단가가 비어있는 행 자동 채우기: 상품명/품번이 제품DB와 일치하면 단가 가져옴
+  // (수정 모드에서만 — 신규 등록 시는 의미 없음. 이미 단가 있는 행은 건드리지 않음)
+  if(o){
+    const priceResult = autoFillPricesFromDB(ordRowsBuf);
+    if(priceResult.filled > 0){
+      // 조용히 토스트만 — 사용자가 모달 닫고 저장하면 노션에도 반영됨
+      if(typeof showToast === 'function'){
+        showToast(`✓ ${priceResult.filled}개 행의 단가를 제품DB에서 자동으로 가져옴`, 'var(--grn)', 3000);
+      }
+    }
+  }
   // 요청 출고일 변경 이력 표시
   const shipHistEl=document.getElementById('o_shipHistArea');
   if(shipHistEl){
