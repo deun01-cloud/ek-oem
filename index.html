@@ -495,6 +495,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>📦 제품DB ID <span style="font-size:9.5px;color:var(--t3)">(신규)</span></label><input class="fi" id="notion_product_db" placeholder="Notion에서 DB 생성 후 ID 입력"></div>
   </div>
   <div class="fg"><label>📬 고객사 문의 DB ID</label><input class="fi" id="notion_inq_db" placeholder="28ad79cef0bc4895..."></div>
+  <div class="fg"><label>📋 주간/월간 업무 목표 DB ID <span style="font-size:9.5px;color:var(--t3)">(신규 — 비워두면 동기화 안 함)</span></label><input class="fi" id="notion_checklist_db" placeholder="Notion에서 DB 생성 후 ID 입력"></div>
   <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;padding:10px 13px;margin-top:10px;font-size:11px;color:var(--gold-lt)">
     <b>📌 미리 생성된 Notion DB (모두 자동 연결됨)</b><br>
     • 📋 샘플의뢰 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">dad8448577d74ea8bbbcb52f4419be3b</code><br>
@@ -990,7 +991,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       <select class="fs" id="t_cat">
         <option>업무</option><option>커머스</option>
         <option>발주출고</option><option>샘플출고</option>
-        <option>중국입고</option><option>중국출고</option>
+        <option value="중국입고">한국→중국</option><option value="중국출고">중국→한국</option>
       </select>
     </div>
   </div>
@@ -1631,6 +1632,10 @@ const CATS_SCHED=['업무','커머스','발주출고','샘플출고','중국입�
 const CAT_BG={'업무':'rgba(26,109,181,.07)','커머스':'rgba(168,90,16,.07)','발주출고':'rgba(46,139,44,.07)','샘플출고':'rgba(26,109,181,.07)','중국입고':'rgba(192,48,48,.07)','중국출고':'rgba(192,48,48,.12)'};
 const CAT_COL={'업무':'#155A9A','커머스':'#7A4008','발주출고':'#256B23','샘플출고':'#155A9A','중국입고':'#A32D2D','중국출고':'#A32D2D'};
 const CAT_HAS_FILES=['발주출고','샘플출고','중국입고','중국출고'];
+// 사용자에게 보이는 라벨 — 식별자(중국입고/중국출고)는 데이터/노션 호환을 위해 유지하고,
+// 화면에 그릴 때만 이 매핑을 사용한다. 매핑이 없는 카테고리는 원본 이름 그대로.
+const CAT_LABEL={'중국입고':'한국→중국','중국출고':'중국→한국'};
+function catLabel(c){ return CAT_LABEL[c] || c; }
 
 let currentTab='dash';
 let calY=TODAY.getFullYear(), calM=TODAY.getMonth();
@@ -5568,6 +5573,7 @@ let notionCfg = {
   ndDb:    '201b2b17b3924161b636134229f532ee', // 신규 디자인 제안
   inqDb:   '28ad79cef0bc4895a4815827f3cb7da2', // 고객사 문의
   quoteDb: 'eeda4d95607c411da6b3a69bb6a732cc', // 📋 견적 DB
+  checklistDb: '', // 📋 주간/월간 업무 목표 — 사용자가 노션 설정에서 DB ID 입력
 };
 
 function loadNotionCfg(){
@@ -5589,6 +5595,7 @@ function saveNotionSettings(){
     productDb:document.getElementById('notion_product_db')?.value.trim()||notionCfg.productDb,
     inqDb:   document.getElementById('notion_inq_db')?.value.trim()||notionCfg.inqDb,
     quoteDb: notionCfg.quoteDb, // 견적서 DB (UI 입력 필드 없음 — 기존 값 유지)
+    checklistDb: document.getElementById('notion_checklist_db')?.value.trim()||notionCfg.checklistDb,
   };
   try{ localStorage.setItem(NOTION_CFG_KEY, JSON.stringify(notionCfg)); }catch(e){}
   closeM('mNotion'); updateNotionNavLabel();
@@ -5612,6 +5619,7 @@ function openNotionSettings(){
   if(g('notion_inv_db')) g('notion_inv_db').value=notionCfg.invDb||'';
   if(g('notion_product_db')) g('notion_product_db').value=notionCfg.productDb||'';
   if(g('notion_inq_db')) g('notion_inq_db').value=notionCfg.inqDb||'';
+  if(g('notion_checklist_db')) g('notion_checklist_db').value=notionCfg.checklistDb||'';
   const res=document.getElementById('notionTestResult'); if(res) res.textContent='';
   updateNotionMode(); openM('mNotion');
 }
@@ -6552,6 +6560,11 @@ async function pullFromNotion(opts){
 
     save(); slSave();
     _lastSyncAt=Date.now();
+
+    // 체크리스트 동기화 (notionCfg.checklistDb 설정된 경우만)
+    if(notionCfg.checklistDb){
+      try{ await pullChecklistsFromNotion(); }catch(e){}
+    }
 
     // 현재 탭 다시 그리기
     if(typeof renderTab==='function') try{renderTab();updateBadges();}catch(e){}
@@ -11488,12 +11501,12 @@ function renderWeekSchedulePanel(){
     // 공장 출고 (샘플) — 중국 출고
     samples.filter(s=>s.factShip===ds).forEach(s=>{
       const st=s.status||'의뢰';
-      evts.push({cls:'ev-ship',label:'중국출고',name:s.name,detail:`${s.manager||''} · 샘플 · ${st}`,done:st==='확정'||st==='취소',canceled:st==='취소'});
+      evts.push({cls:'ev-ship',label:catLabel('중국출고'),name:s.name,detail:`${s.manager||''} · 샘플 · ${st}`,done:st==='확정'||st==='취소',canceled:st==='취소'});
     });
     // 공장 출고 (발주) — 중국 출고
     orders.filter(o=>o.factShip===ds).forEach(o=>{
       const st=o.status||'진행중';
-      evts.push({cls:'ev-ship',label:'중국출고',name:o.vendor,detail:`발주 · ${(o.rows||[]).length}개 품목 · ${st}`,done:st==='출고완료'||st==='취소',canceled:st==='취소'});
+      evts.push({cls:'ev-ship',label:catLabel('중국출고'),name:o.vendor,detail:`발주 · ${(o.rows||[]).length}개 품목 · ${st}`,done:st==='출고완료'||st==='취소',canceled:st==='취소'});
     });
     if(evts.length)hasAny=true;
     return{d,ds,isToday,evts};
@@ -14215,7 +14228,7 @@ function renderDayView(sc){
     const hasAny=autoItems.length||manualTasks.length;
     return`<div style="margin-bottom:10px;padding:7px 9px;border-radius:6px;background:${CAT_BG[cat]||'var(--s2)'};border:1px solid ${CAT_BG[cat]?'transparent':'var(--bdr)'}" data-date="${ds}" data-cat="${cat}" data-ap="${ap}" ondragover="taskDragOver(event,this)" ondragleave="taskDragLeave(this)" ondrop="taskDrop(event,this)">
       <div style="font-size:10px;color:${CAT_COL[cat]};font-weight:700;margin-bottom:${hasAny?'6px':'0'};display:flex;align-items:center;justify-content:space-between">
-        <span>${cat}</span>
+        <span>${catLabel(cat)}</span>
         <button class="add-t" onclick="openTaskFull('${ds}','${ap}','${cat}')" style="font-size:11px;padding:0 5px;height:18px;line-height:18px">＋</button>
       </div>
       ${autoItems.map(it=>`
@@ -14382,7 +14395,7 @@ function renderWeekView(sc){
       ${CATS_SCHED.map(cat=>{
         const isShip=CAT_HAS_FILES.includes(cat);
         return`
-        <div class="wg-cat" style="background:${CAT_BG[cat]};color:${CAT_COL[cat]};font-size:10.5px">${cat}</div>
+        <div class="wg-cat" style="background:${CAT_BG[cat]};color:${CAT_COL[cat]};font-size:10.5px">${catLabel(cat)}</div>
         ${days.map(d=>{
           const ds=toLocalDateStr(d);
           const manualTasks=tasks.filter(t=>t.date===ds&&t.cat===cat);
@@ -16010,6 +16023,65 @@ function loadChecklists(){try{const w=localStorage.getItem(CL_KEY_WEEK);if(w)wee
 function saveChecklists(){try{localStorage.setItem(CL_KEY_WEEK,JSON.stringify(weekChecklist));localStorage.setItem(CL_KEY_MONTH,JSON.stringify(monthChecklist));}catch(e){}}
 loadChecklists();
 
+// ── Notion 동기화 ──
+// 노션 DB 스키마: 할일(title), 종류(select: 주간/월간), 완료(checkbox)
+// notionCfg.checklistDb가 설정되어 있을 때만 동작
+async function syncChecklistItemToNotion(item, mode, isUpdate){
+  if(!notionCfg.workerUrl || !notionCfg.checklistDb) return;
+  try{
+    const props = {
+      "할일": {"title":[{"text":{"content":(item.text||'').slice(0,2000)}}]},
+      "종류": {"select":{"name": mode==='month'?'월간':'주간'}},
+      "완료": {"checkbox": !!item.done},
+    };
+    if(isUpdate && item._notionId){
+      await nUpdate(item._notionId, props);
+    } else {
+      const r = await nCreate(notionCfg.checklistDb, props);
+      if(r && r.id){
+        item._notionId = r.id;
+        saveChecklists();
+      }
+    }
+  }catch(e){ console.warn('체크리스트 노션 동기화 실패:', e); }
+}
+async function deleteChecklistFromNotion(notionId){
+  if(!notionCfg.workerUrl || !notionId) return;
+  try{
+    // Notion은 page archive로 삭제 처리
+    await notionCall('PATCH', '/pages/'+notionId, {archived: true});
+  }catch(e){ console.warn('체크리스트 노션 삭제 실패:', e); }
+}
+// 노션에서 체크리스트 불러오기 (페이지 진입 시 1회)
+async function pullChecklistsFromNotion(){
+  if(!notionCfg.workerUrl || !notionCfg.checklistDb) return;
+  try{
+    const rows = await nQueryAll(notionCfg.checklistDb);
+    if(!Array.isArray(rows)) return;
+    const wk = [], mn = [];
+    rows.forEach(row=>{
+      const p = row.properties || {};
+      const text = np.title(p['할일']) || '';
+      const kind = np.select(p['종류']) || '주간';
+      const done = np.check(p['완료']);
+      if(!text) return;
+      const item = { text, done, id: Date.now()+Math.random(), _notionId: row.id };
+      if(kind === '월간') mn.push(item); else wk.push(item);
+    });
+    // 노션의 데이터를 진실의 원천으로 (다른 컴퓨터에서도 일관성 유지)
+    weekChecklist = wk;
+    monthChecklist = mn;
+    saveChecklists();
+    // 열려있는 모달이나 위젯 갱신
+    if(document.getElementById('mChecklist')?.classList.contains('on')){
+      renderChecklistBody();
+    }
+    if(currentTab === 'schedule' && typeof renderSchedContent === 'function'){
+      renderSchedContent();
+    }
+  }catch(e){ console.warn('체크리스트 노션 풀 실패:', e); }
+}
+
 function openChecklist(mode){
   _checklistMode=mode||'week';
   document.getElementById('mChecklist_t').textContent=mode==='month'?'📋 월간 업무 목표':'📋 주간 업무 목표';
@@ -16031,21 +16103,33 @@ function renderChecklistBody(){
 function addChecklistItem(){
   const inp=document.getElementById('checklistInput');
   const text=(inp?.value||'').trim();if(!text)return;
-  (_checklistMode==='month'?monthChecklist:weekChecklist).push({text,done:false,id:Date.now()});
+  const newItem = {text,done:false,id:Date.now()};
+  (_checklistMode==='month'?monthChecklist:weekChecklist).push(newItem);
   saveChecklists();inp.value='';renderChecklistBody();
+  // 노션 동기화 (백그라운드)
+  syncChecklistItemToNotion(newItem, _checklistMode, false);
 }
 function toggleChecklist(idx){
   const list=_checklistMode==='month'?monthChecklist:weekChecklist;
-  if(list[idx])list[idx].done=!list[idx].done;
+  if(list[idx]){
+    list[idx].done=!list[idx].done;
+    syncChecklistItemToNotion(list[idx], _checklistMode, true);
+  }
   saveChecklists();renderChecklistBody();
 }
 function deleteChecklist(idx){
   const list=_checklistMode==='month'?monthChecklist:weekChecklist;
+  if(list[idx]){
+    deleteChecklistFromNotion(list[idx]._notionId);
+  }
   list.splice(idx,1);saveChecklists();renderChecklistBody();
 }
 function toggleChecklistInline(mode,idx){
   const list=mode==='month'?monthChecklist:weekChecklist;
-  if(list[idx])list[idx].done=!list[idx].done;
+  if(list[idx]){
+    list[idx].done=!list[idx].done;
+    syncChecklistItemToNotion(list[idx], mode, true);
+  }
   saveChecklists();if(currentTab==='schedule')renderSchedContent();
 }
 function renderChecklistWidget(mode){
