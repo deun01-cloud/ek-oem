@@ -4561,20 +4561,20 @@ function _invStatusOrder(s){ return _INV_STATUS_PRIORITY[s] || 99; }
 
 function renderInvoiceHistory(){
   slLoad();
-  // 4-A: _invStage 자동 마이그레이션 (1회 — 한 번 처리하면 그 후 새 명세서는 저장 시점에 분류됨)
-  if(!window._invStageMigrated){
-    if(typeof window.migrateInvoiceStages === 'function'){
-      // 조용히 — 이미 분류된 명세서가 있으면 토스트 안 띄우고 진행
-      let migrated = 0;
-      invoiceHistory.forEach(v => {
-        if(v._isConsolidated) return;
-        if(typeof v._invStage === 'string' && v._invStage) return;
-        v._invStage = inferInvStage(v);
-        migrated++;
-      });
-      if(migrated > 0 && typeof save==='function') save();
+  // 4-A: _invStage 자동 재계산 — 매 렌더링마다 모든 명세서를 재분류
+  // (옛 데이터, 노션 풀로 새로 받은 데이터, 외부 수정 등으로 _invStage가 잘못/누락된 경우 자동 교정)
+  let _stageChanged = 0;
+  invoiceHistory.forEach(v => {
+    if(v._isConsolidated) return; // 합본은 stage 없음
+    const newStage = inferInvStage(v);
+    if(v._invStage !== newStage){
+      v._invStage = newStage;
+      _stageChanged++;
     }
-    window._invStageMigrated = true;
+  });
+  if(_stageChanged > 0){
+    console.log('[invoice] _invStage 자동 재계산:', _stageChanged, '건 갱신');
+    if(typeof save === 'function') save();
   }
   var c=document.getElementById('content');
   var st=invFilter.status;
@@ -18576,6 +18576,8 @@ function inferInvStage(v){
   if(v._isConsolidated) return null; // 합본은 stage 없음
   // status가 '입금완료'면 무조건 done
   if(v.status === '입금완료') return 'done';
+  // 입금률 100% → done (status 누락 케이스 대비)
+  if((+v.paymentRatio || 0) >= 100) return 'done';
   // 5-A: 명세서별 출고완료 플래그가 핵심 기준
   // _shipped=true → billing (청구 단계)
   if(v._shipped === true) return 'billing';
@@ -18590,7 +18592,11 @@ function inferInvStage(v){
     return (v.status === '발행완료' || v.status === '청구완료' || v.status === '미수')
       ? 'billing' : 'draft';
   }
-  // 그 외는 draft (미청구 단계 — 아직 출고 전)
+  // AS 명세서 — 출고일 있으면 billing, 없으면 draft
+  if(v._fromAS){
+    return v.shipDate ? 'billing' : 'draft';
+  }
+  // 그 외 (발주 기반 미출고, 재고 출고 STOCK-, 독립 명세서 등) → draft (미청구)
   return 'draft';
 }
 
