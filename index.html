@@ -496,6 +496,19 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
   <div class="fg"><label>📬 고객사 문의 DB ID</label><input class="fi" id="notion_inq_db" placeholder="28ad79cef0bc4895..."></div>
   <div class="fg"><label>📋 주간/월간 업무 목표 DB ID <span style="font-size:9.5px;color:var(--t3)">(신규 — 비워두면 동기화 안 함)</span></label><input class="fi" id="notion_checklist_db" placeholder="Notion에서 DB 생성 후 ID 입력"></div>
+  <div style="margin-top:10px;padding:12px 14px;background:rgba(192,48,48,.06);border:1px solid rgba(192,48,48,.25);border-radius:6px">
+    <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12px">
+      <input type="checkbox" id="notion_strict_mode" style="margin-top:2px;flex-shrink:0">
+      <span>
+        <b style="color:var(--red)">🔒 노션 진실의 원천 모드 (Strict Mode)</b><br>
+        <span style="font-size:11px;color:var(--t2);line-height:1.5">
+          켜면 <b>노션 DB에 등록된 항목만</b> 화면에 표시됩니다.<br>
+          노션과 동기화되지 않은 로컬 전용 항목(다른 기기에서 만든 캐시 등)은 자동으로 화면에서 제외되어, 다른 기기 간 일관성이 보장됩니다.<br>
+          <span style="color:var(--red)">⚠ 모드 변경 후 다음 동기화 시 적용되며, 로컬 전용 데이터는 보이지 않게 됩니다 (노션 DB의 데이터는 안전).</span>
+        </span>
+      </span>
+    </label>
+  </div>
   <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;padding:10px 13px;margin-top:10px;font-size:11px;color:var(--gold-lt)">
     <b>📌 미리 생성된 Notion DB (모두 자동 연결됨)</b><br>
     • 📋 샘플의뢰 DB: <code style="font-size:10px;background:rgba(0,0,0,.06);padding:1px 4px;border-radius:3px">dad8448577d74ea8bbbcb52f4419be3b</code><br>
@@ -5574,6 +5587,7 @@ let notionCfg = {
   inqDb:   '28ad79cef0bc4895a4815827f3cb7da2', // 고객사 문의
   quoteDb: 'eeda4d95607c411da6b3a69bb6a732cc', // 📋 견적 DB
   checklistDb: '', // 📋 주간/월간 업무 목표 — 사용자가 노션 설정에서 DB ID 입력
+  strictMode: false, // 🔒 노션 진실의 원천 모드 — 켜면 노션에 없는 로컬 전용 항목 자동 제거
 };
 
 function loadNotionCfg(){
@@ -5581,6 +5595,7 @@ function loadNotionCfg(){
   updateNotionNavLabel();
 }
 function saveNotionSettings(){
+  const wasStrict = !!notionCfg.strictMode;
   notionCfg={
     workerUrl:(document.getElementById('notion_worker')?.value||'').trim().replace(/\/$/,''),
     token:document.getElementById('notion_token')?.value.trim()||'',
@@ -5596,12 +5611,23 @@ function saveNotionSettings(){
     inqDb:   document.getElementById('notion_inq_db')?.value.trim()||notionCfg.inqDb,
     quoteDb: notionCfg.quoteDb, // 견적서 DB (UI 입력 필드 없음 — 기존 값 유지)
     checklistDb: document.getElementById('notion_checklist_db')?.value.trim()||notionCfg.checklistDb,
+    strictMode: !!document.getElementById('notion_strict_mode')?.checked,
   };
   try{ localStorage.setItem(NOTION_CFG_KEY, JSON.stringify(notionCfg)); }catch(e){}
   closeM('mNotion'); updateNotionNavLabel();
   // 설정이 바뀌었으니 회로차단기 리셋 — 새 URL로 재시도 가능
   resetNotionCircuit();
-  showToast('✓ Notion 설정 저장됨', 'var(--blu)');
+  // 🔒 strict 모드를 새로 켰으면: 증분 sync 마커를 리셋해서 다음 풀이 전체 모드로 동작하게
+  //    그래야 로컬 전용 항목들이 정상적으로 제외됨
+  if(notionCfg.strictMode && !wasStrict){
+    try{
+      localStorage.removeItem('ek3_full_sync_at');
+      if(typeof clearAllDbSyncTimes === 'function') clearAllDbSyncTimes();
+    }catch(e){}
+    showToast('🔒 Strict 모드 켜짐 — 노션과 전체 재동기화 시작', 'var(--red)', 3500);
+  } else {
+    showToast('✓ Notion 설정 저장됨', 'var(--blu)');
+  }
   // 설정 저장 후 즉시 동기화 시작
   if(notionCfg.workerUrl){
     setTimeout(()=>pullFromNotion({silent:false}), 400);
@@ -5620,6 +5646,7 @@ function openNotionSettings(){
   if(g('notion_product_db')) g('notion_product_db').value=notionCfg.productDb||'';
   if(g('notion_inq_db')) g('notion_inq_db').value=notionCfg.inqDb||'';
   if(g('notion_checklist_db')) g('notion_checklist_db').value=notionCfg.checklistDb||'';
+  if(g('notion_strict_mode')) g('notion_strict_mode').checked=!!notionCfg.strictMode;
   const res=document.getElementById('notionTestResult'); if(res) res.textContent='';
   updateNotionMode(); openM('mNotion');
 }
@@ -5633,7 +5660,9 @@ function updateNotionNavLabel(){
   const lbl=document.getElementById('notionSyncLabel');
   const ico=document.getElementById('notionSyncIcon');
   if(!lbl||!ico) return;
-  if(notionCfg.workerUrl){ lbl.textContent='Notion 🟢'; lbl.style.color='var(--grn)'; ico.textContent='☁'; lbl.title='Notion 동기화 활성 (Worker 연결됨)'; }
+  const strictBadge = notionCfg.strictMode ? ' 🔒' : '';
+  const strictTitle = notionCfg.strictMode ? ' · 🔒 Strict 모드 (노션만 표시)' : '';
+  if(notionCfg.workerUrl){ lbl.textContent='Notion 🟢'+strictBadge; lbl.style.color='var(--grn)'; ico.textContent='☁'; lbl.title='Notion 동기화 활성 (Worker 연결됨)'+strictTitle; }
   else if(notionCfg.token){ lbl.textContent='Notion ⚠'; lbl.style.color='var(--org)'; ico.textContent='🔄'; lbl.title='Notion 토큰은 있지만 Worker URL이 없음 — 동기화 불가'; }
   else { lbl.textContent='Notion ❌'; lbl.style.color='var(--red)'; ico.textContent='⚠'; lbl.title='Notion 미연결 — 로컬에만 저장됨. 클릭해서 설정하세요'; }
 }
@@ -6334,7 +6363,8 @@ async function pullFromNotion(opts){
 
   try{
     // 증분 동기화 결정: 풀 동기화 강제 시점이거나 처음이면 since=null (전체)
-    const useIncremental = !shouldFullSync();
+    // 🔒 strict 모드면 항상 전체 풀 — 로컬 전용 데이터가 살아남지 않도록
+    const useIncremental = !shouldFullSync() && !(notionCfg && notionCfg.strictMode);
     const sinceFor = (dbId)=> (useIncremental && dbId) ? getDbSyncTime(dbId) : null;
     // 사용자 액션은 회로차단기 우회 — 한 번의 일시적 실패로 영구 차단되지 않게
     const callOpts = silent ? undefined : {bypassCircuit:true};
@@ -6439,8 +6469,10 @@ async function pullFromNotion(opts){
       });
 
       // 3단계: 로컬 전용 데이터 보존. 단, merged에 같은 내용이 있으면 제외
+      // 🔒 strict 모드가 켜져있으면 로컬 전용 데이터 자체를 제외 (노션 = 진실의 원천)
+      const strict = !!(notionCfg && notionCfg.strictMode);
       const mergedKeys=new Set(merged.map(dupKey).filter(Boolean));
-      const localOnly=local.filter(x=>{
+      const localOnly = strict ? [] : local.filter(x=>{
         if(x._notionId) return false; // 이미 위에서 처리됨
         const xKey=dupKey(x);
         if(!xKey) return true; // 키 생성 불가 → 그대로 보존
@@ -6450,6 +6482,15 @@ async function pullFromNotion(opts){
         }
         return true;
       });
+      if(strict){
+        // 추가로 — 로컬 배열 중 _notionId가 없거나 노션 측에 매칭 안 된 항목도 모두 제거
+        // (위 byNotionId 매핑에서 prev가 있어야만 merged에 들어가는 흐름이라
+        //  remote에 없는 로컬은 자동 제외되지만, 로깅을 남김)
+        const dropped = local.filter(x => !x._notionId).length;
+        if(dropped > 0){
+          console.log(`[strict] 노션 미동기 로컬 항목 ${dropped}건 제외 (${label})`);
+        }
+      }
 
       return [...merged, ...localOnly];
     }
@@ -13344,7 +13385,18 @@ function bulkOpenOrdDeliveryNote(){
     return;
   }
   if(window._ordChecked.size>1){
-    showToast('⚠ 출하지시서는 1건씩 발행됩니다 — 1건만 선택해 주세요','var(--org)',3000);
+    const selectedNos = [...window._ordChecked]
+      .map(id => orders.find(o => String(o.id) === String(id)))
+      .filter(Boolean)
+      .map(o => o.no || o.vendor || '(번호없음)')
+      .slice(0, 5)
+      .join(', ');
+    const moreCount = window._ordChecked.size - 5;
+    const moreText = moreCount > 0 ? ` 외 ${moreCount}건` : '';
+    showToast(
+      `⚠ 발주서가 ${window._ordChecked.size}건 선택되어 있습니다 (${selectedNos}${moreText}). 출하지시서는 1건씩 발행됩니다. — 위의 [해제] 버튼으로 모두 해제 후 1건만 다시 선택하세요.`,
+      'var(--org)', 6000
+    );
     return;
   }
   const ordId=[...window._ordChecked][0];
@@ -13359,7 +13411,19 @@ function bulkOpenOrdTaxInvoice(){
     return;
   }
   if(window._ordChecked.size>1){
-    showToast('⚠ 거래명세서는 1건씩 발행됩니다 — 여러 건 합본은 [거래명세서] 탭에서 가능합니다','var(--org)',4000);
+    // 어떤 발주서가 선택됐는지 정확히 보여주어 사용자가 의도와 다른 선택을 인지하도록
+    const selectedNos = [...window._ordChecked]
+      .map(id => orders.find(o => String(o.id) === String(id)))
+      .filter(Boolean)
+      .map(o => o.no || o.vendor || '(번호없음)')
+      .slice(0, 5)
+      .join(', ');
+    const moreCount = window._ordChecked.size - 5;
+    const moreText = moreCount > 0 ? ` 외 ${moreCount}건` : '';
+    showToast(
+      `⚠ 발주서가 ${window._ordChecked.size}건 선택되어 있습니다 (${selectedNos}${moreText}). 거래명세서는 1건씩 발행됩니다. — 위의 [해제] 버튼으로 모두 해제 후 1건만 다시 선택하세요.`,
+      'var(--org)', 6000
+    );
     return;
   }
   const ordId=[...window._ordChecked][0];
@@ -13534,6 +13598,18 @@ function renderOrder(){
   const doneOrd=orders.filter(o=>o.status==='출고완료').length;
 
   const STAGE_COLORS=['#5040A0','#1A6DB5','#0F6E56','#A85A10','#2E8B2C'];
+
+  // _ordChecked 정리: 현재 필터에 보이는 발주서만 남김 (필터 변경 후 사라진 ID는 자동 해제)
+  // 다른 탭/필터에서 체크된 발주서가 Set에 남아있다가 bulk 액션 시 혼란을 주는 문제 방지
+  if(window._ordChecked && window._ordChecked.size){
+    const visibleIds = new Set(list.map(o => String(o.id)));
+    const toRemove = [];
+    window._ordChecked.forEach(id => {
+      if(!visibleIds.has(String(id))) toRemove.push(id);
+    });
+    toRemove.forEach(id => window._ordChecked.delete(id));
+    if(toRemove.length) console.log('[ord] 필터 밖 선택 정리:', toRemove.length, '건');
+  }
 
   c.innerHTML=`
   <!-- 서브탭: 진행중 / 출고완료 / 전체 -->
