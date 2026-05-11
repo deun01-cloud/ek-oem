@@ -3326,6 +3326,14 @@ function renderProducts(){
   }
 
   const lowStock=getLowStockProducts();
+  // 🔒 노션-우선 안내 배너 (제품DB는 항상 노션-우선 모드)
+  const notionStatus = (notionCfg.workerUrl && notionCfg.productDb)
+    ? {ok:true, msg:'🔒 노션-우선 모드: 모든 제품은 노션 동기화 성공 후에만 화면에 표시됩니다 (모든 기기 일관성 보장)'}
+    : {ok:false, msg:'⚠ 노션 미연결: 제품 등록·수정이 불가합니다 — 우측 상단 ⚙ Notion 설정 버튼으로 연결하세요'};
+  const notionBanner = `
+  <div style="padding:9px 13px;background:${notionStatus.ok?'rgba(46,139,44,.06)':'rgba(192,48,48,.06)'};border:1px solid ${notionStatus.ok?'rgba(46,139,44,.25)':'rgba(192,48,48,.3)'};border-radius:6px;font-size:11.5px;color:${notionStatus.ok?'var(--grn)':'var(--red)'};margin-bottom:10px;font-weight:500">
+    ${notionStatus.msg}
+  </div>`;
   const kpiRow=`
   <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
     <div class="kpi"><div class="kpi-l">전체 품목</div><div class="kpi-v">${productDB.length}<span class="kpi-d">개</span></div></div>
@@ -3473,11 +3481,11 @@ function renderProducts(){
     <span style="font-size:11px;color:var(--t3);margin-left:auto">전체 DB 삭제: <button onclick="pdDeleteAll()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:11px;text-decoration:underline;font-family:inherit">전체 삭제</button></span>
   </div>`;
 
-  c.innerHTML=kpiRow+filters+`
+  c.innerHTML=notionBanner+kpiRow+filters+`
   <div class="card" style="padding:0">
     <div style="padding:10px 14px;border-bottom:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:center">
       <div style="font-size:12px;font-weight:600;color:var(--t2)">총 <b style="color:var(--t1)">${list.length.toLocaleString()}</b>개 품목</div>
-      <button onclick="pdDeleteAll()" style="font-size:11px;padding:4px 10px;background:none;border:1px solid rgba(192,48,48,.3);border-radius:5px;color:var(--red);cursor:pointer;font-family:inherit">🗑 전체 DB 초기화</button>
+      <button onclick="pdDeleteAll()" style="font-size:11px;padding:4px 10px;background:none;border:1px solid rgba(26,109,181,.3);border-radius:5px;color:var(--blu);cursor:pointer;font-family:inherit" title="이 컴퓨터의 로컬 캐시를 비우고 노션에서 다시 받아옵니다 (노션 데이터는 안전)">🔄 로컬 재동기화</button>
     </div>
     ${listView}
     ${bulkBar}
@@ -3522,12 +3530,66 @@ function pdDeleteSelected(){
   },'선택 삭제','🗑');
 }
 function pdDeleteAll(){
-  showConfirm(`제품DB 전체(${productDB.length.toLocaleString()}개)를 삭제합니다.\n이 작업은 되돌릴 수 없습니다.`,()=>{
-    productDB.forEach(p=>deleteProductFromNotion(p));
-    productDB=[];
-    save();renderTab();
-    showToast('✓ 전체 삭제됨','var(--grn)');
-  },'⚠ 전체 DB 초기화','🗑');
+  const total = productDB.length;
+  // 로컬이 이미 비어있다면 노션에서 강제 풀 (재동기화)
+  if(total === 0){
+    showConfirm(
+      '로컬 제품DB가 비어 있습니다.\n노션에서 데이터를 다시 받아오시겠습니까?\n\n(노션 데이터는 변경되지 않습니다)',
+      ()=>{
+        try{
+          localStorage.removeItem('ek3_full_sync_at');
+          if(typeof clearAllDbSyncTimes === 'function') clearAllDbSyncTimes();
+          if(typeof resetNotionCircuit === 'function') resetNotionCircuit();
+        }catch(e){}
+        if(typeof pullFromNotion === 'function'){
+          pullFromNotion({silent:false}).then(ok=>{
+            if(ok){
+              showToast(`✓ 노션에서 ${productDB.length.toLocaleString()}개 받아옴`, 'var(--grn)', 4000);
+              renderTab();
+            }
+          });
+        }
+      },
+      '🔄 노션에서 다시 받기', '🔄', '받기', 'blu'
+    );
+    return;
+  }
+  // 로컬 비우기 + 노션에서 재풀 (안전 — 노션 데이터는 보존)
+  // ⚠ 노션까지 삭제하려면 별도 안내 (브라우저 prompt 사용으로 명시적 확인)
+  showConfirm(
+    `이 컴퓨터의 로컬 제품DB 캐시(${total.toLocaleString()}개)를 비우고, 노션에서 최신 데이터를 다시 받아옵니다.\n\n` +
+    `· 노션 DB의 데이터는 안전합니다 (그대로 유지)\n` +
+    `· 다른 기기에 영향 없음\n` +
+    `· 동기화 충돌이나 캐시 문제 해결에 사용\n\n` +
+    `※ 노션 DB 자체를 삭제하려면 노션에서 직접 작업하세요.`,
+    ()=>{
+      productDB=[];
+      try{
+        localStorage.removeItem('ek3_full_sync_at');
+        if(typeof clearAllDbSyncTimes === 'function') clearAllDbSyncTimes();
+        if(typeof resetNotionCircuit === 'function') resetNotionCircuit();
+      }catch(e){}
+      save();
+      // 즉시 노션에서 재풀
+      if(notionCfg.workerUrl && notionCfg.productDb && typeof pullFromNotion === 'function'){
+        pullFromNotion({silent:false}).then(ok=>{
+          renderTab();
+          if(ok){
+            showToast(`✓ 로컬 초기화 + 노션에서 ${productDB.length.toLocaleString()}개 받아옴`, 'var(--grn)', 4000);
+          } else {
+            showToast(`✓ 로컬 초기화됨 — 다음 동기화 시 노션에서 복원`, 'var(--blu)', 3000);
+          }
+        });
+      } else {
+        renderTab();
+        showToast(`✓ 로컬 초기화됨 (노션 미연결)`, 'var(--grn)');
+      }
+    },
+    '🔄 로컬 캐시 초기화 + 노션에서 재동기화',
+    '🔄',
+    '로컬만 비우기 (안전)',
+    'blu'
+  );
 }
 
 // ── 제품 모달 ──
@@ -3710,6 +3772,12 @@ function saveProduct(){
   const code=gv('pd_code'), name=gv('pd_name');
   if(!name) return showToast('⚠ 품목명을 입력해 주세요','var(--red)');
   const id=gv('pd_id');
+  // 🔒 노션-우선 모드: 신규 등록 시 노션 연결 필수
+  // (수정은 기존 항목이 이미 노션에 있다고 가정하고 통과)
+  if(!id && (!notionCfg.workerUrl || !notionCfg.productDb)){
+    showToast('⚠ 제품 등록은 Notion 연결이 필요합니다 — 우측 상단 Notion 설정에서 Worker URL과 제품DB ID를 먼저 설정하세요', 'var(--red)', 5000);
+    return;
+  }
   // 품목코드 중복 검증 (코드가 비어있지 않을 때만)
   // 같은 코드 가진 다른 제품(자기 자신 제외)이 있으면 거부
   if(code && code.trim()){
@@ -3766,16 +3834,30 @@ function saveProduct(){
       const i=productDB.findIndex(x=>x.id==id);
       if(i>=0){ productDB[i]={...productDB[i],...finalObj}; savedProduct=productDB[i]; }
     } else {
+      // 🔒 노션-우선: 노션 동기화가 성공한 후에만 productDB에 추가
+      // 일시적으로 객체 만들고 노션에 push 시도 → 성공 시 productDB에 추가, 실패 시 폐기
       savedProduct={id:Date.now(),createdAt:new Date().toISOString(),...finalObj};
-      productDB.push(savedProduct);
-      // 신규 등록 시 초기재고 이력 기록
-      if(newStock>0){
-        applyStockChange({
-          productId:savedProduct.id, delta:newStock,
-          type:'initial', note:'신규 등록 시 초기재고'
-        });
-        // applyStockChange가 stock을 다시 +newStock 했을 것이므로 정정
-        savedProduct.stock=newStock;
+      let toastId;
+      try{
+        if(typeof showToast === 'function') showToast('🔄 Notion에 등록 중...', 'var(--blu)', 1500);
+        await syncProductToNotion(savedProduct, false);
+        // 노션 동기화 성공 — 이제 로컬에도 추가
+        productDB.push(savedProduct);
+        // 신규 등록 시 초기재고 이력 기록
+        if(newStock>0){
+          applyStockChange({
+            productId:savedProduct.id, delta:newStock,
+            type:'initial', note:'신규 등록 시 초기재고'
+          });
+          // applyStockChange가 stock을 다시 +newStock 했을 것이므로 정정
+          savedProduct.stock=newStock;
+        }
+      } catch(e){
+        console.error('제품 등록 실패 — 노션 동기화 실패로 인해 폐기:', e);
+        if(typeof showToast === 'function'){
+          showToast(`❌ 제품 등록 실패: Notion에 저장할 수 없습니다 (${e.message||'네트워크/권한 오류'}) — 모달은 열린 상태이니 다시 시도하거나 닫으세요`, 'var(--red)', 7000);
+        }
+        return; // 모달 닫지 않고 종료 — 사용자가 다시 시도할 수 있게
       }
     }
     // 수정 모드에서 재고 차이 발생 시 이력 기록
@@ -3844,10 +3926,9 @@ function saveProduct(){
       showToast('✓ 제품 저장됨','var(--grn)');
     }
     if(typeof syncSels==='function') syncSels();
-    // Notion 동기화 — 수정은 디바운싱, 신규는 즉시 (ID 받기)
-    if(savedProduct){
-      if(id) debouncedSync('product', savedProduct, true);
-      else setTimeout(()=>syncProductToNotion(savedProduct, false), 50);
+    // Notion 동기화 — 수정만 디바운싱 (신규는 위에서 await로 처리됨)
+    if(savedProduct && id){
+      debouncedSync('product', savedProduct, true);
     }
   };
   if(notionCfg.workerUrl && pdImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
@@ -4032,11 +4113,14 @@ function guessPlating(metal, name){
 
 function confirmImport(){
   if(!_importRows.length) return;
+  // 🔒 노션-우선 모드: 노션 미연결이면 등록 자체를 차단
+  if(!notionCfg.workerUrl || !notionCfg.productDb){
+    showToast('⚠ 제품 등록은 Notion 연결이 필요합니다 — 우측 상단 Notion 설정에서 Worker URL과 제품DB ID를 먼저 설정하세요', 'var(--red)', 5000);
+    return;
+  }
   const importId = 'import_'+Date.now();
   const importTime = new Date().toISOString();
   const fileName = _importFileName||'알 수 없는 파일';
-  let added=0, updated=0;
-  const toSync=[]; // 노션 동기화 대상
   // 같은 import 파일 안에서 같은 코드가 여러 번 등장하는 경우 감지
   const codeCounts = {};
   _importRows.forEach(r => {
@@ -4048,36 +4132,56 @@ function confirmImport(){
     console.warn('⚠ 업로드 파일 안에 중복 품목코드 발견:', fileDuplicates);
     showToast(`⚠ 파일 내 중복 코드 ${fileDuplicates.length}건 — 마지막 행만 적용됨 (콘솔 확인)`, 'var(--org)', 4500);
   }
-  _importRows.forEach(row=>{
-    const exist=productDB.find(p=>p.code&&p.code===row.code);
-    if(exist){
-      Object.assign(exist,{...row,imgs:exist.imgs,importSource:importId});
-      updated++;
-      toSync.push({obj:exist, update:true});
-    } else {
-      const np={id:Date.now()+Math.random(),createdAt:importTime,...row,importSource:importId};
-      productDB.push(np);
-      added++;
-      toSync.push({obj:np, update:false});
-    }
-  });
-  // 업로드 이력 저장
-  if(!window._importHistory) window._importHistory=JSON.parse(localStorage.getItem('ek3_import_hist')||'[]');
-  window._importHistory.unshift({id:importId,fileName,time:importTime,added,updated,total:_importRows.length});
-  localStorage.setItem('ek3_import_hist',JSON.stringify(window._importHistory.slice(0,20)));
-  save();closeM('mProductImport');renderTab();
-  showToast(`✓ ${added}개 추가 / ${updated}개 업데이트됨`,'var(--grn)',3000);
-  // 노션 동기화: 속도 제한 고려하여 순차적으로 처리 (100ms 간격)
-  if(notionCfg.workerUrl && notionCfg.productDb && toSync.length){
-    showToast(`🔄 Notion에 ${toSync.length}개 동기화 중...`,'var(--blu)',2500);
-    (async()=>{
-      for(let i=0;i<toSync.length;i++){
-        try{ await syncProductToNotion(toSync[i].obj, toSync[i].update); }catch(e){}
+  // 🔒 노션-우선 처리: 먼저 노션에 push → 성공한 것만 로컬에 반영
+  // 비동기 처리로 변경 — 모달은 유지하고 토스트로 진행 상황 표시
+  (async()=>{
+    showToast(`🔄 Notion에 ${_importRows.length}개 등록 중... (잠시만 기다려주세요)`, 'var(--blu)', 3000);
+    let added=0, updated=0, failed=0;
+    const failedRows=[];
+    for(let i=0; i<_importRows.length; i++){
+      const row = _importRows[i];
+      const exist = productDB.find(p=>p.code&&p.code===row.code);
+      try{
+        if(exist){
+          // 수정: 기존 객체 업데이트 + 노션 동기화
+          Object.assign(exist,{...row,imgs:exist.imgs,importSource:importId});
+          await syncProductToNotion(exist, true);
+          updated++;
+        } else {
+          // 신규: 노션 push 성공 후에만 productDB에 추가
+          const np={id:Date.now()+Math.random()+i,createdAt:importTime,...row,importSource:importId};
+          await syncProductToNotion(np, false);
+          productDB.push(np);
+          added++;
+        }
+      } catch(e){
+        console.warn('제품 import 실패:', row.code, e);
+        failedRows.push({code:row.code, name:row.name, error: e.message});
+        failed++;
+      }
+      // 속도 제한 대비 100ms 간격
+      if(i < _importRows.length - 1){
         await new Promise(r=>setTimeout(r,100));
       }
-      showToast(`✓ Notion 동기화 완료`,'var(--grn)',2200);
-    })();
-  }
+    }
+    // 업로드 이력 저장 — 실패도 기록
+    if(!window._importHistory) window._importHistory=JSON.parse(localStorage.getItem('ek3_import_hist')||'[]');
+    window._importHistory.unshift({id:importId,fileName,time:importTime,added,updated,failed,total:_importRows.length});
+    localStorage.setItem('ek3_import_hist',JSON.stringify(window._importHistory.slice(0,20)));
+    save();
+    closeM('mProductImport');
+    renderTab();
+    // 결과 보고
+    if(failed > 0){
+      console.error('실패한 행들:', failedRows);
+      showToast(
+        `⚠ Notion 등록 결과 — 추가 ${added}개 / 업데이트 ${updated}개 / 실패 ${failed}개 (콘솔에서 확인)`,
+        'var(--org)', 6000
+      );
+    } else {
+      showToast(`✓ Notion에 ${added}개 추가 / ${updated}개 업데이트됨`,'var(--grn)',3500);
+    }
+  })();
 }
 let _importFileName='';
 
@@ -6470,7 +6574,9 @@ async function pullFromNotion(opts){
 
       // 3단계: 로컬 전용 데이터 보존. 단, merged에 같은 내용이 있으면 제외
       // 🔒 strict 모드가 켜져있으면 로컬 전용 데이터 자체를 제외 (노션 = 진실의 원천)
-      const strict = !!(notionCfg && notionCfg.strictMode);
+      // 🔒 제품DB는 항상 노션-우선 (사용자 결정 — 일관성 보장)
+      const isProductDB = (label === '제품DB');
+      const strict = isProductDB || !!(notionCfg && notionCfg.strictMode);
       const mergedKeys=new Set(merged.map(dupKey).filter(Boolean));
       const localOnly = strict ? [] : local.filter(x=>{
         if(x._notionId) return false; // 이미 위에서 처리됨
@@ -6483,12 +6589,9 @@ async function pullFromNotion(opts){
         return true;
       });
       if(strict){
-        // 추가로 — 로컬 배열 중 _notionId가 없거나 노션 측에 매칭 안 된 항목도 모두 제거
-        // (위 byNotionId 매핑에서 prev가 있어야만 merged에 들어가는 흐름이라
-        //  remote에 없는 로컬은 자동 제외되지만, 로깅을 남김)
         const dropped = local.filter(x => !x._notionId).length;
         if(dropped > 0){
-          console.log(`[strict] 노션 미동기 로컬 항목 ${dropped}건 제외 (${label})`);
+          console.log(`[strict] 노션 미동기 로컬 항목 ${dropped}건 제외 (${label}${isProductDB?' — 항상 적용':''})`);
         }
       }
 
@@ -7305,7 +7408,9 @@ async function deleteInqFromNotion(q){
 // 8. 제품DB ↔ Notion
 // ══════════════════════════════════
 async function syncProductToNotion(pd, update){
-  if(!notionCfg.workerUrl||!notionCfg.productDb) return;
+  if(!notionCfg.workerUrl||!notionCfg.productDb){
+    throw new Error('Notion 미연결: Worker URL 또는 제품DB ID가 설정되지 않음');
+  }
   const p={
     "품목코드":{"title":[{"text":{"content":pd.code||''}}]},
     "품목명":{"rich_text":[{"text":{"content":pd.name||''}}]},
@@ -7328,8 +7433,18 @@ async function syncProductToNotion(pd, update){
   if(pd.plating) p["도금"]={"select":{"name":pd.plating}};
   if(pd.createdDate)  p["최초등록일"]={"date":{"start":pd.createdDate}};
   if(pd.lastModified) p["최종수정일"]={"date":{"start":pd.lastModified}};
-  if(pd._notionId){ await nUpdate(pd._notionId,p); }
-  else{ const r=await nCreate(notionCfg.productDb,p); if(r?.id) saveNotionId(productDB,pd.id,r.id,SK.pd); }
+  if(pd._notionId){
+    await nUpdate(pd._notionId,p);
+  } else {
+    const r=await nCreate(notionCfg.productDb,p);
+    if(!r || !r.id){
+      throw new Error('Notion 생성 실패: 응답에 ID 없음');
+    }
+    saveNotionId(productDB,pd.id,r.id,SK.pd);
+    // 호출자가 _notionId를 확인할 수 있도록 객체에도 설정
+    pd._notionId = r.id;
+  }
+  return pd;
 }
 async function deleteProductFromNotion(pd){
   if(pd._notionId) await nDelete(pd._notionId);
@@ -11351,7 +11466,13 @@ function switchTab(tab,el){
   const acts=document.getElementById('subActs');
   acts.innerHTML='';
   if(tab==='as') acts.innerHTML='<button class="btn bp bs" onclick="openASModal(null)">+ AS 접수</button>';
-  else if(tab==='products') acts.innerHTML='<button class="btn bp bs" onclick="openProductModal(null)">+ 제품 등록</button><button class="btn bgo bs" onclick="openProductImport()">📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button>';
+  else if(tab==='products'){
+    const pdConnected = !!(notionCfg.workerUrl && notionCfg.productDb);
+    const disabledStyle = pdConnected ? '' : 'opacity:.4;cursor:not-allowed';
+    const disabledAttr = pdConnected ? '' : 'disabled';
+    const tipMsg = pdConnected ? '' : ' title="Notion 미연결 — 설정 후 사용 가능"';
+    acts.innerHTML=`<button class="btn bp bs" onclick="${pdConnected?'openProductModal(null)':'showToast(\\'⚠ Notion 연결 후 사용 가능\\',\\'var(--red)\\')'}" style="${disabledStyle}"${tipMsg}>+ 제품 등록</button><button class="btn bgo bs" onclick="${pdConnected?'openProductImport()':'showToast(\\'⚠ Notion 연결 후 사용 가능\\',\\'var(--red)\\')'}" style="${disabledStyle}"${tipMsg}>📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button>`;
+  }
   else if(tab==='sample') acts.innerHTML='<button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 샘플 등록</button>';
   else if(tab==='order') acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button>';
   else if(tab==='schedule') acts.innerHTML='<button class="btn bp bs" onclick="openTaskModal()">+ 업무 추가</button>';
@@ -16952,6 +17073,15 @@ function upsertProductFromQuoteRow(row, opts){
     return { itemCode: matched.code, isNew: false };
   }
 
+  // 🔒 신규 생성 — 노션-우선: 노션 미연결이면 자동 생성 거부 + 사용자 안내
+  if(!notionCfg.workerUrl || !notionCfg.productDb){
+    console.warn('견적서 자동 제품 생성 스킵 — Notion 미연결:', row.name);
+    if(typeof showToast === 'function'){
+      showToast(`⚠ "${row.name||'(이름없음)'}" 제품 자동 생성 스킵 — Notion 미연결 (견적서는 정상 저장됨)`, 'var(--org)', 4500);
+    }
+    return { itemCode: '', isNew: false, skipped: true };
+  }
+
   // 신규 생성
   const gen = genQuoteProductCode(row);
   const newPd = {
@@ -16974,11 +17104,25 @@ function upsertProductFromQuoteRow(row, opts){
     createdDate: todayStr,
     lastModified: todayStr,
   };
+  // 노션-우선: 노션 push 시도 → 성공해야만 productDB에 추가
+  // 동기 함수에서 비동기 작업을 await 할 수 없어서 fire-and-forget 후 즉시 코드 반환
+  // 다만, 실패하면 productDB에서 제거 (즉시는 보이지만 곧 사라짐)
   productDB.push(newPd);
-  // 노션 동기화 (신규)
-  if(notionCfg.workerUrl && notionCfg.productDb){
-    syncProductToNotion(newPd, false).catch(e=>console.warn('제품DB 신규 sync 실패:',e));
-  }
+  syncProductToNotion(newPd, false)
+    .then(()=>{ /* 성공 — 이미 push되어 있음 */ })
+    .catch(e=>{
+      console.error('견적서 자동 제품 노션 sync 실패 — 로컬에서 제거:', e);
+      // 로컬에서 제거
+      const idx = productDB.findIndex(p => p.id === newPd.id);
+      if(idx >= 0){
+        productDB.splice(idx, 1);
+        save();
+        if(typeof showToast === 'function'){
+          showToast(`⚠ "${newPd.name||'(이름없음)'}" 자동 생성된 제품이 Notion 등록 실패로 제거됨`, 'var(--red)', 5000);
+        }
+        if(typeof renderTab === 'function') renderTab();
+      }
+    });
   return { itemCode: newPd.code, isNew: true };
 }
 
