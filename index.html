@@ -3559,6 +3559,11 @@ function pdDeleteSelected(){
     showToast(`✓ ${ids.length}개 삭제됨`,'var(--grn)');
   },'선택 삭제','🗑');
 }
+function pdRequireNotionWarning(){
+  if(typeof showToast === 'function'){
+    showToast('⚠ Notion 연결 후 사용 가능 — 우측 상단 ⚙ Notion 설정에서 Worker URL을 입력하세요','var(--red)',4000);
+  }
+}
 function pdDeleteAll(){
   const total = productDB.length;
   // 로컬이 이미 비어있다면 노션에서 강제 풀 (재동기화)
@@ -11559,9 +11564,10 @@ function switchTab(tab,el){
   else if(tab==='products'){
     const pdConnected = !!(notionCfg.workerUrl && notionCfg.productDb);
     const disabledStyle = pdConnected ? '' : 'opacity:.4;cursor:not-allowed';
-    const disabledAttr = pdConnected ? '' : 'disabled';
     const tipMsg = pdConnected ? '' : ' title="Notion 미연결 — 설정 후 사용 가능"';
-    acts.innerHTML=`<button class="btn bp bs" onclick="${pdConnected?'openProductModal(null)':'showToast(\\'⚠ Notion 연결 후 사용 가능\\',\\'var(--red)\\')'}" style="${disabledStyle}"${tipMsg}>+ 제품 등록</button><button class="btn bgo bs" onclick="${pdConnected?'openProductImport()':'showToast(\\'⚠ Notion 연결 후 사용 가능\\',\\'var(--red)\\')'}" style="${disabledStyle}"${tipMsg}>📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button>`;
+    const onclickRegister = pdConnected ? 'openProductModal(null)' : 'pdRequireNotionWarning()';
+    const onclickImport   = pdConnected ? 'openProductImport()'    : 'pdRequireNotionWarning()';
+    acts.innerHTML=`<button class="btn bp bs" onclick="${onclickRegister}" style="${disabledStyle}"${tipMsg}>+ 제품 등록</button><button class="btn bgo bs" onclick="${onclickImport}" style="${disabledStyle}"${tipMsg}>📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button>`;
   }
   else if(tab==='sample') acts.innerHTML='<button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 샘플 등록</button>';
   else if(tab==='order') acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button>';
