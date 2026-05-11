@@ -3223,17 +3223,32 @@ async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
 let pdImgBuf=[], _importRows=[];
 let pdSearch='', pdFilterType='전체', pdFilterMat='전체', pdPage=1, pdLowOnly=false;
 
-// 한글 IME 안전 + 디바운스 검색 (250ms — 입력 중 매 글자마다 렌더링 안 함)
+// 한글 IME 안전 + 디바운스 검색
+// 핵심: renderProducts()는 검색창 DOM을 통째로 재생성하므로 입력 중 호출되면 IME가 깨짐
+// → 디바운스(400ms)로 입력이 멈춘 후에만 렌더링
+// → 렌더 후 즉시 포커스/커서 위치 복원
 let _pdSearchTimer = null;
 function _debouncedPdSearch(val){
   pdSearch = val;
   pdPage = 1;
-  // 입력 도중 잦은 재렌더링이 한글 IME를 깨므로 디바운스
   if(_pdSearchTimer) clearTimeout(_pdSearchTimer);
+  // 검색창 입력 중에는 결과만 갱신하면 좋지만 현재 구조는 전체 재렌더 → 디바운스 길게
   _pdSearchTimer = setTimeout(()=>{
     _pdSearchTimer = null;
+    // 현재 검색창의 커서 위치 저장
+    const oldEl = document.getElementById('srch_pdSearch');
+    const selStart = oldEl?.selectionStart ?? val.length;
+    const selEnd = oldEl?.selectionEnd ?? val.length;
     if(typeof renderProducts === 'function') renderProducts();
-  }, 250);
+    // 렌더 직후 새 검색창에 포커스 + 커서 복원
+    requestAnimationFrame(()=>{
+      const newEl = document.getElementById('srch_pdSearch');
+      if(newEl){
+        newEl.focus();
+        try { newEl.setSelectionRange(selStart, selEnd); } catch(_){}
+      }
+    });
+  }, 400);
 }
 // 최종수정일 필터: 'all' / 'today' / 'week' / 'month' / 'quarter' / 'year' / 'custom' (custom일 땐 pdDateFrom/To 사용)
 let pdDateFilter='all', pdDateFrom='', pdDateTo='';
