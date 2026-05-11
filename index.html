@@ -816,6 +816,50 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
 </div></div>
 
+<!-- SAMPLE MULTI MODAL (한 의뢰서에 여러 품목) -->
+<div class="ov" id="mSmpMulti"><div class="modal wide" style="max-width:1280px">
+  <div class="mt">🔬 샘플 의뢰서 (여러 품목)</div>
+
+  <div class="form-sec">기본 정보 (모든 품목 공통)</div>
+  <div class="fr3">
+    <div class="fg" style="position:relative">
+      <label>고객사 *</label>
+      <input class="fi" id="sm_vendor" placeholder="고객사명" autocomplete="off"
+        oninput="renderSmMultiVendorDropdown(this.value)" onfocus="renderSmMultiVendorDropdown(this.value)"
+        onblur="setTimeout(()=>{const d=document.getElementById('smMultiVendorDropdown');if(d)d.style.display='none'},180)">
+      <div id="smMultiVendorDropdown" style="display:none;position:absolute;top:calc(100% + 3px);left:0;right:0;background:var(--s1);border:1px solid var(--gold-line);border-radius:6px;z-index:50;max-height:220px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,.12)"></div>
+    </div>
+    <div class="fg"><label>의뢰일</label><input class="fi" type="date" id="sm_reqDate"></div>
+    <div class="fg"><label>납기일 *</label><input class="fi" type="date" id="sm_due"></div>
+  </div>
+  <div class="fr3">
+    <div class="fg"><label>공장 출고일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(중국 출고 일정)</span></label><input class="fi" type="date" id="sm_factShip"></div>
+    <div class="fg"><label>진행 상태</label>
+      <select class="fs" id="sm_status">
+        <option value="의뢰">의뢰</option>
+        <option value="제작중">제작중</option>
+        <option value="수정중">수정중</option>
+        <option value="확정">확정</option>
+        <option value="취소">취소</option>
+      </select>
+    </div>
+    <div class="fg"><label>공통 메모</label><input class="fi" id="sm_commonMemo" placeholder="모든 품목에 적용될 메모"></div>
+  </div>
+
+  <div class="form-sec">📋 의뢰 품목 <span style="font-size:10.5px;color:var(--t3);font-weight:400">— 같은 의뢰서 안에서 여러 품목 등록</span>
+    <button class="btn bgo bs" onclick="smMultiAddRow()" style="float:right;font-size:11px">+ 품목 추가</button>
+  </div>
+  <div id="smMultiRowsArea" style="display:flex;flex-direction:column;gap:14px"></div>
+
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px;padding-top:14px;border-top:1px solid var(--bdr)">
+    <div style="font-size:11.5px;color:var(--t3)" id="smMultiSummary">— 품목 0건</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn" onclick="closeM('mSmpMulti')">취소</button>
+      <button class="btn bp" onclick="saveSmpMulti()" style="font-size:13px;padding:7px 20px">✓ 샘플 의뢰서 등록</button>
+    </div>
+  </div>
+</div></div>
+
 <!-- ORDER MODAL -->
 <div class="ov" id="mOrd"><div class="modal wide">
   <div class="mt" id="mOrd_t">발주서 등록 <span id="ord_ai_badge" class="ai-flag" style="display:none">✦ AI 자동입력</span></div>
@@ -11595,7 +11639,7 @@ function switchTab(tab,el){
     const onclickImport   = pdConnected ? 'openProductImport()'    : 'pdRequireNotionWarning()';
     acts.innerHTML=`<button class="btn bp bs" onclick="${onclickRegister}" style="${disabledStyle}"${tipMsg}>+ 제품 등록</button><button class="btn bgo bs" onclick="${onclickImport}" style="${disabledStyle}"${tipMsg}>📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button>`;
   }
-  else if(tab==='sample') acts.innerHTML='<button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 샘플 등록</button>';
+  else if(tab==='sample') acts.innerHTML='<button class="btn bp bs" onclick="openSmpMultiModal()">+ 샘플 의뢰서 작성</button><button class="btn bgo bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)" title="한 품목만 등록 (옛 방식)">+ 단일 품목</button>';
   else if(tab==='order') acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button>';
   else if(tab==='schedule') acts.innerHTML='<button class="btn bp bs" onclick="openTaskModal()">+ 업무 추가</button>';
   else if(tab==='sales') acts.innerHTML='<button class="btn bp bs" onclick="openClModal(null)">+ 고객사 등록</button><button class="btn bgo bs" onclick="openPropModal(null)">+ 영업 등록</button><button class="btn bgo bs" onclick="openClientImport()">📥 고객사 엑셀 업로드</button>';
@@ -14951,6 +14995,316 @@ let _smpPasteHandler=null;
   }
 })();
 
+// ════════════════════════════════════════════════════════════════
+// 다중 행 샘플 의뢰서 (한 번에 여러 품목 등록)
+// ════════════════════════════════════════════════════════════════
+// 각 행은 별도의 sample 객체로 저장됨 (노션도 행마다 페이지 1개)
+// 공통 정보(고객사, 의뢰일, 납기일, 공장출고일, 메모, 상태)는 모든 행에 복사됨
+
+let _smRowsBuf = [];
+
+// 기본 행 객체 (스펙은 최소만 — 보조줄/장식 제외)
+function _smDefaultRow(){
+  return {
+    name:'', type:'', qty:'1EA',
+    sz1:'', sz2:'',  // 외경/길이, 호수만 (보조줄/장식 제거)
+    mat:'브라스 (BRASS)', plating:'실버', wt:'',
+    engr:'', // 각인 위치
+    costPrice:0, unitPrice:0, devCost:0,
+    memo:'', // 행별 추가 메모
+    imgs:[], sourceDoc:[], cadFiles:[]  // 행별 파일
+  };
+}
+
+function smMultiAddRow(){
+  _smRowsBuf.push(_smDefaultRow());
+  renderSmMultiRows();
+}
+
+function smMultiRemoveRow(idx){
+  if(_smRowsBuf.length <= 1){
+    showToast('⚠ 최소 1개 품목은 필요합니다','var(--org)');
+    return;
+  }
+  _smRowsBuf.splice(idx, 1);
+  renderSmMultiRows();
+}
+
+function smMultiSetField(idx, field, value){
+  if(_smRowsBuf[idx]){
+    _smRowsBuf[idx][field] = value;
+    // 입고원가 변경 시 단가 자동 ×2 (수동 입력했으면 건너뛰기)
+    if(field === 'costPrice'){
+      const cp = +value || 0;
+      if(cp > 0 && (!_smRowsBuf[idx].unitPrice || _smRowsBuf[idx]._unitAutoSet)){
+        _smRowsBuf[idx].unitPrice = cp * 2;
+        _smRowsBuf[idx]._unitAutoSet = true;
+        // 단가 인풋 동기화
+        const unitEl = document.getElementById('sm_row_unit_'+idx);
+        if(unitEl) unitEl.value = cp * 2;
+      }
+    } else if(field === 'unitPrice'){
+      _smRowsBuf[idx]._unitAutoSet = false; // 수동 입력 표시
+    }
+  }
+  _updateSmMultiSummary();
+}
+
+function _updateSmMultiSummary(){
+  const el = document.getElementById('smMultiSummary');
+  if(!el) return;
+  const count = _smRowsBuf.length;
+  const total = _smRowsBuf.reduce((s,r) => s + ((+r.unitPrice||0) * (parseInt(r.qty)||1)), 0);
+  el.innerHTML = `품목 <b style="color:var(--t1)">${count}</b>건 · 예상 합계 <b style="color:var(--gold-lt)">${total.toLocaleString()}원</b>`;
+}
+
+function renderSmMultiRows(){
+  const area = document.getElementById('smMultiRowsArea');
+  if(!area) return;
+  if(!_smRowsBuf.length){
+    area.innerHTML = '<div style="text-align:center;padding:30px;color:var(--t3);font-size:12px;border:1px dashed var(--bdr);border-radius:8px">품목이 없습니다. 우측 상단 + 품목 추가 버튼을 눌러주세요.</div>';
+    _updateSmMultiSummary();
+    return;
+  }
+
+  area.innerHTML = _smRowsBuf.map((r, i)=>{
+    const safeEsc = (s)=>String(s||'').replace(/"/g,'&quot;');
+    // 파일 첨부 미리보기 (간단)
+    const fileBadges = [];
+    if(r.imgs?.length) fileBadges.push(`<span style="background:rgba(46,139,44,.1);color:var(--grn);padding:2px 6px;border-radius:4px;font-size:10px">🖼 ${r.imgs.length}</span>`);
+    if(r.sourceDoc?.length) fileBadges.push(`<span style="background:var(--gold-bg);color:var(--gold-lt);padding:2px 6px;border-radius:4px;font-size:10px">📋 작지서 ${r.sourceDoc.length}</span>`);
+    if(r.cadFiles?.length) fileBadges.push(`<span style="background:rgba(26,109,181,.1);color:var(--blu);padding:2px 6px;border-radius:4px;font-size:10px">📐 CAD ${r.cadFiles.length}</span>`);
+
+    return `<div style="border:1px solid var(--bdr);border-radius:8px;padding:14px;background:var(--s2);position:relative">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--bdr)">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="background:var(--gold);color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${i+1}</div>
+          <div style="font-size:12.5px;font-weight:600">품목 ${i+1}</div>
+          ${fileBadges.length?`<span style="display:flex;gap:4px;margin-left:8px">${fileBadges.join('')}</span>`:''}
+        </div>
+        <button onclick="smMultiRemoveRow(${i})" style="background:none;border:1px solid rgba(192,48,48,.3);color:var(--red);cursor:pointer;font-size:11px;padding:3px 10px;border-radius:5px;font-family:inherit">× 삭제</button>
+      </div>
+
+      <div class="fr3" style="margin-bottom:8px">
+        <div class="fg"><label style="font-size:10.5px">샘플명 *</label><input class="fi" placeholder="11mm 원형 스톤 원터치" value="${safeEsc(r.name)}" oninput="smMultiSetField(${i},'name',this.value)"></div>
+        <div class="fg"><label style="font-size:10.5px">아이템 유형</label>
+          <input class="fi" list="smpTypeList" placeholder="EARRING / RING / NECKLACE..." value="${safeEsc(r.type)}" oninput="smMultiSetField(${i},'type',this.value)">
+        </div>
+        <div class="fg"><label style="font-size:10.5px">발주량</label><input class="fi" placeholder="1EA" value="${safeEsc(r.qty)}" oninput="smMultiSetField(${i},'qty',this.value)"></div>
+      </div>
+
+      <div class="fr4" style="margin-bottom:8px">
+        <div class="fg"><label style="font-size:10.5px">외경 / 길이</label><input class="fi" placeholder="11mm" value="${safeEsc(r.sz1)}" oninput="smMultiSetField(${i},'sz1',this.value)"></div>
+        <div class="fg"><label style="font-size:10.5px">호수</label><input class="fi" placeholder="13호" value="${safeEsc(r.sz2)}" oninput="smMultiSetField(${i},'sz2',this.value)"></div>
+        <div class="fg"><label style="font-size:10.5px">중량(g)</label><input class="fi" placeholder="g" value="${safeEsc(r.wt)}" oninput="smMultiSetField(${i},'wt',this.value)"></div>
+        <div class="fg"><label style="font-size:10.5px">각인</label><input class="fi" placeholder="이미지 참고" value="${safeEsc(r.engr)}" oninput="smMultiSetField(${i},'engr',this.value)"></div>
+      </div>
+
+      <div class="fr3" style="margin-bottom:8px">
+        <div class="fg"><label style="font-size:10.5px">소재 *</label>
+          <input class="fi" list="smpMatList" value="${safeEsc(r.mat)}" oninput="smMultiSetField(${i},'mat',this.value)">
+        </div>
+        <div class="fg"><label style="font-size:10.5px">도금</label>
+          <input class="fi" list="smpPlatingList" value="${safeEsc(r.plating)}" oninput="smMultiSetField(${i},'plating',this.value)">
+        </div>
+        <div class="fg"><label style="font-size:10.5px">입고원가(원)</label>
+          <input class="fi" id="sm_row_cost_${i}" type="number" placeholder="0" value="${r.costPrice||''}" oninput="smMultiSetField(${i},'costPrice',+this.value||0)">
+        </div>
+      </div>
+
+      <div class="fr3" style="margin-bottom:8px">
+        <div class="fg"><label style="font-size:10.5px">샘플단가(원) <span style="font-size:9px;color:var(--t3)">입고×2 자동</span></label>
+          <input class="fi" id="sm_row_unit_${i}" type="number" placeholder="0" value="${r.unitPrice||''}" oninput="smMultiSetField(${i},'unitPrice',+this.value||0)">
+        </div>
+        <div class="fg"><label style="font-size:10.5px">개발비(원)</label>
+          <input class="fi" type="number" placeholder="0" value="${r.devCost||''}" oninput="smMultiSetField(${i},'devCost',+this.value||0)">
+        </div>
+        <div class="fg"><label style="font-size:10.5px">행별 메모</label>
+          <input class="fi" placeholder="이 품목만의 메모" value="${safeEsc(r.memo)}" oninput="smMultiSetField(${i},'memo',this.value)">
+        </div>
+      </div>
+
+      <!-- 행별 파일 첨부 -->
+      <div style="border-top:1px dashed var(--bdr);padding-top:10px;margin-top:8px">
+        <div style="font-size:10.5px;color:var(--t3);margin-bottom:6px">📎 파일 첨부 <span style="font-size:9.5px;color:var(--t3)">— 이미지·작지서·CAD를 이 품목에 첨부</span></div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="file" id="smRow_file_${i}" multiple accept="*/*" style="display:none" onchange="smMultiRowFileInput(${i}, event)">
+          <button class="btn bgo bs" onclick="document.getElementById('smRow_file_${i}').click()" style="font-size:11px">📎 파일 선택</button>
+          <span style="font-size:10.5px;color:var(--t3)" id="smRow_fileStat_${i}">${(r.imgs?.length||0)+(r.sourceDoc?.length||0)+(r.cadFiles?.length||0)}개 첨부됨</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  _updateSmMultiSummary();
+}
+
+// 행별 파일 입력 처리 — 자동 분류 (이미지/PDF·엑셀/CAD)
+function smMultiRowFileInput(idx, event){
+  const files = Array.from(event.target.files || []);
+  if(!files.length) return;
+  const r = _smRowsBuf[idx];
+  if(!r) return;
+  if(!r.imgs) r.imgs = [];
+  if(!r.sourceDoc) r.sourceDoc = [];
+  if(!r.cadFiles) r.cadFiles = [];
+
+  let pending = files.length;
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const data = e.target.result;
+      const obj = { name: file.name, url: data, type: file.type, size: file.size };
+      const ext = (file.name.split('.').pop() || '').toLowerCase();
+      // 분류 규칙
+      if(file.type.startsWith('image/')){
+        if(r.imgs.length < 4) r.imgs.push(obj);
+      } else if(['ai','dxf','dwg','stl','step','iges','3dm'].includes(ext)){
+        r.cadFiles.push(obj);
+      } else {
+        // PDF/엑셀/기타 → 작지서
+        r.sourceDoc.push(obj);
+      }
+      pending--;
+      if(pending === 0){
+        renderSmMultiRows();
+      }
+    };
+    reader.readAsDataURL(file);
+  });
+  event.target.value = ''; // 같은 파일 다시 선택 가능하게
+}
+
+// 새 의뢰서 모달 열기
+function openSmpMultiModal(prefillRows){
+  if(!requireNotion('smpDb', '샘플의뢰')) return;
+  // 기본 1행
+  _smRowsBuf = prefillRows && prefillRows.length ? prefillRows.map(r=>({..._smDefaultRow(), ...r})) : [_smDefaultRow()];
+  // 기본 날짜
+  const today = toLocalDateStr(new Date());
+  setTimeout(()=>{
+    const setVal = (id, val) => { const el = document.getElementById(id); if(el) el.value = val; };
+    setVal('sm_vendor', '');
+    setVal('sm_reqDate', today);
+    setVal('sm_due', '');
+    setVal('sm_factShip', '');
+    setVal('sm_status', '의뢰');
+    setVal('sm_commonMemo', '');
+    renderSmMultiRows();
+  }, 50);
+  openM('mSmpMulti');
+}
+
+// 고객사 드롭다운 (mSmp의 renderSmpMgrDropdown 재활용 — 함수 구조 비슷)
+function renderSmMultiVendorDropdown(val){
+  const dd = document.getElementById('smMultiVendorDropdown');
+  if(!dd || typeof clients === 'undefined') return;
+  const q = (val||'').trim().toLowerCase();
+  const matches = clients.filter(c => {
+    if(!q) return true;
+    return (c.name||'').toLowerCase().includes(q) || (c.initials||'').toLowerCase().includes(q);
+  }).slice(0, 15);
+  if(!matches.length){ dd.style.display = 'none'; return; }
+  dd.innerHTML = matches.map(c => `<div style="padding:7px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--bdr)" onmousedown="document.getElementById('sm_vendor').value='${(c.name||'').replace(/'/g,'&#39;')}';document.getElementById('smMultiVendorDropdown').style.display='none'">${c.name||''} <span style="color:var(--t3);font-size:10.5px">${c.initials||''}</span></div>`).join('');
+  dd.style.display = 'block';
+}
+
+// 저장: 각 행을 별도 sample 객체로 변환해 노션에 순차 push
+async function saveSmpMulti(){
+  const vendor = gv('sm_vendor').trim();
+  if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
+  const due = gv('sm_due');
+  if(!due){ showToast('⚠ 납기일을 입력해 주세요','var(--red)'); return; }
+  // 행 검증 — 샘플명 필수
+  const validRows = _smRowsBuf.filter(r => (r.name||'').trim());
+  if(!validRows.length){ showToast('⚠ 최소 1개 품목에 샘플명을 입력해 주세요','var(--red)'); return; }
+  if(!requireNotion('smpDb', '샘플의뢰')) return;
+
+  const reqDate = gv('sm_reqDate') || toLocalDateStr(new Date());
+  const factShip = gv('sm_factShip');
+  const status = gv('sm_status') || '의뢰';
+  const commonMemo = gv('sm_commonMemo');
+  const now = new Date().toISOString();
+  // 의뢰서 그룹 ID (같은 의뢰서 안의 행들을 묶기 위함)
+  const groupId = 'smg_' + Date.now();
+
+  showToast(`🔄 Notion에 ${validRows.length}개 품목 순차 등록 중... (잠시만 기다려주세요)`, 'var(--blu)', 3000);
+
+  let success = 0, failed = 0;
+  const failedItems = [];
+
+  for(let i=0; i<validRows.length; i++){
+    const row = validRows[i];
+    // 파일 R2 업로드 (base64 → URL)
+    let imgs = row.imgs || [], src = row.sourceDoc || [], cad = row.cadFiles || [];
+    const hasLocalFile =
+      imgs.some(f => f.url && f.url.startsWith('data:')) ||
+      src.some(f => f.url && f.url.startsWith('data:')) ||
+      cad.some(f => f.url && f.url.startsWith('data:'));
+    if(notionCfg.workerUrl && hasLocalFile && typeof uploadImagesToR2 === 'function'){
+      try {
+        imgs = await uploadImagesToR2([...imgs]);
+        src  = await uploadImagesToR2([...src]);
+        cad  = await uploadImagesToR2([...cad]);
+      } catch(e){
+        console.warn('파일 업로드 실패 (계속 진행):', e);
+      }
+    }
+    // 행 → sample 객체
+    const smpObj = {
+      id: Date.now() + Math.random() + i,
+      createdAt: now,
+      _smpGroupId: groupId, // 같은 의뢰서 그룹 식별
+      // 행별 정보
+      name: row.name,
+      type: row.type || '',
+      qty: row.qty || '1EA',
+      sz1: row.sz1 || '', sz2: row.sz2 || '', sz3: '', sz4: '',
+      mat: row.mat || '', plating: row.plating || '',
+      wt: row.wt || '',
+      engr: row.engr || '',
+      costPrice: +row.costPrice || 0,
+      unitPrice: +row.unitPrice || 0,
+      devCost: +row.devCost || 0,
+      imgs: imgs, sourceDoc: src, cadFiles: cad,
+      // 공통 정보
+      manager: vendor,
+      reqDate: reqDate, due: due, factShip: factShip || '',
+      status: status,
+      // 메모: 공통 메모 + 행별 메모
+      devNote: [commonMemo, row.memo].filter(Boolean).join(' · '),
+      notes: [],
+      caution: '',
+      itemNo: '', card: '', invNo: '', itemCode: ''
+    };
+
+    try {
+      await syncSampleToNotion(smpObj, false);
+      smpObj._syncedAt = new Date().toISOString();
+      samples.push(smpObj);
+      success++;
+    } catch(e){
+      console.error(`샘플 등록 실패 [${row.name}]:`, e);
+      failedItems.push({name: row.name, error: e.message});
+      failed++;
+    }
+    // 노션 API 속도 제한 대비
+    if(i < validRows.length - 1){
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
+  save();
+  closeM('mSmpMulti');
+  renderTab(); updateBadges();
+
+  if(failed > 0){
+    console.error('실패 항목:', failedItems);
+    showToast(`⚠ 등록 완료: 성공 ${success}건 / 실패 ${failed}건 (콘솔 확인)`, 'var(--org)', 6000);
+  } else {
+    showToast(`✓ 샘플 의뢰서 등록 완료 — ${success}개 품목 (${vendor})`, 'var(--grn)', 4500);
+  }
+}
+
 function saveSmp(){
   const name=gv('s_name');if(!name)return showToast('⚠ 샘플명을 입력해 주세요','var(--red)');
   const id=gv('s_id');
@@ -17566,10 +17920,12 @@ function openQuoteModal(idOrNull){
       ${_renderQtTotalsBox()}
     </div>
 
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap">
       ${idOrNull?`<button class="btn" style="background:var(--red-bg);color:var(--red);border:1px solid rgba(192,48,48,.3)" onclick="deleteQuote()">삭제</button>`:''}
       <button class="btn" onclick="closeM('mQuote')">취소</button>
       ${idOrNull?`<button class="btn bp-blu" onclick="openQuotePreview('${idOrNull}')">PDF 미리보기</button>`:''}
+      ${idOrNull?`<button class="btn bgo bs" onclick="transferQuoteToSample('${idOrNull}')" title="견적 후 샘플개발 흐름: 견적서 품목을 샘플의뢰 모달로 채워서 새로 등록합니다">🔬 샘플의뢰 이관</button>`:''}
+      ${idOrNull?`<button class="btn bgo bs" onclick="transferQuoteToOrder('${idOrNull}')" title="견적 후 바로 발주 흐름: 견적서 품목을 발주서 모달로 채워서 새로 등록합니다">📦 발주서 이관</button>`:''}
       <button class="btn bp" onclick="saveQuote()">저장</button>
     </div>
     <input type="hidden" id="qt_id" value="${q?q.id:''}">
@@ -18294,6 +18650,161 @@ function selectClientForQuote(clientId){
 }
 
 // 저장
+// ════════════════════════════════════════════════════════════════
+// 견적서 → 발주서 / 샘플의뢰 이관
+// ════════════════════════════════════════════════════════════════
+// 견적서의 행들을 발주서 모달에 채워넣고 모달 열기
+// 사용자가 출고일·메모 등 추가 입력 후 저장하면 정식 발주가 됨
+function transferQuoteToOrder(quoteId){
+  const q = quotes.find(x => String(x.id) === String(quoteId));
+  if(!q){ showToast('⚠ 견적서를 찾을 수 없습니다','var(--red)'); return; }
+  if(!q.rows || !q.rows.length){
+    showToast('⚠ 견적서에 품목이 없습니다','var(--red)');
+    return;
+  }
+  // 견적서 행 → 발주서 행 매핑
+  // 발주서 행 구조: {name, qty, plating, mat, size, note, itemCode, unitPrice, weight}
+  ordRowsBuf = q.rows.map(r => ({
+    name: r.name || '',
+    qty: r.qty || '',
+    plating: r.plating || '실버',
+    mat: r.mat || '브라스 (BRASS)',
+    size: r.size || '',
+    weight: r.weight || '',
+    unitPrice: +r.unitPrice || 0,  // 견적 단가 그대로 발주 단가로
+    itemCode: r.itemCode || '', // 견적 후 자동 매칭된 품번
+    note: '',
+    color: '',
+  }));
+  // 견적서 정보를 발주서 모달에 미리 채울 수 있도록 임시 저장
+  window._transferFromQuote = {
+    vendor: q.vendor,
+    quoteId: q.id,
+    quoteNo: q.no,
+    payment: q.payment || '',
+    issuedAt: q.issuedAt || ''
+  };
+  // 견적서 모달 닫고 발주서 모달 열기
+  closeM('mQuote');
+  if(typeof openOrdModal === 'function'){
+    openOrdModal(null);
+    // 모달이 열리고 나서 vendor와 견적번호 메모 자동 채우기 (약간 딜레이)
+    setTimeout(()=>{
+      const vEl = document.getElementById('o_vendor');
+      if(vEl && q.vendor) vEl.value = q.vendor;
+      const memoEl = document.getElementById('o_memo');
+      if(memoEl && q.no){
+        const existingMemo = memoEl.value || '';
+        const refMemo = `견적서 ${q.no} 기반`;
+        if(!existingMemo.includes(refMemo)){
+          memoEl.value = existingMemo ? existingMemo + '\n' + refMemo : refMemo;
+        }
+      }
+      // 발주서 행 재렌더링 (ordRowsBuf 반영)
+      if(typeof renderOrdRows === 'function') renderOrdRows();
+    }, 100);
+  }
+  showToast(`✓ 견적서 ${q.no || ''}의 ${q.rows.length}개 품목을 발주서로 이관 (단가 포함) — 발주일·출고일 등 추가 입력 후 저장하세요`,'var(--blu)', 5000);
+}
+
+// 견적서의 행들을 샘플의뢰로 이관
+// 견적서엔 여러 품목이 있을 수 있는데 샘플은 보통 1개씩이라 — 첫 행을 기본으로 채우고 사용자가 조정
+function transferQuoteToSample(quoteId){
+  const q = quotes.find(x => String(x.id) === String(quoteId));
+  if(!q){ showToast('⚠ 견적서를 찾을 수 없습니다','var(--red)'); return; }
+  if(!q.rows || !q.rows.length){
+    showToast('⚠ 견적서에 품목이 없습니다','var(--red)');
+    return;
+  }
+  // 여러 행이면 새 다중 행 모달로 이관 (한꺼번에 등록)
+  const rows = q.rows;
+  if(rows.length === 1){
+    _doTransferToSample(q, rows[0]);
+    return;
+  }
+  // 여러 행 → 다중 모달로 미리 채워서 열기
+  closeM('mQuote');
+  const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 220;
+  const prefillRows = rows.map(r => ({
+    name: r.name || '',
+    type: '',
+    qty: r.qty ? String(r.qty) + 'EA' : '1EA',
+    sz1: r.size || '',
+    sz2: '',
+    mat: r.mat || '브라스 (BRASS)',
+    plating: r.plating || '실버',
+    wt: r.weight || '',
+    engr: '',
+    costPrice: r.cnPrice ? Math.round(+r.cnPrice * RATE) : (+r.prodCost || 0),
+    unitPrice: +r.unitPrice || 0,
+    devCost: 0,
+    memo: '',
+    imgs: [], sourceDoc: [], cadFiles: []
+  }));
+  openSmpMultiModal(prefillRows);
+  // 공통 정보 채우기
+  setTimeout(()=>{
+    const setVal = (id, val) => { const el = document.getElementById(id); if(el && val) el.value = val; };
+    setVal('sm_vendor', q.vendor || '');
+    setVal('sm_reqDate', q.issuedAt || toLocalDateStr(new Date()));
+    setVal('sm_commonMemo', `견적서 ${q.no || ''} 기반`);
+    renderSmMultiRows();
+  }, 150);
+  showToast(`✓ 견적서 ${q.no || ''}의 ${rows.length}개 품목을 샘플 의뢰서로 이관 — 납기일·CAD 등 추가 입력 후 저장하세요`,'var(--blu)', 5000);
+}
+
+// 견적서 행 1개 → 샘플의뢰 모달 채우기
+function _doTransferToSample(q, row){
+  // 견적서 행 → 샘플 객체 매핑
+  // 샘플 필수 필드: name, mat, plating, sz1, qty, type
+  // 단가 필드: costPrice(입고원가), unitPrice(샘플단가), devCost(개발비)
+  closeM('mQuote');
+  if(typeof openSmpModal === 'function'){
+    openSmpModal(null);
+    setTimeout(()=>{
+      // 모달이 열린 후 폼 필드 채우기
+      const setVal = (id, val) => { const el = document.getElementById(id); if(el && val !== undefined && val !== null && val !== '') el.value = val; };
+      setVal('s_name', row.name);
+      setVal('s_qty', row.qty || '1');
+      setVal('s_mat', row.mat);
+      setVal('s_plating', row.plating);
+      setVal('s_sz1', row.size || '');
+      setVal('s_wt', row.weight || '');
+      // 💰 단가 매핑
+      // 견적서 단가(unitPrice) → 샘플 단가(s_unitPrice)
+      if(row.unitPrice) setVal('s_unitPrice', row.unitPrice);
+      // 견적서 중국입고단가(cnPrice) × 220 → 샘플 입고원가(s_costPrice)
+      if(row.cnPrice){
+        const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 220;
+        const costPrice = Math.round(+row.cnPrice * RATE);
+        setVal('s_costPrice', costPrice);
+      }
+      // 견적서에 prodCost(생산원가)가 있고 cnPrice는 없는 경우 — prodCost를 입고원가로 추정
+      else if(row.prodCost){
+        setVal('s_costPrice', row.prodCost);
+      }
+      // 개발비는 보통 견적서엔 별도 표시 안 되므로 미설정
+      // 기본 메모에 견적서 참조 + 단가 정보
+      const devNote = document.getElementById('s_devNote');
+      if(devNote){
+        const refParts = [`견적서 ${q.no || ''} 기반`];
+        if(q.vendor) refParts.push(q.vendor);
+        if(row.unitPrice) refParts.push(`단가 ${(+row.unitPrice).toLocaleString()}원`);
+        const ref = refParts.join(' · ');
+        devNote.value = devNote.value ? devNote.value + '\n' + ref : ref;
+      }
+      // 의뢰일 = 견적 발행일
+      setVal('s_reqDate', q.issuedAt || toLocalDateStr(new Date()));
+      // 단가 계산 트리거 (입고원가 입력 시 샘플단가가 자동으로 ×2 되는 흐름이 있을 수 있음 — 만약 채워졌으면 onCostPriceInput 호출)
+      if(typeof onCostPriceInput === 'function' && row.cnPrice){
+        // 입고원가에서 자동으로 단가 계산하면 사용자가 입력한 견적 단가가 덮어쓰일 수 있으니
+        // 명시적으로 견적 단가 우선 — onCostPriceInput 호출 안 함
+      }
+      showToast(`✓ 견적서 ${q.no || ''} → 샘플의뢰로 이관 (단가·입고원가 포함) — 의뢰일·납기·CAD 등 추가 입력 후 저장하세요`,'var(--blu)', 5000);
+    }, 100);
+  }
+}
+
 async function saveQuote(forceOverwrite){
   const vendor = (gv('qt_vendor')||'').trim();
   if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
