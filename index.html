@@ -2231,18 +2231,10 @@ function renderASParseTable(){
         <tbody>
         ${items.map((it,i)=>{
           const checked=it._checked!==false;
-          const reasonStr = (it.reason || '').toLowerCase();
-          // 입고불량 키워드: '입고불량', '입고 불량', '공장불량', '공장 불량'
-          // 고객불량 키워드: '고객불량', '고객 불량', 'AS요청', 'AS 요청', 'AS불량', 'as 불량', 'AS접수', '클레임'
-          const _isFactoryDefect = reasonStr.includes('입고불량') || reasonStr.includes('입고 불량')
-            || reasonStr.includes('공장불량') || reasonStr.includes('공장 불량');
-          const _isCustomerDefect = reasonStr.includes('고객불량') || reasonStr.includes('고객 불량')
-            || reasonStr.includes('as요청') || reasonStr.includes('as 요청')
-            || reasonStr.includes('as불량') || reasonStr.includes('as 불량')
-            || reasonStr.includes('as접수') || reasonStr.includes('as 접수')
-            || reasonStr.includes('클레임') || reasonStr.includes('claim');
+          const reasonStr = it.reason || '';
           const defectType = it.defectType
-            || (_isFactoryDefect ? '입고불량' : _isCustomerDefect ? '고객불량' : '');
+            || (reasonStr.includes('입고불량') ? '입고불량'
+              : reasonStr.includes('고객불량') ? '고객불량' : '');
           it.defectType = defectType; // 저장
           return `<tr style="${!checked?'opacity:.45':''}">
             <td style="padding:3px 4px;text-align:center;border-bottom:1px solid var(--bdr)">
@@ -2352,42 +2344,24 @@ async function applyASParseAll(){
   }
   const now=new Date().toISOString();
   const todayS=toLocalDateStr(new Date());
-  let added=0, failed=0, skipped=0;
-  const skippedReasons=[];
+  let added=0, failed=0;
   // 🔒 노션-우선: 각 항목을 노션에 push → 성공한 것만 asItems에 추가
   showToast(`🔄 Notion에 ${checkedItems.length}건 등록 중...`, 'var(--blu)', 3000);
   for(let i=0; i<checkedItems.length; i++){
     const it = checkedItems[i];
-    // ✅ 빈 행 가드 — 품명이 비어있으면 건너뜀 (빈 노션 페이지 생성 방지)
-    const itemName = (it.item||'').trim();
-    const itemReason = (it.reason||'').trim();
-    if(!itemName){
-      skipped++;
-      skippedReasons.push(`행 ${i+1}: 품명 비어있음`);
-      console.warn('AS 일괄 등록 건너뜀 (품명 없음):', it);
-      continue;
-    }
     // defectType은 사용자가 편집했으면 그 값, 아니면 reason에서 자동 판단
-    const reason = itemReason;
-    const reasonLow = reason.toLowerCase();
+    const reason = (it.reason||'').trim();
     let defectType = it.defectType || '';
     if(!defectType){
-      const _isFactoryDefect = reasonLow.includes('입고불량') || reasonLow.includes('입고 불량')
-        || reasonLow.includes('공장불량') || reasonLow.includes('공장 불량');
-      const _isCustomerDefect = reasonLow.includes('고객불량') || reasonLow.includes('고객 불량')
-        || reasonLow.includes('as요청') || reasonLow.includes('as 요청')
-        || reasonLow.includes('as불량') || reasonLow.includes('as 불량')
-        || reasonLow.includes('as접수') || reasonLow.includes('as 접수')
-        || reasonLow.includes('클레임') || reasonLow.includes('claim');
-      if(_isFactoryDefect) defectType = '입고불량';
-      else if(_isCustomerDefect) defectType = '고객불량';
+      if(reason.includes('입고불량')) defectType = '입고불량';
+      else if(reason.includes('고객불량')) defectType = '고객불량';
     }
     const obj={
-      id: (typeof _genSafeId === 'function') ? _genSafeId(i) : (Date.now()+Math.random()+i),
+      id: Date.now()+Math.random()+i, // unique ID 충돌 방지
       createdAt: now,
       client: vendor,
       date: it.date || todayS,
-      item: itemName,
+      item: (it.item||'').trim(),
       qty: +it.qty || 1,
       desc: reason,
       defectType,
@@ -2413,17 +2387,10 @@ async function applyASParseAll(){
   save();
   _asAIPasteCleanup();
   closeM('mAS');
-  let toastMsg = '';
-  if(added > 0) toastMsg += `✓ ${added}건 등록`;
-  if(failed > 0) toastMsg += ` · ❌ ${failed}건 실패`;
-  if(skipped > 0){
-    toastMsg += ` · ⚠ ${skipped}건 건너뜀 (빈 행)`;
-    console.warn('건너뛴 행:', skippedReasons);
-  }
-  if(toastMsg){
-    showToast(toastMsg, (failed > 0 || skipped > 0) ? 'var(--org)' : 'var(--grn)', 5000);
-  } else if(checkedItems.length === 0){
-    showToast('⚠ 등록할 항목이 없습니다', 'var(--red)', 3000);
+  if(failed > 0){
+    showToast(`⚠ AS 등록 결과 — 성공 ${added}건 / 실패 ${failed}건 (Notion 동기화 실패)`, 'var(--org)', 6000);
+  } else {
+    showToast(`✓ AS ${added}건 등록 완료`,'var(--grn)',3500);
   }
   if(currentTab==='as') renderTab();
   updateBadges();
@@ -2457,15 +2424,13 @@ function openASModal(idOrNull){
 
 async function saveAS(){
   const client=gv('as_client');if(!client)return showToast('⚠ 고객사를 입력해 주세요','var(--red)');
-  const item=gv('as_item').trim();
-  if(!item) return showToast('⚠ 품번/품목명을 입력해 주세요','var(--red)');
   const id=gv('as_id');
   // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
   if(!id && !requireNotion('asDb', 'AS')) return;
   const obj={
     client,date:gv('as_date'),due:gv('as_due'),
     shipDate:gv('as_shipDate')||'', // 출고일 (청구서 그룹 기준)
-    item, qty:+gv('as_qty')||1,
+    item:gv('as_item'),qty:+gv('as_qty')||1,
     unitCost:+gv('as_unitCost')||0,
     desc:gv('as_desc'),note:gv('as_note'),
     defectType:gv('as_defectType'),
@@ -2475,18 +2440,11 @@ async function saveAS(){
     const i=asItems.findIndex(x=>x.id==id);
     if(i>=0){
       asItems[i]={...asItems[i],...obj};
-      // 🔒 수정도 즉시 동기화 (디바운스 → await로 변경)
-      try {
-        await syncASToNotion(asItems[i], true);
-        asItems[i]._syncedAt = new Date().toISOString();
-      } catch(e){
-        console.error('AS 수정 노션 동기화 실패:', e);
-        showToast(`⚠ Notion 동기화 실패: ${e.message||'네트워크 오류'} — 로컬엔 저장됨`, 'var(--org)', 5000);
-      }
+      debouncedSync('as',asItems[i],true);
     }
   } else {
     // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
-    const na={id:(typeof _genSafeId==='function')?_genSafeId(0):Date.now(),createdAt:new Date().toISOString(),...obj};
+    const na={id:Date.now(),createdAt:new Date().toISOString(),...obj};
     const ok = await createWithNotion(asItems, na, syncASToNotion, 'AS');
     if(!ok) return; // 실패 — 모달 유지
   }
@@ -2582,184 +2540,6 @@ function clearASSelection(){
   _asSelected.clear();
   renderAS();
 }
-// ════════════════════════════════════════════════════════════════
-// 선택된 AS들 → 거래명세서 발행 (고객사별 자동 묶음)
-// ════════════════════════════════════════════════════════════════
-async function publishSelectedASInvoice(){
-  console.log('[AS 명세서 발행] 시작 - 선택 항목:', _asSelected.size);
-  if(_asSelected.size === 0){
-    showToast('⚠ 선택된 항목이 없습니다','var(--red)');
-    return;
-  }
-  // 🔒 노션-우선
-  if(!requireNotion('invDb', '거래명세서')){
-    console.warn('[AS 명세서 발행] Notion 미연결 → 중단');
-    return;
-  }
-
-  const selectedItems = asItems.filter(a => _asSelected.has(+a.id));
-  console.log('[AS 명세서 발행] 선택된 AS items:', selectedItems.length);
-  if(!selectedItems.length){
-    showToast('⚠ 선택된 항목을 찾을 수 없습니다 — 페이지를 새로고침해 주세요','var(--red)', 4000);
-    console.warn('[AS 명세서 발행] _asSelected에 ID 있지만 asItems에서 못 찾음. _asSelected:', [..._asSelected]);
-    return;
-  }
-
-  // 청구 가능 항목만 필터 (고객불량)
-  const billable = selectedItems.filter(a => a.defectType === '고객불량');
-  const notBillable = selectedItems.filter(a => a.defectType !== '고객불량');
-  const alreadyBilled = billable.filter(a => a.billing === '청구 완료');
-  const ready = billable.filter(a => a.billing === '미청구' || a.billing === '청구 예정');
-  console.log('[AS 명세서 발행] 필터 결과:', {billable: billable.length, ready: ready.length, alreadyBilled: alreadyBilled.length, notBillable: notBillable.length});
-
-  if(ready.length === 0){
-    let msg = '⚠ 청구 가능한 AS가 없습니다.\n';
-    if(notBillable.length > 0) msg += `\n· ${notBillable.length}건: 고객불량이 아님 (입고불량/미설정)`;
-    if(alreadyBilled.length > 0) msg += `\n· ${alreadyBilled.length}건: 이미 청구 완료`;
-    showToast(msg, 'var(--red)', 5000);
-    return;
-  }
-
-  // 고객사별로 그룹화 (initials 기준)
-  const byVendor = {};
-  ready.forEach(a => {
-    const init = getVendorInit(a.client) || a.client || '미분류';
-    if(!byVendor[init]) byVendor[init] = {
-      vendor: a.client,
-      initials: init,
-      items: []
-    };
-    byVendor[init].items.push(a);
-  });
-  const vendorGroups = Object.values(byVendor);
-
-  // 확인 메시지
-  let msg = `선택한 AS ${selectedItems.length}건 중 ${ready.length}건을 거래명세서로 발행합니다.\n\n`;
-  if(vendorGroups.length === 1){
-    const g = vendorGroups[0];
-    const totalAmt = g.items.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
-    msg += `📋 ${g.vendor} (${g.items.length}건, ${totalAmt.toLocaleString()}원)\n   → 하나의 거래명세서로 묶어 발행`;
-  } else {
-    msg += `📊 ${vendorGroups.length}개 고객사 — 각 고객사별로 별도 명세서 발행:\n`;
-    vendorGroups.forEach(g => {
-      const totalAmt = g.items.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
-      msg += `\n  · ${g.vendor}: ${g.items.length}건, ${totalAmt.toLocaleString()}원`;
-    });
-  }
-  if(notBillable.length > 0){
-    msg += `\n\n⚠ ${notBillable.length}건은 고객불량이 아니라 제외됩니다.`;
-  }
-  if(alreadyBilled.length > 0){
-    msg += `\n⚠ ${alreadyBilled.length}건은 이미 청구 완료라 제외됩니다.`;
-  }
-
-  showConfirm(msg, async ()=>{
-    let issuedCount = 0;
-    let failedCount = 0;
-    const issuedInvoices = [];
-
-    showToast(`🔄 ${vendorGroups.length}개 거래명세서 발행 중...`, 'var(--blu)', 3000);
-
-    for(const group of vendorGroups){
-      try {
-        // 거래명세서 객체 생성
-        const today = toLocalDateStr(new Date());
-        const supplyAmt = group.items.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
-        const tax = Math.round(supplyAmt * 0.1);
-        const total = supplyAmt + tax;
-
-        // 발주번호 자동 생성 (AS-YYMMDD-NNN 형식)
-        const yy = today.slice(2,4) + today.slice(5,7) + today.slice(8,10);
-        const todayInvs = invoiceHistory.filter(v => (v.ordNo||'').startsWith('AS-' + yy));
-        const seqNum = String(todayInvs.length + issuedCount + 1).padStart(3, '0');
-        const ordNo = `AS-${yy}-${seqNum}`;
-
-        const newInv = {
-          id: (typeof _genSafeId === 'function') ? _genSafeId(issuedCount) : Date.now() + issuedCount,
-          createdAt: new Date().toISOString(),
-          vendor: group.vendor,
-          ordNo: ordNo,
-          issuedAt: today,
-          shipDate: today,
-          // 행: 각 AS를 명세서 행으로
-          items: group.items.map(a => ({
-            name: a.item || 'AS 수리',
-            code: '', // AS는 별도 품번 없음
-            qty: +a.qty || 1,
-            unit: +a.unitCost || 0,
-            note: `AS: ${a.desc || ''}`
-          })),
-          supplyAmt: supplyAmt,
-          tax: tax,
-          total: total,
-          taxIncluded: true,
-          status: '발행완료',
-          payments: [],
-          totalPaid: 0,
-          paymentRatio: 0,
-          memo: `AS 거래명세서 — ${group.items.length}건 묶음 발행 (선택 발행)`,
-          // AS 전용 플래그
-          _fromAS: true,
-          _isStandalone: true, // 발주서 기반 아님
-          _asItemIds: group.items.map(a => a.id),
-          _invStage: 'billing'
-        };
-
-        // 노션에 push
-        if(typeof syncInvoiceToNotion === 'function'){
-          await syncInvoiceToNotion(newInv, false);
-          newInv._syncedAt = new Date().toISOString();
-        }
-
-        invoiceHistory.unshift(newInv);
-        issuedInvoices.push(newInv);
-
-        // 해당 AS들의 청구상태 갱신
-        for(const a of group.items){
-          const idx = asItems.findIndex(x => x.id === a.id);
-          if(idx >= 0){
-            asItems[idx].billing = '청구 완료';
-            asItems[idx]._linkedInvoiceId = newInv.id;
-            asItems[idx]._linkedInvoiceNo = newInv.ordNo;
-            // AS도 노션 업데이트
-            if(asItems[idx]._notionId && typeof syncASToNotion === 'function'){
-              try {
-                await syncASToNotion(asItems[idx], true);
-              } catch(e){
-                console.warn('AS 업데이트 실패 (백그라운드):', e);
-              }
-            }
-          }
-        }
-
-        issuedCount++;
-      } catch(e){
-        console.error('거래명세서 발행 실패:', group.vendor, e);
-        failedCount++;
-      }
-      // 노션 API 속도 제한 대비
-      if(vendorGroups.indexOf(group) < vendorGroups.length - 1){
-        await new Promise(r => setTimeout(r, 300));
-      }
-    }
-
-    save();
-    _asSelected.clear();
-    renderAS();
-    updateBadges();
-
-    if(failedCount > 0){
-      showToast(`⚠ 거래명세서 ${issuedCount}건 발행 / ${failedCount}건 실패`, 'var(--org)', 6000);
-    } else {
-      showToast(`✓ 거래명세서 ${issuedCount}건 발행 완료 — 거래명세서 탭에서 확인`, 'var(--grn)', 5000);
-      // 발행한 명세서 정보 표시
-      console.log('발행된 거래명세서:', issuedInvoices.map(v => ({
-        ordNo: v.ordNo, vendor: v.vendor, total: v.total, items: v.items.length
-      })));
-    }
-  }, vendorGroups.length === 1 ? '거래명세서 발행' : '거래명세서 다중 발행', '🧾', '발행', 'blu');
-}
-
 function deleteSelectedAS(){
   if(_asSelected.size===0){
     showToast('⚠ 선택된 항목이 없습니다','var(--red)');
@@ -2787,7 +2567,7 @@ function deleteSelectedAS(){
   },'⚠ AS 일괄 삭제','🗑','삭제','var(--red)');
 }
 
-async function updateASField(id, field, value, ev){
+function updateASField(id, field, value, ev){
   if(ev) ev.stopPropagation();
   const i = asItems.findIndex(x=>x.id==id);
   if(i<0) return;
@@ -2804,21 +2584,13 @@ async function updateASField(id, field, value, ev){
   }
   asItems[i] = {...asItems[i], [field]: value};
   save();
-  // 🔒 즉시 Notion 동기화 — 디바운스 X (새로고침 시 손실 방지)
-  if(notionCfg.workerUrl && notionCfg.asDb && asItems[i]._notionId){
-    try {
-      await syncASToNotion(asItems[i], true);
-      asItems[i]._syncedAt = new Date().toISOString();
-      showToast('✓ 변경됨 (Notion 동기화 완료)','var(--grn)',1500);
-    } catch(e){
-      console.error('AS 인라인 수정 노션 sync 실패:', e);
-      showToast(`⚠ Notion 동기화 실패 — 로컬엔 저장됨 (${e.message||'네트워크 오류'})`, 'var(--org)', 5000);
-    }
-  } else {
-    showToast('✓ 변경됨','var(--grn)',1200);
+  // Notion 동기화 (백그라운드)
+  if(notionCfg.workerUrl && notionCfg.asDb){
+    debouncedSync('as', asItems[i], true);
   }
   renderAS();
   updateBadges();
+  showToast('✓ 변경됨','var(--grn)',1200);
 }
 
 let _asSubtab = 'active'; // 'active' | 'done'
@@ -2970,20 +2742,8 @@ function renderAS(){
   ${_asSelected.size>0?`
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:10px 14px;background:var(--gold-bg);border:1.5px solid var(--gold);border-radius:8px;position:sticky;top:10px;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,.06)">
     <span style="font-size:12.5px;font-weight:700;color:var(--gold-lt)">✓ ${_asSelected.size}건 선택됨</span>
-    ${(function(){
-      // 선택된 AS의 고객사별 분포 미리보기
-      const selectedItems = asItems.filter(a => _asSelected.has(+a.id));
-      const vendors = new Set(selectedItems.map(a => getVendorInit(a.client) || a.client || '미분류'));
-      const billable = selectedItems.filter(a => a.defectType === '고객불량');
-      const notBillable = selectedItems.length - billable.length;
-      let hint = '';
-      if(vendors.size > 1) hint += `<span style="font-size:11px;color:var(--t3)">· ${vendors.size}개 고객사</span>`;
-      if(notBillable > 0) hint += `<span style="font-size:11px;color:var(--red)">· ${notBillable}건 청구 불가(고객불량 아님)</span>`;
-      return hint;
-    })()}
     <span style="flex:1"></span>
     <button onclick="clearASSelection()" style="padding:5px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--t2)">선택 해제</button>
-    <button onclick="publishSelectedASInvoice()" style="padding:5px 14px;font-size:11.5px;background:var(--gold);color:#fff;border:none;border-radius:5px;font-weight:600;cursor:pointer;font-family:inherit" title="선택한 AS를 고객사별로 묶어서 거래명세서 발행">🧾 거래명세서 발행</button>
     <button onclick="deleteSelectedAS()" style="padding:5px 14px;font-size:11.5px;background:var(--red);color:#fff;border:none;border-radius:5px;font-weight:600;cursor:pointer;font-family:inherit">🗑 선택 항목 삭제</button>
   </div>
   `:''}
@@ -3010,53 +2770,6 @@ function renderAS(){
   ` : `
   <div class="card">
     <div class="ch"><div class="ch-t">✅ 완료 / 반송 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${done.length}건${currentGroupName?` · ${currentGroupName} 필터`:''})</span></div></div>
-    ${(function(){
-      // 수리종류 미설정 안내 (완료된 AS인데 수리종류가 비어있음)
-      const noDefectType = done.filter(a => !a.defectType && (a.billing === '미청구' || a.billing === '청구 예정'));
-      if(noDefectType.length === 0) return '';
-      return `<div style="margin:10px 14px;padding:10px 14px;background:rgba(192,48,48,.06);border:1px solid rgba(192,48,48,.25);border-radius:6px">
-        <div style="font-size:11.5px;color:var(--red);font-weight:600;margin-bottom:4px">
-          ⚠ 수리종류 미설정 — ${noDefectType.length}건
-        </div>
-        <div style="font-size:11px;color:var(--t2)">
-          청구하려면 각 AS 행을 클릭해서 <b>수리종류</b>를 <b>고객불량</b> 또는 <b>입고불량</b>으로 지정해주세요.<br>
-          <span style="color:var(--t3)">고객불량 → 청구 가능 · 입고불량 → 공장 책임 (청구 불가)</span>
-        </div>
-      </div>`;
-    })()}
-    ${(function(){
-      // 청구 가능한 AS — 완료 + 고객불량 + 미청구/청구 예정 그룹
-      const billableDone = done.filter(a =>
-        a.defectType === '고객불량' && (a.billing === '미청구' || a.billing === '청구 예정')
-      );
-      if(billableDone.length === 0) return '';
-      // 고객사별 그룹화
-      const byVendor = {};
-      billableDone.forEach(a => {
-        const init = getVendorInit(a.client);
-        const key = init || a.client || '미분류';
-        if(!byVendor[key]) byVendor[key] = {init, name: a.client, items: []};
-        byVendor[key].items.push(a);
-      });
-      const vendorList = Object.entries(byVendor);
-      return `<div style="margin:10px 14px;padding:12px 14px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px">
-        <div style="font-size:12.5px;font-weight:600;color:var(--gold-lt);margin-bottom:8px">
-          💰 청구 가능 AS — 고객불량으로 완료된 ${billableDone.length}건 (${vendorList.length}개 고객사)
-        </div>
-        <div style="font-size:11px;color:var(--t2);margin-bottom:8px">
-          ${currentGroupName ? '현재 고객사 필터 적용 중 — 우측 상단 "🧾 청구서 작성" 버튼으로 거래명세서 발행' : '아래 고객사를 클릭하면 청구서 작성 버튼이 나타납니다'}
-        </div>
-        ${!currentGroupName ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${vendorList.map(([init, info]) => {
-          const total = info.items.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
-          return `<button onclick="_asVendorFilter='${init}';renderAS()" style="padding:6px 12px;background:var(--s1);border:1px solid var(--gold-line);border-radius:6px;cursor:pointer;font-family:inherit;font-size:11.5px;color:var(--t1);display:flex;align-items:center;gap:6px" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">
-            <span style="font-weight:700;color:var(--gold-lt)">${init}</span>
-            <span>${(info.name||'').slice(0,12)}</span>
-            <span style="color:var(--t3);font-size:10px">${info.items.length}건</span>
-            <span style="color:var(--gold-lt);font-weight:600">${total.toLocaleString()}원</span>
-          </button>`;
-        }).join('')}</div>` : ''}
-      </div>`;
-    })()}
     <div style="overflow-x:auto"><table>
       <thead><tr>
         <th style="text-align:center;width:30px"><input type="checkbox" ${done.length&&done.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${done.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
@@ -3508,72 +3221,6 @@ async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
 // 제품 DB
 // ════════════════════════════════
 let pdImgBuf=[], _importRows=[];
-
-// ════════════════════════════════════════════════════════════════
-// 🔒 안전한 ID 생성기 — JavaScript safe integer 범위 내에서 절대 충돌 없는 ID
-// ════════════════════════════════════════════════════════════════
-// Number.MAX_SAFE_INTEGER = 2^53 - 1 = 9,007,199,254,740,991
-// Date.now() 범위 = 약 1.7 * 10^12 (2026년 기준)
-// 안전 베이스 = 5 * 10^15 (Date.now()의 약 3000배 — 절대 안 겹침)
-// 글로벌 카운터로 같은 ms에 여러 번 호출돼도 고유 ID 보장
-let _safeIdCounter = 0;
-window._genSafeId = function(extra){
-  // 5e15 + counter (정수) + extra (옵션 — 머지 index 등)
-  // 모두 safe integer 범위 내 정수 → 정밀도 손실 없음
-  const baseId = 5e15 + _safeIdCounter + (extra || 0);
-  _safeIdCounter++;
-  return baseId;
-};
-
-// 호환성: 옛 코드의 Date.now() 기반 ID와 충돌 안 함 (5e15 >> 1.7e12)
-
-// ════════════════════════════════════════════════════════════════
-// 🔒 productDB ID 중복 진단/수정 도구 (페이지 로드 시 즉시 사용 가능)
-// 사용법: 콘솔에 window.diagnoseProductIds() 또는 window.diagnoseProductIds(true) 입력
-// ════════════════════════════════════════════════════════════════
-window.diagnoseProductIds = function(autoFix){
-  if(typeof productDB === 'undefined' || !Array.isArray(productDB)){
-    console.error('productDB가 아직 초기화되지 않음');
-    return;
-  }
-  const idGroups = {};
-  productDB.forEach((p, idx) => {
-    const key = String(p.id);
-    if(!idGroups[key]) idGroups[key] = [];
-    idGroups[key].push({idx, code:p.code, name:p.name, notionId:p._notionId});
-  });
-  const dups = Object.entries(idGroups).filter(([k,v]) => v.length > 1);
-  console.log('=== productDB ID 중복 진단 ===');
-  console.log('총 제품:', productDB.length);
-  console.log('고유 ID:', Object.keys(idGroups).length);
-  console.log('중복된 ID 그룹:', dups.length);
-  if(dups.length > 0){
-    console.log('상세 (상위 10개):');
-    dups.slice(0, 10).forEach(([id, items]) => {
-      console.log(`  id=${id} (${items.length}개):`, items);
-    });
-    if(autoFix){
-      console.log('🔧 자동 수정 시작 — 첫 번째 항목 유지, 나머지에 새 고유 id 부여');
-      let fixed = 0;
-      dups.forEach(([id, items]) => {
-        items.slice(1).forEach(item => {
-          const newId = Date.now() + Math.random() + fixed * 1e-6;
-          productDB[item.idx].id = newId;
-          fixed++;
-        });
-      });
-      if(typeof save === 'function') save();
-      if(typeof renderTab === 'function') renderTab();
-      console.log(`✓ ${fixed}개 항목에 새 id 부여됨 — 로컬 저장 완료`);
-      console.log('⚠ 노션은 _notionId 그대로 사용하므로 영향 없음');
-    } else {
-      console.log('자동 수정하려면: window.diagnoseProductIds(true)');
-    }
-  } else {
-    console.log('✓ ID 중복 없음 — 데이터 무결성 정상');
-  }
-  return {total: productDB.length, unique: Object.keys(idGroups).length, dups: dups.length};
-};
 let pdSearch='', pdFilterType='전체', pdFilterMat='전체', pdPage=1, pdLowOnly=false;
 
 // 한글 IME 안전 + 디바운스 검색
@@ -3880,9 +3527,6 @@ function renderProducts(){
           const isOut=stock<=0;
           const stkColor=isOut?'var(--red)':isLow?'var(--org)':'var(--grn)';
           const stkBg=isOut?'var(--red-bg)':isLow?'var(--org-bg)':'var(--grn-bg)';
-          // 🔒 클릭 핸들러용 식별자 — _notionId가 있으면 우선 (전역 고유), 없으면 id
-          // 문자열로 감싸서 number/string 혼동 방지
-          const clickId = "'" + String(p._notionId || p.id).replace(/'/g, "\\'") + "'";
           // 첫 번째 이미지 추출 (string or {url})
           let thumbUrl='';
           if(Array.isArray(p.imgs)&&p.imgs.length){
@@ -3891,20 +3535,20 @@ function renderProducts(){
           }
           const thumbCell=thumbUrl
             ? `<img src="${thumbUrl}" loading="lazy" onclick="event.stopPropagation();openPrevList(${JSON.stringify(p.imgs).replace(/"/g,'&quot;')},0,false)" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--bdr);cursor:pointer;display:block">`
-            : `<div onclick="openProductModal(${clickId})" style="width:38px;height:38px;background:var(--s2);border:1px dashed var(--bdr);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--t3);cursor:pointer" title="사진 없음 — 클릭해서 추가">📷</div>`;
+            : `<div onclick="openProductModal(${p.id})" style="width:38px;height:38px;background:var(--s2);border:1px dashed var(--bdr);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--t3);cursor:pointer" title="사진 없음 — 클릭해서 추가">📷</div>`;
           return `
         <tr style="border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
           <td style="padding:7px 10px" onclick="event.stopPropagation()">
             <input type="checkbox" class="pd-chk" value="${p.id}" onchange="pdUpdateBulkBar()">
           </td>
           <td style="padding:5px 6px" onclick="event.stopPropagation()">${thumbCell}</td>
-          <td style="padding:7px 10px;font-family:monospace;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${clickId})">${p.code||'—'}</td>
-          <td style="padding:7px 10px;font-weight:600;color:var(--t1)" onclick="openProductModal(${clickId})">${p.name}</td>
-          <td style="padding:7px 10px;text-align:center" onclick="openProductModal(${clickId})">
+          <td style="padding:7px 10px;font-family:monospace;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.code||'—'}</td>
+          <td style="padding:7px 10px;font-weight:600;color:var(--t1)" onclick="openProductModal(${p.id})">${p.name}</td>
+          <td style="padding:7px 10px;text-align:center" onclick="openProductModal(${p.id})">
             <span style="font-size:10px;padding:2px 7px;border-radius:10px;background:var(--s2);border:1px solid var(--bdr);white-space:nowrap">${p.type||'기타'}</span>
           </td>
-          <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);white-space:nowrap" onclick="openProductModal(${clickId})">${p.mat||'—'}</td>
-          <td style="padding:7px 10px" onclick="openProductModal(${clickId})">
+          <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);white-space:nowrap" onclick="openProductModal(${p.id})">${p.mat||'—'}</td>
+          <td style="padding:7px 10px" onclick="openProductModal(${p.id})">
             ${p.plating?`<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt)">${p.plating}</span>`:'—'}
           </td>
           <td style="padding:7px 10px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
@@ -3914,9 +3558,9 @@ function renderProducts(){
               <button onclick="quickStockChange(${p.id},+1)" title="+1" style="width:22px;height:22px;border:1px solid var(--bdr);border-radius:4px;background:var(--s1);color:var(--t2);cursor:pointer;font-size:12px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center">＋</button>
             </div>
           </td>
-          <td style="padding:7px 10px;text-align:right;font-weight:700;color:var(--gold-lt);white-space:nowrap" onclick="openProductModal(${clickId})">${p.price?p.price.toLocaleString()+'원':'—'}</td>
-          <td style="padding:7px 10px;text-align:right;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${clickId})">${p.costPrice?p.costPrice.toLocaleString()+'원':'—'}</td>
-          <td style="padding:7px 10px;text-align:center;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${clickId})">${p.lastModified||'—'}</td>
+          <td style="padding:7px 10px;text-align:right;font-weight:700;color:var(--gold-lt);white-space:nowrap" onclick="openProductModal(${p.id})">${p.price?p.price.toLocaleString()+'원':'—'}</td>
+          <td style="padding:7px 10px;text-align:right;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.costPrice?p.costPrice.toLocaleString()+'원':'—'}</td>
+          <td style="padding:7px 10px;text-align:center;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.lastModified||'—'}</td>
           <td style="padding:7px 10px;text-align:center" onclick="event.stopPropagation()">
             <button onclick="pdDeleteOne(${p.id})" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 5px;border-radius:4px" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--t3)'" title="삭제">🗑</button>
           </td>
@@ -4071,23 +3715,7 @@ function pdDeleteAll(){
 
 // ── 제품 모달 ──
 function openProductModal(idOrNull){
-  // 🔒 정확한 매칭 — id 충돌 방지
-  // 1순위: _notionId가 있고 idOrNull과 정확히 일치
-  // 2순위: id 엄격 비교 (=== 우선, == fallback)
-  let p = null;
-  if(idOrNull){
-    const target = String(idOrNull);
-    // 일치하는 후보 모두 찾기
-    const candidates = productDB.filter(x =>
-      String(x.id) === target || String(x._notionId) === target
-    );
-    if(candidates.length > 1){
-      // ⚠ ID 중복 발견 — 콘솔에 경고
-      console.warn('[제품DB] ID 중복 발견 — 같은 ID를 가진 제품 ' + candidates.length + '개:', candidates.map(c => ({id:c.id, code:c.code, name:c.name, notionId:c._notionId})));
-      showToast(`⚠ ID 중복 감지: "${target}"에 매칭되는 제품 ${candidates.length}개 — 콘솔 확인 필요`, 'var(--red)', 6000);
-    }
-    p = candidates[0] || null;
-  }
+  const p=idOrNull?productDB.find(x=>x.id==idOrNull):null;
   pdImgBuf=p?[...(p.imgs||[])]:[];
   sv('pd_id',p?p.id:'');sv('pd_code',p?p.code:'');sv('pd_name',p?p.name:'');
   sv('pd_type',p?p.type:'EARRING');sv('pd_mat',p?p.mat:'브라스 (BRASS)');
@@ -4261,7 +3889,7 @@ function renderPdImgPrev(){
       <button onclick="pdImgBuf.splice(${i},1);renderPdImgPrev()" style="position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;border:none;border-radius:50%;width:17px;height:17px;font-size:11px;cursor:pointer;line-height:1;padding:0">×</button>
     </div>`).join('');
 }
-async function saveProduct(){
+function saveProduct(){
   const code=gv('pd_code'), name=gv('pd_name');
   if(!name) return showToast('⚠ 품목명을 입력해 주세요','var(--red)');
   const id=gv('pd_id');
@@ -4371,29 +3999,14 @@ async function saveProduct(){
         when: new Date().toISOString()
       });
     }
-    // 출고단가 변경 시: 진행 중인 모든 항목의 단가 자동 동기화
-    // 제품DB가 단가의 단일 진실원천(Single Source of Truth)
-    // 갱신 대상: 발주서(출고완료 안 됨), 거래명세서(입금완료/출고완료 안 됨), 샘플(명세서 발행 안 됨), 견적서(작성중/발송)
+    // 출고단가 변경 시: 출고완료/입금완료 안 된 거래명세서의 같은 품번 행 단가 자동 동기화
     let priceSyncedCount = 0;
-    let ordSyncedCount = 0;
-    let smpSyncedCount = 0;
-    let quoteSyncedCount = 0;
     if(id && savedProduct && obj.price !== prevPrice){
       const newPrice = +obj.price||0;
       const code = (savedProduct.code||'').trim();
-      const prodName = (savedProduct.name||'').trim();
-      if(code || prodName){
-        // 매칭 헬퍼: itemCode 우선 매칭, 없으면 품명으로 매칭
-        const matchesProduct = (item, codeField, nameField) => {
-          const itemCode = ((item[codeField]||'')+'').trim();
-          const itemName = ((item[nameField]||'')+'').trim();
-          if(code && itemCode === code) return true;
-          if(prodName && itemName === prodName && !itemCode) return true; // 품번 없는 행은 이름으로 매칭
-          return false;
-        };
-
-        // ── 1) 거래명세서 ──
+      if(code){
         invoiceHistory.forEach(v=>{
+          // 잠금 조건: 합본 청구서 자체, 합본에 묶인 명세서, 입금완료, _shipped 출고완료 → 모두 제외
           if(v._isConsolidated) return;
           if(v._consolidatedInvoiceId) return;
           if(v.status === '입금완료') return;
@@ -4401,144 +4014,101 @@ async function saveProduct(){
           if(!Array.isArray(v.items)) return;
           let touched = false;
           v.items.forEach(it=>{
-            if(matchesProduct(it,'code','name') && (+it.unit||0) !== newPrice){
+            if((it.code||'').trim() === code && (+it.unit||0) !== newPrice){
               it.unit = newPrice;
               touched = true;
             }
           });
           if(touched){
+            // 공급가액/부가세/합계 재계산
             const supply = v.items.reduce((s,it)=>s+(+it.qty||0)*(+it.unit||0), 0);
             v.supplyAmt = supply;
             v.tax = Math.round(supply*0.1);
             v.total = supply + v.tax;
+            // 입금률 갱신
             if(typeof calcPaymentSummary === 'function'){
               const summary = calcPaymentSummary(v.payments||[], v.total);
               v.totalPaid = summary.totalPaid;
               v.paymentRatio = summary.ratio;
             }
             priceSyncedCount++;
+            // 노션 동기화 (디바운스)
             if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof debouncedSync==='function'){
               debouncedSync('invoice', v, true);
             }
           }
         });
-
-        // ── 2) 발주서 ──
-        // 출고완료된 발주는 단가 잠금 (이미 거래 완료된 것은 보존)
+      }
+    }
+    // 출고단가 변경 시: 진행 중 발주서의 같은 품번 행 단가 자동 동기화 (안전 모드)
+    // 잠금 조건: status가 '출고완료' 또는 '취소'면 제외 (이미 확정된 거래는 보호)
+    let orderPriceSyncedCount = 0;
+    if(id && savedProduct && obj.price !== prevPrice){
+      const newPrice = +obj.price||0;
+      const code = (savedProduct.code||'').trim();
+      if(code && Array.isArray(orders)){
         orders.forEach(o=>{
-          if(o.status === '출고완료') return;
+          const st = o.status||'진행중';
+          if(st === '출고완료' || st === '취소') return; // 잠금
           if(!Array.isArray(o.rows)) return;
           let touched = false;
           o.rows.forEach(r=>{
-            if(matchesProduct(r,'itemCode','name') && (+r.unitPrice||0) !== newPrice){
+            if((r.itemCode||'').trim() === code && (+r.unitPrice||0) !== newPrice){
               r.unitPrice = newPrice;
               touched = true;
             }
           });
           if(touched){
-            ordSyncedCount++;
+            orderPriceSyncedCount++;
+            // 노션 동기화 (디바운스)
             if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.ordDb && o._notionId && typeof debouncedSync==='function'){
               debouncedSync('order', o, true);
             }
           }
         });
-
-        // ── 3) 샘플의뢰 ──
-        // 거래명세서 발행 안 된(invNo 비어있는) 샘플의 단가 갱신
-        // 단, status가 '확정/취소'면 잠금 (이미 결론난 것은 보존)
+      }
+    }
+    // 출고단가 변경 시: 단가가 비어있는(0) 샘플의뢰의 같은 품번 단가 자동 채움 (안전 모드)
+    // 잠금 조건: s.unitPrice가 이미 입력되어 있으면 제외 (수동 입력값 보호)
+    let samplePriceSyncedCount = 0;
+    if(id && savedProduct && (+obj.price||0) > 0){
+      const newPrice = +obj.price||0;
+      const code = (savedProduct.code||'').trim();
+      if(code && Array.isArray(samples)){
         samples.forEach(s=>{
-          if(s.status === '확정' || s.status === '취소') return;
-          if(s.invNo) return; // 명세서 발행됨 → 잠금
-          // 샘플은 단일 품목이라 itemCode + name 모두 보고 매칭
-          if(matchesProduct(s,'itemCode','name') && (+s.unitPrice||0) !== newPrice){
-            s.unitPrice = newPrice;
-            // 입고원가가 바뀌었으면 그것도 — 다만 입고원가는 별도 정책이라 일단 단가만
-            smpSyncedCount++;
-            if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.smpDb && s._notionId && typeof debouncedSync==='function'){
-              debouncedSync('sample', s, true);
-            }
+          if((s.itemCode||'').trim() !== code) return;
+          if((+s.unitPrice||0) > 0) return; // 이미 단가 있음 → 보호
+          s.unitPrice = newPrice;
+          samplePriceSyncedCount++;
+          if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.smpDb && s._notionId && typeof debouncedSync==='function'){
+            debouncedSync('sample', s, true);
           }
         });
-
-        // ── 4) 견적서 ──
-        // 작성중/발송 단계의 견적서만 갱신 (수주확정/거절 상태는 잠금)
-        if(typeof quotes !== 'undefined' && Array.isArray(quotes)){
-          quotes.forEach(q=>{
-            if(q.status === '수주확정' || q.status === '거절' || q.status === '취소') return;
-            if(!Array.isArray(q.rows)) return;
-            let touched = false;
-            q.rows.forEach(r=>{
-              if(matchesProduct(r,'itemCode','name') && (+r.unitPrice||0) !== newPrice){
-                r.unitPrice = newPrice;
-                touched = true;
-              }
-            });
-            if(touched){
-              quoteSyncedCount++;
-              if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.quoteDb && q._notionId && typeof debouncedSync==='function'){
-                debouncedSync('quote', q, true);
-              }
-            }
-          });
-        }
       }
     }
     save();closeM('mProduct');renderTab();
-    const syncTotal = priceSyncedCount + ordSyncedCount + smpSyncedCount + quoteSyncedCount;
-    if(syncTotal > 0){
+    // 동기화 결과 토스트: 거래명세서·발주서·샘플 합쳐서 표시
+    const totalSynced = priceSyncedCount + orderPriceSyncedCount + samplePriceSyncedCount;
+    if(totalSynced > 0){
       const parts = [];
-      if(quoteSyncedCount > 0) parts.push(`견적서 ${quoteSyncedCount}건`);
-      if(ordSyncedCount > 0) parts.push(`발주서 ${ordSyncedCount}건`);
-      if(smpSyncedCount > 0) parts.push(`샘플 ${smpSyncedCount}건`);
       if(priceSyncedCount > 0) parts.push(`거래명세서 ${priceSyncedCount}건`);
-      showToast(`✓ 제품 저장됨 — 진행 중 ${parts.join(' · ')} 단가 자동 동기화`,'var(--grn)', 5000);
+      if(orderPriceSyncedCount > 0) parts.push(`발주서 ${orderPriceSyncedCount}건`);
+      if(samplePriceSyncedCount > 0) parts.push(`샘플 ${samplePriceSyncedCount}건`);
+      showToast(`✓ 제품 저장됨 — ${parts.join(' · ')} 단가 자동 동기화`,'var(--grn)', 4000);
     } else {
       showToast('✓ 제품 저장됨','var(--grn)');
     }
     if(typeof syncSels==='function') syncSels();
-    // 🔒 Notion 동기화 — 수정 시에도 즉시(await) 동기화
-    // (디바운스로 했더니 새로고침 시 노션엔 옛 이미지가 남아 사라지는 문제 → 즉시 동기화로 변경)
+    // Notion 동기화 — 수정만 디바운싱 (신규는 위에서 await로 처리됨)
     if(savedProduct && id){
-      try {
-        if(typeof showToast === 'function') showToast('🔄 Notion에 변경사항 저장 중...', 'var(--blu)', 1500);
-        await syncProductToNotion(savedProduct, true);
-        savedProduct._syncedAt = new Date().toISOString();
-      } catch(e){
-        console.error('[제품 수정] Notion 동기화 실패:', e);
-        if(typeof showToast === 'function'){
-          showToast(`⚠ Notion 동기화 실패 — 로컬엔 저장됐지만 다른 기기엔 반영 안 될 수 있습니다 (${e.message||'네트워크 오류'})`, 'var(--red)', 7000);
-        }
-      }
+      debouncedSync('product', savedProduct, true);
     }
   };
   if(notionCfg.workerUrl && pdImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
     showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
-    try {
-      const uploaded = await uploadImagesToR2([...pdImgBuf]);
-      // 업로드된 이미지 중 여전히 base64인 것이 있는지 검사 (R2 실패한 경우)
-      const stillBase64 = uploaded.filter(img => img.url && img.url.startsWith('data:'));
-      if(stillBase64.length > 0){
-        // 업로드 실패한 이미지가 있음 — 사용자에게 알리고 계속 진행 여부 확인
-        const proceed = confirm(
-          `⚠ 이미지 ${stillBase64.length}개가 R2 업로드 실패\n\n` +
-          `이대로 저장하면 base64로 노션에 저장되지만 — 노션 크기 제한(2MB)을 넘으면 사진이 손실됩니다.\n\n` +
-          `계속하시겠습니까?\n\n` +
-          `· 확인 → 그대로 저장 (사진 손실 위험 있음)\n` +
-          `· 취소 → 저장 중단 (네트워크 확인 후 재시도)`
-        );
-        if(!proceed){
-          showToast('저장 취소 — Worker/R2 연결 상태를 확인하세요','var(--org)',5000);
-          return;
-        }
-      }
-      await doSaveProduct(uploaded);
-    } catch(e){
-      console.error('이미지 업로드 실패:', e);
-      showToast(`❌ 이미지 업로드 실패: ${e.message||'알 수 없는 오류'} — 저장 취소됨`,'var(--red)',6000);
-      return;
-    }
+    uploadImagesToR2([...pdImgBuf]).then(uploaded=>doSaveProduct(uploaded));
   } else {
-    await doSaveProduct(obj.imgs);
+    doSaveProduct(obj.imgs);
   }
 }
 function deleteProduct(){
@@ -6915,7 +6485,7 @@ function mapNotionAS(row){
     shipDate:np.date(p['출고일']),
     status:  np.select(p['진행상태'])||'접수',
     billing: np.select(p['청구상태'])||'미청구',
-    defectType: np.select(p['수리종류'])||'', // 🔒 수리종류 매핑 추가
+    defectType: np.select(p['수리종류'])||'',
   };
 }
 function mapNotionInquiry(row){
@@ -7155,11 +6725,9 @@ async function pullFromNotion(opts){
 
       // 2단계: 기존처럼 병합 (로컬 _notionId 일치 항목 보존)
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map(x=>[x._notionId,x]));
-      const merged=remoteDedupe.map((r, mergeIdx)=>{
+      const merged=remoteDedupe.map(r=>{
         const prev=byNotionId[r._notionId];
-        // 🔒 ID 충돌 방지: Date.now() + index 조합으로 같은 ms에 여러 항목 생성 시에도 고유
-        // 추가 보너스: 작은 random 값으로 다른 머지 사이클과의 충돌도 피함
-        if(!prev) return {id:_genSafeId(mergeIdx), ...r};
+        if(!prev) return {id:Date.now()+Math.random(), ...r};
         const out={...r, id:prev.id};
         idFields.forEach(f=>{
           // 배열 필드: 로컬이 더 많은 항목을 가지고 있으면 로컬 유지 (데이터 유실 방지)
@@ -7275,8 +6843,8 @@ async function pullFromNotion(opts){
           });
           out[hit.i]=merged;
         } else {
-          // 신규 항목 추가 — id 충돌 방지: 현재 out 길이를 index로 사용
-          out.push({id:_genSafeId(out.length), ...r});
+          // 신규 항목 추가
+          out.push({id:Date.now()+Math.random(), ...r});
         }
       }
       return out;
@@ -7994,29 +7562,14 @@ async function syncASToNotion(a, update){
   };
   if(a.date) p["접수일"]={"date":{"start":a.date}};
   if(a.due)  p["완료예정일"]={"date":{"start":a.due}};
-  // 🔒 출고일 필드는 노션 AS DB에 없을 수 있어서 — 옵션으로만 보냄
-  // 노션에 출고일 필드가 있으면 자동 저장, 없어도 등록 자체엔 영향 없음
-  // (노션 API는 모르는 필드를 받으면 에러를 내므로, 별도 처리)
-  // → 등록 후 사용자가 노션에서 필드를 추가하면 그 다음 sync 부터 자동 반영됨
+  if(a.shipDate) p["출고일"]={"date":{"start":a.shipDate}};
   if(a.status)  p["진행상태"]={"select":{"name":a.status}};
   if(a.billing) p["청구상태"]={"select":{"name":a.billing}};
-  // 🔒 수리종류 동기화 — 노션 AS DB의 select 필드와 매칭
   if(a.defectType) p["수리종류"]={"select":{"name":a.defectType}};
-  if(a._notionId){
-    // 업데이트 시도 — 실패하면 출고일 빼고 재시도
-    try {
-      await nUpdate(a._notionId,p);
-    } catch(e){
-      console.warn('AS 업데이트 실패, 재시도:', e.message);
-      throw e;
-    }
-  }
+  if(a._notionId){ await nUpdate(a._notionId,p); }
   else{
     const r=await nCreate(notionCfg.asDb,p);
-    if(!r || !r.id){
-      console.error('AS 노션 생성 실패 - 응답:', r);
-      throw new Error('Notion 생성 실패: 응답에 ID 없음 (AS) — 노션 DB 스키마 확인 필요');
-    }
+    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (AS)');
     saveNotionId(asItems,a.id,r.id,SK.a);
     a._notionId = r.id;
   }
@@ -8794,40 +8347,49 @@ function findProductByOrderRow(row){
       if(cand.length===1) return cand[0];
     }
   }
+  // 5) 유형/도금/소재 부가 괄호 제거 후 재매칭
+  //    예: "S통통 원터치 귀걸이 [귀걸이]" → "S통통 원터치 귀걸이"
+  //        "S굴곡면 원터치 이어링 (실버)" → "S굴곡면 원터치 이어링"
+  //    호수/사이즈 괄호(11호, 16mm 등 숫자 포함)는 제품 식별자이므로 보존
+  const stripExtraBrackets = (s)=>{
+    if(!s) return '';
+    // 괄호 안에 숫자가 없는 것만 제거 (예: [귀걸이], (실버), (브라스), (RING))
+    // 괄호 안에 숫자가 있는 것은 유지 (예: (11호), (16mm), (4-1))
+    return String(s)
+      .replace(/[\[(（「『][^\d\])）」』]*?[\])）」』]/g, '') // 숫자 없는 괄호 통째로 제거
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+  const stripped5 = stripExtraBrackets(name);
+  if(stripped5 && stripped5 !== name){
+    // 5-a: 정확 일치
+    const byName5 = productDB.find(p=>{
+      const pName = stripExtraBrackets(p.name||'');
+      return pName === stripped5 || (p.name||'').trim() === stripped5;
+    });
+    if(byName5) return byName5;
+    // 5-b: 정규화 일치
+    const norm5 = _normProdNameOrd(stripped5);
+    if(norm5){
+      const cand5 = productDB.filter(p=>{
+        const pNorm = _normProdNameOrd(stripExtraBrackets(p.name||''));
+        return pNorm === norm5 || _normProdNameOrd(p.name) === norm5;
+      });
+      if(cand5.length === 1) return cand5[0];
+      // 여러 개면 도금 일치하는 것 우선
+      if(cand5.length > 1 && targetPlat){
+        const platMatch5 = cand5.find(p=>_normPlatingOrd(p.plating)===targetPlat);
+        if(platMatch5) return platMatch5;
+      }
+      // 도금 매칭도 실패 + 여러 개면 첫번째 (보수적으로 안전 — null 반환할 수도 있음)
+      if(cand5.length > 1) return null;
+    }
+  }
   return null;
 }
 
 // 발주서 rows 배열 전체에 대해 productDB 매칭을 시도해 itemCode를 채워줌
 // AI가 itemCode를 채우지 못한 행들에 폴백으로 작동
-// 거래명세서 행에서 품명 입력 후 포커스 빠질 때 자동 매칭
-// — 같은 품명이 제품DB에 있으면 code·unit(단가) 자동 채움
-function _autoMatchInvRow(idx){
-  const r = _invRowsBuf[idx];
-  if(!r || !r.name || !r.name.trim()) return;
-  if(r.code) return; // 이미 품번 있으면 건너뜀
-  if(!productDB || !productDB.length) return;
-  // 정확히 같은 품명 찾기 (먼저 시도)
-  const q = r.name.trim().toLowerCase();
-  let p = productDB.find(x => (x.name||'').trim().toLowerCase() === q);
-  // 부분 매칭 (없으면)
-  if(!p){
-    const candidates = productDB.filter(x =>
-      (x.name||'').toLowerCase().includes(q) || q.includes((x.name||'').toLowerCase())
-    );
-    if(candidates.length === 1) p = candidates[0];
-    // 여러 개면 모호하니 매칭 안 함 (사용자가 수동으로 골라야 함)
-  }
-  if(!p) return;
-  if(p.code && !r.code) r.code = p.code;
-  if(p.price && !r.unit) r.unit = +p.price;
-  // 행 다시 렌더링
-  if(typeof _renderInvRows === 'function') _renderInvRows();
-  if(typeof _updateInvRowCalc === 'function') _updateInvRowCalc(idx);
-  if(typeof showToast === 'function'){
-    showToast(`✓ "${p.code||p.name}" 제품DB에서 매칭 — 단가 ${(+p.price||0).toLocaleString()}원 자동 채움`, 'var(--grn)', 2500);
-  }
-}
-
 function autoFillItemCodesFromDB(rows){
   if(!Array.isArray(rows)||!rows.length) return {matched:0, total:0};
   let matched=0;
@@ -8844,34 +8406,23 @@ function autoFillItemCodesFromDB(rows){
   return {matched, total:rows.length};
 }
 
-// 발주서 행에서 품명 입력 후 포커스 빠질 때 자동 매칭
-// — 같은 품명이 제품DB에 있으면 itemCode·단가·도금·소재·사이즈 자동 채움
-function _autoMatchOrdRow(idx){
-  const r = ordRowsBuf[idx];
-  if(!r || !r.name || !r.name.trim()) return;
-  // 이미 itemCode가 있으면 (이전에 매칭됨) 다시 안 함
-  if(r.itemCode) return;
-  if(!productDB || !productDB.length) return;
-  // findProductByOrderRow 사용
-  const p = (typeof findProductByOrderRow === 'function')
-    ? findProductByOrderRow(r)
-    : productDB.find(x => x.name && x.name.trim() === r.name.trim());
-  if(!p) return;
-  // 자동 매칭 — 비어있는 필드만 채움 (사용자가 이미 입력한 건 존중)
-  if(p.code && !r.itemCode) r.itemCode = p.code;
-  if(p.price && !r.unitPrice) r.unitPrice = p.price;
-  if(p.plating && !r.plating) r.plating = p.plating;
-  if(p.mat && !r.mat) r.mat = p.mat;
-  if(p.size && !r.size) r.size = p.size;
-  // 이미지도 채움 (있고 행에 없으면)
-  if(p.imgs && p.imgs[0] && p.imgs[0].url && !r.img){
-    r.img = p.imgs[0].url;
-  }
-  // 행 다시 렌더링해서 itemCode 배지/이미지 표시
-  if(typeof renderOrdRows === 'function') renderOrdRows();
-  if(typeof showToast === 'function'){
-    showToast(`✓ "${p.code||p.name}" 제품DB에서 매칭 — 행 ${idx+1} 자동 채움`, 'var(--grn)', 2500);
-  }
+// 발주서 rows의 단가가 비어있거나 0인 행을 productDB에서 자동으로 채워줌
+// (itemCode 유무와 상관없이) — 발주서 모달 열 때 자동 호출
+// 안전 보장: 단가가 이미 0보다 큰 값이면 절대 안 건드림 (수동 입력값 보호)
+function autoFillPricesFromDB(rows){
+  if(!Array.isArray(rows)||!rows.length) return {filled:0};
+  let filled=0;
+  rows.forEach(r=>{
+    if((+r.unitPrice||0) > 0) return; // 이미 단가 있음 → 보호
+    const p=findProductByOrderRow(r);
+    if(p && (+p.price||0) > 0){
+      r.unitPrice = +p.price;
+      filled++;
+      // 매칭은 됐는데 itemCode가 비어있으면 같이 채워줌
+      if(!r.itemCode && p.code) r.itemCode = p.code;
+    }
+  });
+  return {filled};
 }
 
 // AI 프롬프트에 주입할 productDB 슬림 카탈로그 생성
@@ -16731,6 +16282,17 @@ function openOrdModal(idOrNull){
   document.getElementById('o_delBtn').style.display=o?'':'none';
   document.getElementById('ord_ai_badge').style.display='none';
   if(!ordRowsBuf||!ordRowsBuf.length)ordRowsBuf=o?(o.rows||[]).map(r=>({...r})):[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];
+  // 단가가 비어있는 행 자동 채우기: 상품명/품번이 제품DB와 일치하면 단가 가져옴
+  // (수정 모드에서만 — 신규 등록 시는 의미 없음. 이미 단가 있는 행은 건드리지 않음)
+  if(o){
+    const priceResult = autoFillPricesFromDB(ordRowsBuf);
+    if(priceResult.filled > 0){
+      // 조용히 토스트만 — 사용자가 모달 닫고 저장하면 노션에도 반영됨
+      if(typeof showToast === 'function'){
+        showToast(`✓ ${priceResult.filled}개 행의 단가를 제품DB에서 자동으로 가져옴`, 'var(--grn)', 3000);
+      }
+    }
+  }
   // 요청 출고일 변경 이력 표시
   const shipHistEl=document.getElementById('o_shipHistArea');
   if(shipHistEl){
@@ -16884,19 +16446,9 @@ function renderOrdRows(){
           <img src="${r.img}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1.5px solid var(--gold-line);cursor:pointer;flex-shrink:0"
             onclick="openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\'")}'}],0,false)"
             title="클릭하여 미리보기">
-          <input class="fi" value="${r.name||''}"
-            oncompositionstart="this._composing=true"
-            oncompositionend="this._composing=false;ordRowsBuf[${i}].name=this.value"
-            oninput="if(!this._composing)ordRowsBuf[${i}].name=this.value"
-            onblur="_autoMatchOrdRow(${i})"
-            placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;flex:1;min-width:0">
+          <input class="fi" value="${r.name||''}" oninput="ordRowsBuf[${i}].name=this.value" placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;flex:1;min-width:0">
           <button onclick="ordRowsBuf[${i}].img='';renderOrdRows()" title="이미지 제거" style="padding:2px 5px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;font-size:10px;color:var(--t3);flex-shrink:0">🗑</button>
-        </div>`:`<input class="fi" value="${r.name||''}"
-            oncompositionstart="this._composing=true"
-            oncompositionend="this._composing=false;ordRowsBuf[${i}].name=this.value"
-            oninput="if(!this._composing)ordRowsBuf[${i}].name=this.value"
-            onblur="_autoMatchOrdRow(${i})"
-            placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;width:100%">`}
+        </div>`:`<input class="fi" value="${r.name||''}" oninput="ordRowsBuf[${i}].name=this.value" placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;width:100%">`}
         ${r.itemCode?`<div style="font-size:9.5px;color:var(--gold-lt);margin-top:2px;font-weight:600">📌 ${r.itemCode}</div>`:''}
       </div>
       <div style="position:relative">
@@ -17213,95 +16765,6 @@ async function saveOrd(forceOverwrite){
         }
       });
       orders[i]={...orders[i],...obj};
-
-      // 🔄 발주 수정 시 연결된 거래명세서 단가 동기화 검사
-      // 같은 발주에 연결된 거래명세서가 있고 단가/수량/품목이 다르면 사용자에게 안내
-      const linkedInvoices = invoiceHistory.filter(inv =>
-        !inv._isConsolidated && !inv._isStandalone &&
-        (String(inv.ordId) === String(ordId) || (inv.ordNo && inv.ordNo === obj.no))
-      );
-      if(linkedInvoices.length > 0){
-        // 명세서별로 발주 행과 매칭해서 차이 찾기
-        const updates = [];
-        linkedInvoices.forEach(inv => {
-          const oldItems = inv.items || [];
-          const diffs = [];
-          const newItems = oldItems.map(invItem => {
-            // 발주 행에서 같은 품번/품명 찾기
-            const ordRow = cleanRows.find(r =>
-              (r.itemCode && invItem.code && r.itemCode === invItem.code) ||
-              (r.name && invItem.name && r.name === invItem.name)
-            );
-            if(!ordRow) return invItem;
-            // 단가/수량 비교
-            const newUnit = +ordRow.unitPrice || 0;
-            const oldUnit = +invItem.unit || 0;
-            if(newUnit > 0 && newUnit !== oldUnit){
-              diffs.push({
-                name: invItem.name || ordRow.name,
-                oldUnit: oldUnit,
-                newUnit: newUnit
-              });
-              return {...invItem, unit: newUnit};
-            }
-            return invItem;
-          });
-          if(diffs.length > 0){
-            updates.push({inv, newItems, diffs});
-          }
-        });
-
-        if(updates.length > 0){
-          // 사용자에게 확인 — 비동기로 안 막고 발주 저장은 계속 진행
-          const summary = updates.map(u => {
-            const diffStr = u.diffs.slice(0,3).map(d =>
-              `  · ${d.name}: ${d.oldUnit.toLocaleString()}원 → ${d.newUnit.toLocaleString()}원`
-            ).join('\n');
-            const more = u.diffs.length > 3 ? `\n  · 외 ${u.diffs.length-3}건` : '';
-            return `📋 거래명세서 ${u.inv.invNo||u.inv.id}\n${diffStr}${more}`;
-          }).join('\n\n');
-
-          setTimeout(()=>{
-            if(typeof showConfirm === 'function'){
-              showConfirm(
-                `발주서 단가 변경이 감지되었습니다.\n연결된 거래명세서 ${updates.length}건에도 적용할까요?\n\n${summary}\n\n⚠ 입금완료된 명세서도 함께 갱신됩니다.`,
-                async ()=>{
-                  let updated = 0;
-                  for(const u of updates){
-                    u.inv.items = u.newItems;
-                    // 합계 재계산
-                    const supplyAmt = u.newItems.reduce((s,it)=> s + ((+it.qty||0) * (+it.unit||0)), 0);
-                    u.inv.supplyAmt = supplyAmt;
-                    if(u.inv.taxIncluded || u.inv.includeTax){
-                      u.inv.tax = Math.round(supplyAmt * 0.1);
-                      u.inv.total = supplyAmt + u.inv.tax;
-                    } else {
-                      u.inv.tax = 0;
-                      u.inv.total = supplyAmt;
-                    }
-                    // 입금률 재계산
-                    if(u.inv.total > 0){
-                      const paid = (u.inv.payments||[]).reduce((s,p)=>s+(+p.amount||0),0);
-                      u.inv.paymentRatio = Math.round(paid * 100 / u.inv.total);
-                    }
-                    // 노션 동기화
-                    if(u.inv._notionId && typeof syncInvoiceToNotion === 'function'){
-                      try { await syncInvoiceToNotion(u.inv, true); updated++; }
-                      catch(e){ console.warn('거래명세서 sync 실패:', e); }
-                    } else {
-                      updated++;
-                    }
-                  }
-                  save();
-                  if(currentTab==='invoice') renderTab();
-                  showToast(`✓ 연결 거래명세서 ${updated}건의 단가가 갱신되었습니다`, 'var(--grn)', 4500);
-                },
-                '단가 동기화', '💰', '예, 명세서에도 적용', 'blu'
-              );
-            }
-          }, 800); // 발주 저장 토스트 사라진 후
-        }
-      }
     }
     ordId=+id;
     // Update ship date on linked procs
@@ -22155,12 +21618,7 @@ function _renderInvRows(){
       return `
       <div style="display:grid;grid-template-columns:30px 2fr 1.2fr 0.8fr 1fr 1.2fr 30px;gap:4px 4px;align-items:center;margin-bottom:6px;padding-bottom:3px;border-bottom:1px dashed transparent">
         <div style="text-align:center;font-size:11px;color:var(--t3);font-weight:600">${i+1}</div>
-        <input class="fi" id="sivName_${i}" value="${(r.name||'').replace(/"/g,'&quot;')}"
-          oncompositionstart="this._composing=true"
-          oncompositionend="this._composing=false;_invRowsBuf[${i}].name=this.value"
-          oninput="if(!this._composing)_invRowsBuf[${i}].name=this.value"
-          onblur="_autoMatchInvRow(${i})"
-          placeholder="품명" style="font-size:11.5px;padding:4px 6px">
+        <input class="fi" id="sivName_${i}" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].name=this.value" placeholder="품명" style="font-size:11.5px;padding:4px 6px">
         <input class="fi" id="sivCode_${i}" value="${(r.code||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].code=this.value;_updateInvRowCalc(${i})" placeholder="품번 (재고 연동)" style="font-size:11px;padding:4px 6px;font-family:monospace">
         <input class="fi" id="sivQty_${i}" type="number" value="${r.qty||1}" oninput="_invRowsBuf[${i}].qty=+this.value;_updateInvRowCalc(${i})" style="font-size:11.5px;padding:4px 6px;text-align:center">
         <input class="fi" id="sivUnit_${i}" type="number" value="${r.unit||0}" oninput="_invRowsBuf[${i}].unit=+this.value;_updateInvRowCalc(${i})" placeholder="0" style="font-size:11.5px;padding:4px 6px;text-align:right">
