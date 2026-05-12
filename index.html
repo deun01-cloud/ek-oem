@@ -2352,13 +2352,23 @@ async function applyASParseAll(){
   }
   const now=new Date().toISOString();
   const todayS=toLocalDateStr(new Date());
-  let added=0, failed=0;
+  let added=0, failed=0, skipped=0;
+  const skippedReasons=[];
   // 🔒 노션-우선: 각 항목을 노션에 push → 성공한 것만 asItems에 추가
   showToast(`🔄 Notion에 ${checkedItems.length}건 등록 중...`, 'var(--blu)', 3000);
   for(let i=0; i<checkedItems.length; i++){
     const it = checkedItems[i];
+    // ✅ 빈 행 가드 — 품명이 비어있으면 건너뜀 (빈 노션 페이지 생성 방지)
+    const itemName = (it.item||'').trim();
+    const itemReason = (it.reason||'').trim();
+    if(!itemName){
+      skipped++;
+      skippedReasons.push(`행 ${i+1}: 품명 비어있음`);
+      console.warn('AS 일괄 등록 건너뜀 (품명 없음):', it);
+      continue;
+    }
     // defectType은 사용자가 편집했으면 그 값, 아니면 reason에서 자동 판단
-    const reason = (it.reason||'').trim();
+    const reason = itemReason;
     const reasonLow = reason.toLowerCase();
     let defectType = it.defectType || '';
     if(!defectType){
@@ -2373,11 +2383,11 @@ async function applyASParseAll(){
       else if(_isCustomerDefect) defectType = '고객불량';
     }
     const obj={
-      id: Date.now()+Math.random()+i, // unique ID 충돌 방지
+      id: (typeof _genSafeId === 'function') ? _genSafeId(i) : (Date.now()+Math.random()+i),
       createdAt: now,
       client: vendor,
       date: it.date || todayS,
-      item: (it.item||'').trim(),
+      item: itemName,
       qty: +it.qty || 1,
       desc: reason,
       defectType,
@@ -2403,10 +2413,17 @@ async function applyASParseAll(){
   save();
   _asAIPasteCleanup();
   closeM('mAS');
-  if(failed > 0){
-    showToast(`⚠ AS 등록 결과 — 성공 ${added}건 / 실패 ${failed}건 (Notion 동기화 실패)`, 'var(--org)', 6000);
-  } else {
-    showToast(`✓ AS ${added}건 등록 완료`,'var(--grn)',3500);
+  let toastMsg = '';
+  if(added > 0) toastMsg += `✓ ${added}건 등록`;
+  if(failed > 0) toastMsg += ` · ❌ ${failed}건 실패`;
+  if(skipped > 0){
+    toastMsg += ` · ⚠ ${skipped}건 건너뜀 (빈 행)`;
+    console.warn('건너뛴 행:', skippedReasons);
+  }
+  if(toastMsg){
+    showToast(toastMsg, (failed > 0 || skipped > 0) ? 'var(--org)' : 'var(--grn)', 5000);
+  } else if(checkedItems.length === 0){
+    showToast('⚠ 등록할 항목이 없습니다', 'var(--red)', 3000);
   }
   if(currentTab==='as') renderTab();
   updateBadges();
@@ -2440,13 +2457,15 @@ function openASModal(idOrNull){
 
 async function saveAS(){
   const client=gv('as_client');if(!client)return showToast('⚠ 고객사를 입력해 주세요','var(--red)');
+  const item=gv('as_item').trim();
+  if(!item) return showToast('⚠ 품번/품목명을 입력해 주세요','var(--red)');
   const id=gv('as_id');
   // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
   if(!id && !requireNotion('asDb', 'AS')) return;
   const obj={
     client,date:gv('as_date'),due:gv('as_due'),
     shipDate:gv('as_shipDate')||'', // 출고일 (청구서 그룹 기준)
-    item:gv('as_item'),qty:+gv('as_qty')||1,
+    item, qty:+gv('as_qty')||1,
     unitCost:+gv('as_unitCost')||0,
     desc:gv('as_desc'),note:gv('as_note'),
     defectType:gv('as_defectType'),
@@ -2456,11 +2475,18 @@ async function saveAS(){
     const i=asItems.findIndex(x=>x.id==id);
     if(i>=0){
       asItems[i]={...asItems[i],...obj};
-      debouncedSync('as',asItems[i],true);
+      // 🔒 수정도 즉시 동기화 (디바운스 → await로 변경)
+      try {
+        await syncASToNotion(asItems[i], true);
+        asItems[i]._syncedAt = new Date().toISOString();
+      } catch(e){
+        console.error('AS 수정 노션 동기화 실패:', e);
+        showToast(`⚠ Notion 동기화 실패: ${e.message||'네트워크 오류'} — 로컬엔 저장됨`, 'var(--org)', 5000);
+      }
     }
   } else {
     // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
-    const na={id:Date.now(),createdAt:new Date().toISOString(),...obj};
+    const na={id:(typeof _genSafeId==='function')?_genSafeId(0):Date.now(),createdAt:new Date().toISOString(),...obj};
     const ok = await createWithNotion(asItems, na, syncASToNotion, 'AS');
     if(!ok) return; // 실패 — 모달 유지
   }
@@ -2556,6 +2582,177 @@ function clearASSelection(){
   _asSelected.clear();
   renderAS();
 }
+// ════════════════════════════════════════════════════════════════
+// 선택된 AS들 → 거래명세서 발행 (고객사별 자동 묶음)
+// ════════════════════════════════════════════════════════════════
+async function publishSelectedASInvoice(){
+  if(_asSelected.size === 0){
+    showToast('⚠ 선택된 항목이 없습니다','var(--red)');
+    return;
+  }
+  // 🔒 노션-우선
+  if(!requireNotion('invDb', '거래명세서')) return;
+
+  const selectedItems = asItems.filter(a => _asSelected.has(+a.id));
+  if(!selectedItems.length){
+    showToast('⚠ 선택된 항목을 찾을 수 없습니다','var(--red)');
+    return;
+  }
+
+  // 청구 가능 항목만 필터 (고객불량)
+  const billable = selectedItems.filter(a => a.defectType === '고객불량');
+  const notBillable = selectedItems.filter(a => a.defectType !== '고객불량');
+  const alreadyBilled = billable.filter(a => a.billing === '청구 완료');
+  const ready = billable.filter(a => a.billing === '미청구' || a.billing === '청구 예정');
+
+  if(ready.length === 0){
+    let msg = '⚠ 청구 가능한 AS가 없습니다.\n';
+    if(notBillable.length > 0) msg += `\n· ${notBillable.length}건: 고객불량이 아님 (입고불량/미설정)`;
+    if(alreadyBilled.length > 0) msg += `\n· ${alreadyBilled.length}건: 이미 청구 완료`;
+    showToast(msg, 'var(--red)', 5000);
+    return;
+  }
+
+  // 고객사별로 그룹화 (initials 기준)
+  const byVendor = {};
+  ready.forEach(a => {
+    const init = getVendorInit(a.client) || a.client || '미분류';
+    if(!byVendor[init]) byVendor[init] = {
+      vendor: a.client,
+      initials: init,
+      items: []
+    };
+    byVendor[init].items.push(a);
+  });
+  const vendorGroups = Object.values(byVendor);
+
+  // 확인 메시지
+  let msg = `선택한 AS ${selectedItems.length}건 중 ${ready.length}건을 거래명세서로 발행합니다.\n\n`;
+  if(vendorGroups.length === 1){
+    const g = vendorGroups[0];
+    const totalAmt = g.items.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
+    msg += `📋 ${g.vendor} (${g.items.length}건, ${totalAmt.toLocaleString()}원)\n   → 하나의 거래명세서로 묶어 발행`;
+  } else {
+    msg += `📊 ${vendorGroups.length}개 고객사 — 각 고객사별로 별도 명세서 발행:\n`;
+    vendorGroups.forEach(g => {
+      const totalAmt = g.items.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
+      msg += `\n  · ${g.vendor}: ${g.items.length}건, ${totalAmt.toLocaleString()}원`;
+    });
+  }
+  if(notBillable.length > 0){
+    msg += `\n\n⚠ ${notBillable.length}건은 고객불량이 아니라 제외됩니다.`;
+  }
+  if(alreadyBilled.length > 0){
+    msg += `\n⚠ ${alreadyBilled.length}건은 이미 청구 완료라 제외됩니다.`;
+  }
+
+  showConfirm(msg, async ()=>{
+    let issuedCount = 0;
+    let failedCount = 0;
+    const issuedInvoices = [];
+
+    showToast(`🔄 ${vendorGroups.length}개 거래명세서 발행 중...`, 'var(--blu)', 3000);
+
+    for(const group of vendorGroups){
+      try {
+        // 거래명세서 객체 생성
+        const today = toLocalDateStr(new Date());
+        const supplyAmt = group.items.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
+        const tax = Math.round(supplyAmt * 0.1);
+        const total = supplyAmt + tax;
+
+        // 발주번호 자동 생성 (AS-YYMMDD-NNN 형식)
+        const yy = today.slice(2,4) + today.slice(5,7) + today.slice(8,10);
+        const todayInvs = invoiceHistory.filter(v => (v.ordNo||'').startsWith('AS-' + yy));
+        const seqNum = String(todayInvs.length + issuedCount + 1).padStart(3, '0');
+        const ordNo = `AS-${yy}-${seqNum}`;
+
+        const newInv = {
+          id: (typeof _genSafeId === 'function') ? _genSafeId(issuedCount) : Date.now() + issuedCount,
+          createdAt: new Date().toISOString(),
+          vendor: group.vendor,
+          ordNo: ordNo,
+          issuedAt: today,
+          shipDate: today,
+          // 행: 각 AS를 명세서 행으로
+          items: group.items.map(a => ({
+            name: a.item || 'AS 수리',
+            code: '', // AS는 별도 품번 없음
+            qty: +a.qty || 1,
+            unit: +a.unitCost || 0,
+            note: `AS: ${a.desc || ''}`
+          })),
+          supplyAmt: supplyAmt,
+          tax: tax,
+          total: total,
+          taxIncluded: true,
+          status: '발행완료',
+          payments: [],
+          totalPaid: 0,
+          paymentRatio: 0,
+          memo: `AS 거래명세서 — ${group.items.length}건 묶음 발행 (선택 발행)`,
+          // AS 전용 플래그
+          _fromAS: true,
+          _isStandalone: true, // 발주서 기반 아님
+          _asItemIds: group.items.map(a => a.id),
+          _invStage: 'billing'
+        };
+
+        // 노션에 push
+        if(typeof syncInvoiceToNotion === 'function'){
+          await syncInvoiceToNotion(newInv, false);
+          newInv._syncedAt = new Date().toISOString();
+        }
+
+        invoiceHistory.unshift(newInv);
+        issuedInvoices.push(newInv);
+
+        // 해당 AS들의 청구상태 갱신
+        for(const a of group.items){
+          const idx = asItems.findIndex(x => x.id === a.id);
+          if(idx >= 0){
+            asItems[idx].billing = '청구 완료';
+            asItems[idx]._linkedInvoiceId = newInv.id;
+            asItems[idx]._linkedInvoiceNo = newInv.ordNo;
+            // AS도 노션 업데이트
+            if(asItems[idx]._notionId && typeof syncASToNotion === 'function'){
+              try {
+                await syncASToNotion(asItems[idx], true);
+              } catch(e){
+                console.warn('AS 업데이트 실패 (백그라운드):', e);
+              }
+            }
+          }
+        }
+
+        issuedCount++;
+      } catch(e){
+        console.error('거래명세서 발행 실패:', group.vendor, e);
+        failedCount++;
+      }
+      // 노션 API 속도 제한 대비
+      if(vendorGroups.indexOf(group) < vendorGroups.length - 1){
+        await new Promise(r => setTimeout(r, 300));
+      }
+    }
+
+    save();
+    _asSelected.clear();
+    renderAS();
+    updateBadges();
+
+    if(failedCount > 0){
+      showToast(`⚠ 거래명세서 ${issuedCount}건 발행 / ${failedCount}건 실패`, 'var(--org)', 6000);
+    } else {
+      showToast(`✓ 거래명세서 ${issuedCount}건 발행 완료 — 거래명세서 탭에서 확인`, 'var(--grn)', 5000);
+      // 발행한 명세서 정보 표시
+      console.log('발행된 거래명세서:', issuedInvoices.map(v => ({
+        ordNo: v.ordNo, vendor: v.vendor, total: v.total, items: v.items.length
+      })));
+    }
+  }, vendorGroups.length === 1 ? '거래명세서 발행' : '거래명세서 다중 발행', '🧾', '발행', 'gold');
+}
+
 function deleteSelectedAS(){
   if(_asSelected.size===0){
     showToast('⚠ 선택된 항목이 없습니다','var(--red)');
@@ -2758,8 +2955,20 @@ function renderAS(){
   ${_asSelected.size>0?`
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:10px 14px;background:var(--gold-bg);border:1.5px solid var(--gold);border-radius:8px;position:sticky;top:10px;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,.06)">
     <span style="font-size:12.5px;font-weight:700;color:var(--gold-lt)">✓ ${_asSelected.size}건 선택됨</span>
+    ${(function(){
+      // 선택된 AS의 고객사별 분포 미리보기
+      const selectedItems = asItems.filter(a => _asSelected.has(+a.id));
+      const vendors = new Set(selectedItems.map(a => getVendorInit(a.client) || a.client || '미분류'));
+      const billable = selectedItems.filter(a => a.defectType === '고객불량');
+      const notBillable = selectedItems.length - billable.length;
+      let hint = '';
+      if(vendors.size > 1) hint += `<span style="font-size:11px;color:var(--t3)">· ${vendors.size}개 고객사</span>`;
+      if(notBillable > 0) hint += `<span style="font-size:11px;color:var(--red)">· ${notBillable}건 청구 불가(고객불량 아님)</span>`;
+      return hint;
+    })()}
     <span style="flex:1"></span>
     <button onclick="clearASSelection()" style="padding:5px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--t2)">선택 해제</button>
+    <button onclick="publishSelectedASInvoice()" style="padding:5px 14px;font-size:11.5px;background:var(--gold);color:#fff;border:none;border-radius:5px;font-weight:600;cursor:pointer;font-family:inherit" title="선택한 AS를 고객사별로 묶어서 거래명세서 발행">🧾 거래명세서 발행</button>
     <button onclick="deleteSelectedAS()" style="padding:5px 14px;font-size:11.5px;background:var(--red);color:#fff;border:none;border-radius:5px;font-weight:600;cursor:pointer;font-family:inherit">🗑 선택 항목 삭제</button>
   </div>
   `:''}
@@ -2786,6 +2995,53 @@ function renderAS(){
   ` : `
   <div class="card">
     <div class="ch"><div class="ch-t">✅ 완료 / 반송 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${done.length}건${currentGroupName?` · ${currentGroupName} 필터`:''})</span></div></div>
+    ${(function(){
+      // 수리종류 미설정 안내 (완료된 AS인데 수리종류가 비어있음)
+      const noDefectType = done.filter(a => !a.defectType && (a.billing === '미청구' || a.billing === '청구 예정'));
+      if(noDefectType.length === 0) return '';
+      return `<div style="margin:10px 14px;padding:10px 14px;background:rgba(192,48,48,.06);border:1px solid rgba(192,48,48,.25);border-radius:6px">
+        <div style="font-size:11.5px;color:var(--red);font-weight:600;margin-bottom:4px">
+          ⚠ 수리종류 미설정 — ${noDefectType.length}건
+        </div>
+        <div style="font-size:11px;color:var(--t2)">
+          청구하려면 각 AS 행을 클릭해서 <b>수리종류</b>를 <b>고객불량</b> 또는 <b>입고불량</b>으로 지정해주세요.<br>
+          <span style="color:var(--t3)">고객불량 → 청구 가능 · 입고불량 → 공장 책임 (청구 불가)</span>
+        </div>
+      </div>`;
+    })()}
+    ${(function(){
+      // 청구 가능한 AS — 완료 + 고객불량 + 미청구/청구 예정 그룹
+      const billableDone = done.filter(a =>
+        a.defectType === '고객불량' && (a.billing === '미청구' || a.billing === '청구 예정')
+      );
+      if(billableDone.length === 0) return '';
+      // 고객사별 그룹화
+      const byVendor = {};
+      billableDone.forEach(a => {
+        const init = getVendorInit(a.client);
+        const key = init || a.client || '미분류';
+        if(!byVendor[key]) byVendor[key] = {init, name: a.client, items: []};
+        byVendor[key].items.push(a);
+      });
+      const vendorList = Object.entries(byVendor);
+      return `<div style="margin:10px 14px;padding:12px 14px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px">
+        <div style="font-size:12.5px;font-weight:600;color:var(--gold-lt);margin-bottom:8px">
+          💰 청구 가능 AS — 고객불량으로 완료된 ${billableDone.length}건 (${vendorList.length}개 고객사)
+        </div>
+        <div style="font-size:11px;color:var(--t2);margin-bottom:8px">
+          ${currentGroupName ? '현재 고객사 필터 적용 중 — 우측 상단 "🧾 청구서 작성" 버튼으로 거래명세서 발행' : '아래 고객사를 클릭하면 청구서 작성 버튼이 나타납니다'}
+        </div>
+        ${!currentGroupName ? `<div style="display:flex;gap:6px;flex-wrap:wrap">${vendorList.map(([init, info]) => {
+          const total = info.items.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
+          return `<button onclick="_asVendorFilter='${init}';renderAS()" style="padding:6px 12px;background:var(--s1);border:1px solid var(--gold-line);border-radius:6px;cursor:pointer;font-family:inherit;font-size:11.5px;color:var(--t1);display:flex;align-items:center;gap:6px" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">
+            <span style="font-weight:700;color:var(--gold-lt)">${init}</span>
+            <span>${(info.name||'').slice(0,12)}</span>
+            <span style="color:var(--t3);font-size:10px">${info.items.length}건</span>
+            <span style="color:var(--gold-lt);font-weight:600">${total.toLocaleString()}원</span>
+          </button>`;
+        }).join('')}</div>` : ''}
+      </div>`;
+    })()}
     <div style="overflow-x:auto"><table>
       <thead><tr>
         <th style="text-align:center;width:30px"><input type="checkbox" ${done.length&&done.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${done.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
