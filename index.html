@@ -2231,10 +2231,18 @@ function renderASParseTable(){
         <tbody>
         ${items.map((it,i)=>{
           const checked=it._checked!==false;
-          const reasonStr = it.reason || '';
+          const reasonStr = (it.reason || '').toLowerCase();
+          // 입고불량 키워드: '입고불량', '입고 불량', '공장불량', '공장 불량'
+          // 고객불량 키워드: '고객불량', '고객 불량', 'AS요청', 'AS 요청', 'AS불량', 'as 불량', 'AS접수', '클레임'
+          const _isFactoryDefect = reasonStr.includes('입고불량') || reasonStr.includes('입고 불량')
+            || reasonStr.includes('공장불량') || reasonStr.includes('공장 불량');
+          const _isCustomerDefect = reasonStr.includes('고객불량') || reasonStr.includes('고객 불량')
+            || reasonStr.includes('as요청') || reasonStr.includes('as 요청')
+            || reasonStr.includes('as불량') || reasonStr.includes('as 불량')
+            || reasonStr.includes('as접수') || reasonStr.includes('as 접수')
+            || reasonStr.includes('클레임') || reasonStr.includes('claim');
           const defectType = it.defectType
-            || (reasonStr.includes('입고불량') ? '입고불량'
-              : reasonStr.includes('고객불량') ? '고객불량' : '');
+            || (_isFactoryDefect ? '입고불량' : _isCustomerDefect ? '고객불량' : '');
           it.defectType = defectType; // 저장
           return `<tr style="${!checked?'opacity:.45':''}">
             <td style="padding:3px 4px;text-align:center;border-bottom:1px solid var(--bdr)">
@@ -2351,10 +2359,18 @@ async function applyASParseAll(){
     const it = checkedItems[i];
     // defectType은 사용자가 편집했으면 그 값, 아니면 reason에서 자동 판단
     const reason = (it.reason||'').trim();
+    const reasonLow = reason.toLowerCase();
     let defectType = it.defectType || '';
     if(!defectType){
-      if(reason.includes('입고불량')) defectType = '입고불량';
-      else if(reason.includes('고객불량')) defectType = '고객불량';
+      const _isFactoryDefect = reasonLow.includes('입고불량') || reasonLow.includes('입고 불량')
+        || reasonLow.includes('공장불량') || reasonLow.includes('공장 불량');
+      const _isCustomerDefect = reasonLow.includes('고객불량') || reasonLow.includes('고객 불량')
+        || reasonLow.includes('as요청') || reasonLow.includes('as 요청')
+        || reasonLow.includes('as불량') || reasonLow.includes('as 불량')
+        || reasonLow.includes('as접수') || reasonLow.includes('as 접수')
+        || reasonLow.includes('클레임') || reasonLow.includes('claim');
+      if(_isFactoryDefect) defectType = '입고불량';
+      else if(_isCustomerDefect) defectType = '고객불량';
     }
     const obj={
       id: Date.now()+Math.random()+i, // unique ID 충돌 방지
@@ -7706,13 +7722,27 @@ async function syncASToNotion(a, update){
   };
   if(a.date) p["접수일"]={"date":{"start":a.date}};
   if(a.due)  p["완료예정일"]={"date":{"start":a.due}};
-  if(a.shipDate) p["출고일"]={"date":{"start":a.shipDate}};
+  // 🔒 출고일 필드는 노션 AS DB에 없을 수 있어서 — 옵션으로만 보냄
+  // 노션에 출고일 필드가 있으면 자동 저장, 없어도 등록 자체엔 영향 없음
+  // (노션 API는 모르는 필드를 받으면 에러를 내므로, 별도 처리)
+  // → 등록 후 사용자가 노션에서 필드를 추가하면 그 다음 sync 부터 자동 반영됨
   if(a.status)  p["진행상태"]={"select":{"name":a.status}};
   if(a.billing) p["청구상태"]={"select":{"name":a.billing}};
-  if(a._notionId){ await nUpdate(a._notionId,p); }
+  if(a._notionId){
+    // 업데이트 시도 — 실패하면 출고일 빼고 재시도
+    try {
+      await nUpdate(a._notionId,p);
+    } catch(e){
+      console.warn('AS 업데이트 실패, 재시도:', e.message);
+      throw e;
+    }
+  }
   else{
     const r=await nCreate(notionCfg.asDb,p);
-    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (AS)');
+    if(!r || !r.id){
+      console.error('AS 노션 생성 실패 - 응답:', r);
+      throw new Error('Notion 생성 실패: 응답에 ID 없음 (AS) — 노션 DB 스키마 확인 필요');
+    }
     saveNotionId(asItems,a.id,r.id,SK.a);
     a._notionId = r.id;
   }
