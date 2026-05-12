@@ -1112,6 +1112,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 <!-- 매출내역 엑셀 다운로드 모달 -->
 <div class="ov" id="mSalesExcel"><div class="modal" style="max-width:420px">
   <div class="mt">📊 매출내역 엑셀 다운로드</div>
+  <div id="sex_tabInfo" style="font-size:11.5px;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:7px 10px;border-radius:6px;margin-bottom:10px;font-weight:600"></div>
   <div style="font-size:12px;color:var(--t3);margin-bottom:14px">선택한 기간과 거래처의 거래명세서 내역을 출하지시서현황 형식의 엑셀 파일로 다운로드합니다.</div>
 
   <div class="fg">
@@ -5537,6 +5538,19 @@ function openSalesExcelExport(){
     showToast('⚠ 발행된 거래명세서가 없습니다','var(--org)', 2500);
     return;
   }
+  // 현재 탭 이름 표시 — 다운로드 범위가 무엇인지 사용자에게 명확히
+  const subTab = (invFilter && invFilter.subTab) || 'all';
+  const tabLabels = {
+    draft: '📋 미청구',
+    billing: '💰 청구',
+    done: '✓ 완료',
+    consolidated: '📑 합본',
+    all: '📋 모든 명세서'
+  };
+  const tabInfo = document.getElementById('sex_tabInfo');
+  if(tabInfo){
+    tabInfo.innerHTML = `현재 탭: <strong>${tabLabels[subTab]||subTab}</strong> · 이 탭에 보이는 명세서만 다운로드됩니다`;
+  }
   // 기간 초기값: 최근 3개월
   const today = new Date();
   const from = new Date(today); from.setMonth(from.getMonth()-3);
@@ -5582,15 +5596,36 @@ function sexSetRange(type){
 }
 
 // 조건에 맞는 거래명세서 추출
+// 기간/거래처 필터 외에, 현재 화면에 보고 있는 탭(subTab)도 같이 적용
+// → 탭에 보이는 항목들만 다운로드되도록
 function getFilteredInvoicesForExport(){
   const from = gv('sex_from');
   const to   = gv('sex_to');
   const vendor = gv('sex_vendor');
+  const subTab = (invFilter && invFilter.subTab) || 'all';
   return invoiceHistory.filter(v=>{
     const d = (v.issuedAt||'').slice(0,10);
     if(from && d < from) return false;
     if(to   && d > to)   return false;
     if(vendor && v.vendor !== vendor) return false;
+    // 현재 탭 필터 — renderInvoiceHistory의 subTab 분기와 동일
+    if(subTab === 'consolidated'){
+      if(!v._isConsolidated) return false;
+    } else if(subTab === 'draft'){
+      if(v._isConsolidated) return false;
+      if(v._consolidatedInvoiceId) return false;
+      if(v._invStage !== 'draft') return false;
+    } else if(subTab === 'billing'){
+      if(v._isConsolidated) return false;
+      if(v._consolidatedInvoiceId) return false;
+      if(v._invStage !== 'billing') return false;
+    } else if(subTab === 'done'){
+      if(v._isConsolidated) return false;
+      if(v._invStage !== 'done') return false;
+    } else if(subTab === 'all'){
+      // 모든 명세서 탭: 합본 자체 제외 (개별 명세서만)
+      if(v._isConsolidated) return false;
+    }
     return true;
   }).sort((a,b)=>a.issuedAt.localeCompare(b.issuedAt));
 }
@@ -5604,8 +5639,55 @@ function getFilteredInvoicesForExport(){
 // ────────────────────────────────────────────────────────────────
 function _resolveInvItems(inv){
   if(!inv) return [];
-  // 정상 케이스: items 배열에 데이터 있음
-  if(Array.isArray(inv.items) && inv.items.length > 0) return inv.items;
+
+  // 합본 청구서: 묶인 개별 명세서들의 items를 모아 반환 (재귀)
+  if(inv._isConsolidated && Array.isArray(inv.includedInvoiceIds)){
+    const merged = [];
+    inv.includedInvoiceIds.forEach(invId=>{
+      const child = invoiceHistory.find(x=>x.id===invId);
+      if(child) merged.push(..._resolveInvItems(child));
+    });
+    return merged;
+  }
+
+  // items 배열이 있으면 사용하되, unit이 비어있는 경우 보강 시도
+  if(Array.isArray(inv.items) && inv.items.length > 0){
+    const needsEnrichment = inv.items.some(it =>
+      (+it.unit||0) === 0 && (+it.qty||0) > 0
+    );
+    if(!needsEnrichment) return inv.items;
+    // 단가 보강: 발주서 → 제품DB 순으로 시도
+    let ord = null;
+    if(inv.ordId)  ord = orders.find(x=>String(x.id)===String(inv.ordId));
+    if(!ord && inv.ordNo) ord = orders.find(x=>x.no === inv.ordNo);
+    return inv.items.map(it=>{
+      if((+it.unit||0) > 0) return it; // 이미 단가 있음
+      let unit = 0;
+      // 1) 발주서 행에서 찾기 (코드 우선, 이름 차선)
+      if(ord && Array.isArray(ord.rows)){
+        const r = ord.rows.find(r =>
+          (it.code && r.itemCode === it.code) ||
+          (it.name && r.name === it.name)
+        );
+        if(r) unit = +r.unitPrice || 0;
+      }
+      // 2) 제품DB에서 찾기 (코드 우선)
+      if(!unit && typeof productDB !== 'undefined'){
+        const p = productDB.find(p =>
+          (it.code && p.code === it.code) ||
+          (it.name && p.name === it.name)
+        );
+        if(p) unit = +p.price || 0;
+      }
+      const qty = +it.qty || 0;
+      return {
+        ...it,
+        unit,
+        amt: it.amt || qty * unit,
+      };
+    });
+  }
+
   // 폴백: itemSummary 파싱
   if(!inv.itemSummary) return [];
   // 원본 발주서 찾기 (단가/품번/소재 보강용)
@@ -5621,7 +5703,12 @@ function _resolveInvItems(inv){
     const qt = +m[2] || 0;
     // 발주서에서 매칭
     const ordRow = (o && o.rows||[]).find(r => r.name === nm);
-    const unit = ordRow ? (+ordRow.unitPrice || 0) : 0;
+    let unit = ordRow ? (+ordRow.unitPrice || 0) : 0;
+    // 발주서에 없으면 제품DB에서 찾기 (이름 매칭)
+    if(!unit && typeof productDB !== 'undefined'){
+      const p = productDB.find(p => p.name === nm);
+      if(p) unit = +p.price || 0;
+    }
     return {
       name: nm,
       code: (ordRow && ordRow.itemCode) || '',
