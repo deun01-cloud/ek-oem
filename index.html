@@ -3221,6 +3221,54 @@ async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
 // 제품 DB
 // ════════════════════════════════
 let pdImgBuf=[], _importRows=[];
+
+// ════════════════════════════════════════════════════════════════
+// 🔒 productDB ID 중복 진단/수정 도구 (페이지 로드 시 즉시 사용 가능)
+// 사용법: 콘솔에 window.diagnoseProductIds() 또는 window.diagnoseProductIds(true) 입력
+// ════════════════════════════════════════════════════════════════
+window.diagnoseProductIds = function(autoFix){
+  if(typeof productDB === 'undefined' || !Array.isArray(productDB)){
+    console.error('productDB가 아직 초기화되지 않음');
+    return;
+  }
+  const idGroups = {};
+  productDB.forEach((p, idx) => {
+    const key = String(p.id);
+    if(!idGroups[key]) idGroups[key] = [];
+    idGroups[key].push({idx, code:p.code, name:p.name, notionId:p._notionId});
+  });
+  const dups = Object.entries(idGroups).filter(([k,v]) => v.length > 1);
+  console.log('=== productDB ID 중복 진단 ===');
+  console.log('총 제품:', productDB.length);
+  console.log('고유 ID:', Object.keys(idGroups).length);
+  console.log('중복된 ID 그룹:', dups.length);
+  if(dups.length > 0){
+    console.log('상세 (상위 10개):');
+    dups.slice(0, 10).forEach(([id, items]) => {
+      console.log(`  id=${id} (${items.length}개):`, items);
+    });
+    if(autoFix){
+      console.log('🔧 자동 수정 시작 — 첫 번째 항목 유지, 나머지에 새 고유 id 부여');
+      let fixed = 0;
+      dups.forEach(([id, items]) => {
+        items.slice(1).forEach(item => {
+          const newId = Date.now() + Math.random() + fixed * 1e-6;
+          productDB[item.idx].id = newId;
+          fixed++;
+        });
+      });
+      if(typeof save === 'function') save();
+      if(typeof renderTab === 'function') renderTab();
+      console.log(`✓ ${fixed}개 항목에 새 id 부여됨 — 로컬 저장 완료`);
+      console.log('⚠ 노션은 _notionId 그대로 사용하므로 영향 없음');
+    } else {
+      console.log('자동 수정하려면: window.diagnoseProductIds(true)');
+    }
+  } else {
+    console.log('✓ ID 중복 없음 — 데이터 무결성 정상');
+  }
+  return {total: productDB.length, unique: Object.keys(idGroups).length, dups: dups.length};
+};
 let pdSearch='', pdFilterType='전체', pdFilterMat='전체', pdPage=1, pdLowOnly=false;
 
 // 한글 IME 안전 + 디바운스 검색
@@ -3527,6 +3575,9 @@ function renderProducts(){
           const isOut=stock<=0;
           const stkColor=isOut?'var(--red)':isLow?'var(--org)':'var(--grn)';
           const stkBg=isOut?'var(--red-bg)':isLow?'var(--org-bg)':'var(--grn-bg)';
+          // 🔒 클릭 핸들러용 식별자 — _notionId가 있으면 우선 (전역 고유), 없으면 id
+          // 문자열로 감싸서 number/string 혼동 방지
+          const clickId = "'" + String(p._notionId || p.id).replace(/'/g, "\\'") + "'";
           // 첫 번째 이미지 추출 (string or {url})
           let thumbUrl='';
           if(Array.isArray(p.imgs)&&p.imgs.length){
@@ -3535,20 +3586,20 @@ function renderProducts(){
           }
           const thumbCell=thumbUrl
             ? `<img src="${thumbUrl}" loading="lazy" onclick="event.stopPropagation();openPrevList(${JSON.stringify(p.imgs).replace(/"/g,'&quot;')},0,false)" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--bdr);cursor:pointer;display:block">`
-            : `<div onclick="openProductModal(${p.id})" style="width:38px;height:38px;background:var(--s2);border:1px dashed var(--bdr);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--t3);cursor:pointer" title="사진 없음 — 클릭해서 추가">📷</div>`;
+            : `<div onclick="openProductModal(${clickId})" style="width:38px;height:38px;background:var(--s2);border:1px dashed var(--bdr);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--t3);cursor:pointer" title="사진 없음 — 클릭해서 추가">📷</div>`;
           return `
         <tr style="border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
           <td style="padding:7px 10px" onclick="event.stopPropagation()">
             <input type="checkbox" class="pd-chk" value="${p.id}" onchange="pdUpdateBulkBar()">
           </td>
           <td style="padding:5px 6px" onclick="event.stopPropagation()">${thumbCell}</td>
-          <td style="padding:7px 10px;font-family:monospace;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.code||'—'}</td>
-          <td style="padding:7px 10px;font-weight:600;color:var(--t1)" onclick="openProductModal(${p.id})">${p.name}</td>
-          <td style="padding:7px 10px;text-align:center" onclick="openProductModal(${p.id})">
+          <td style="padding:7px 10px;font-family:monospace;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${clickId})">${p.code||'—'}</td>
+          <td style="padding:7px 10px;font-weight:600;color:var(--t1)" onclick="openProductModal(${clickId})">${p.name}</td>
+          <td style="padding:7px 10px;text-align:center" onclick="openProductModal(${clickId})">
             <span style="font-size:10px;padding:2px 7px;border-radius:10px;background:var(--s2);border:1px solid var(--bdr);white-space:nowrap">${p.type||'기타'}</span>
           </td>
-          <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);white-space:nowrap" onclick="openProductModal(${p.id})">${p.mat||'—'}</td>
-          <td style="padding:7px 10px" onclick="openProductModal(${p.id})">
+          <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);white-space:nowrap" onclick="openProductModal(${clickId})">${p.mat||'—'}</td>
+          <td style="padding:7px 10px" onclick="openProductModal(${clickId})">
             ${p.plating?`<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt)">${p.plating}</span>`:'—'}
           </td>
           <td style="padding:7px 10px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
@@ -3558,9 +3609,9 @@ function renderProducts(){
               <button onclick="quickStockChange(${p.id},+1)" title="+1" style="width:22px;height:22px;border:1px solid var(--bdr);border-radius:4px;background:var(--s1);color:var(--t2);cursor:pointer;font-size:12px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center">＋</button>
             </div>
           </td>
-          <td style="padding:7px 10px;text-align:right;font-weight:700;color:var(--gold-lt);white-space:nowrap" onclick="openProductModal(${p.id})">${p.price?p.price.toLocaleString()+'원':'—'}</td>
-          <td style="padding:7px 10px;text-align:right;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.costPrice?p.costPrice.toLocaleString()+'원':'—'}</td>
-          <td style="padding:7px 10px;text-align:center;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.lastModified||'—'}</td>
+          <td style="padding:7px 10px;text-align:right;font-weight:700;color:var(--gold-lt);white-space:nowrap" onclick="openProductModal(${clickId})">${p.price?p.price.toLocaleString()+'원':'—'}</td>
+          <td style="padding:7px 10px;text-align:right;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${clickId})">${p.costPrice?p.costPrice.toLocaleString()+'원':'—'}</td>
+          <td style="padding:7px 10px;text-align:center;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${clickId})">${p.lastModified||'—'}</td>
           <td style="padding:7px 10px;text-align:center" onclick="event.stopPropagation()">
             <button onclick="pdDeleteOne(${p.id})" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 5px;border-radius:4px" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--t3)'" title="삭제">🗑</button>
           </td>
@@ -3715,7 +3766,23 @@ function pdDeleteAll(){
 
 // ── 제품 모달 ──
 function openProductModal(idOrNull){
-  const p=idOrNull?productDB.find(x=>x.id==idOrNull):null;
+  // 🔒 정확한 매칭 — id 충돌 방지
+  // 1순위: _notionId가 있고 idOrNull과 정확히 일치
+  // 2순위: id 엄격 비교 (=== 우선, == fallback)
+  let p = null;
+  if(idOrNull){
+    const target = String(idOrNull);
+    // 일치하는 후보 모두 찾기
+    const candidates = productDB.filter(x =>
+      String(x.id) === target || String(x._notionId) === target
+    );
+    if(candidates.length > 1){
+      // ⚠ ID 중복 발견 — 콘솔에 경고
+      console.warn('[제품DB] ID 중복 발견 — 같은 ID를 가진 제품 ' + candidates.length + '개:', candidates.map(c => ({id:c.id, code:c.code, name:c.name, notionId:c._notionId})));
+      showToast(`⚠ ID 중복 감지: "${target}"에 매칭되는 제품 ${candidates.length}개 — 콘솔 확인 필요`, 'var(--red)', 6000);
+    }
+    p = candidates[0] || null;
+  }
   pdImgBuf=p?[...(p.imgs||[])]:[];
   sv('pd_id',p?p.id:'');sv('pd_code',p?p.code:'');sv('pd_name',p?p.name:'');
   sv('pd_type',p?p.type:'EARRING');sv('pd_mat',p?p.mat:'브라스 (BRASS)');
@@ -3889,7 +3956,7 @@ function renderPdImgPrev(){
       <button onclick="pdImgBuf.splice(${i},1);renderPdImgPrev()" style="position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;border:none;border-radius:50%;width:17px;height:17px;font-size:11px;cursor:pointer;line-height:1;padding:0">×</button>
     </div>`).join('');
 }
-function saveProduct(){
+async function saveProduct(){
   const code=gv('pd_code'), name=gv('pd_name');
   if(!name) return showToast('⚠ 품목명을 입력해 주세요','var(--red)');
   const id=gv('pd_id');
@@ -4124,16 +4191,49 @@ function saveProduct(){
       showToast('✓ 제품 저장됨','var(--grn)');
     }
     if(typeof syncSels==='function') syncSels();
-    // Notion 동기화 — 수정만 디바운싱 (신규는 위에서 await로 처리됨)
+    // 🔒 Notion 동기화 — 수정 시에도 즉시(await) 동기화
+    // (디바운스로 했더니 새로고침 시 노션엔 옛 이미지가 남아 사라지는 문제 → 즉시 동기화로 변경)
     if(savedProduct && id){
-      debouncedSync('product', savedProduct, true);
+      try {
+        if(typeof showToast === 'function') showToast('🔄 Notion에 변경사항 저장 중...', 'var(--blu)', 1500);
+        await syncProductToNotion(savedProduct, true);
+        savedProduct._syncedAt = new Date().toISOString();
+      } catch(e){
+        console.error('[제품 수정] Notion 동기화 실패:', e);
+        if(typeof showToast === 'function'){
+          showToast(`⚠ Notion 동기화 실패 — 로컬엔 저장됐지만 다른 기기엔 반영 안 될 수 있습니다 (${e.message||'네트워크 오류'})`, 'var(--red)', 7000);
+        }
+      }
     }
   };
   if(notionCfg.workerUrl && pdImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
     showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
-    uploadImagesToR2([...pdImgBuf]).then(uploaded=>doSaveProduct(uploaded));
+    try {
+      const uploaded = await uploadImagesToR2([...pdImgBuf]);
+      // 업로드된 이미지 중 여전히 base64인 것이 있는지 검사 (R2 실패한 경우)
+      const stillBase64 = uploaded.filter(img => img.url && img.url.startsWith('data:'));
+      if(stillBase64.length > 0){
+        // 업로드 실패한 이미지가 있음 — 사용자에게 알리고 계속 진행 여부 확인
+        const proceed = confirm(
+          `⚠ 이미지 ${stillBase64.length}개가 R2 업로드 실패\n\n` +
+          `이대로 저장하면 base64로 노션에 저장되지만 — 노션 크기 제한(2MB)을 넘으면 사진이 손실됩니다.\n\n` +
+          `계속하시겠습니까?\n\n` +
+          `· 확인 → 그대로 저장 (사진 손실 위험 있음)\n` +
+          `· 취소 → 저장 중단 (네트워크 확인 후 재시도)`
+        );
+        if(!proceed){
+          showToast('저장 취소 — Worker/R2 연결 상태를 확인하세요','var(--org)',5000);
+          return;
+        }
+      }
+      await doSaveProduct(uploaded);
+    } catch(e){
+      console.error('이미지 업로드 실패:', e);
+      showToast(`❌ 이미지 업로드 실패: ${e.message||'알 수 없는 오류'} — 저장 취소됨`,'var(--red)',6000);
+      return;
+    }
   } else {
-    doSaveProduct(obj.imgs);
+    await doSaveProduct(obj.imgs);
   }
 }
 function deleteProduct(){
