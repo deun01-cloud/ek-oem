@@ -3999,14 +3999,29 @@ function saveProduct(){
         when: new Date().toISOString()
       });
     }
-    // 출고단가 변경 시: 출고완료/입금완료 안 된 거래명세서의 같은 품번 행 단가 자동 동기화
+    // 출고단가 변경 시: 진행 중인 모든 항목의 단가 자동 동기화
+    // 제품DB가 단가의 단일 진실원천(Single Source of Truth)
+    // 갱신 대상: 발주서(출고완료 안 됨), 거래명세서(입금완료/출고완료 안 됨), 샘플(명세서 발행 안 됨), 견적서(작성중/발송)
     let priceSyncedCount = 0;
+    let ordSyncedCount = 0;
+    let smpSyncedCount = 0;
+    let quoteSyncedCount = 0;
     if(id && savedProduct && obj.price !== prevPrice){
       const newPrice = +obj.price||0;
       const code = (savedProduct.code||'').trim();
-      if(code){
+      const prodName = (savedProduct.name||'').trim();
+      if(code || prodName){
+        // 매칭 헬퍼: itemCode 우선 매칭, 없으면 품명으로 매칭
+        const matchesProduct = (item, codeField, nameField) => {
+          const itemCode = ((item[codeField]||'')+'').trim();
+          const itemName = ((item[nameField]||'')+'').trim();
+          if(code && itemCode === code) return true;
+          if(prodName && itemName === prodName && !itemCode) return true; // 품번 없는 행은 이름으로 매칭
+          return false;
+        };
+
+        // ── 1) 거래명세서 ──
         invoiceHistory.forEach(v=>{
-          // 잠금 조건: 합본 청구서 자체, 합본에 묶인 명세서, 입금완료, _shipped 출고완료 → 모두 제외
           if(v._isConsolidated) return;
           if(v._consolidatedInvoiceId) return;
           if(v.status === '입금완료') return;
@@ -4014,87 +4029,97 @@ function saveProduct(){
           if(!Array.isArray(v.items)) return;
           let touched = false;
           v.items.forEach(it=>{
-            if((it.code||'').trim() === code && (+it.unit||0) !== newPrice){
+            if(matchesProduct(it,'code','name') && (+it.unit||0) !== newPrice){
               it.unit = newPrice;
               touched = true;
             }
           });
           if(touched){
-            // 공급가액/부가세/합계 재계산
             const supply = v.items.reduce((s,it)=>s+(+it.qty||0)*(+it.unit||0), 0);
             v.supplyAmt = supply;
             v.tax = Math.round(supply*0.1);
             v.total = supply + v.tax;
-            // 입금률 갱신
             if(typeof calcPaymentSummary === 'function'){
               const summary = calcPaymentSummary(v.payments||[], v.total);
               v.totalPaid = summary.totalPaid;
               v.paymentRatio = summary.ratio;
             }
             priceSyncedCount++;
-            // 노션 동기화 (디바운스)
             if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof debouncedSync==='function'){
               debouncedSync('invoice', v, true);
             }
           }
         });
-      }
-    }
-    // 출고단가 변경 시: 진행 중 발주서의 같은 품번 행 단가 자동 동기화 (안전 모드)
-    // 잠금 조건: status가 '출고완료' 또는 '취소'면 제외 (이미 확정된 거래는 보호)
-    let orderPriceSyncedCount = 0;
-    if(id && savedProduct && obj.price !== prevPrice){
-      const newPrice = +obj.price||0;
-      const code = (savedProduct.code||'').trim();
-      if(code && Array.isArray(orders)){
+
+        // ── 2) 발주서 ──
+        // 출고완료된 발주는 단가 잠금 (이미 거래 완료된 것은 보존)
         orders.forEach(o=>{
-          const st = o.status||'진행중';
-          if(st === '출고완료' || st === '취소') return; // 잠금
+          if(o.status === '출고완료') return;
           if(!Array.isArray(o.rows)) return;
           let touched = false;
           o.rows.forEach(r=>{
-            if((r.itemCode||'').trim() === code && (+r.unitPrice||0) !== newPrice){
+            if(matchesProduct(r,'itemCode','name') && (+r.unitPrice||0) !== newPrice){
               r.unitPrice = newPrice;
               touched = true;
             }
           });
           if(touched){
-            orderPriceSyncedCount++;
-            // 노션 동기화 (디바운스)
+            ordSyncedCount++;
             if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.ordDb && o._notionId && typeof debouncedSync==='function'){
               debouncedSync('order', o, true);
             }
           }
         });
-      }
-    }
-    // 출고단가 변경 시: 단가가 비어있는(0) 샘플의뢰의 같은 품번 단가 자동 채움 (안전 모드)
-    // 잠금 조건: s.unitPrice가 이미 입력되어 있으면 제외 (수동 입력값 보호)
-    let samplePriceSyncedCount = 0;
-    if(id && savedProduct && (+obj.price||0) > 0){
-      const newPrice = +obj.price||0;
-      const code = (savedProduct.code||'').trim();
-      if(code && Array.isArray(samples)){
+
+        // ── 3) 샘플의뢰 ──
+        // 거래명세서 발행 안 된(invNo 비어있는) 샘플의 단가 갱신
+        // 단, status가 '확정/취소'면 잠금 (이미 결론난 것은 보존)
         samples.forEach(s=>{
-          if((s.itemCode||'').trim() !== code) return;
-          if((+s.unitPrice||0) > 0) return; // 이미 단가 있음 → 보호
-          s.unitPrice = newPrice;
-          samplePriceSyncedCount++;
-          if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.smpDb && s._notionId && typeof debouncedSync==='function'){
-            debouncedSync('sample', s, true);
+          if(s.status === '확정' || s.status === '취소') return;
+          if(s.invNo) return; // 명세서 발행됨 → 잠금
+          // 샘플은 단일 품목이라 itemCode + name 모두 보고 매칭
+          if(matchesProduct(s,'itemCode','name') && (+s.unitPrice||0) !== newPrice){
+            s.unitPrice = newPrice;
+            // 입고원가가 바뀌었으면 그것도 — 다만 입고원가는 별도 정책이라 일단 단가만
+            smpSyncedCount++;
+            if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.smpDb && s._notionId && typeof debouncedSync==='function'){
+              debouncedSync('sample', s, true);
+            }
           }
         });
+
+        // ── 4) 견적서 ──
+        // 작성중/발송 단계의 견적서만 갱신 (수주확정/거절 상태는 잠금)
+        if(typeof quotes !== 'undefined' && Array.isArray(quotes)){
+          quotes.forEach(q=>{
+            if(q.status === '수주확정' || q.status === '거절' || q.status === '취소') return;
+            if(!Array.isArray(q.rows)) return;
+            let touched = false;
+            q.rows.forEach(r=>{
+              if(matchesProduct(r,'itemCode','name') && (+r.unitPrice||0) !== newPrice){
+                r.unitPrice = newPrice;
+                touched = true;
+              }
+            });
+            if(touched){
+              quoteSyncedCount++;
+              if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.quoteDb && q._notionId && typeof debouncedSync==='function'){
+                debouncedSync('quote', q, true);
+              }
+            }
+          });
+        }
       }
     }
     save();closeM('mProduct');renderTab();
-    // 동기화 결과 토스트: 거래명세서·발주서·샘플 합쳐서 표시
-    const totalSynced = priceSyncedCount + orderPriceSyncedCount + samplePriceSyncedCount;
-    if(totalSynced > 0){
+    const syncTotal = priceSyncedCount + ordSyncedCount + smpSyncedCount + quoteSyncedCount;
+    if(syncTotal > 0){
       const parts = [];
+      if(quoteSyncedCount > 0) parts.push(`견적서 ${quoteSyncedCount}건`);
+      if(ordSyncedCount > 0) parts.push(`발주서 ${ordSyncedCount}건`);
+      if(smpSyncedCount > 0) parts.push(`샘플 ${smpSyncedCount}건`);
       if(priceSyncedCount > 0) parts.push(`거래명세서 ${priceSyncedCount}건`);
-      if(orderPriceSyncedCount > 0) parts.push(`발주서 ${orderPriceSyncedCount}건`);
-      if(samplePriceSyncedCount > 0) parts.push(`샘플 ${samplePriceSyncedCount}건`);
-      showToast(`✓ 제품 저장됨 — ${parts.join(' · ')} 단가 자동 동기화`,'var(--grn)', 4000);
+      showToast(`✓ 제품 저장됨 — 진행 중 ${parts.join(' · ')} 단가 자동 동기화`,'var(--grn)', 5000);
     } else {
       showToast('✓ 제품 저장됨','var(--grn)');
     }
@@ -8350,6 +8375,35 @@ function findProductByOrderRow(row){
 
 // 발주서 rows 배열 전체에 대해 productDB 매칭을 시도해 itemCode를 채워줌
 // AI가 itemCode를 채우지 못한 행들에 폴백으로 작동
+// 거래명세서 행에서 품명 입력 후 포커스 빠질 때 자동 매칭
+// — 같은 품명이 제품DB에 있으면 code·unit(단가) 자동 채움
+function _autoMatchInvRow(idx){
+  const r = _invRowsBuf[idx];
+  if(!r || !r.name || !r.name.trim()) return;
+  if(r.code) return; // 이미 품번 있으면 건너뜀
+  if(!productDB || !productDB.length) return;
+  // 정확히 같은 품명 찾기 (먼저 시도)
+  const q = r.name.trim().toLowerCase();
+  let p = productDB.find(x => (x.name||'').trim().toLowerCase() === q);
+  // 부분 매칭 (없으면)
+  if(!p){
+    const candidates = productDB.filter(x =>
+      (x.name||'').toLowerCase().includes(q) || q.includes((x.name||'').toLowerCase())
+    );
+    if(candidates.length === 1) p = candidates[0];
+    // 여러 개면 모호하니 매칭 안 함 (사용자가 수동으로 골라야 함)
+  }
+  if(!p) return;
+  if(p.code && !r.code) r.code = p.code;
+  if(p.price && !r.unit) r.unit = +p.price;
+  // 행 다시 렌더링
+  if(typeof _renderInvRows === 'function') _renderInvRows();
+  if(typeof _updateInvRowCalc === 'function') _updateInvRowCalc(idx);
+  if(typeof showToast === 'function'){
+    showToast(`✓ "${p.code||p.name}" 제품DB에서 매칭 — 단가 ${(+p.price||0).toLocaleString()}원 자동 채움`, 'var(--grn)', 2500);
+  }
+}
+
 function autoFillItemCodesFromDB(rows){
   if(!Array.isArray(rows)||!rows.length) return {matched:0, total:0};
   let matched=0;
@@ -8366,23 +8420,34 @@ function autoFillItemCodesFromDB(rows){
   return {matched, total:rows.length};
 }
 
-// 발주서 rows의 단가가 비어있거나 0인 행을 productDB에서 자동으로 채워줌
-// (itemCode 유무와 상관없이) — 발주서 모달 열 때 자동 호출
-// 안전 보장: 단가가 이미 0보다 큰 값이면 절대 안 건드림 (수동 입력값 보호)
-function autoFillPricesFromDB(rows){
-  if(!Array.isArray(rows)||!rows.length) return {filled:0};
-  let filled=0;
-  rows.forEach(r=>{
-    if((+r.unitPrice||0) > 0) return; // 이미 단가 있음 → 보호
-    const p=findProductByOrderRow(r);
-    if(p && (+p.price||0) > 0){
-      r.unitPrice = +p.price;
-      filled++;
-      // 매칭은 됐는데 itemCode가 비어있으면 같이 채워줌
-      if(!r.itemCode && p.code) r.itemCode = p.code;
-    }
-  });
-  return {filled};
+// 발주서 행에서 품명 입력 후 포커스 빠질 때 자동 매칭
+// — 같은 품명이 제품DB에 있으면 itemCode·단가·도금·소재·사이즈 자동 채움
+function _autoMatchOrdRow(idx){
+  const r = ordRowsBuf[idx];
+  if(!r || !r.name || !r.name.trim()) return;
+  // 이미 itemCode가 있으면 (이전에 매칭됨) 다시 안 함
+  if(r.itemCode) return;
+  if(!productDB || !productDB.length) return;
+  // findProductByOrderRow 사용
+  const p = (typeof findProductByOrderRow === 'function')
+    ? findProductByOrderRow(r)
+    : productDB.find(x => x.name && x.name.trim() === r.name.trim());
+  if(!p) return;
+  // 자동 매칭 — 비어있는 필드만 채움 (사용자가 이미 입력한 건 존중)
+  if(p.code && !r.itemCode) r.itemCode = p.code;
+  if(p.price && !r.unitPrice) r.unitPrice = p.price;
+  if(p.plating && !r.plating) r.plating = p.plating;
+  if(p.mat && !r.mat) r.mat = p.mat;
+  if(p.size && !r.size) r.size = p.size;
+  // 이미지도 채움 (있고 행에 없으면)
+  if(p.imgs && p.imgs[0] && p.imgs[0].url && !r.img){
+    r.img = p.imgs[0].url;
+  }
+  // 행 다시 렌더링해서 itemCode 배지/이미지 표시
+  if(typeof renderOrdRows === 'function') renderOrdRows();
+  if(typeof showToast === 'function'){
+    showToast(`✓ "${p.code||p.name}" 제품DB에서 매칭 — 행 ${idx+1} 자동 채움`, 'var(--grn)', 2500);
+  }
 }
 
 // AI 프롬프트에 주입할 productDB 슬림 카탈로그 생성
@@ -16242,17 +16307,6 @@ function openOrdModal(idOrNull){
   document.getElementById('o_delBtn').style.display=o?'':'none';
   document.getElementById('ord_ai_badge').style.display='none';
   if(!ordRowsBuf||!ordRowsBuf.length)ordRowsBuf=o?(o.rows||[]).map(r=>({...r})):[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];
-  // 단가가 비어있는 행 자동 채우기: 상품명/품번이 제품DB와 일치하면 단가 가져옴
-  // (수정 모드에서만 — 신규 등록 시는 의미 없음. 이미 단가 있는 행은 건드리지 않음)
-  if(o){
-    const priceResult = autoFillPricesFromDB(ordRowsBuf);
-    if(priceResult.filled > 0){
-      // 조용히 토스트만 — 사용자가 모달 닫고 저장하면 노션에도 반영됨
-      if(typeof showToast === 'function'){
-        showToast(`✓ ${priceResult.filled}개 행의 단가를 제품DB에서 자동으로 가져옴`, 'var(--grn)', 3000);
-      }
-    }
-  }
   // 요청 출고일 변경 이력 표시
   const shipHistEl=document.getElementById('o_shipHistArea');
   if(shipHistEl){
@@ -16406,9 +16460,19 @@ function renderOrdRows(){
           <img src="${r.img}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1.5px solid var(--gold-line);cursor:pointer;flex-shrink:0"
             onclick="openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\'")}'}],0,false)"
             title="클릭하여 미리보기">
-          <input class="fi" value="${r.name||''}" oninput="ordRowsBuf[${i}].name=this.value" placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;flex:1;min-width:0">
+          <input class="fi" value="${r.name||''}"
+            oncompositionstart="this._composing=true"
+            oncompositionend="this._composing=false;ordRowsBuf[${i}].name=this.value"
+            oninput="if(!this._composing)ordRowsBuf[${i}].name=this.value"
+            onblur="_autoMatchOrdRow(${i})"
+            placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;flex:1;min-width:0">
           <button onclick="ordRowsBuf[${i}].img='';renderOrdRows()" title="이미지 제거" style="padding:2px 5px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;font-size:10px;color:var(--t3);flex-shrink:0">🗑</button>
-        </div>`:`<input class="fi" value="${r.name||''}" oninput="ordRowsBuf[${i}].name=this.value" placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;width:100%">`}
+        </div>`:`<input class="fi" value="${r.name||''}"
+            oncompositionstart="this._composing=true"
+            oncompositionend="this._composing=false;ordRowsBuf[${i}].name=this.value"
+            oninput="if(!this._composing)ordRowsBuf[${i}].name=this.value"
+            onblur="_autoMatchOrdRow(${i})"
+            placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;width:100%">`}
         ${r.itemCode?`<div style="font-size:9.5px;color:var(--gold-lt);margin-top:2px;font-weight:600">📌 ${r.itemCode}</div>`:''}
       </div>
       <div style="position:relative">
@@ -16725,6 +16789,95 @@ async function saveOrd(forceOverwrite){
         }
       });
       orders[i]={...orders[i],...obj};
+
+      // 🔄 발주 수정 시 연결된 거래명세서 단가 동기화 검사
+      // 같은 발주에 연결된 거래명세서가 있고 단가/수량/품목이 다르면 사용자에게 안내
+      const linkedInvoices = invoiceHistory.filter(inv =>
+        !inv._isConsolidated && !inv._isStandalone &&
+        (String(inv.ordId) === String(ordId) || (inv.ordNo && inv.ordNo === obj.no))
+      );
+      if(linkedInvoices.length > 0){
+        // 명세서별로 발주 행과 매칭해서 차이 찾기
+        const updates = [];
+        linkedInvoices.forEach(inv => {
+          const oldItems = inv.items || [];
+          const diffs = [];
+          const newItems = oldItems.map(invItem => {
+            // 발주 행에서 같은 품번/품명 찾기
+            const ordRow = cleanRows.find(r =>
+              (r.itemCode && invItem.code && r.itemCode === invItem.code) ||
+              (r.name && invItem.name && r.name === invItem.name)
+            );
+            if(!ordRow) return invItem;
+            // 단가/수량 비교
+            const newUnit = +ordRow.unitPrice || 0;
+            const oldUnit = +invItem.unit || 0;
+            if(newUnit > 0 && newUnit !== oldUnit){
+              diffs.push({
+                name: invItem.name || ordRow.name,
+                oldUnit: oldUnit,
+                newUnit: newUnit
+              });
+              return {...invItem, unit: newUnit};
+            }
+            return invItem;
+          });
+          if(diffs.length > 0){
+            updates.push({inv, newItems, diffs});
+          }
+        });
+
+        if(updates.length > 0){
+          // 사용자에게 확인 — 비동기로 안 막고 발주 저장은 계속 진행
+          const summary = updates.map(u => {
+            const diffStr = u.diffs.slice(0,3).map(d =>
+              `  · ${d.name}: ${d.oldUnit.toLocaleString()}원 → ${d.newUnit.toLocaleString()}원`
+            ).join('\n');
+            const more = u.diffs.length > 3 ? `\n  · 외 ${u.diffs.length-3}건` : '';
+            return `📋 거래명세서 ${u.inv.invNo||u.inv.id}\n${diffStr}${more}`;
+          }).join('\n\n');
+
+          setTimeout(()=>{
+            if(typeof showConfirm === 'function'){
+              showConfirm(
+                `발주서 단가 변경이 감지되었습니다.\n연결된 거래명세서 ${updates.length}건에도 적용할까요?\n\n${summary}\n\n⚠ 입금완료된 명세서도 함께 갱신됩니다.`,
+                async ()=>{
+                  let updated = 0;
+                  for(const u of updates){
+                    u.inv.items = u.newItems;
+                    // 합계 재계산
+                    const supplyAmt = u.newItems.reduce((s,it)=> s + ((+it.qty||0) * (+it.unit||0)), 0);
+                    u.inv.supplyAmt = supplyAmt;
+                    if(u.inv.taxIncluded || u.inv.includeTax){
+                      u.inv.tax = Math.round(supplyAmt * 0.1);
+                      u.inv.total = supplyAmt + u.inv.tax;
+                    } else {
+                      u.inv.tax = 0;
+                      u.inv.total = supplyAmt;
+                    }
+                    // 입금률 재계산
+                    if(u.inv.total > 0){
+                      const paid = (u.inv.payments||[]).reduce((s,p)=>s+(+p.amount||0),0);
+                      u.inv.paymentRatio = Math.round(paid * 100 / u.inv.total);
+                    }
+                    // 노션 동기화
+                    if(u.inv._notionId && typeof syncInvoiceToNotion === 'function'){
+                      try { await syncInvoiceToNotion(u.inv, true); updated++; }
+                      catch(e){ console.warn('거래명세서 sync 실패:', e); }
+                    } else {
+                      updated++;
+                    }
+                  }
+                  save();
+                  if(currentTab==='invoice') renderTab();
+                  showToast(`✓ 연결 거래명세서 ${updated}건의 단가가 갱신되었습니다`, 'var(--grn)', 4500);
+                },
+                '단가 동기화', '💰', '예, 명세서에도 적용', 'blu'
+              );
+            }
+          }, 800); // 발주 저장 토스트 사라진 후
+        }
+      }
     }
     ordId=+id;
     // Update ship date on linked procs
@@ -21578,7 +21731,12 @@ function _renderInvRows(){
       return `
       <div style="display:grid;grid-template-columns:30px 2fr 1.2fr 0.8fr 1fr 1.2fr 30px;gap:4px 4px;align-items:center;margin-bottom:6px;padding-bottom:3px;border-bottom:1px dashed transparent">
         <div style="text-align:center;font-size:11px;color:var(--t3);font-weight:600">${i+1}</div>
-        <input class="fi" id="sivName_${i}" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].name=this.value" placeholder="품명" style="font-size:11.5px;padding:4px 6px">
+        <input class="fi" id="sivName_${i}" value="${(r.name||'').replace(/"/g,'&quot;')}"
+          oncompositionstart="this._composing=true"
+          oncompositionend="this._composing=false;_invRowsBuf[${i}].name=this.value"
+          oninput="if(!this._composing)_invRowsBuf[${i}].name=this.value"
+          onblur="_autoMatchInvRow(${i})"
+          placeholder="품명" style="font-size:11.5px;padding:4px 6px">
         <input class="fi" id="sivCode_${i}" value="${(r.code||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].code=this.value;_updateInvRowCalc(${i})" placeholder="품번 (재고 연동)" style="font-size:11px;padding:4px 6px;font-family:monospace">
         <input class="fi" id="sivQty_${i}" type="number" value="${r.qty||1}" oninput="_invRowsBuf[${i}].qty=+this.value;_updateInvRowCalc(${i})" style="font-size:11.5px;padding:4px 6px;text-align:center">
         <input class="fi" id="sivUnit_${i}" type="number" value="${r.unit||0}" oninput="_invRowsBuf[${i}].unit=+this.value;_updateInvRowCalc(${i})" placeholder="0" style="font-size:11.5px;padding:4px 6px;text-align:right">
