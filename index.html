@@ -2849,43 +2849,32 @@ function issueSelectedASInvoice(){
     return;
   }
 
-  // 확인 다이얼로그
+  // 확인 다이얼로그 없이 바로 청구서 빌더 모달 열기 — 사용자가 거기서 다시 확인함
   const vendorName = billable.reduce((acc, a) =>
     (a.client||'').length > acc.length ? a.client : acc, '');
-  const totalAmt = billable.reduce((sum, a) => sum + (+a.qty||1)*(+a.unitCost||0), 0);
-  // showConfirm은 textContent로 출력하므로 \n이 안 먹음 → 한 줄로 정리
-  let confirmMsg = `${vendorName} ${billable.length}건 · 합계 ${totalAmt.toLocaleString()}원을 발행합니다.`;
-  const excluded = [];
-  if(factoryFault.length) excluded.push(`입고불량 ${factoryFault.length}건`);
-  if(unclassified.length) excluded.push(`수리종류 미설정 ${unclassified.length}건`);
-  if(alreadyBilled.length) excluded.push(`이미 청구됨 ${alreadyBilled.length}건`);
-  if(excluded.length) confirmMsg += ` (제외: ${excluded.join(', ')})`;
-
-  showConfirm(confirmMsg, () => {
-    // 청구서 빌더 컨텍스트 구성 — 선택된 청구가능 건만으로
-    const items = billable.map(a => ({...a, _selected: true}));
-    // 고객사 이니셜 계산 (기존 로직과 동일)
-    const getInit=(name)=>{
-      const nm=(name||'').trim();
-      if(!nm) return '';
-      const cl=findClientByVendor(nm);
-      if(cl && cl.initials) return cl.initials.trim().toUpperCase();
-      const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
-      const words=clean.split(/\s+/);
-      return (words.length>=2 ? (words[0][0]+(words[1][0]||'')) : clean.slice(0,2)).toUpperCase();
-    };
-    _asInvoiceContext = {
-      init: getInit(vendorName),
-      vendorName,
-      items,
-      asOfDate: toLocalDateStr(new Date()),
-      factoryFaultCount: factoryFault.length,
-      unclassifiedCount: unclassified.length,
-      isFromSelection: true, // 선택 기반 발행임을 표시
-    };
-    renderASInvoiceBody();
-    openM('mASInvoice');
-  }, '거래명세서 발행', '🧾', '발행', 'blu');
+  // 청구서 빌더 컨텍스트 구성 — 선택된 청구가능 건만으로
+  const items = billable.map(a => ({...a, _selected: true}));
+  // 고객사 이니셜 계산 (기존 로직과 동일)
+  const getInit=(name)=>{
+    const nm=(name||'').trim();
+    if(!nm) return '';
+    const cl=findClientByVendor(nm);
+    if(cl && cl.initials) return cl.initials.trim().toUpperCase();
+    const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
+    const words=clean.split(/\s+/);
+    return (words.length>=2 ? (words[0][0]+(words[1][0]||'')) : clean.slice(0,2)).toUpperCase();
+  };
+  _asInvoiceContext = {
+    init: getInit(vendorName),
+    vendorName,
+    items,
+    asOfDate: toLocalDateStr(new Date()),
+    factoryFaultCount: factoryFault.length,
+    unclassifiedCount: unclassified.length,
+    isFromSelection: true, // 선택 기반 발행임을 표시
+  };
+  renderASInvoiceBody();
+  openM('mASInvoice');
 }
 
 // 청구서 작성 모달 열기 — 고객사 이니셜 기준
