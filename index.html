@@ -2586,16 +2586,22 @@ function clearASSelection(){
 // 선택된 AS들 → 거래명세서 발행 (고객사별 자동 묶음)
 // ════════════════════════════════════════════════════════════════
 async function publishSelectedASInvoice(){
+  console.log('[AS 명세서 발행] 시작 - 선택 항목:', _asSelected.size);
   if(_asSelected.size === 0){
     showToast('⚠ 선택된 항목이 없습니다','var(--red)');
     return;
   }
   // 🔒 노션-우선
-  if(!requireNotion('invDb', '거래명세서')) return;
+  if(!requireNotion('invDb', '거래명세서')){
+    console.warn('[AS 명세서 발행] Notion 미연결 → 중단');
+    return;
+  }
 
   const selectedItems = asItems.filter(a => _asSelected.has(+a.id));
+  console.log('[AS 명세서 발행] 선택된 AS items:', selectedItems.length);
   if(!selectedItems.length){
-    showToast('⚠ 선택된 항목을 찾을 수 없습니다','var(--red)');
+    showToast('⚠ 선택된 항목을 찾을 수 없습니다 — 페이지를 새로고침해 주세요','var(--red)', 4000);
+    console.warn('[AS 명세서 발행] _asSelected에 ID 있지만 asItems에서 못 찾음. _asSelected:', [..._asSelected]);
     return;
   }
 
@@ -2604,6 +2610,7 @@ async function publishSelectedASInvoice(){
   const notBillable = selectedItems.filter(a => a.defectType !== '고객불량');
   const alreadyBilled = billable.filter(a => a.billing === '청구 완료');
   const ready = billable.filter(a => a.billing === '미청구' || a.billing === '청구 예정');
+  console.log('[AS 명세서 발행] 필터 결과:', {billable: billable.length, ready: ready.length, alreadyBilled: alreadyBilled.length, notBillable: notBillable.length});
 
   if(ready.length === 0){
     let msg = '⚠ 청구 가능한 AS가 없습니다.\n';
@@ -2750,7 +2757,7 @@ async function publishSelectedASInvoice(){
         ordNo: v.ordNo, vendor: v.vendor, total: v.total, items: v.items.length
       })));
     }
-  }, vendorGroups.length === 1 ? '거래명세서 발행' : '거래명세서 다중 발행', '🧾', '발행', 'gold');
+  }, vendorGroups.length === 1 ? '거래명세서 발행' : '거래명세서 다중 발행', '🧾', '발행', 'blu');
 }
 
 function deleteSelectedAS(){
@@ -2780,7 +2787,7 @@ function deleteSelectedAS(){
   },'⚠ AS 일괄 삭제','🗑','삭제','var(--red)');
 }
 
-function updateASField(id, field, value, ev){
+async function updateASField(id, field, value, ev){
   if(ev) ev.stopPropagation();
   const i = asItems.findIndex(x=>x.id==id);
   if(i<0) return;
@@ -2797,13 +2804,21 @@ function updateASField(id, field, value, ev){
   }
   asItems[i] = {...asItems[i], [field]: value};
   save();
-  // Notion 동기화 (백그라운드)
-  if(notionCfg.workerUrl && notionCfg.asDb){
-    debouncedSync('as', asItems[i], true);
+  // 🔒 즉시 Notion 동기화 — 디바운스 X (새로고침 시 손실 방지)
+  if(notionCfg.workerUrl && notionCfg.asDb && asItems[i]._notionId){
+    try {
+      await syncASToNotion(asItems[i], true);
+      asItems[i]._syncedAt = new Date().toISOString();
+      showToast('✓ 변경됨 (Notion 동기화 완료)','var(--grn)',1500);
+    } catch(e){
+      console.error('AS 인라인 수정 노션 sync 실패:', e);
+      showToast(`⚠ Notion 동기화 실패 — 로컬엔 저장됨 (${e.message||'네트워크 오류'})`, 'var(--org)', 5000);
+    }
+  } else {
+    showToast('✓ 변경됨','var(--grn)',1200);
   }
   renderAS();
   updateBadges();
-  showToast('✓ 변경됨','var(--grn)',1200);
 }
 
 let _asSubtab = 'active'; // 'active' | 'done'
@@ -6900,6 +6915,7 @@ function mapNotionAS(row){
     shipDate:np.date(p['출고일']),
     status:  np.select(p['진행상태'])||'접수',
     billing: np.select(p['청구상태'])||'미청구',
+    defectType: np.select(p['수리종류'])||'', // 🔒 수리종류 매핑 추가
   };
 }
 function mapNotionInquiry(row){
@@ -7984,6 +8000,8 @@ async function syncASToNotion(a, update){
   // → 등록 후 사용자가 노션에서 필드를 추가하면 그 다음 sync 부터 자동 반영됨
   if(a.status)  p["진행상태"]={"select":{"name":a.status}};
   if(a.billing) p["청구상태"]={"select":{"name":a.billing}};
+  // 🔒 수리종류 동기화 — 노션 AS DB의 select 필드와 매칭
+  if(a.defectType) p["수리종류"]={"select":{"name":a.defectType}};
   if(a._notionId){
     // 업데이트 시도 — 실패하면 출고일 빼고 재시도
     try {
