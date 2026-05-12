@@ -5695,23 +5695,47 @@ function _resolveInvItems(inv){
   if(inv.ordId) o = orders.find(x=>String(x.id)===String(inv.ordId));
   if(!o && inv.ordNo) o = orders.find(x=>x.no === inv.ordNo);
   // "이름 ×수량, 이름 ×수량, ..." 형식 파싱
+  // 이름에 [품번] 포함된 경우도 처리: "고래꼬리 원터치-YG [WBEBG091202G] × 30"
   const parsed = inv.itemSummary.split(',').map(s=>{
     const t = s.trim();
     const m = t.match(/^(.+?)\s*×\s*(\d+)$/);
     if(!m) return null;
-    const nm = m[1].trim();
+    let nm = m[1].trim();
     const qt = +m[2] || 0;
-    // 발주서에서 매칭
-    const ordRow = (o && o.rows||[]).find(r => r.name === nm);
+    // 이름에서 [품번] 추출 시도
+    let extractedCode = '';
+    const codeMatch = nm.match(/\[([A-Z0-9]+)\]\s*$/);
+    if(codeMatch){
+      extractedCode = codeMatch[1];
+      // 이름은 [품번] 부분 제거한 깨끗한 형태로
+      nm = nm.replace(/\s*\[[A-Z0-9]+\]\s*$/, '').trim();
+    }
+    // 발주서에서 매칭 (이름 또는 추출된 품번으로)
+    const ordRow = (o && o.rows||[]).find(r =>
+      r.name === nm ||
+      (extractedCode && r.itemCode === extractedCode) ||
+      // 이름에 [품번]이 그대로 포함된 발주서 행도 매칭
+      r.name === m[1].trim()
+    );
     let unit = ordRow ? (+ordRow.unitPrice || 0) : 0;
-    // 발주서에 없으면 제품DB에서 찾기 (이름 매칭)
+    let code = (ordRow && ordRow.itemCode) || extractedCode;
+    // 발주서에 없으면 제품DB에서 찾기 (품번 우선, 이름 차선)
     if(!unit && typeof productDB !== 'undefined'){
-      const p = productDB.find(p => p.name === nm);
-      if(p) unit = +p.price || 0;
+      let p = null;
+      if(extractedCode){
+        p = productDB.find(p => p.code === extractedCode);
+      }
+      if(!p) p = productDB.find(p => p.name === nm);
+      // 이름에 [품번]이 그대로 붙어있는 제품DB도 매칭 시도
+      if(!p) p = productDB.find(p => p.name === m[1].trim());
+      if(p){
+        unit = +p.price || 0;
+        if(!code) code = p.code || '';
+      }
     }
     return {
       name: nm,
-      code: (ordRow && ordRow.itemCode) || '',
+      code,
       qty: qt,
       unit,
       amt: qt * unit,
@@ -5721,6 +5745,29 @@ function _resolveInvItems(inv){
       size: (ordRow && ordRow.size) || ''
     };
   }).filter(Boolean);
+  // 최종 폴백: 단가가 여전히 0인데 supplyAmt가 있으면 역산
+  //   - 단일 품목: supplyAmt ÷ qty
+  //   - 여러 품목 중 일부만 단가 누락: 누락 행 합산 = supplyAmt - (정상 행 합)
+  //                                      그걸 누락 수량으로 나눔 (균등 분배)
+  const supplyAmt = +inv.supplyAmt || 0;
+  if(supplyAmt > 0){
+    const missing = parsed.filter(it => (+it.unit||0) === 0 && (+it.qty||0) > 0);
+    const known = parsed.filter(it => (+it.unit||0) > 0 && (+it.qty||0) > 0);
+    if(missing.length > 0){
+      const knownAmt = known.reduce((s,it)=>s + (+it.qty||0)*(+it.unit||0), 0);
+      const remaining = supplyAmt - knownAmt;
+      const missingQty = missing.reduce((s,it)=>s+(+it.qty||0), 0);
+      if(remaining > 0 && missingQty > 0){
+        // 누락 행 사이 단가는 같다고 가정 → 균등 분배
+        const inferredUnit = Math.round(remaining / missingQty);
+        missing.forEach(it=>{
+          it.unit = inferredUnit;
+          it.amt = (+it.qty||0) * inferredUnit;
+          it._inferredUnit = true; // 역산된 단가 표시 (필요 시 UI에서 활용)
+        });
+      }
+    }
+  }
   return parsed;
 }
 
