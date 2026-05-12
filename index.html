@@ -3269,9 +3269,12 @@ async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
     await syncInvoiceToNotion(invRec, false);
   } catch(e){
     console.error('AS 거래명세서 노션 등록 실패:', e);
+    const errMsg = e.message||'네트워크/권한 오류';
     if(typeof showToast === 'function'){
-      showToast(`❌ AS 거래명세서 발행 실패: Notion에 저장할 수 없습니다 (${e.message||'네트워크/권한 오류'}) — 다시 시도해주세요`, 'var(--red)', 7000);
+      showToast(`❌ AS 거래명세서 발행 실패 — ${errMsg}`, 'var(--red)', 7000);
     }
+    // 토스트로 놓칠 수 있으니 alert로도 확실히 안내
+    alert(`❌ AS 거래명세서 발행 실패\n\nNotion에 저장할 수 없습니다.\n사유: ${errMsg}\n\n다시 시도하거나, 상단의 Notion 연결 상태를 확인해 주세요.`);
     return; // 모달 유지
   }
 
