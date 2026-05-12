@@ -3197,16 +3197,15 @@ function confirmASInvoice(){
   const supplyAmt = selected.reduce((s,a)=>s+(+a.qty||1)*(+a.unitCost||0),0);
   const tax = Math.round(supplyAmt*0.1);
   const total = supplyAmt + tax;
+  // showConfirm은 textContent로 출력 → 한 줄로 정리
+  const confirmMsg =
+    `${ctx.vendorName} · AS ${selected.length}건 → 거래명세서 1장 · ` +
+    `공급가액 ${supplyAmt.toLocaleString()}원 + VAT ${tax.toLocaleString()}원 = ` +
+    `합계 ${total.toLocaleString()}원을 발행합니다.`;
   showConfirm(
-    `${ctx.vendorName}으로 거래명세서를 발행합니다.\n\n` +
-    `AS ${selected.length}건 → 거래명세서 1장\n` +
-    `공급가액 ₩${supplyAmt.toLocaleString()} + VAT ₩${tax.toLocaleString()}\n` +
-    `합계 ₩${total.toLocaleString()}\n\n` +
-    `발행 후:\n` +
-    `· AS 청구상태 → 청구 완료\n` +
-    `· 거래명세서 탭에 등장 (월말 합본 청구 가능)`,
+    confirmMsg,
     () => { _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total); },
-    '거래명세서 발행', '🧾'
+    '거래명세서 발행', '🧾', '발행', 'blu'
   );
 }
 
