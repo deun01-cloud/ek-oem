@@ -2739,14 +2739,39 @@ function renderAS(){
     </button>
   </div>
 
-  ${_asSelected.size>0?`
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:10px 14px;background:var(--gold-bg);border:1.5px solid var(--gold);border-radius:8px;position:sticky;top:10px;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,.06)">
-    <span style="font-size:12.5px;font-weight:700;color:var(--gold-lt)">✓ ${_asSelected.size}건 선택됨</span>
-    <span style="flex:1"></span>
-    <button onclick="clearASSelection()" style="padding:5px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--t2)">선택 해제</button>
-    <button onclick="deleteSelectedAS()" style="padding:5px 14px;font-size:11.5px;background:var(--red);color:#fff;border:none;border-radius:5px;font-weight:600;cursor:pointer;font-family:inherit">🗑 선택 항목 삭제</button>
-  </div>
-  `:''}
+  ${_asSelected.size>0?(()=>{
+    // 선택된 항목 청구 가능 여부 미리 계산
+    const _selItems = asItems.filter(a => _asSelected.has(+a.id));
+    const _billable = _selItems.filter(a => a.defectType === '고객불량');
+    const _factoryFault = _selItems.filter(a => a.defectType === '입고불량');
+    const _unclassified = _selItems.filter(a => !a.defectType || (a.defectType !== '고객불량' && a.defectType !== '입고불량'));
+    const _alreadyBilled = _selItems.filter(a => a.billing === '청구 완료');
+    const _nonBillable = _selItems.length - _billable.length;
+    // 안내 메시지
+    let _hint = '';
+    if(_nonBillable > 0){
+      const parts = [];
+      if(_factoryFault.length) parts.push(_factoryFault.length + '건 입고불량(공장책임)');
+      if(_unclassified.length) parts.push(_unclassified.length + '건 수리종류 미설정');
+      if(_alreadyBilled.length) parts.push(_alreadyBilled.length + '건 이미 청구됨');
+      _hint = ' · <span style="color:var(--red);font-size:11px">' + _nonBillable + '건 청구 불가(' + (parts.join(', ')||'고객불량 아님') + ')</span>';
+    }
+    const _canIssue = _billable.length > 0;
+    const _btnBg = _canIssue ? 'var(--gold)' : 'var(--s3)';
+    const _btnColor = _canIssue ? '#fff' : 'var(--t3)';
+    const _btnCursor = _canIssue ? 'pointer' : 'not-allowed';
+    const _btnDisabled = _canIssue ? '' : 'disabled';
+    const _btnTitle = _canIssue ? ('선택한 ' + _billable.length + '건 거래명세서 발행') : '청구 가능한 항목이 없습니다';
+    const _btnLabel = '🧾 거래명세서 발행' + (_canIssue ? (' (' + _billable.length + ')') : '');
+    return '' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;padding:10px 14px;background:var(--gold-bg);border:1.5px solid var(--gold);border-radius:8px;position:sticky;top:10px;z-index:10;box-shadow:0 2px 8px rgba(0,0,0,.06)">' +
+        '<span style="font-size:12.5px;font-weight:700;color:var(--gold-lt)">✓ ' + _asSelected.size + '건 선택됨' + _hint + '</span>' +
+        '<span style="flex:1"></span>' +
+        '<button onclick="clearASSelection()" style="padding:5px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--t2)">선택 해제</button>' +
+        '<button onclick="issueSelectedASInvoice()" ' + _btnDisabled + ' style="padding:5px 14px;font-size:11.5px;background:' + _btnBg + ';color:' + _btnColor + ';border:none;border-radius:5px;font-weight:600;cursor:' + _btnCursor + ';font-family:inherit" title="' + _btnTitle + '">' + _btnLabel + '</button>' +
+        '<button onclick="deleteSelectedAS()" style="padding:5px 14px;font-size:11.5px;background:var(--red);color:#fff;border:none;border-radius:5px;font-weight:600;cursor:pointer;font-family:inherit">🗑 선택 항목 삭제</button>' +
+      '</div>';
+  })():''}
 
   ${_asSubtab==='active' ? `
   <div class="card">
@@ -2788,6 +2813,78 @@ function renderAS(){
 //   출고일별로 그룹핑한 표 형식 청구서 (이미지 형식 참조)
 // ════════════════════════════════════════════════════════════════
 let _asInvoiceContext = null; // {init, vendorName, items:[...], asOfDate}
+
+// 선택된 AS 항목만 모아서 거래명세서 발행
+// (액션바의 "거래명세서 발행" 버튼에서 호출)
+function issueSelectedASInvoice(){
+  if(_asSelected.size === 0){
+    showToast('⚠ 선택된 AS가 없습니다','var(--red)');
+    return;
+  }
+  // 선택된 항목 모으기
+  const selItems = asItems.filter(a => _asSelected.has(+a.id));
+  // 청구 대상: 고객불량 + 미청구 또는 청구예정
+  const billable = selItems.filter(a =>
+    a.defectType === '고객불량' &&
+    (a.billing === '미청구' || a.billing === '청구 예정')
+  );
+  const factoryFault = selItems.filter(a => a.defectType === '입고불량');
+  const unclassified = selItems.filter(a => !a.defectType);
+  const alreadyBilled = selItems.filter(a => a.billing === '청구 완료');
+
+  if(billable.length === 0){
+    let msg = '청구 가능한 AS가 없습니다.\n\n청구 대상은 "고객불량" + "미청구/청구예정" 건입니다.';
+    if(factoryFault.length) msg += `\n• 입고불량 ${factoryFault.length}건 — 공장 책임이라 청구 불가`;
+    if(unclassified.length) msg += `\n• 수리종류 미설정 ${unclassified.length}건 — 행을 클릭해서 분류해 주세요`;
+    if(alreadyBilled.length) msg += `\n• 이미 청구 완료 ${alreadyBilled.length}건`;
+    showToast('⚠ 청구 가능한 항목이 없습니다','var(--org)', 4000);
+    setTimeout(()=>alert(msg), 100);
+    return;
+  }
+
+  // 고객사가 여러 개면 경고 (한 거래명세서는 한 고객사만)
+  const vendors = [...new Set(billable.map(a => (a.client||'').trim()))].filter(Boolean);
+  if(vendors.length > 1){
+    alert(`⚠ 서로 다른 고객사가 ${vendors.length}곳 섞여 있습니다.\n\n${vendors.join(', ')}\n\n거래명세서는 한 고객사씩 발행해야 합니다.\n같은 고객사 건만 선택해서 다시 시도해 주세요.`);
+    return;
+  }
+
+  // 확인 다이얼로그
+  const vendorName = billable.reduce((acc, a) =>
+    (a.client||'').length > acc.length ? a.client : acc, '');
+  const totalAmt = billable.reduce((sum, a) => sum + (+a.qty||1)*(+a.unitCost||0), 0);
+  let confirmMsg = `${vendorName} 고객사 AS ${billable.length}건의 거래명세서를 발행하시겠습니까?\n\n`;
+  confirmMsg += `• 청구 가능: ${billable.length}건 (합계 ${totalAmt.toLocaleString()}원)`;
+  if(factoryFault.length) confirmMsg += `\n• 제외: 입고불량 ${factoryFault.length}건`;
+  if(unclassified.length) confirmMsg += `\n• 제외: 수리종류 미설정 ${unclassified.length}건`;
+  if(alreadyBilled.length) confirmMsg += `\n• 제외: 이미 청구 완료 ${alreadyBilled.length}건`;
+
+  showConfirm(confirmMsg, () => {
+    // 청구서 빌더 컨텍스트 구성 — 선택된 청구가능 건만으로
+    const items = billable.map(a => ({...a, _selected: true}));
+    // 고객사 이니셜 계산 (기존 로직과 동일)
+    const getInit=(name)=>{
+      const nm=(name||'').trim();
+      if(!nm) return '';
+      const cl=findClientByVendor(nm);
+      if(cl && cl.initials) return cl.initials.trim().toUpperCase();
+      const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
+      const words=clean.split(/\s+/);
+      return (words.length>=2 ? (words[0][0]+(words[1][0]||'')) : clean.slice(0,2)).toUpperCase();
+    };
+    _asInvoiceContext = {
+      init: getInit(vendorName),
+      vendorName,
+      items,
+      asOfDate: toLocalDateStr(new Date()),
+      factoryFaultCount: factoryFault.length,
+      unclassifiedCount: unclassified.length,
+      isFromSelection: true, // 선택 기반 발행임을 표시
+    };
+    renderASInvoiceBody();
+    openM('mASInvoice');
+  }, '거래명세서 발행', '🧾');
+}
 
 // 청구서 작성 모달 열기 — 고객사 이니셜 기준
 // 비즈니스 규칙: 고객불량(defectType='고객불량')만 청구 대상.
