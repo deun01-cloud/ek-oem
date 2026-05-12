@@ -5001,7 +5001,7 @@ function renderInvoiceHistory(){
     h+='<thead><tr style="background:var(--s2);border-bottom:2px solid var(--bdr)">';
     h+='<th onclick="invToggleSort(\'date\')" style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" title="클릭하여 발행일 정렬">발행일'+_invSortIndicator('date')+'</th>';
     h+='<th onclick="invToggleSort(\'vendor\')" style="padding:8px 10px;text-align:left;font-weight:600;cursor:pointer;user-select:none" title="클릭하여 고객사 정렬">고객사'+_invSortIndicator('vendor')+'</th>';
-    h+='<th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap">발주번호</th>';
+    h+='<th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap" title="명세서 종류 (발주/샘플/AS/재고/합본) 및 번호">구분 / 번호</th>';
     h+='<th style="padding:8px 10px;text-align:left;font-weight:600">품목내역</th>';
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">공급가액</th>';
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">부가세</th>';
@@ -5031,18 +5031,21 @@ function renderInvoiceHistory(){
       h+='<td onclick="'+clickFn+'" style="padding:8px 10px;white-space:nowrap;color:var(--t3)"><div>'+v.issuedAt+'</div>'+stageChip+'</td>';
       h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-weight:600">'+v.vendor+'</td>';
       // 발주번호 컬럼 분기:
-      // - 합본: "📑 합본 (YYYY-MM)"
-      // - 샘플: "🧪 샘플"
-      // - AS: "🔧 AS"
-      // - 일반: ordNo
+      // - 합본: "📑 합본 (YYYY-MM, N건)"
+      // - 샘플: "🧪 샘플" + 명세서번호
+      // - AS: "🔧 AS" + 명세서번호
+      // - 재고/독립형: "📦 재고" + 명세서번호
+      // - 일반(발주): "📋 발주" + 발주번호
       if(isCons){
         h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-size:11px"><span style="background:rgba(122,77,181,.18);color:#7A4DB5;border:1px solid #7A4DB5;padding:1px 8px;border-radius:9px;font-weight:700;white-space:nowrap" title="'+(v.includedInvoiceIds||[]).length+'건의 명세서를 묶은 합본 청구서">📑 '+(v.consolidationMonth||'합본')+' ('+(v.includedInvoiceIds||[]).length+'건)</span></td>';
       } else if(v._fromSample){
-        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-size:11px"><span style="background:rgba(122,77,181,.12);color:#7A4DB5;border:1px solid rgba(122,77,181,.3);padding:1px 7px;border-radius:9px;font-weight:700;white-space:nowrap" title="'+(v.invType||'샘플 명세서')+' / '+(v.invNo||'')+'">🧪 샘플</span></td>';
+        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-size:11px"><span style="background:rgba(122,77,181,.12);color:#7A4DB5;border:1px solid rgba(122,77,181,.3);padding:1px 7px;border-radius:9px;font-weight:700;white-space:nowrap;margin-right:6px" title="'+(v.invType||'샘플 명세서')+'">🧪 샘플</span><span style="font-family:monospace;font-size:10.5px;color:var(--t3)">'+(v.ordNo||'—')+'</span></td>';
       } else if(v._fromAS){
-        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-size:11px"><span style="background:rgba(168,90,16,.12);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:9px;font-weight:700;white-space:nowrap" title="AS 수리 청구 명세서 / '+(v.ordNo||'')+'">🔧 AS</span></td>';
+        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-size:11px"><span style="background:rgba(168,90,16,.12);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:9px;font-weight:700;white-space:nowrap;margin-right:6px" title="AS 수리 청구 명세서">🔧 AS</span><span style="font-family:monospace;font-size:10.5px;color:var(--t3)">'+(v.ordNo||'—')+'</span></td>';
+      } else if(v._isStandalone){
+        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-size:11px"><span style="background:rgba(74,128,80,.12);color:var(--grn);border:1px solid rgba(74,128,80,.3);padding:1px 7px;border-radius:9px;font-weight:700;white-space:nowrap;margin-right:6px" title="발주서 없이 작성된 독립 거래명세서 (재고 판매 등)">📦 재고</span><span style="font-family:monospace;font-size:10.5px;color:var(--t3)">'+(v.ordNo||'—')+'</span></td>';
       } else {
-        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-family:monospace;font-size:11px;color:var(--t3)">'+(v.ordNo||'—')+'</td>';
+        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-size:11px"><span style="background:rgba(192,144,32,.12);color:var(--gold-lt);border:1px solid rgba(192,144,32,.3);padding:1px 7px;border-radius:9px;font-weight:700;white-space:nowrap;margin-right:6px" title="발주서 기반 거래명세서">📋 발주</span><span style="font-family:monospace;font-size:10.5px;color:var(--t3)">'+(v.ordNo||'—')+'</span></td>';
       }
       h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-size:11px;color:var(--t2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+v.itemSummary+'</td>';
       h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right">'+(v.supplyAmt?v.supplyAmt.toLocaleString():'-')+'</td>';
