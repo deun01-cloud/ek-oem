@@ -1337,8 +1337,65 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 <div class="ov" id="mProduct"><div class="modal wide" style="max-width:640px">
   <div class="mt" id="mProduct_t">📦 제품 등록</div>
   <input type="hidden" id="pd_id">
+
+  <!-- 🏷 품목코드 자동 생성기 -->
+  <div id="pd_codeBuilder" style="margin-bottom:14px;padding:12px 14px;background:linear-gradient(135deg,rgba(167,131,57,.06),rgba(167,131,57,.02));border:1.5px solid var(--gold-line);border-radius:8px">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <span style="font-size:13px">🏷</span>
+      <span style="font-weight:700;font-size:12.5px;color:var(--gold-lt)">품목코드 자동생성</span>
+      <span style="font-size:10.5px;color:var(--t3)">— 아래 4개 항목을 입력하면 코드가 자동 생성됩니다</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:8px;align-items:end">
+      <div class="fg" style="margin:0;position:relative">
+        <label style="font-size:10.5px">고객사 이니셜 (2자) *</label>
+        <input class="fi" id="pd_codeVendor" maxlength="6" placeholder="VV / BW / TT 등" style="font-family:monospace;text-transform:uppercase"
+          oninput="this.value=this.value.toUpperCase();renderPdCodeVendorDropdown(this.value);buildPdCode()"
+          onfocus="renderPdCodeVendorDropdown(this.value)"
+          onblur="setTimeout(()=>{const d=document.getElementById('pdCodeVendorDropdown');if(d)d.style.display='none'},180)">
+        <div id="pdCodeVendorDropdown" style="display:none;position:absolute;top:calc(100% + 2px);left:0;right:0;background:var(--s1);border:1px solid var(--gold-line);border-radius:6px;z-index:60;max-height:200px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,.12);font-size:11.5px"></div>
+      </div>
+      <div class="fg" style="margin:0">
+        <label style="font-size:10.5px">품목 *</label>
+        <select class="fs" id="pd_codeType" onchange="syncPdTypeFromCode();buildPdCode()">
+          <option value="">선택</option>
+          <option value="N">N — 목걸이</option>
+          <option value="B">B — 팔찌</option>
+          <option value="E">E — 귀걸이</option>
+          <option value="R">R — 반지</option>
+        </select>
+      </div>
+      <div class="fg" style="margin:0">
+        <label style="font-size:10.5px">소재 *</label>
+        <select class="fs" id="pd_codeMat" onchange="syncPdMatFromCode();buildPdCode()">
+          <option value="">선택</option>
+          <option value="S">S — 925실버</option>
+          <option value="B">B — 신주</option>
+          <option value="G">G — 골드</option>
+        </select>
+      </div>
+      <div class="fg" style="margin:0">
+        <label style="font-size:10.5px">칼라 *</label>
+        <select class="fs" id="pd_codeColor" onchange="buildPdCode()">
+          <option value="">선택</option>
+          <option value="S">S — 실버</option>
+          <option value="G">G — 골드</option>
+          <option value="R">R — 로듐</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:8px;border-top:1px dashed var(--bdr)">
+      <div style="flex:1;display:flex;align-items:center;gap:8px">
+        <span style="font-size:10.5px;color:var(--t3)">생성 코드</span>
+        <code id="pd_codePreview" style="font-family:monospace;font-size:14px;font-weight:700;color:var(--gold-lt);padding:4px 10px;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;letter-spacing:1px">—</code>
+        <span style="font-size:9.5px;color:var(--t3)" id="pd_codePreviewParts">VV·R·B·0513·00·S</span>
+      </div>
+      <button type="button" onclick="applyPdGeneratedCode()" id="pd_codeApplyBtn" disabled
+        style="padding:5px 12px;font-size:11px;background:var(--gold);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit;font-weight:600;opacity:.5">↓ 품목코드에 적용</button>
+    </div>
+  </div>
+
   <div class="fr3">
-    <div class="fg"><label>품목코드 *</label><input class="fi" id="pd_code" placeholder="VTBB042401S" style="font-family:monospace"></div>
+    <div class="fg"><label>품목코드 *</label><input class="fi" id="pd_code" placeholder="VTBB042401S" style="font-family:monospace" oninput="this.value=this.value.toUpperCase()"></div>
     <div class="fg"><label>품목명 *</label><input class="fi" id="pd_name" placeholder="박스 체인 팔찌"></div>
     <div class="fg"><label>유형</label>
       <select class="fs" id="pd_type">
@@ -4450,8 +4507,174 @@ function openProductModal(idOrNull){
   renderPdImgPrev();
   // 원가 분석 영역 자동 갱신
   setTimeout(()=>{ if(typeof updatePdCostAnalysis==='function') updatePdCostAnalysis(); }, 0);
+  // 🏷 품목코드 빌더 초기화 (수정 모드면 기존 코드 파싱해서 채움, 신규면 비움)
+  setTimeout(()=>initPdCodeBuilder(p), 30);
   openM('mProduct');
 }
+
+// ════════════════════════════════════════════════════════════════
+// 🏷 품목코드 자동 생성기
+// 형식: [고객사2자] + [품목1자: N/B/E/R] + [소재1자: S/B/G] + [날짜MMDD] + [순번2자] + [칼라1자: S/G/R]
+// 예시: VVRB051200S = VV(바이비) + R(반지) + B(신주) + 0513(5/13) + 00(첫번째) + S(실버칼라)
+// ════════════════════════════════════════════════════════════════
+
+// 품목코드 → 제품유형 매핑
+const PD_CODE_TYPE_MAP = { 'N': 'NECKLACE', 'B': 'BRACELET', 'E': 'EARRING', 'R': 'RING' };
+const PD_TYPE_CODE_MAP = { 'NECKLACE': 'N', 'BRACELET': 'B', 'EARRING': 'E', 'RING': 'R' };
+
+// 품목코드 → 소재 매핑
+const PD_CODE_MAT_MAP = { 'S': '925 실버', 'B': '브라스 (BRASS)', 'G': '14K 골드' };
+const PD_MAT_CODE_MAP = { '925 실버': 'S', '925실버': 'S', '브라스 (BRASS)': 'B', '브라스': 'B', '14K 골드': 'G', '14k 골드': 'G' };
+
+// 모달 열 때 빌더 초기화
+function initPdCodeBuilder(p){
+  const codeVendorEl = document.getElementById('pd_codeVendor');
+  const codeTypeEl = document.getElementById('pd_codeType');
+  const codeMatEl = document.getElementById('pd_codeMat');
+  const codeColorEl = document.getElementById('pd_codeColor');
+  if(!codeVendorEl || !codeTypeEl || !codeMatEl || !codeColorEl) return;
+
+  if(p && p.code){
+    // 수정 모드 — 기존 코드 파싱
+    const parsed = parsePdCode(p.code);
+    codeVendorEl.value = parsed.vendor || '';
+    codeTypeEl.value = parsed.type || '';
+    codeMatEl.value = parsed.mat || '';
+    codeColorEl.value = parsed.color || '';
+  } else {
+    // 신규 모드 — 비움
+    codeVendorEl.value = '';
+    codeTypeEl.value = '';
+    codeMatEl.value = '';
+    codeColorEl.value = '';
+  }
+  buildPdCode();
+}
+
+// 기존 코드 문자열을 파싱 (수정 모드용)
+// 예: VVRB051200S → {vendor:'VV', type:'R', mat:'B', date:'0513', seq:'00', color:'S'}
+function parsePdCode(code){
+  if(!code) return {};
+  const c = String(code).trim().toUpperCase();
+  const m = c.match(/^([A-Z]{2,3})([NBER])([SBG])(\d{4})(\d{2})([SGR])$/);
+  if(!m) return {};
+  return { vendor: m[1], type: m[2], mat: m[3], date: m[4], seq: m[5], color: m[6] };
+}
+
+// 4개 필드로 코드 빌드
+function buildPdCode(){
+  const vendor = (document.getElementById('pd_codeVendor')?.value || '').toUpperCase().trim();
+  const type = document.getElementById('pd_codeType')?.value || '';
+  const mat = document.getElementById('pd_codeMat')?.value || '';
+  const color = document.getElementById('pd_codeColor')?.value || '';
+
+  // 오늘 날짜 (MMDD)
+  const d = new Date();
+  const dateStr = String(d.getMonth()+1).padStart(2,'0') + String(d.getDate()).padStart(2,'0');
+
+  // 순번 — 같은 (vendor+type+mat+date) 조합으로 이미 등록된 코드 중 가장 큰 순번 +1
+  let seq = '00';
+  if(vendor && type && mat){
+    const prefix = vendor + type + mat + dateStr;
+    const existing = (productDB||[])
+      .map(p => String(p.code||'').toUpperCase())
+      .filter(c => c.startsWith(prefix) && c.length >= prefix.length + 2)
+      .map(c => parseInt(c.slice(prefix.length, prefix.length+2), 10))
+      .filter(n => !isNaN(n));
+    const maxSeq = existing.length ? Math.max(...existing) : -1;
+    seq = String(maxSeq + 1).padStart(2, '0');
+  }
+
+  // 전체 코드
+  const code = (vendor && type && mat && color)
+    ? vendor + type + mat + dateStr + seq + color
+    : '';
+
+  const previewEl = document.getElementById('pd_codePreview');
+  const partsEl = document.getElementById('pd_codePreviewParts');
+  const applyBtn = document.getElementById('pd_codeApplyBtn');
+
+  if(previewEl){
+    previewEl.textContent = code || '—';
+    previewEl.style.color = code ? 'var(--gold-lt)' : 'var(--t3)';
+  }
+  if(partsEl){
+    partsEl.textContent = `${vendor||'??'}·${type||'?'}·${mat||'?'}·${dateStr}·${seq}·${color||'?'}`;
+  }
+  if(applyBtn){
+    applyBtn.disabled = !code;
+    applyBtn.style.opacity = code ? '1' : '0.5';
+    applyBtn.style.cursor = code ? 'pointer' : 'not-allowed';
+  }
+}
+
+// "↓ 품목코드에 적용" 버튼 — 빌더의 생성 코드를 pd_code input에 넣고 관련 필드도 동기화
+function applyPdGeneratedCode(){
+  const code = document.getElementById('pd_codePreview')?.textContent || '';
+  if(!code || code === '—'){ showToast('⚠ 4개 항목을 모두 선택해 주세요','var(--org)',2000); return; }
+  sv('pd_code', code);
+
+  // 품목 유형도 같이 채움 (비어있을 때만)
+  const typeCode = document.getElementById('pd_codeType')?.value;
+  if(typeCode && PD_CODE_TYPE_MAP[typeCode]){
+    const cur = gv('pd_type');
+    if(!cur || cur === 'EARRING'){ // 디폴트값이거나 빈값이면 자동 채움
+      sv('pd_type', PD_CODE_TYPE_MAP[typeCode]);
+    }
+  }
+  // 소재도 같이 채움
+  const matCode = document.getElementById('pd_codeMat')?.value;
+  if(matCode && PD_CODE_MAT_MAP[matCode]){
+    sv('pd_mat', PD_CODE_MAT_MAP[matCode]);
+  }
+
+  showToast(`✓ 품목코드 적용: ${code}`, 'var(--grn)', 2000);
+}
+
+// 빌더 → 일반 필드 동기화 (선택 시 자동 반영)
+function syncPdTypeFromCode(){
+  const typeCode = document.getElementById('pd_codeType')?.value;
+  if(typeCode && PD_CODE_TYPE_MAP[typeCode]){
+    const cur = gv('pd_type');
+    if(!cur || cur === 'EARRING'){
+      sv('pd_type', PD_CODE_TYPE_MAP[typeCode]);
+    }
+  }
+}
+function syncPdMatFromCode(){
+  const matCode = document.getElementById('pd_codeMat')?.value;
+  if(matCode && PD_CODE_MAT_MAP[matCode]){
+    sv('pd_mat', PD_CODE_MAT_MAP[matCode]);
+  }
+}
+
+// 고객사 이니셜 자동완성 드롭다운 — 등록된 고객사들의 이니셜을 보여줌
+function renderPdCodeVendorDropdown(val){
+  const dd = document.getElementById('pdCodeVendorDropdown');
+  if(!dd) return;
+  if(typeof clients === 'undefined' || !Array.isArray(clients) || !clients.length){
+    dd.style.display = 'none';
+    return;
+  }
+  const q = (val||'').trim().toUpperCase();
+  const matches = clients
+    .filter(c => {
+      const ini = (c.initials||'').trim().toUpperCase();
+      if(!ini) return false;
+      return !q || ini.startsWith(q) || (c.name||'').toUpperCase().includes(q);
+    })
+    .slice(0, 10);
+  if(!matches.length){ dd.style.display = 'none'; return; }
+  dd.innerHTML = matches.map(c => `
+    <div style="padding:6px 11px;cursor:pointer;border-bottom:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:center;gap:8px"
+      onmousedown="document.getElementById('pd_codeVendor').value='${(c.initials||'').trim().toUpperCase().replace(/'/g,'&#39;')}';document.getElementById('pdCodeVendorDropdown').style.display='none';buildPdCode()">
+      <span style="font-family:monospace;font-weight:700;color:var(--gold-lt)">${(c.initials||'').toUpperCase()}</span>
+      <span style="color:var(--t3);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.name||''}</span>
+    </div>
+  `).join('');
+  dd.style.display = 'block';
+}
+
 function handlePdImgs(e){
   Array.from(e.target.files).forEach(f=>{const r=new FileReader();r.onload=ev=>{pdImgBuf.push({name:f.name,url:ev.target.result});renderPdImgPrev();};r.readAsDataURL(f);});
 }
@@ -4798,7 +5021,12 @@ async function saveProduct(){
         });
       }
     }
-    save();closeM('mProduct');renderTab();
+    save();
+    // 🔗 발주서에서 호출된 등록이라면 → 발주 행과 itemCode 자동 연결
+    if(savedProduct && typeof _linkPendingOrdRow === 'function'){
+      _linkPendingOrdRow(savedProduct);
+    }
+    closeM('mProduct');renderTab();
     // 동기화 결과 토스트: 거래명세서·발주서·샘플 합쳐서 표시
     const totalSynced = priceSyncedCount + orderPriceSyncedCount + samplePriceSyncedCount;
     if(totalSynced > 0){
@@ -18096,46 +18324,59 @@ function _registerOrdRowToProductDB(rowIdx){
     if(!confirm(`동일한 이름의 품목이 이미 제품DB에 있습니다:\n"${existing.name}" (품번: ${existing.code||'—'})\n\n그래도 새 항목으로 등록하시겠습니까?`)) return;
   }
 
-  // 새 제품DB 항목 생성
-  const now = new Date().toISOString();
-  const newCode = (typeof genProductCode === 'function')
-    ? genProductCode(r.plating || '', r.mat || '')
-    : ('NEW-' + Date.now().toString(36).toUpperCase());
+  // 발주 행의 정보를 갖고 제품DB 모달을 열어줌
+  // → 사용자가 코드 빌더로 정확한 품목코드를 만들어 저장
+  showToast('🏷 품목코드 자동생성기에서 4개 항목을 선택해 코드를 만든 후 저장해 주세요', 'var(--blu)', 4500);
 
-  const newProduct = {
-    id: Date.now() + Math.random(),
-    code: newCode,
-    name: name,
-    type: '',
-    plating: r.plating || '',
-    mat: r.mat || '',
-    sz1: r.size || '',
-    sz2: '', sz3: '', sz4: '',
-    wt: '',
-    costPrice: 0,
-    price: +r.unitPrice || 0,
-    imgs: r.img ? [{url: r.img, name: r._imgName || 'order_img.png'}] : [],
-    vendor: '',
-    memo: `발주서에서 등록 (${(new Date()).toLocaleDateString('ko-KR')})`,
-    createdAt: now
-  };
+  // 제품 모달 열기 (새 등록 모드)
+  if(typeof openProductModal === 'function'){
+    openProductModal(null);
 
-  if(!Array.isArray(productDB)) productDB = [];
-  productDB.push(newProduct);
+    // 발주 정보로 필드 미리 채우기
+    setTimeout(()=>{
+      sv('pd_name', name);
+      if(r.mat) sv('pd_mat', r.mat);
+      if(r.plating) sv('pd_plating', r.plating);
+      if(r.size) sv('pd_size', r.size);
+      if(r.unitPrice) sv('pd_price', r.unitPrice);
 
-  // 행에도 itemCode 연결
-  ordRowsBuf[rowIdx].itemCode = newCode;
+      // 코드 빌더에 소재 자동 추정
+      const matCode = PD_MAT_CODE_MAP[r.mat] || PD_MAT_CODE_MAP[(r.mat||'').replace(/\s+/g,'')] || '';
+      if(matCode) {
+        const codeMatEl = document.getElementById('pd_codeMat');
+        if(codeMatEl) codeMatEl.value = matCode;
+      }
+      // 발주서 고객사명으로 이니셜 추정
+      const ordVendor = (gv('o_vendor')||'').trim();
+      if(ordVendor && typeof clients !== 'undefined'){
+        const c = clients.find(x => (x.name||'').trim() === ordVendor);
+        if(c && c.initials){
+          const codeVendorEl = document.getElementById('pd_codeVendor');
+          if(codeVendorEl) codeVendorEl.value = (c.initials||'').toUpperCase();
+        }
+      }
+      // 이미지 승계
+      if(r.img){
+        pdImgBuf = [{url: r.img, name: r._imgName || 'order_img.png'}];
+        if(typeof renderPdImgPrev === 'function') renderPdImgPrev();
+      }
+      buildPdCode();
 
-  // 저장
-  if(typeof save === 'function') save();
-  renderOrdRows();
-
-  // 노션 동기화
-  if(typeof syncProductToNotion === 'function' && typeof notionCfg !== 'undefined' && notionCfg?.productDb){
-    syncProductToNotion(newProduct).catch(e => console.warn('제품DB 노션 동기화 실패:', e));
+      // 저장 후 발주 행에 itemCode 연결되도록 _pendingOrdRowLink 마커 설정
+      window._pendingOrdRowLink = { rowIdx: rowIdx };
+    }, 100);
   }
+}
 
-  showToast(`✓ "${name}" 제품DB 등록 완료 (품번: ${newCode})`, 'var(--grn)', 3500);
+// 제품DB 모달에서 저장 후 호출됨 — 대기 중인 발주 행과 itemCode 연결
+function _linkPendingOrdRow(newProduct){
+  if(!window._pendingOrdRowLink) return;
+  const link = window._pendingOrdRowLink;
+  window._pendingOrdRowLink = null;
+  if(typeof ordRowsBuf === 'undefined' || !ordRowsBuf[link.rowIdx]) return;
+  ordRowsBuf[link.rowIdx].itemCode = newProduct.code || '';
+  if(typeof renderOrdRows === 'function') renderOrdRows();
+  showToast(`✓ "${newProduct.name}" 발주 행과 연결됨 (품번: ${newProduct.code})`, 'var(--grn)', 3000);
 }
 
 // ════════════════════════════════
