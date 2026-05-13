@@ -1343,7 +1343,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <span style="font-size:13px">🏷</span>
       <span style="font-weight:700;font-size:12.5px;color:var(--gold-lt)">품목코드 자동생성</span>
-      <span style="font-size:10.5px;color:var(--t3)">— 아래 4개 항목을 입력하면 코드가 자동 생성됩니다</span>
+      <span style="font-size:10.5px;color:var(--t3)">— 4개 항목 입력 시 코드 자동 생성 (목록 선택 또는 직접 입력 ⌨)</span>
     </div>
     <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:8px;align-items:end">
       <div class="fg" style="margin:0;position:relative">
@@ -1356,31 +1356,37 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       </div>
       <div class="fg" style="margin:0">
         <label style="font-size:10.5px">품목 *</label>
-        <select class="fs" id="pd_codeType" onchange="syncPdTypeFromCode();buildPdCode()">
-          <option value="">선택</option>
+        <input class="fi" id="pd_codeType" list="pdCodeTypeList" maxlength="2" placeholder="N/B/E/R 또는 직접" style="font-family:monospace;text-transform:uppercase"
+          oninput="this.value=this.value.toUpperCase();syncPdTypeFromCode();buildPdCode()"
+          title="목록 선택 또는 직접 입력 (1자 권장) — N:목걸이, B:팔찌, E:귀걸이, R:반지">
+        <datalist id="pdCodeTypeList">
           <option value="N">N — 목걸이</option>
           <option value="B">B — 팔찌</option>
           <option value="E">E — 귀걸이</option>
           <option value="R">R — 반지</option>
-        </select>
+        </datalist>
       </div>
       <div class="fg" style="margin:0">
         <label style="font-size:10.5px">소재 *</label>
-        <select class="fs" id="pd_codeMat" onchange="syncPdMatFromCode();buildPdCode()">
-          <option value="">선택</option>
+        <input class="fi" id="pd_codeMat" list="pdCodeMatList" maxlength="2" placeholder="S/B/G 또는 직접" style="font-family:monospace;text-transform:uppercase"
+          oninput="this.value=this.value.toUpperCase();syncPdMatFromCode();buildPdCode()"
+          title="목록 선택 또는 직접 입력 (1자 권장) — S:925실버, B:신주, G:골드">
+        <datalist id="pdCodeMatList">
           <option value="S">S — 925실버</option>
           <option value="B">B — 신주</option>
           <option value="G">G — 골드</option>
-        </select>
+        </datalist>
       </div>
       <div class="fg" style="margin:0">
         <label style="font-size:10.5px">칼라 *</label>
-        <select class="fs" id="pd_codeColor" onchange="buildPdCode()">
-          <option value="">선택</option>
+        <input class="fi" id="pd_codeColor" list="pdCodeColorList" maxlength="2" placeholder="S/G/R 또는 직접" style="font-family:monospace;text-transform:uppercase"
+          oninput="this.value=this.value.toUpperCase();buildPdCode()"
+          title="목록 선택 또는 직접 입력 (1자 권장) — S:실버, G:골드, R:로듐">
+        <datalist id="pdCodeColorList">
           <option value="S">S — 실버</option>
           <option value="G">G — 골드</option>
           <option value="R">R — 로듐</option>
-        </select>
+        </datalist>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:8px;border-top:1px dashed var(--bdr)">
@@ -1432,10 +1438,8 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>재고 수량</label><input class="fi" type="number" id="pd_stock" placeholder="0" min="0"></div>
     <div class="fg"><label>안전재고 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(0=알림 끔)</span></label><input class="fi" type="number" id="pd_safetyStock" placeholder="0" min="0"></div>
   </div>
-  <div class="fr2">
-    <div class="fg"><label>금속 종류</label><input class="fi" id="pd_metal" placeholder="브라스"></div>
-    <div class="fg"><label>도금 컬러 / 스펙</label><input class="fi" id="pd_platingSpec" placeholder="로듐"></div>
-  </div>
+  <input type="hidden" id="pd_metal">
+  <input type="hidden" id="pd_platingSpec">
   <div class="fr3" style="grid-template-columns:repeat(4,1fr)">
     <div class="fg"><label>중량 (g)</label><input class="fi" type="number" id="pd_weight" placeholder="0" step="0.1" oninput="updatePdCostAnalysis()"></div>
     <div class="fg"><label>입고단가 (¥) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(원가 계산용)</span></label><input class="fi" type="number" id="pd_cnyPrice" placeholder="0" min="0" step="0.01" oninput="updatePdCostAnalysis()"></div>
@@ -1837,6 +1841,31 @@ function catLabel(c){ return CAT_LABEL[c] || c; }
 
 let currentTab='dash';
 let calY=TODAY.getFullYear(), calM=TODAY.getMonth();
+
+// 📅 캘린더 카테고리 필터 — localStorage에 저장되어 새로고침 후에도 유지
+const CAL_FILTER_KEY = 'ek_cal_filters';
+let calFilters = (() => {
+  try {
+    const saved = localStorage.getItem(CAL_FILTER_KEY);
+    if(saved){
+      const parsed = JSON.parse(saved);
+      return {
+        ord: parsed.ord !== false,
+        smp: parsed.smp !== false,
+        ship: parsed.ship !== false,
+        task: parsed.task !== false
+      };
+    }
+  } catch(e){}
+  return { ord: true, smp: true, ship: true, task: true };
+})();
+
+function _toggleCalFilter(key){
+  if(typeof calFilters[key] === 'undefined') return;
+  calFilters[key] = !calFilters[key];
+  try { localStorage.setItem(CAL_FILTER_KEY, JSON.stringify(calFilters)); } catch(e){}
+  renderTab();
+}
 let schedView='week', schedWOff=0;
 let schedMY=TODAY.getFullYear(), schedMM=TODAY.getMonth();
 let smpFilter='전체', smpSearch='', ordSearch='', procFilter='전체';
@@ -4553,20 +4582,26 @@ function initPdCodeBuilder(p){
 
 // 기존 코드 문자열을 파싱 (수정 모드용)
 // 예: VVRB051200S → {vendor:'VV', type:'R', mat:'B', date:'0513', seq:'00', color:'S'}
+// 직접 입력 케이스도 허용: 품목/소재/칼라가 임의 알파벳일 수 있음
 function parsePdCode(code){
   if(!code) return {};
   const c = String(code).trim().toUpperCase();
-  const m = c.match(/^([A-Z]{2,3})([NBER])([SBG])(\d{4})(\d{2})([SGR])$/);
-  if(!m) return {};
-  return { vendor: m[1], type: m[2], mat: m[3], date: m[4], seq: m[5], color: m[6] };
+  // 1순위: 표준 형식 (vendor 2-3자 + 품목 1자 + 소재 1자 + MMDD + seq 2자 + 칼라 1자)
+  let m = c.match(/^([A-Z]{2,3})([A-Z])([A-Z])(\d{4})(\d{2})([A-Z])$/);
+  if(m) return { vendor: m[1], type: m[2], mat: m[3], date: m[4], seq: m[5], color: m[6] };
+  // 2순위: 좀 더 느슨 (vendor 2-4자 가능, 품목/소재/칼라 1-2자)
+  m = c.match(/^([A-Z]{2,4})([A-Z]{1,2})([A-Z]{1,2})(\d{4})(\d{2})([A-Z]{1,2})$/);
+  if(m) return { vendor: m[1], type: m[2], mat: m[3], date: m[4], seq: m[5], color: m[6] };
+  return {};
 }
 
 // 4개 필드로 코드 빌드
 function buildPdCode(){
   const vendor = (document.getElementById('pd_codeVendor')?.value || '').toUpperCase().trim();
-  const type = document.getElementById('pd_codeType')?.value || '';
-  const mat = document.getElementById('pd_codeMat')?.value || '';
-  const color = document.getElementById('pd_codeColor')?.value || '';
+  // type/mat/color도 직접 입력 가능해서 정규화 필요
+  const type = (document.getElementById('pd_codeType')?.value || '').toUpperCase().trim();
+  const mat = (document.getElementById('pd_codeMat')?.value || '').toUpperCase().trim();
+  const color = (document.getElementById('pd_codeColor')?.value || '').toUpperCase().trim();
 
   // 오늘 날짜 (MMDD)
   const d = new Date();
@@ -13548,7 +13583,7 @@ function renderCalWidget(){
 
     // 1) 발주 출고 — 발주서의 요청출고일(o.ship) 기준
     //    출고완료/취소도 표시 (삭선으로 구분)
-    orders.filter(o=>o.ship===ds).forEach(o=>{
+    if(calFilters.ord) orders.filter(o=>o.ship===ds).forEach(o=>{
       const initBadge=vendorInitHtml(o.vendor, true);
       const st=o.status||'진행중';
       const isDone = st==='출고완료' || st==='취소';
@@ -13564,10 +13599,10 @@ function renderCalWidget(){
 
     // 2) 샘플 출고 — 샘플의뢰서의 납기일(s.due) 기준
     //    확정/취소도 표시 (삭선으로 구분)
-    samples.filter(s=>s.due===ds).forEach(s=>{
+    if(calFilters.smp) samples.filter(s=>s.due===ds).forEach(s=>{
       const initBadge=vendorInitHtml(s.manager, true);
       const st=s.status||'의뢰';
-      const isDone = st==='확정' || st==='취소';
+      const isDone = st==='확정' || st==='완료' || st==='취소';
       r.push({
         cls:'ev-smp',
         done: isDone,
@@ -13579,9 +13614,9 @@ function renderCalWidget(){
     });
 
     // 2-A) 공장 출고일 (샘플) — 중국 출고
-    samples.filter(s=>s.factShip===ds).forEach(s=>{
+    if(calFilters.ship) samples.filter(s=>s.factShip===ds).forEach(s=>{
       const st=s.status||'의뢰';
-      const isDone = st==='확정' || st==='취소';
+      const isDone = st==='확정' || st==='완료' || st==='취소';
       r.push({
         cls:'ev-ship',
         done: isDone,
@@ -13593,7 +13628,7 @@ function renderCalWidget(){
     });
 
     // 2-B) 공장 출고일 (발주) — 중국 출고
-    orders.filter(o=>o.factShip===ds).forEach(o=>{
+    if(calFilters.ship) orders.filter(o=>o.factShip===ds).forEach(o=>{
       const st=o.status||'진행중';
       const isDone = st==='출고완료' || st==='취소';
       r.push({
@@ -13620,7 +13655,7 @@ function renderCalWidget(){
       '중국입고':'🇨🇳←',
       '중국출고':'🇨🇳→'
     };
-    tasks.filter(t=>t.date===ds && CAL_TASK_CATS.includes(t.cat)).forEach(t=>{
+    if(calFilters.task) tasks.filter(t=>t.date===ds && CAL_TASK_CATS.includes(t.cat)).forEach(t=>{
       const cls=TASK_CAT_CLS[t.cat]||'ev-task';
       const prefix=TASK_CAT_PREFIX[t.cat]||'';
       const cont=(t.cont||'').substring(0,12);
@@ -13644,9 +13679,20 @@ function renderCalWidget(){
         <button class="cal-nb" onclick="calM++;if(calM>11){calM=0;calY++;}renderTab()">&#8250;</button>
         <button class="btn bgo bs" onclick="calY=TODAY.getFullYear();calM=TODAY.getMonth();renderTab()" style="margin-left:4px">오늘</button>
       </div>
-      <div style="display:flex;gap:10px;font-size:10.5px;color:var(--t3);flex-wrap:wrap">
-        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(168,90,16,.45);border-radius:2px"></span>발주 출고</span>
-        <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:10px;height:10px;background:rgba(26,109,181,.45);border-radius:2px"></span>샘플 출고</span>
+      <div style="display:flex;gap:6px;font-size:10.5px;color:var(--t3);flex-wrap:wrap;align-items:center">
+        <span style="font-size:9.5px;color:var(--t3);margin-right:2px">필터:</span>
+        <span onclick="_toggleCalFilter('ord')" style="display:flex;align-items:center;gap:4px;padding:3px 9px;border-radius:12px;cursor:pointer;background:${calFilters.ord?'rgba(168,90,16,.12)':'var(--s2)'};border:1px solid ${calFilters.ord?'var(--org)':'var(--bdr)'};opacity:${calFilters.ord?'1':'0.5'};transition:all .15s;user-select:none;font-weight:${calFilters.ord?'600':'500'}" title="발주 요청출고일 표시">
+          <span style="display:inline-block;width:9px;height:9px;background:rgba(168,90,16,.55);border-radius:2px"></span>발주 출고
+        </span>
+        <span onclick="_toggleCalFilter('smp')" style="display:flex;align-items:center;gap:4px;padding:3px 9px;border-radius:12px;cursor:pointer;background:${calFilters.smp?'rgba(26,109,181,.12)':'var(--s2)'};border:1px solid ${calFilters.smp?'var(--blu)':'var(--bdr)'};opacity:${calFilters.smp?'1':'0.5'};transition:all .15s;user-select:none;font-weight:${calFilters.smp?'600':'500'}" title="샘플 납기일 표시">
+          <span style="display:inline-block;width:9px;height:9px;background:rgba(26,109,181,.55);border-radius:2px"></span>샘플 출고
+        </span>
+        <span onclick="_toggleCalFilter('ship')" style="display:flex;align-items:center;gap:4px;padding:3px 9px;border-radius:12px;cursor:pointer;background:${calFilters.ship?'rgba(192,48,48,.12)':'var(--s2)'};border:1px solid ${calFilters.ship?'var(--red)':'var(--bdr)'};opacity:${calFilters.ship?'1':'0.5'};transition:all .15s;user-select:none;font-weight:${calFilters.ship?'600':'500'}" title="공장 출고일 (중국→한국)">
+          <span style="display:inline-block;width:9px;height:9px;background:rgba(192,48,48,.55);border-radius:2px"></span>중국 출고
+        </span>
+        <span onclick="_toggleCalFilter('task')" style="display:flex;align-items:center;gap:4px;padding:3px 9px;border-radius:12px;cursor:pointer;background:${calFilters.task?'rgba(80,64,160,.10)':'var(--s2)'};border:1px solid ${calFilters.task?'var(--prp)':'var(--bdr)'};opacity:${calFilters.task?'1':'0.5'};transition:all .15s;user-select:none;font-weight:${calFilters.task?'600':'500'}" title="업무일지의 출고·입고 항목">
+          <span style="display:inline-block;width:9px;height:9px;background:rgba(80,64,160,.45);border-radius:2px"></span>업무일지
+        </span>
       </div>
     </div>
     <div class="cal-dow-row">${['월','화','수','목','금','토','일'].map(d=>`<div class="cal-dow" style="padding:8px 4px;font-size:11px">${d}</div>`).join('')}</div>
