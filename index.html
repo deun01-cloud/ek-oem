@@ -694,6 +694,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <option value="제작중">제작중</option>
         <option value="수정중">수정중</option>
         <option value="확정">확정</option>
+        <option value="완료">완료</option>
         <option value="취소">취소</option>
       </select>
     </div>
@@ -840,6 +841,8 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <button class="btn bp-red" id="s_delBtn" onclick="deleteSmp()" style="display:none">삭제</button>
     <button class="btn bgo" id="s_invBtn" onclick="saveAndInvoice()" style="display:none;border-color:var(--gold);color:var(--gold-lt)">🧾 명세서 발행</button>
     <button class="btn bp-grn" id="s_cfmBtn" onclick="confirmSmp()" style="display:none">✓ 확정 → 발주 생성</button>
+    <button class="btn" id="s_completeBtn" onclick="completeSmp()" style="display:none;background:#5a9b5e;color:#fff;border-color:#4a8a4e;font-weight:600" title="발주로 가지 않고 의뢰서만 완료 처리합니다">✅ 완료처리</button>
+    <button class="btn bgo" id="s_reopenBtn" onclick="reopenSmp()" style="display:none;border-color:var(--blu);color:var(--blu);font-weight:600" title="완료된 의뢰서를 다시 진행중으로 되돌립니다">↩ 되살리기</button>
     <button class="btn bp" id="s_saveBtn" onclick="saveSmp()" style="font-size:13px;padding:7px 20px">✓ 샘플 등록</button>
   </div>
 </div></div>
@@ -868,6 +871,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <option value="제작중">제작중</option>
         <option value="수정중">수정중</option>
         <option value="확정">확정</option>
+        <option value="완료">완료</option>
         <option value="취소">취소</option>
       </select>
     </div>
@@ -1765,7 +1769,7 @@ const KR_HOLIDAYS={
 function getHoliday(ds){ return KR_HOLIDAYS[ds]||''; }
 const DAY_KR=['일','월','화','수','목','금','토'];
 const STAGES=['주물','도금','검품','포장','출고'];
-const SMP_CATS=['전체','의뢰','제작중','수정중','확정','취소'];
+const SMP_CATS=['전체','의뢰','제작중','수정중','확정','완료','취소'];
 const SMP_CLS={의뢰:'chip',제작중:'cb',수정중:'co',확정:'cg',취소:'chip'};
 const CATS_SCHED=['업무','커머스','발주출고','샘플출고','중국입고','중국출고'];
 const CAT_BG={'업무':'rgba(26,109,181,.07)','커머스':'rgba(168,90,16,.07)','발주출고':'rgba(46,139,44,.07)','샘플출고':'rgba(26,109,181,.07)','중국입고':'rgba(192,48,48,.07)','중국출고':'rgba(192,48,48,.12)'};
@@ -13444,10 +13448,21 @@ function renderSample(){
   }
 
   const list=filteredSamples();
-  const counts={};SMP_CATS.forEach(cat=>{counts[cat]=cat==='전체'?samples.length:samples.filter(s=>s.status===cat).length;});
 
   // checked sample ids (persisted in window for re-render)
   if(!window._smpChecked)window._smpChecked=new Set();
+  // 진행/완료 상태 서브탭 기본값
+  if(!window._smpStateTab) window._smpStateTab = 'active'; // 'active' | 'done'
+
+  // 진행중/완료 카운트 (탭 헤더용)
+  const doneCount = samples.filter(s => s.status === '완료').length;
+  const activeCount = samples.filter(s => s.status !== '완료').length;
+
+  // SMP_CATS 칩 카운트는 현재 stateTab에 맞게 계산
+  const stateTabFiltered = window._smpStateTab === 'done'
+    ? samples.filter(s => s.status === '완료')
+    : samples.filter(s => s.status !== '완료');
+  const counts={};SMP_CATS.forEach(cat=>{counts[cat]=cat==='전체'?stateTabFiltered.length:stateTabFiltered.filter(s=>s.status===cat).length;});
 
   c.innerHTML=`
   <!-- 서브탭 헤더 -->
@@ -13484,6 +13499,17 @@ function renderSample(){
   <div id="smpTabParseResult"></div>
 
   <div class="card">
+    <div style="display:flex;border-bottom:1px solid var(--bdr);padding:0 8px">
+      <div onclick="window._smpStateTab='active';window._smpChecked&&window._smpChecked.clear();renderSample()"
+        style="padding:11px 18px;cursor:pointer;font-weight:${window._smpStateTab==='active'?'700':'500'};font-size:13px;color:${window._smpStateTab==='active'?'var(--gold-lt)':'var(--t3)'};border-bottom:3px solid ${window._smpStateTab==='active'?'var(--gold)':'transparent'}">
+        ✏ 진행 중 <span style="font-size:11px;color:var(--t3);font-weight:400;margin-left:4px">${activeCount}건</span>
+      </div>
+      <div onclick="window._smpStateTab='done';window._smpChecked&&window._smpChecked.clear();renderSample()"
+        style="padding:11px 18px;cursor:pointer;font-weight:${window._smpStateTab==='done'?'700':'500'};font-size:13px;color:${window._smpStateTab==='done'?'var(--grn)':'var(--t3)'};border-bottom:3px solid ${window._smpStateTab==='done'?'var(--grn)':'transparent'}">
+        ✅ 완료 <span style="font-size:11px;color:var(--t3);font-weight:400;margin-left:4px">${doneCount}건</span>
+      </div>
+    </div>
+    ${window._smpStateTab === 'done' ? `<div style="padding:8px 14px;background:rgba(46,139,44,.05);border-bottom:1px solid var(--bdr);font-size:11.5px;color:var(--t2)">✓ 발주로 가지 않고 마감된 의뢰서들입니다. 수정이 필요하면 의뢰서를 열어 "↩ 되살리기"로 다시 진행 중으로 되돌릴 수 있습니다.</div>` : ''}
     <div class="ch" style="flex-wrap:wrap;gap:8px">
       <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
         <div class="ch-t">샘플 의뢰 현황 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${list.length}건)</span></div>
@@ -13498,7 +13524,7 @@ function renderSample(){
       <button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 직접 등록</button>
     </div>
     <div class="frow">
-      ${SMP_CATS.map(f=>`<span class="fc ${smpFilter===f?'on':''}" onclick="smpFilter='${f}';renderSample()">${f} <span style="font-size:9.5px;opacity:.7">${counts[f]||0}</span></span>`).join('')}
+      ${SMP_CATS.filter(f => window._smpStateTab === 'done' ? (f === '전체' || f === '완료') : f !== '완료').map(f=>`<span class="fc ${smpFilter===f?'on':''}" onclick="smpFilter='${f}';renderSample()">${f} <span style="font-size:9.5px;opacity:.7">${counts[f]||0}</span></span>`).join('')}
       <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
         <button onclick="smpAdvFilter.panelOpen=!smpAdvFilter.panelOpen;renderSample()"
           style="font-size:11.5px;padding:4px 10px;background:${smpAdvActiveCount()?'var(--gold-bg)':'var(--s1)'};border:1px solid ${smpAdvActiveCount()?'var(--gold)':'var(--bdr)'};border-radius:5px;cursor:pointer;font-family:inherit;color:${smpAdvActiveCount()?'var(--gold-lt)':'var(--t2)'};font-weight:${smpAdvActiveCount()?'700':'500'};display:flex;align-items:center;gap:4px"
@@ -13733,7 +13759,15 @@ function renderSample(){
   applySmpIndeterminate();
 }
 function filteredSamples(){
-  let list=smpFilter==='전체'?samples:samples.filter(s=>s.status===smpFilter);
+  // 진행중/완료 상태 서브탭 필터 (1차)
+  const stateTab = window._smpStateTab || 'active';
+  let baseList;
+  if(stateTab === 'done'){
+    baseList = samples.filter(s => s.status === '완료');
+  } else {
+    baseList = samples.filter(s => s.status !== '완료');
+  }
+  let list = smpFilter==='전체' ? baseList : baseList.filter(s=>s.status===smpFilter);
   if(smpSearch)list=list.filter(s=>(s.name+s.manager+s.mat+(s.itemCode||'')).toLowerCase().includes(smpSearch.toLowerCase()));
 
   // 고급 필터 적용
@@ -16321,8 +16355,14 @@ function openSmpModal(idOrNull){
   sv('s_costPrice',s?s.costPrice||'':'');
   sv('s_invNo',s?s.itemCode||'':'');
   document.getElementById('s_delBtn').style.display=s?'':'none';
-  document.getElementById('s_cfmBtn').style.display=(s&&s.status!=='확정'&&s.status!=='취소')?'':'none';
+  document.getElementById('s_cfmBtn').style.display=(s&&s.status!=='확정'&&s.status!=='취소'&&s.status!=='완료')?'':'none';
   document.getElementById('s_invBtn').style.display=s?'':'none';
+  // 완료처리 버튼: 등록된 의뢰서이고 아직 완료/취소가 아닐 때만
+  const completeBtn = document.getElementById('s_completeBtn');
+  if(completeBtn) completeBtn.style.display = (s && s.status !== '완료' && s.status !== '취소') ? '' : 'none';
+  // 되살리기 버튼: 완료 상태일 때만
+  const reopenBtn = document.getElementById('s_reopenBtn');
+  if(reopenBtn) reopenBtn.style.display = (s && s.status === '완료') ? '' : 'none';
   document.getElementById('smp_ai_badge').style.display=(s&&s.aiParsed)?'':'none';
   // 생성일자 표시 (모달 안에서만)
   var createdDispEl=document.getElementById('smp_created_disp');
@@ -17417,6 +17457,63 @@ function deleteSmp(){
     if(s) deleteSampleFromNotion(s);
     samples=samples.filter(x=>x.id!=id);
     save();closeM('mSmp');renderTab();updateBadges();
+  });
+}
+
+// ✅ 완료처리 — 발주로 가지 않고 의뢰서 자체를 완료 상태로 마감
+// (예: 샘플만 받고 양산 안 가는 케이스, 컨셉 확인용 등)
+function completeSmp(){
+  const id = gv('s_id');
+  if(!id){ showToast('⚠ 등록된 의뢰서만 완료할 수 있습니다','var(--red)'); return; }
+  const s = samples.find(x => x.id == id);
+  if(!s){ showToast('⚠ 의뢰서를 찾을 수 없습니다','var(--red)'); return; }
+  showConfirm(`"${s.name||'샘플'}"을 완료 처리합니다.\n완료 탭에서 확인할 수 있으며, 필요시 "되살리기"로 진행중으로 되돌릴 수 있습니다.`, async ()=>{
+    s.status = '완료';
+    s.completedAt = new Date().toISOString();
+    try { sv('s_status', '완료'); } catch(e){}
+    save();
+    showToast(`✅ "${s.name}" 완료 처리됨`, 'var(--grn)', 2500);
+    // 노션 동기화
+    try {
+      if(typeof syncSampleToNotion === 'function' && notionCfg?.smpDb){
+        await syncSampleToNotion(s, true);
+      }
+    } catch(e){ console.warn('완료처리 노션 동기화 실패:', e); }
+    closeM('mSmp');
+    renderTab();
+    updateBadges();
+  });
+}
+
+// ↩ 되살리기 — 완료된 의뢰서를 다시 "수정중" 상태로 되돌림 (수정 후 재완료 가능)
+function reopenSmp(){
+  const id = gv('s_id');
+  if(!id){ return; }
+  const s = samples.find(x => x.id == id);
+  if(!s){ return; }
+  showConfirm(`"${s.name||'샘플'}"을 다시 진행중으로 되돌립니다.\n상태가 "수정중"으로 변경되며, 수정 후 다시 완료처리하거나 발주로 보낼 수 있습니다.`, async ()=>{
+    s.status = '수정중';
+    // 되살리기 이력 기록 (필요시 추적 가능)
+    if(!Array.isArray(s.reopenHistory)) s.reopenHistory = [];
+    s.reopenHistory.push({ at: new Date().toISOString(), prevStatus: '완료' });
+    save();
+    sv('s_status', '수정중');
+    // 버튼 표시 갱신 — 모달 닫고 다시 열면 깔끔하지만, 그냥 인라인으로도 처리
+    const completeBtn = document.getElementById('s_completeBtn');
+    const reopenBtn = document.getElementById('s_reopenBtn');
+    const cfmBtn = document.getElementById('s_cfmBtn');
+    if(completeBtn) completeBtn.style.display = '';
+    if(reopenBtn) reopenBtn.style.display = 'none';
+    if(cfmBtn) cfmBtn.style.display = '';
+    showToast(`↩ "${s.name}" 되살림 (수정중 상태) — 수정 후 저장하세요`, 'var(--blu)', 3500);
+    // 노션 동기화
+    try {
+      if(typeof syncSampleToNotion === 'function' && notionCfg?.smpDb){
+        await syncSampleToNotion(s, true);
+      }
+    } catch(e){ console.warn('되살리기 노션 동기화 실패:', e); }
+    renderTab();
+    updateBadges();
   });
 }
 
