@@ -2172,6 +2172,28 @@ function showASParseResult(parsed, resultEl){
   parsed.items.forEach(it=>{ if(it._checked===undefined) it._checked=true; });
   window._asParsed=parsed;
   renderASParseTable();
+  // 🔒 AI가 인식한 공통 고객사를 단일 AS 모달의 고객사 칸에도 자동 채움
+  if(parsed.vendor){
+    setTimeout(()=>_syncAsParseVendorToForm(parsed.vendor), 50);
+  }
+}
+
+// AI 파싱의 공통 고객사 → 단일 AS 모달의 고객사 칸 자동 동기화
+// (두 화면이 같은 모달 안에 함께 보일 때 사용자가 두 번 입력 안 해도 되도록)
+function _syncAsParseVendorToForm(vendor){
+  const v = (vendor||'').trim();
+  if(!v) return;
+  const target = document.getElementById('as_client');
+  if(!target) return;
+  // 사용자가 이미 다른 값을 입력했으면 덮어쓰지 않음 (수동 입력 보호)
+  // — 단, 공백이면 자동 채움
+  if(!target.value || target.value === v){
+    target.value = v;
+  }
+  // 이니셜 등 부가 UI도 갱신 (가능하면)
+  if(typeof onAsClientInput === 'function'){
+    try { onAsClientInput(v); } catch(e){}
+  }
 }
 
 // 편집 가능한 AI 파싱 결과 테이블 렌더
@@ -2207,7 +2229,9 @@ function renderASParseTable(){
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:8px 10px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px">
       <label style="font-size:10.5px;color:var(--t3);font-weight:600;white-space:nowrap">공통 고객사:</label>
       <input list="asParseVendorDl" class="fi" id="asParseVendor" value="${(parsed.vendor||'').replace(/"/g,'&quot;')}"
-        oninput="window._asParsed.vendor=this.value"
+        oncompositionstart="this._composing=true"
+        oncompositionend="this._composing=false;window._asParsed.vendor=this.value;_syncAsParseVendorToForm(this.value)"
+        oninput="if(!this._composing){window._asParsed.vendor=this.value;_syncAsParseVendorToForm(this.value)}"
         placeholder="고객사명 입력 (이 값이 모든 항목에 적용됩니다)"
         style="flex:1;font-size:11.5px;padding:4px 8px">
       <datalist id="asParseVendorDl">
@@ -2234,10 +2258,18 @@ function renderASParseTable(){
         <tbody>
         ${items.map((it,i)=>{
           const checked=it._checked!==false;
-          const reasonStr = it.reason || '';
+          const reasonStr = (it.reason || '').toLowerCase();
+          // 입고불량 키워드: '입고불량', '입고 불량', '공장불량', '공장 불량'
+          // 고객불량 키워드: '고객불량', '고객 불량', 'AS요청', 'AS 요청', 'AS불량', 'as 불량', 'AS접수', '클레임', 'claim'
+          const _isFactoryDefect = reasonStr.includes('입고불량') || reasonStr.includes('입고 불량')
+            || reasonStr.includes('공장불량') || reasonStr.includes('공장 불량');
+          const _isCustomerDefect = reasonStr.includes('고객불량') || reasonStr.includes('고객 불량')
+            || reasonStr.includes('as요청') || reasonStr.includes('as 요청')
+            || reasonStr.includes('as불량') || reasonStr.includes('as 불량')
+            || reasonStr.includes('as접수') || reasonStr.includes('as 접수')
+            || reasonStr.includes('클레임') || reasonStr.includes('claim');
           const defectType = it.defectType
-            || (reasonStr.includes('입고불량') ? '입고불량'
-              : reasonStr.includes('고객불량') ? '고객불량' : '');
+            || (_isFactoryDefect ? '입고불량' : _isCustomerDefect ? '고객불량' : '');
           it.defectType = defectType; // 저장
           return `<tr style="${!checked?'opacity:.45':''}">
             <td style="padding:3px 4px;text-align:center;border-bottom:1px solid var(--bdr)">
@@ -2354,13 +2386,21 @@ async function applyASParseAll(){
     const it = checkedItems[i];
     // defectType은 사용자가 편집했으면 그 값, 아니면 reason에서 자동 판단
     const reason = (it.reason||'').trim();
+    const reasonLow = reason.toLowerCase();
     let defectType = it.defectType || '';
     if(!defectType){
-      if(reason.includes('입고불량')) defectType = '입고불량';
-      else if(reason.includes('고객불량')) defectType = '고객불량';
+      const _isFactoryDefect = reasonLow.includes('입고불량') || reasonLow.includes('입고 불량')
+        || reasonLow.includes('공장불량') || reasonLow.includes('공장 불량');
+      const _isCustomerDefect = reasonLow.includes('고객불량') || reasonLow.includes('고객 불량')
+        || reasonLow.includes('as요청') || reasonLow.includes('as 요청')
+        || reasonLow.includes('as불량') || reasonLow.includes('as 불량')
+        || reasonLow.includes('as접수') || reasonLow.includes('as 접수')
+        || reasonLow.includes('클레임') || reasonLow.includes('claim');
+      if(_isFactoryDefect) defectType = '입고불량';
+      else if(_isCustomerDefect) defectType = '고객불량';
     }
     const obj={
-      id: Date.now()+Math.random()+i, // unique ID 충돌 방지
+      id: (typeof _genSafeId === 'function') ? _genSafeId(i) : (Date.now()+Math.random()+i),
       createdAt: now,
       client: vendor,
       date: it.date || todayS,
