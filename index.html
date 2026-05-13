@@ -17512,7 +17512,9 @@ function completeSmp(){
   if(!id){ showToast('⚠ 등록된 의뢰서만 완료할 수 있습니다','var(--red)'); return; }
   const s = samples.find(x => x.id == id);
   if(!s){ showToast('⚠ 의뢰서를 찾을 수 없습니다','var(--red)'); return; }
-  showConfirm(`"${s.name||'샘플'}"을 완료 처리합니다.\n완료 후 "📦 발주서 만들기" 버튼이 활성화됩니다.`, async ()=>{
+  showConfirm(
+    `"${s.name||'샘플'}"을 완료 처리합니다.\n완료 후 "📦 발주서 만들기" 버튼이 활성화됩니다.`,
+    async ()=>{
     s.status = '완료';
     s.completedAt = new Date().toISOString();
     try { sv('s_status', '완료'); } catch(e){}
@@ -17534,7 +17536,12 @@ function completeSmp(){
     // 모달 안 닫음 — 사용자가 바로 발주 만들기 클릭 또는 직접 닫기
     renderTab();  // 백그라운드에서 탭만 갱신
     updateBadges();
-  });
+    },
+    '완료 처리하시겠습니까?',  // title
+    '✅',                       // icon
+    '완료처리',                 // okLabel
+    'grn'                       // okColor (초록)
+  );
 }
 
 // ↩ 되살리기 — 완료된 의뢰서를 다시 "수정중" 상태로 되돌림 (수정 후 재완료 가능)
@@ -17543,7 +17550,9 @@ function reopenSmp(){
   if(!id){ return; }
   const s = samples.find(x => x.id == id);
   if(!s){ return; }
-  showConfirm(`"${s.name||'샘플'}"을 다시 진행중으로 되돌립니다.\n상태가 "수정중"으로 변경되며, 수정 후 다시 완료처리하거나 발주로 보낼 수 있습니다.`, async ()=>{
+  showConfirm(
+    `"${s.name||'샘플'}"을 다시 진행중으로 되돌립니다.\n상태가 "수정중"으로 변경되며, 수정 후 다시 완료처리하거나 발주로 보낼 수 있습니다.`,
+    async ()=>{
     s.status = '수정중';
     // 되살리기 이력 기록 (필요시 추적 가능)
     if(!Array.isArray(s.reopenHistory)) s.reopenHistory = [];
@@ -17566,7 +17575,12 @@ function reopenSmp(){
     } catch(e){ console.warn('되살리기 노션 동기화 실패:', e); }
     renderTab();
     updateBadges();
-  });
+    },
+    '되살리시겠습니까?',  // title
+    '↩',                   // icon
+    '되살리기',             // okLabel
+    'blu'                   // okColor (파랑)
+  );
 }
 
 function deleteOrd(){
