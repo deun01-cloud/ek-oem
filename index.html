@@ -14020,11 +14020,61 @@ function renderSample(){
                 <input type="checkbox" ${isChk?'checked':''} onchange="toggleSmpChk(${s.id},this.checked)">
               </td>
               <td onclick="event.stopPropagation()">
-                ${sourceDocs.length
-                  ?`<div style="display:flex;gap:3px">
-                      ${sourceDocs.slice(0,2).map((doc,i)=>`<div title="${(doc.name||'').replace(/"/g,'')}" style="width:32px;height:32px;border-radius:4px;overflow:hidden;border:1.5px solid var(--gold-line);cursor:pointer" onclick="openPrevList(window['${srcKey}'],${i},true)"><img src="${doc.url}" style="width:100%;height:100%;object-fit:cover;display:block"></div>`).join('')}
-                    </div>`
-                  :`<span style="font-size:10px;color:var(--t3)">없음</span>`}
+                ${(()=>{
+                  // 모든 첨부 소스에서 이미지 파일만 모음 (작지서 + CAD + 예시이미지)
+                  const cad = Array.isArray(s.cadFiles) ? s.cadFiles : [];
+                  const isImageLike = (it) => {
+                    if(!it) return false;
+                    const url = typeof it === 'string' ? it : (it.url || '');
+                    const name = (it.name || '').toLowerCase();
+                    const type = (it.type || '').toLowerCase();
+                    if(type.startsWith('image/')) return true;
+                    if(/\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(name)) return true;
+                    if(typeof url === 'string' && /^data:image\//i.test(url)) return true;
+                    // PDF/엑셀/CAD는 미리보기 이미지 없으면 제외
+                    if(/\.(pdf|xlsx?|csv|dxf|dwg|stl|step|stp|igs|iges|ai|psd)$/i.test(name)) return false;
+                    return false;
+                  };
+                  // 출처별 배지 라벨
+                  const tagOrigin = (arr, origin) => arr.filter(isImageLike).map(it => ({...it, _origin: origin}));
+                  // 중복 제거 (같은 url 또는 name+size)
+                  const seen = new Set();
+                  const all = [
+                    ...tagOrigin(sourceDocs, 'src'),
+                    ...tagOrigin(cad, 'cad'),
+                    ...tagOrigin(imgs, 'img')
+                  ].filter(it => {
+                    const k = it.url || (it.name+'_'+(it.size||0));
+                    if(!k || seen.has(k)) return false;
+                    seen.add(k);
+                    return true;
+                  });
+                  if(!all.length){
+                    return `<span style="font-size:10px;color:var(--t3)">없음</span>`;
+                  }
+                  // window에 합쳐서 노출 — 클릭 시 큰 미리보기로 전달
+                  const allKey = '_smpAll_' + s.id;
+                  window[allKey] = all;
+                  const MAX_SHOW = 4;
+                  const shown = all.slice(0, MAX_SHOW);
+                  const remaining = all.length - shown.length;
+                  return `<div style="display:flex;gap:3px;align-items:center;flex-wrap:nowrap">
+                    ${shown.map((doc, i) => {
+                      const url = doc.url || (typeof doc === 'string' ? doc : '');
+                      const originBadge = doc._origin === 'cad' ? '<span style="position:absolute;bottom:0;right:0;background:rgba(26,109,181,.85);color:#fff;font-size:7px;padding:0 3px;border-radius:2px 0 0 0;font-weight:700">C</span>'
+                                       : doc._origin === 'img' ? '<span style="position:absolute;bottom:0;right:0;background:rgba(46,139,44,.85);color:#fff;font-size:7px;padding:0 3px;border-radius:2px 0 0 0;font-weight:700">E</span>'
+                                       : '';
+                      const borderColor = doc._origin === 'cad' ? 'var(--blu)' : doc._origin === 'img' ? 'var(--grn)' : 'var(--gold-line)';
+                      return `<div title="${(doc.name||'').replace(/"/g,'')} (${doc._origin==='cad'?'CAD':doc._origin==='img'?'예시이미지':'작지서'})"
+                        style="position:relative;width:32px;height:32px;border-radius:4px;overflow:hidden;border:1.5px solid ${borderColor};cursor:pointer;flex-shrink:0"
+                        onclick="openPrevList(window['${allKey}'],${i},true)">
+                        <img src="${url}" style="width:100%;height:100%;object-fit:cover;display:block">
+                        ${originBadge}
+                      </div>`;
+                    }).join('')}
+                    ${remaining > 0 ? `<div onclick="openPrevList(window['${allKey}'],0,true)" style="width:32px;height:32px;border-radius:4px;background:var(--s3);border:1.5px solid var(--bdr);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--t2);cursor:pointer;flex-shrink:0" title="전체 ${all.length}장 — 클릭하여 미리보기">+${remaining}</div>` : ''}
+                  </div>`;
+                })()}
               </td>
               <td>
                 <div style="display:flex;align-items:center;gap:6px">
