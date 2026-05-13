@@ -693,7 +693,6 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <option value="의뢰">의뢰</option>
         <option value="제작중">제작중</option>
         <option value="수정중">수정중</option>
-        <option value="확정">확정</option>
         <option value="완료">완료</option>
         <option value="취소">취소</option>
       </select>
@@ -840,7 +839,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <button class="btn bgo" onclick="closeM('mSmp')">취소</button>
     <button class="btn bp-red" id="s_delBtn" onclick="deleteSmp()" style="display:none">삭제</button>
     <button class="btn bgo" id="s_invBtn" onclick="saveAndInvoice()" style="display:none;border-color:var(--gold);color:var(--gold-lt)">🧾 명세서 발행</button>
-    <button class="btn bp-grn" id="s_cfmBtn" onclick="confirmSmp()" style="display:none">✓ 확정 → 발주 생성</button>
+    <button class="btn bp-grn" id="s_cfmBtn" onclick="confirmSmp()" style="display:none;font-weight:700" title="완료된 샘플 의뢰서로 발주서를 생성합니다">📦 발주서 만들기</button>
     <button class="btn" id="s_completeBtn" onclick="completeSmp()" style="display:none;background:#5a9b5e;color:#fff;border-color:#4a8a4e;font-weight:600" title="발주로 가지 않고 의뢰서만 완료 처리합니다">✅ 완료처리</button>
     <button class="btn bgo" id="s_reopenBtn" onclick="reopenSmp()" style="display:none;border-color:var(--blu);color:var(--blu);font-weight:600" title="완료된 의뢰서를 다시 진행중으로 되돌립니다">↩ 되살리기</button>
     <button class="btn bp" id="s_saveBtn" onclick="saveSmp()" style="font-size:13px;padding:7px 20px">✓ 샘플 등록</button>
@@ -870,7 +869,6 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <option value="의뢰">의뢰</option>
         <option value="제작중">제작중</option>
         <option value="수정중">수정중</option>
-        <option value="확정">확정</option>
         <option value="완료">완료</option>
         <option value="취소">취소</option>
       </select>
@@ -1769,7 +1767,7 @@ const KR_HOLIDAYS={
 function getHoliday(ds){ return KR_HOLIDAYS[ds]||''; }
 const DAY_KR=['일','월','화','수','목','금','토'];
 const STAGES=['주물','도금','검품','포장','출고'];
-const SMP_CATS=['전체','의뢰','제작중','수정중','확정','완료','취소'];
+const SMP_CATS=['전체','의뢰','제작중','수정중','완료','취소'];
 const SMP_CLS={의뢰:'chip',제작중:'cb',수정중:'co',확정:'cg',취소:'chip'};
 const CATS_SCHED=['업무','커머스','발주출고','샘플출고','중국입고','중국출고'];
 const CAT_BG={'업무':'rgba(26,109,181,.07)','커머스':'rgba(168,90,16,.07)','발주출고':'rgba(46,139,44,.07)','샘플출고':'rgba(26,109,181,.07)','중국입고':'rgba(192,48,48,.07)','중국출고':'rgba(192,48,48,.12)'};
@@ -7273,7 +7271,7 @@ function mapNotionSample(row){
     notes,
     type:     np.select(p['유형']),
     plating:  np.select(p['도금']),
-    status:   np.select(p['상태'])||'의뢰',
+    status:   (np.select(p['상태']) === '확정' ? '완료' : (np.select(p['상태']) || '의뢰')),
     reqDate:  np.date(p['의뢰일']),
     due:      np.date(p['납기일']),
     factShip: np.date(p['공장출고일']),
@@ -9183,7 +9181,53 @@ function save(){
     }catch(e){}
   }
 }
-function load(){try{const s=localStorage.getItem(SK.s);if(s)samples=JSON.parse(s);const o=localStorage.getItem(SK.o);if(o)orders=JSON.parse(o);const p=localStorage.getItem(SK.p);if(p)procItems=JSON.parse(p);const t=localStorage.getItem(SK.t);if(t)tasks=JSON.parse(t);const a=localStorage.getItem(SK.a);if(a)asItems=JSON.parse(a);const pd=localStorage.getItem(SK.pd);if(pd)productDB=JSON.parse(pd);const iv=localStorage.getItem(SK.iv);if(iv)invoiceHistory=JSON.parse(iv);const sh=localStorage.getItem(SK.sh);if(sh)stockHistory=JSON.parse(sh);}catch(e){}}
+function load(){
+  try{
+    const s=localStorage.getItem(SK.s);if(s)samples=JSON.parse(s);
+    const o=localStorage.getItem(SK.o);if(o)orders=JSON.parse(o);
+    const p=localStorage.getItem(SK.p);if(p)procItems=JSON.parse(p);
+    const t=localStorage.getItem(SK.t);if(t)tasks=JSON.parse(t);
+    const a=localStorage.getItem(SK.a);if(a)asItems=JSON.parse(a);
+    const pd=localStorage.getItem(SK.pd);if(pd)productDB=JSON.parse(pd);
+    const iv=localStorage.getItem(SK.iv);if(iv)invoiceHistory=JSON.parse(iv);
+    const sh=localStorage.getItem(SK.sh);if(sh)stockHistory=JSON.parse(sh);
+  }catch(e){}
+  // 🔄 마이그레이션: "확정" 상태 → "완료"로 일괄 변환
+  // (워크플로우 변경: 의뢰→제작중→수정중→완료→발주, "확정" 상태 폐기)
+  migrateSampleStatusConfirmedToDone();
+}
+
+// "확정" 상태를 "완료"로 자동 이관 (1회 실행)
+function migrateSampleStatusConfirmedToDone(){
+  if(!Array.isArray(samples) || !samples.length) return;
+  let changed = 0;
+  samples.forEach(s => {
+    if(s.status === '확정'){
+      s.status = '완료';
+      s._migratedFromConfirmed = new Date().toISOString();
+      if(!s.completedAt) s.completedAt = s._migratedFromConfirmed;
+      changed++;
+    }
+  });
+  if(changed > 0){
+    try { localStorage.setItem(SK.s, JSON.stringify(samples)); } catch(e){}
+    console.log(`[Migration] "확정" 상태 ${changed}건 → "완료"로 이관 완료`);
+    // 노션도 동기화 (백그라운드)
+    if(typeof syncSampleToNotion === 'function' && typeof notionCfg !== 'undefined' && notionCfg?.smpDb){
+      setTimeout(() => {
+        samples.filter(s => s._migratedFromConfirmed && !s._migrationSynced).forEach(async (s, i) => {
+          try {
+            await new Promise(r => setTimeout(r, i * 150)); // rate limit 대비
+            await syncSampleToNotion(s, true);
+            s._migrationSynced = true;
+          } catch(e){ console.warn('마이그레이션 노션 sync 실패:', s.name, e); }
+        });
+        // 동기화 완료 후 한번 더 저장
+        setTimeout(() => { try { localStorage.setItem(SK.s, JSON.stringify(samples)); } catch(e){} }, 5000);
+      }, 1500);
+    }
+  }
+}
 
 // ════════════════════════════════
 // 데모/테스트 데이터 — 콘솔에서 호출
@@ -16355,12 +16399,13 @@ function openSmpModal(idOrNull){
   sv('s_costPrice',s?s.costPrice||'':'');
   sv('s_invNo',s?s.itemCode||'':'');
   document.getElementById('s_delBtn').style.display=s?'':'none';
-  document.getElementById('s_cfmBtn').style.display=(s&&s.status!=='확정'&&s.status!=='취소'&&s.status!=='완료')?'':'none';
+  // 📦 발주서 만들기 버튼: 완료 상태에서만 노출 (새 워크플로우: 의뢰→제작중→수정중→완료→발주)
+  document.getElementById('s_cfmBtn').style.display=(s && s.status === '완료')?'':'none';
   document.getElementById('s_invBtn').style.display=s?'':'none';
-  // 완료처리 버튼: 등록된 의뢰서이고 아직 완료/취소가 아닐 때만
+  // ✅ 완료처리 버튼: 등록된 의뢰서이고 아직 완료/취소가 아닐 때만
   const completeBtn = document.getElementById('s_completeBtn');
   if(completeBtn) completeBtn.style.display = (s && s.status !== '완료' && s.status !== '취소') ? '' : 'none';
-  // 되살리기 버튼: 완료 상태일 때만
+  // ↩ 되살리기 버튼: 완료 상태일 때만
   const reopenBtn = document.getElementById('s_reopenBtn');
   if(reopenBtn) reopenBtn.style.display = (s && s.status === '완료') ? '' : 'none';
   document.getElementById('smp_ai_badge').style.display=(s&&s.aiParsed)?'':'none';
@@ -17467,20 +17512,27 @@ function completeSmp(){
   if(!id){ showToast('⚠ 등록된 의뢰서만 완료할 수 있습니다','var(--red)'); return; }
   const s = samples.find(x => x.id == id);
   if(!s){ showToast('⚠ 의뢰서를 찾을 수 없습니다','var(--red)'); return; }
-  showConfirm(`"${s.name||'샘플'}"을 완료 처리합니다.\n완료 탭에서 확인할 수 있으며, 필요시 "되살리기"로 진행중으로 되돌릴 수 있습니다.`, async ()=>{
+  showConfirm(`"${s.name||'샘플'}"을 완료 처리합니다.\n완료 후 "📦 발주서 만들기" 버튼이 활성화됩니다.`, async ()=>{
     s.status = '완료';
     s.completedAt = new Date().toISOString();
     try { sv('s_status', '완료'); } catch(e){}
     save();
-    showToast(`✅ "${s.name}" 완료 처리됨`, 'var(--grn)', 2500);
+    // 버튼 상태 토글 (모달 안 닫고 그대로) — 완료 후 바로 발주 만들기 가능
+    const completeBtn = document.getElementById('s_completeBtn');
+    const reopenBtn = document.getElementById('s_reopenBtn');
+    const cfmBtn = document.getElementById('s_cfmBtn');
+    if(completeBtn) completeBtn.style.display = 'none';
+    if(reopenBtn) reopenBtn.style.display = '';
+    if(cfmBtn) cfmBtn.style.display = '';
+    showToast(`✅ "${s.name}" 완료 처리됨 — 발주 만들기 가능`, 'var(--grn)', 3000);
     // 노션 동기화
     try {
       if(typeof syncSampleToNotion === 'function' && notionCfg?.smpDb){
         await syncSampleToNotion(s, true);
       }
     } catch(e){ console.warn('완료처리 노션 동기화 실패:', e); }
-    closeM('mSmp');
-    renderTab();
+    // 모달 안 닫음 — 사용자가 바로 발주 만들기 클릭 또는 직접 닫기
+    renderTab();  // 백그라운드에서 탭만 갱신
     updateBadges();
   });
 }
@@ -17498,14 +17550,14 @@ function reopenSmp(){
     s.reopenHistory.push({ at: new Date().toISOString(), prevStatus: '완료' });
     save();
     sv('s_status', '수정중');
-    // 버튼 표시 갱신 — 모달 닫고 다시 열면 깔끔하지만, 그냥 인라인으로도 처리
+    // 버튼 표시 갱신: 수정중 상태에서는 완료처리 노출, 발주 만들기는 숨김
     const completeBtn = document.getElementById('s_completeBtn');
     const reopenBtn = document.getElementById('s_reopenBtn');
     const cfmBtn = document.getElementById('s_cfmBtn');
     if(completeBtn) completeBtn.style.display = '';
     if(reopenBtn) reopenBtn.style.display = 'none';
-    if(cfmBtn) cfmBtn.style.display = '';
-    showToast(`↩ "${s.name}" 되살림 (수정중 상태) — 수정 후 저장하세요`, 'var(--blu)', 3500);
+    if(cfmBtn) cfmBtn.style.display = 'none';  // 수정중 → 다시 완료해야 발주 가능
+    showToast(`↩ "${s.name}" 되살림 (수정중 상태) — 수정 후 다시 완료처리 → 발주`, 'var(--blu)', 3500);
     // 노션 동기화
     try {
       if(typeof syncSampleToNotion === 'function' && notionCfg?.smpDb){
@@ -17538,13 +17590,55 @@ function deleteProc(){
     procItems=procItems.filter(x=>x.id!=id);
     save();closeM('mProc');renderTab();updateBadges();
   });
-}function confirmSmp(){
-  const id=gv('s_id');const s=samples.find(x=>x.id==id);if(!s)return;
-  s.status='확정';
-  const ord={id:Date.now(),vendor:s.manager||'',date:todayStr,ship:s.due||'',no:genOrderNo(s.manager||'', todayStr),manager:'',memo:`샘플 확정 자동전환: ${s.name}`,rows:[{name:s.name,qty:s.qty||'',plating:s.plating||'',mat:s.mat||'',size:s.sz1||'',note:''}]};
+}
+// 📦 발주서 만들기 — 완료된 샘플 의뢰서에서 발주서를 생성
+// (기존 "확정 → 발주" 로직을 새 워크플로우에 맞게 변경: 상태는 "완료" 유지, 발주서만 추가 생성)
+function confirmSmp(){
+  const id=gv('s_id');
+  const s=samples.find(x=>x.id==id);
+  if(!s){ showToast('⚠ 의뢰서를 찾을 수 없습니다','var(--red)'); return; }
+  if(s.status !== '완료'){
+    showToast('⚠ "완료" 상태인 의뢰서만 발주를 만들 수 있습니다. 먼저 완료처리 해주세요','var(--org)', 3500);
+    return;
+  }
+  // 같은 샘플로 이미 만든 발주가 있는지 확인 (중복 방지)
+  const existing = orders.find(o => o._fromSampleId == id);
+  if(existing){
+    if(!confirm(`이 의뢰서로 이미 발주서가 만들어져 있습니다 (발주번호: ${existing.no || '—'}).\n다시 만들까요? (중복 생성)`)) return;
+  }
+  const ord={
+    id: Date.now(),
+    vendor: s.manager||'',
+    date: todayStr,
+    ship: s.due||'',
+    no: genOrderNo(s.manager||'', todayStr),
+    manager: '',
+    memo: `샘플 의뢰서 기반 자동 생성: ${s.name}`,
+    rows:[{name:s.name, qty:s.qty||'', plating:s.plating||'', mat:s.mat||'', size:s.sz1||'', note:''}],
+    _fromSampleId: id,  // 추적용
+    factoryNotice: s.factoryNotice || ''  // 공장 주의사항 승계
+  };
   orders.push(ord);
-  if(s.due)procItems.push({id:Date.now()+1,name:s.name,vendor:(s.manager||'').substring(0,8),qty:s.qty||'',due:s.due,stageIdx:0,note:`확정: ${s.name}`,shipped:false});
-  save();closeM('mSmp');showToast(`✓ "${s.name}" 확정 완료 — 발주서 자동 생성`);renderTab();updateBadges();
+  if(s.due){
+    procItems.push({
+      id: Date.now()+1,
+      name: s.name,
+      vendor: (s.manager||'').substring(0,8),
+      qty: s.qty||'',
+      due: s.due,
+      stageIdx: 0,
+      note: `샘플 기반: ${s.name}`,
+      shipped: false
+    });
+  }
+  // 샘플에도 발주 연결 기록 (한 번의 샘플에서 여러 발주 가능하지만 마지막 연결만 기록)
+  s._linkedOrderId = ord.id;
+  s._linkedOrderAt = new Date().toISOString();
+  save();
+  closeM('mSmp');
+  showToast(`✓ 발주서 생성 — "${s.name}" (${ord.no})`, 'var(--grn)', 3000);
+  renderTab();
+  updateBadges();
 }
 // ════════════════════════════════
 // CRUD: ORDER
@@ -17770,16 +17864,19 @@ function renderOrdRows(){
   const w=document.getElementById('ordRowsWrap');if(!w)return;
 
   // 컬럼 헤더 (맨 위에 1회만) + 공유 datalist
+  // datalist는 자동완성 힌트일 뿐 — 사용자는 자유롭게 직접 입력 가능
+  // "기타"는 의미가 모호해서 옵션에서 제거 (직접 입력 가능함을 명확히 하기 위해)
   const header=`
-  <datalist id="ordPlatingList"><option value="실버"><option value="골드"><option value="로즈골드"><option value="무도금"><option value="건메탈"><option value="블랙"><option value="기타"></datalist>
-  <datalist id="ordMatList"><option value="브라스 (BRASS)"><option value="925 실버"><option value="14K 골드"><option value="스테인리스"><option value="써지컬스틸"><option value="아연합금"><option value="기타"></datalist>
-  <div style="display:grid;grid-template-columns:22px 28px 1fr 60px 80px 100px 65px 90px 28px;gap:4px;align-items:center;padding:6px 0 4px 0;border-bottom:1px solid var(--bdr);margin-bottom:2px;font-size:10px;color:var(--t3);font-weight:600;letter-spacing:.3px">
+  <datalist id="ordPlatingList"><option value="실버"><option value="골드"><option value="로즈골드"><option value="옐로우골드"><option value="화이트골드"><option value="블랙로듐"><option value="건메탈"><option value="무도금"><option value="변색방지 코팅"></datalist>
+  <datalist id="ordMatList"><option value="브라스 (BRASS)"><option value="925 실버"><option value="14K 골드"><option value="18K 골드"><option value="스테인리스"><option value="써지컬스틸"><option value="아연합금"><option value="신주"><option value="티타늄"></datalist>
+  <div style="display:grid;grid-template-columns:22px 28px 64px 1fr 60px 80px 100px 65px 90px 28px;gap:4px;align-items:center;padding:6px 0 4px 0;border-bottom:1px solid var(--bdr);margin-bottom:2px;font-size:10px;color:var(--t3);font-weight:600;letter-spacing:.3px">
     <div style="text-align:center">#</div>
     <div style="text-align:center">검색</div>
+    <div style="text-align:center" title="클릭/드래그로 이미지 첨부 — 공장 전송 미리보기에 표시됨">이미지</div>
     <div>품목명</div>
     <div style="text-align:center">발주량</div>
-    <div style="text-align:center">도금</div>
-    <div style="text-align:center">소재</div>
+    <div style="text-align:center" title="목록 선택 또는 직접 입력 가능">도금 <span style="font-size:8.5px;color:var(--gold-lt);font-weight:500">⌨</span></div>
+    <div style="text-align:center" title="목록 선택 또는 직접 입력 가능">소재 <span style="font-size:8.5px;color:var(--gold-lt);font-weight:500">⌨</span></div>
     <div style="text-align:center">규격</div>
     <div style="text-align:right;padding-right:4px">단가(원)</div>
     <div></div>
@@ -17799,39 +17896,45 @@ function renderOrdRows(){
     return`
   <div style="border-bottom:0.5px solid var(--bdr);padding:8px 0;${isDone?'opacity:.8':''}">
     <!-- 품목 기본 행 -->
-    <div style="display:grid;grid-template-columns:22px 28px 1fr 60px 80px 100px 65px 90px 28px;gap:4px;align-items:center">
+    <div style="display:grid;grid-template-columns:22px 28px 64px 1fr 60px 80px 100px 65px 90px 28px;gap:4px;align-items:center">
       <div style="font-size:10px;color:var(--t3);text-align:center">${i+1}</div>
       <button title="품번 검색" onclick="openItemSearch(${i})" style="padding:3px 5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;cursor:pointer;font-size:13px;line-height:1">🔍</button>
+      <!-- 🖼 이미지 칸 (클릭/드래그/붙여넣기로 이미지 추가) -->
+      <div style="position:relative;width:64px;height:64px;border:1.5px dashed ${r.img?'var(--gold-line)':'var(--bdr)'};border-radius:6px;background:${r.img?'transparent':'var(--s2)'};overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0"
+        ondragover="event.preventDefault();this.style.borderColor='var(--gold)';this.style.background='var(--gold-bg)'"
+        ondragleave="this.style.borderColor='${r.img?'var(--gold-line)':'var(--bdr)'}';this.style.background='${r.img?'transparent':'var(--s2)'}'"
+        ondrop="_handleOrdRowImageDrop(event,${i})"
+        onclick="${r.img?`openPrevList([{url:'${String(r.img).replace(/'/g,"\\\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\\\'")}'}],0,false)`:`document.getElementById('ordRowImgInp_${i}').click()`}"
+        title="${r.img?'클릭하여 큰 미리보기':'클릭/드래그로 이미지 첨부'}">
+        ${r.img
+          ? `<img src="${r.img}" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none">
+             <button onclick="event.stopPropagation();ordRowsBuf[${i}].img='';renderOrdRows()" title="이미지 제거" style="position:absolute;top:1px;right:1px;width:18px;height:18px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:50%;cursor:pointer;font-size:11px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center;padding:0">×</button>`
+          : `<div style="font-size:18px;color:var(--t3)">📷</div>`}
+        <input type="file" id="ordRowImgInp_${i}" accept="image/*" style="display:none" onchange="_handleOrdRowImageFile(event,${i})">
+      </div>
       <div>
-        ${r.img?`<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
-          <img src="${r.img}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1.5px solid var(--gold-line);cursor:pointer;flex-shrink:0"
-            onclick="openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\'")}'}],0,false)"
-            title="클릭하여 미리보기">
-          <input class="fi" value="${r.name||''}"
-            oncompositionstart="this._composing=true"
-            oncompositionend="this._composing=false;ordRowsBuf[${i}].name=this.value"
-            oninput="if(!this._composing)ordRowsBuf[${i}].name=this.value"
-            onblur="_autoMatchOrdRow(${i})"
-            placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;flex:1;min-width:0">
-          <button onclick="ordRowsBuf[${i}].img='';renderOrdRows()" title="이미지 제거" style="padding:2px 5px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;font-size:10px;color:var(--t3);flex-shrink:0">🗑</button>
-        </div>`:`<input class="fi" value="${r.name||''}"
-            oncompositionstart="this._composing=true"
-            oncompositionend="this._composing=false;ordRowsBuf[${i}].name=this.value"
-            oninput="if(!this._composing)ordRowsBuf[${i}].name=this.value"
-            onblur="_autoMatchOrdRow(${i})"
-            placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;width:100%">`}
+        <input class="fi" value="${(r.name||'').replace(/"/g,'&quot;')}"
+          oncompositionstart="this._composing=true"
+          oncompositionend="this._composing=false;ordRowsBuf[${i}].name=this.value"
+          oninput="if(!this._composing)ordRowsBuf[${i}].name=this.value"
+          onblur="_autoMatchOrdRow(${i})"
+          placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;width:100%">
         ${r.itemCode?`<div style="font-size:9.5px;color:var(--gold-lt);margin-top:2px;font-weight:600">📌 ${r.itemCode}</div>`:''}
       </div>
       <div style="position:relative">
         <input class="fi search-box-tracked" id="ordRowQty_${i}" value="${r.qty||''}" oninput="ordRowsBuf[${i}].qty=this.value;renderOrdRows()" placeholder="발주량" style="font-size:11.5px;padding:4px 7px;text-align:center;width:100%" title="발주 수량 (예: 80, '각 20개 (총 80개)')">
         ${(r.qty&&String(r.qty).trim()&&parseOrdQty(r.qty)>0&&String(parseOrdQty(r.qty))!==String(r.qty).trim())?`<div style="position:absolute;top:100%;left:0;right:0;font-size:9px;color:var(--gold-lt);text-align:center;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="잔량 계산에 사용되는 수량">= ${parseOrdQty(r.qty).toLocaleString()}개</div>`:''}
       </div>
-      <input class="fi" list="ordPlatingList" value="${(r.plating||'').replace(/"/g,'&quot;')}" oninput="ordRowsBuf[${i}].plating=this.value" placeholder="도금" style="font-size:11px;padding:4px 6px" title="선택 또는 직접입력">
-      <input class="fi" list="ordMatList" value="${(r.mat||'').replace(/"/g,'&quot;')}" oninput="ordRowsBuf[${i}].mat=this.value" placeholder="소재" style="font-size:11px;padding:4px 6px" title="선택 또는 직접입력">
+      <input class="fi" list="ordPlatingList" value="${(r.plating||'').replace(/"/g,'&quot;')}" oninput="ordRowsBuf[${i}].plating=this.value" placeholder="도금 (직접 입력 가능)" style="font-size:11px;padding:4px 6px" title="목록 선택 또는 직접 입력 — 예: 실버 / 골드 / 18K 옐로우골드 / 변색방지 코팅 등">
+      <input class="fi" list="ordMatList" value="${(r.mat||'').replace(/"/g,'&quot;')}" oninput="ordRowsBuf[${i}].mat=this.value" placeholder="소재 (직접 입력 가능)" style="font-size:11px;padding:4px 6px" title="목록 선택 또는 직접 입력 — 예: 925 실버 / 14K 골드 / 써지컬스틸 / 신주 등">
       <input class="fi" value="${r.size||''}" oninput="ordRowsBuf[${i}].size=this.value" placeholder="11mm" style="font-size:11.5px;padding:4px 7px">
       <input class="fi" type="number" value="${r.unitPrice||''}" oninput="ordRowsBuf[${i}].unitPrice=+this.value" placeholder="단가" style="font-size:11px;padding:4px 6px;text-align:right">
       <button onclick="ordRowsBuf.splice(${i},1);renderOrdRows()" style="padding:3px 5px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-size:12px;color:var(--t3)">×</button>
     </div>
+    ${!r.itemCode && (r.name||'').trim() ? `<div style="display:flex;justify-content:flex-end;padding:2px 32px 0 0">
+      <button onclick="_registerOrdRowToProductDB(${i})" style="font-size:10.5px;padding:2px 9px;background:transparent;color:var(--blu);border:none;cursor:pointer;font-family:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px"
+        title="이 품목 정보(품명·도금·소재·규격·단가·이미지)를 제품DB에 새 항목으로 등록합니다">+ 이 품목을 제품DB에 등록</button>
+    </div>` : ''}
 
     <!-- 입고 현황 (발주수량 있을 때만) -->
     ${ordQty>0?(()=>{
@@ -17896,7 +17999,109 @@ function renderOrdRows(){
     window._ordPreviewTimer = setTimeout(refreshInlineOrdPreview, 100);
   }
 }
-function addOrdRow(){ordRowsBuf.push({name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:'',itemCode:'',unitPrice:0,rcvHistory:[]});renderOrdRows();}
+function addOrdRow(){ordRowsBuf.push({name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:'',itemCode:'',unitPrice:0,img:'',rcvHistory:[]});renderOrdRows();}
+
+// ════════════════════════════════
+// 발주 품목 행 - 이미지 첨부 핸들러 (파일 선택 / 드래그앤드롭)
+// ════════════════════════════════
+function _handleOrdRowImageFile(ev, rowIdx){
+  const files = ev.target.files;
+  if(!files || !files.length) return;
+  _readOrdRowImage(files[0], rowIdx);
+  ev.target.value = ''; // 같은 파일 재선택 가능하도록
+}
+function _handleOrdRowImageDrop(ev, rowIdx){
+  ev.preventDefault();
+  ev.stopPropagation();
+  // 드롭 영역 스타일 원복
+  if(ev.currentTarget && ev.currentTarget.style){
+    ev.currentTarget.style.borderColor = '';
+    ev.currentTarget.style.background = '';
+  }
+  const files = ev.dataTransfer?.files;
+  if(!files || !files.length) return;
+  // 이미지 파일만 받음
+  const imgFile = Array.from(files).find(f => (f.type||'').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic)$/i.test(f.name||''));
+  if(!imgFile){
+    showToast('⚠ 이미지 파일만 첨부할 수 있습니다','var(--org)', 2000);
+    return;
+  }
+  _readOrdRowImage(imgFile, rowIdx);
+}
+function _readOrdRowImage(file, rowIdx){
+  const r = new FileReader();
+  r.onload = ev => {
+    if(!ordRowsBuf[rowIdx]) return;
+    ordRowsBuf[rowIdx].img = ev.target.result;
+    ordRowsBuf[rowIdx]._imgName = file.name || 'image';
+    renderOrdRows();
+    showToast(`✓ 행 ${rowIdx+1}에 이미지 첨부됨`, 'var(--grn)', 1800);
+  };
+  r.readAsDataURL(file);
+}
+
+// ════════════════════════════════
+// 발주 품목 → 제품DB 등록 (수동)
+// ════════════════════════════════
+function _registerOrdRowToProductDB(rowIdx){
+  const r = ordRowsBuf[rowIdx];
+  if(!r){ return; }
+  const name = (r.name||'').trim();
+  if(!name){ showToast('⚠ 품목명을 먼저 입력해 주세요','var(--red)', 2500); return; }
+  if(r.itemCode){ showToast('ℹ 이미 제품DB에 등록된 품목입니다','var(--blu)', 2500); return; }
+
+  // 노션 우선: 제품DB 동기화 필수
+  if(typeof requireNotion === 'function' && !requireNotion('productDb', '제품DB 등록')) return;
+
+  // 같은 이름의 항목이 이미 있는지 확인 (대소문자/공백 무시)
+  const norm = (s) => (s||'').trim().toLowerCase().replace(/\s+/g,' ');
+  const existing = (typeof productDB !== 'undefined' && Array.isArray(productDB))
+    ? productDB.find(p => norm(p.name) === norm(name)) : null;
+  if(existing){
+    if(!confirm(`동일한 이름의 품목이 이미 제품DB에 있습니다:\n"${existing.name}" (품번: ${existing.code||'—'})\n\n그래도 새 항목으로 등록하시겠습니까?`)) return;
+  }
+
+  // 새 제품DB 항목 생성
+  const now = new Date().toISOString();
+  const newCode = (typeof genProductCode === 'function')
+    ? genProductCode(r.plating || '', r.mat || '')
+    : ('NEW-' + Date.now().toString(36).toUpperCase());
+
+  const newProduct = {
+    id: Date.now() + Math.random(),
+    code: newCode,
+    name: name,
+    type: '',
+    plating: r.plating || '',
+    mat: r.mat || '',
+    sz1: r.size || '',
+    sz2: '', sz3: '', sz4: '',
+    wt: '',
+    costPrice: 0,
+    price: +r.unitPrice || 0,
+    imgs: r.img ? [{url: r.img, name: r._imgName || 'order_img.png'}] : [],
+    vendor: '',
+    memo: `발주서에서 등록 (${(new Date()).toLocaleDateString('ko-KR')})`,
+    createdAt: now
+  };
+
+  if(!Array.isArray(productDB)) productDB = [];
+  productDB.push(newProduct);
+
+  // 행에도 itemCode 연결
+  ordRowsBuf[rowIdx].itemCode = newCode;
+
+  // 저장
+  if(typeof save === 'function') save();
+  renderOrdRows();
+
+  // 노션 동기화
+  if(typeof syncProductToNotion === 'function' && typeof notionCfg !== 'undefined' && notionCfg?.productDb){
+    syncProductToNotion(newProduct).catch(e => console.warn('제품DB 노션 동기화 실패:', e));
+  }
+
+  showToast(`✓ "${name}" 제품DB 등록 완료 (품번: ${newCode})`, 'var(--grn)', 3500);
+}
 
 // ════════════════════════════════
 // 품번 검색
@@ -19592,17 +19797,39 @@ function renderOrdFilePrev(){
     const isImg=(f.type&&f.type.startsWith('image/'))||['jpg','jpeg','png','gif','webp','heic'].includes(ext);
     const isPdf=f.type==='application/pdf'||ext==='pdf';
     const isXl=(f.type&&(f.type.includes('sheet')||f.type.includes('excel')))||['xlsx','xls','csv'].includes(ext);
-    const icon=isImg?'🖼':isPdf?'📄':isXl?'📊':'📎';
+    const icon=isPdf?'📄':isXl?'📊':'📎';
     // 저장 상태 배지 (R2 업로드 완료 or 로컬 base64)
     const isR2=f.url && !String(f.url).startsWith('data:');
     const sz=f.size?(f.size>1048576?(f.size/1048576).toFixed(1)+'MB':Math.round(f.size/1024)+'KB'):'';
     const statusBadge=isR2
       ? '<span style="font-size:9px;background:rgba(46,139,44,.12);color:var(--grn);padding:1px 5px;border-radius:3px;font-weight:600" title="클라우드에 저장됨 (영구)">☁ 저장됨</span>'
       : '<span style="font-size:9px;background:rgba(168,90,16,.12);color:var(--org);padding:1px 5px;border-radius:3px;font-weight:600" title="로컬에만 저장됨. 저장 버튼을 누르면 클라우드에 업로드됩니다">💾 로컬</span>';
+
+    // 🖼 이미지 파일: 실제 썸네일 카드로 표시 (샘플 모달과 일관성)
+    if(isImg && f.url){
+      return `
+      <div style="display:inline-flex;flex-direction:column;align-items:stretch;background:var(--s2);border:1px solid var(--bdr);border-radius:8px;overflow:hidden;cursor:pointer;width:96px;position:relative"
+        onclick="openFilePreviewList(ordFileBuf,${i})"
+        title="클릭하여 미리보기 · ${(f.name||'').replace(/"/g,'&quot;')}">
+        <img src="${f.url}" style="width:100%;height:80px;object-fit:cover;display:block;background:#fafafa;pointer-events:none">
+        <div style="padding:4px 7px;font-size:10.5px;background:var(--s1);border-top:1px solid var(--bdr)">
+          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2);font-weight:500;line-height:1.2">${f.name||'파일'}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;gap:4px">
+            ${sz?`<span style="font-size:9px;color:var(--t3)">${sz}</span>`:'<span></span>'}
+            ${statusBadge}
+          </div>
+        </div>
+        <button onclick="event.stopPropagation();ordFileBuf.splice(${i},1);renderOrdFilePrev()"
+          style="position:absolute;top:3px;right:3px;width:20px;height:20px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:50%;cursor:pointer;font-size:12px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center;padding:0"
+          title="제거">×</button>
+      </div>`;
+    }
+
+    // 📄 비이미지 파일 (PDF/엑셀/기타): 기존 텍스트 칩 유지
     return`
     <div style="display:inline-flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:5px 9px;font-size:11px;cursor:pointer"
       onclick="openFilePreviewList(ordFileBuf,${i})"
-      title="클릭하여 미리보기 · ${f.name||''}">
+      title="클릭하여 미리보기 · ${(f.name||'').replace(/"/g,'&quot;')}">
       <span>${icon}</span>
       <span style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2);font-weight:500">${f.name||'파일'}</span>
       ${sz?`<span style="font-size:9.5px;color:var(--t3)">${sz}</span>`:''}
