@@ -10702,12 +10702,12 @@ function handleSmpAllPaste(e){
   }
   if(files.length){
     e.preventDefault();
-    // 붙여넣기(스크린샷) 이미지는 "작업지시서" 기본 — 스크린샷/워드 캡처 케이스 많음
-    _classifyAndLoad(files, 'paste');
-    showToast(`📋 ${files.length}개 파일 붙여넣기 → 작업지시서`,'var(--blu)',1800);
+    // 붙여넣기 이미지도 예시이미지로 분류 (사용자 혼란 방지)
+    _classifyAndLoad(files, 'auto');
+    showToast(`📋 ${files.length}개 파일 붙여넣기`,'var(--blu)',1800);
   }
 }
-// 파일을 종류별로 분류 (origin: 'auto' = 파일선택/드래그, 'paste' = 붙여넣기)
+// 파일을 종류별로 분류 (origin: 'auto' = 파일선택/드래그/붙여넣기, 'paste-doc' = 명시적 작업지시서)
 function _classifyFile(f, origin){
   const type=(f.type||'').toLowerCase();
   const ext=(f.name||'').split('.').pop().toLowerCase();
@@ -10720,9 +10720,9 @@ function _classifyFile(f, origin){
      ['pdf','xlsx','xls','csv','ods'].includes(ext)){
     return 'src';
   }
-  // 3) 이미지 분류 — 붙여넣기(스크린샷)는 작업지시서 기본, 파일선택/드래그는 예시이미지
+  // 3) 이미지 분류 — 모두 예시이미지로 (사용자가 직접 카테고리 이동 가능)
   if(type.startsWith('image/') || ['jpg','jpeg','png','gif','heic','heif','webp','bmp','svg'].includes(ext)){
-    return origin==='paste' ? 'src' : 'img';
+    return origin==='paste-doc' ? 'src' : 'img';
   }
   // 4) 기타 → CAD 영역으로
   return 'cad';
@@ -18099,7 +18099,20 @@ function _buildSmpPreviewHtml(){
 
   // 샘플 이미지 수집 (다중 소스 — 최대한 다 보여주기)
   // 1순위: 현재 편집 중인 모달의 smpImgBuf (사용자가 새로 추가/제거한 게 반영됨)
-  // 2순위: 편집 중인 의뢰서 ID가 있으면 samples에서 원본 imgs 가져옴 (모달이 안 열려있는 케이스 대비)
+  // 2순위: 편집 중인 의뢰서 ID가 있으면 samples에서 원본 imgs 가져옴
+  // 3순위: sourceDoc/cadFiles에 들어있는 이미지 파일도 합침
+  //   (붙여넣기 이미지는 sourceDoc으로 분류되는 동작 때문에, 결과적으로 다 보여주기)
+  const isImgLike = (item) => {
+    if(!item) return false;
+    const t = (item.type || '').toLowerCase();
+    const nm = (item.name || '').toLowerCase();
+    if(t.startsWith('image/')) return true;
+    if(/\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(nm)) return true;
+    // url이 data:image/... 로 시작하면 이미지
+    const u = typeof item === 'string' ? item : (item.url || '');
+    if(typeof u === 'string' && /^data:image\//i.test(u)) return true;
+    return false;
+  };
   let smpImgs = [];
   try {
     if(typeof smpImgBuf !== 'undefined' && Array.isArray(smpImgBuf) && smpImgBuf.length){
@@ -18107,16 +18120,53 @@ function _buildSmpPreviewHtml(){
     }
   } catch(e){}
   // smpImgBuf가 비었으면 samples에서 fallback
+  let usedFallback = false;
   if(!smpImgs.length){
     try {
       const sid = gv('s_id');
       if(sid && typeof samples !== 'undefined' && Array.isArray(samples)){
         const s = samples.find(x => String(x.id) === String(sid));
-        if(s && Array.isArray(s.imgs)) smpImgs = [...s.imgs];
+        if(s && Array.isArray(s.imgs) && s.imgs.length){
+          smpImgs = [...s.imgs];
+          usedFallback = true;
+        }
       }
     } catch(e){}
   }
-  console.log('[샘플 미리보기] 이미지 수:', smpImgs.length, '소스:', smpImgs.length && smpImgBuf?.length === smpImgs.length ? 'smpImgBuf' : 'samples fallback');
+  // sourceDoc / cadFiles에 들어있는 이미지 파일도 합치기 (현재 모달의 버퍼 우선, 없으면 samples)
+  try {
+    let srcArr = [], cadArr = [];
+    if(typeof smpSrcBuf !== 'undefined' && Array.isArray(smpSrcBuf) && smpSrcBuf.length){
+      srcArr = smpSrcBuf;
+    } else {
+      const sid = gv('s_id');
+      const s = (sid && typeof samples !== 'undefined') ? samples.find(x => String(x.id) === String(sid)) : null;
+      if(s){
+        if(Array.isArray(s.sourceDoc)) srcArr = s.sourceDoc;
+      }
+    }
+    if(typeof smpCadBuf !== 'undefined' && Array.isArray(smpCadBuf) && smpCadBuf.length){
+      cadArr = smpCadBuf;
+    } else {
+      const sid = gv('s_id');
+      const s = (sid && typeof samples !== 'undefined') ? samples.find(x => String(x.id) === String(sid)) : null;
+      if(s && Array.isArray(s.cadFiles)) cadArr = s.cadFiles;
+    }
+    // 이미지로 보이는 것만 추가 (중복 url 제거)
+    const existingUrls = new Set(smpImgs.map(im => typeof im === 'string' ? im : (im?.url || '')));
+    [...srcArr, ...cadArr].forEach(it => {
+      if(!isImgLike(it)) return;
+      const u = typeof it === 'string' ? it : (it?.url || '');
+      if(!u || existingUrls.has(u)) return;
+      smpImgs.push(it);
+      existingUrls.add(u);
+    });
+  } catch(e){ console.warn('[샘플 미리보기] sourceDoc/cadFiles 스캔 실패:', e); }
+
+  console.log('[샘플 미리보기] 최종 이미지 수:', smpImgs.length,
+    '(smpImgBuf:', smpImgBuf?.length || 0,
+    ', samples fallback:', usedFallback,
+    ', sourceDoc/cadFiles 추가됨:', smpImgs.length - (smpImgBuf?.length || (usedFallback ? smpImgs.length : 0)), ')');
 
   // 이전 설정 불러오기 (localStorage)
   let prevCfg = {size: 320, cols: 2};
