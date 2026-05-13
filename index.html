@@ -2448,6 +2448,11 @@ function asParseToggleAll(checked){
 }
 
 async function applyASParseAll(){
+  // 🔒 중복 실행 가드 — 이미 처리 중이면 즉시 리턴
+  if(window._asApplyInProgress){
+    showToast('⏳ 이미 등록 중입니다. 잠시만 기다려 주세요','var(--blu)');
+    return;
+  }
   const parsed=window._asParsed;
   if(!parsed||!Array.isArray(parsed.items)||!parsed.items.length){
     showToast('⚠ 추출된 항목이 없습니다','var(--red)');
@@ -2468,6 +2473,9 @@ async function applyASParseAll(){
     if(vEl) vEl.focus();
     return;
   }
+  // ✅ 모든 검증 통과 → 처리 시작 플래그 & 모달 즉시 닫기 (중복 클릭/혼동 방지)
+  window._asApplyInProgress = true;
+  closeM('mAS');
   const now=new Date().toISOString();
   const todayS=toLocalDateStr(new Date());
   let added=0, failed=0, skipped=0;
@@ -2554,6 +2562,7 @@ async function applyASParseAll(){
   if(currentTab==='as') renderTab();
   updateBadges();
   window._asParsed=null;
+  window._asApplyInProgress = false;
 }
 
 function openASModal(idOrNull){
@@ -2797,6 +2806,27 @@ let _asColFilter = {
   billing: ''       // 청구상태
 };
 let _asFilterOpen = ''; // 현재 열린 필터 드롭다운: 'date' | 'client' | 'status' | 'billing' | ''
+
+// 고객사 이니셜 추출 (글로벌 헬퍼 — renderAS 내부와 applyAsColFilters 양쪽에서 사용)
+function getVendorInit(name){
+  const nm=(name||'').trim();
+  if(!nm) return '';
+  // 1) 고객사 DB에 등록된 업체면 해당 이니셜 사용
+  if(typeof findClientByVendor === 'function'){
+    const cl=findClientByVendor(nm);
+    if(cl && cl.initials) return cl.initials.trim().toUpperCase();
+  }
+  // 2) 자동 이니셜 생성
+  const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
+  const words=clean.split(/\s+/);
+  let init;
+  if(words.length>=2){
+    init=(words[0][0]+(words[1][0]||'')).toUpperCase();
+  } else {
+    init=clean.slice(0,2).toUpperCase();
+  }
+  return init;
+}
 
 function toggleAsColFilter(name){
   _asFilterOpen = _asFilterOpen === name ? '' : name;
@@ -3116,25 +3146,6 @@ function setASSubtab(sub){
 
 function renderAS(){
   const c=document.getElementById('content');
-
-  // ── 이니셜 추출 헬퍼 (vendorInitHtml과 동일 로직) ──
-  const getVendorInit=(name)=>{
-    const nm=(name||'').trim();
-    if(!nm) return '';
-    // 1) 고객사 DB에 등록된 업체면 해당 이니셜 사용 (관대한 매칭)
-    const cl=findClientByVendor(nm);
-    if(cl && cl.initials) return cl.initials.trim().toUpperCase();
-    // 2) 자동 이니셜 생성 (공백 제거, 법인 표기 제거)
-    const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
-    const words=clean.split(/\s+/);
-    let init;
-    if(words.length>=2){
-      init=(words[0][0]+(words[1][0]||'')).toUpperCase();
-    } else {
-      init=clean.slice(0,2).toUpperCase();
-    }
-    return init;
-  };
 
   // 이니셜 기준으로 고객사들을 그룹핑 (표기 변형 통합)
   const vendorGroups = {}; // { 이니셜: {count, names:Set, displayName} }
