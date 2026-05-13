@@ -2205,25 +2205,46 @@ JSON 형식으로만 응답 (다른 텍스트 없이):
 날짜가 "2026-04-14" 같으면 그대로, "4/14" 같으면 올해 기준으로 보정.`;
 
   const content=[{type:'text',text:prompt}];
-  payloads.slice(0,5).forEach(p=>{
+  payloads.slice(0,10).forEach(p=>{
     if(p.kind==='image') content.push({type:'image',source:{type:'base64',media_type:p.type||'image/jpeg',data:p.data}});
     else if(p.kind==='pdf') content.push({type:'document',source:{type:'base64',media_type:'application/pdf',data:p.data}});
-    else if(p.kind==='text') content.push({type:'text',text:`[파일: ${p.name}]\n${(p.csvText||'').slice(0,15000)}`});
+    else if(p.kind==='text') content.push({type:'text',text:`[파일: ${p.name}]\n${(p.csvText||'').slice(0,80000)}`});
   });
 
   try{
-    const data=await callClaudeAPI({model:'claude-sonnet-4-5',max_tokens:2500,messages:[{role:'user',content}]});
+    const data=await callClaudeAPI({model:'claude-sonnet-4-5',max_tokens:8000,messages:[{role:'user',content}]});
+    console.log('[AS Parse] stop_reason:',data.stop_reason,'usage:',data.usage);
     if(data.error){
       const errMsg=data.error.message||'API 오류';
       resultEl.innerHTML='<div style="padding:12px;background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;font-size:12px;color:var(--red)"><b>API 오류:</b> '+errMsg+'</div>';
       return;
     }
+    if(data.stop_reason==='max_tokens'){
+      console.warn('[AS Parse] 응답이 max_tokens에서 잘렸습니다. 항목이 누락될 수 있습니다.');
+    }
     const text=data.content?.find(b=>b.type==='text')?.text||'{}';
+    console.log('[AS Parse] raw text length:',text.length);
     let parsed;
-    try{parsed=JSON.parse(text.replace(/```json|```/g,'').trim());}
-    catch{parsed={docType:'AS불량리스트',confidence:0,items:[],notes:text.slice(0,200)};}
+    try{
+      let cleaned=text.replace(/```json|```/g,'').trim();
+      // 응답이 max_tokens로 잘려서 JSON이 불완전한 경우 복구 시도
+      if(!cleaned.endsWith('}')&&!cleaned.endsWith(']')){
+        console.warn('[AS Parse] JSON이 불완전합니다. 복구 시도...');
+        // 마지막으로 완성된 items 항목까지만 유지하고 배열/객체 닫기
+        const lastComplete=cleaned.lastIndexOf('},');
+        if(lastComplete>0){
+          cleaned=cleaned.slice(0,lastComplete+1)+']}';
+        }
+      }
+      parsed=JSON.parse(cleaned);
+    }catch(parseErr){
+      console.error('[AS Parse] JSON 파싱 실패:',parseErr,'원본 앞부분:',text.slice(0,500));
+      parsed={docType:'AS불량리스트',confidence:0,items:[],notes:'파싱 실패: '+text.slice(0,200)};
+    }
+    console.log('[AS Parse] 추출된 items 수:',parsed.items?.length||0);
     showASParseResult(parsed, resultEl);
   }catch(err){
+    console.error('[AS Parse] 네트워크/연결 오류:',err);
     resultEl.innerHTML='<div style="padding:12px;background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:6px;font-size:12px;color:var(--red)"><b>연결 오류:</b> '+err.message+'</div>';
   }
 }
