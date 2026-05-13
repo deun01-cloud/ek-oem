@@ -3311,7 +3311,7 @@ function renderAS(){
     </div>
     <div style="overflow-x:auto"><table>
       <thead><tr>
-        <th style="text-align:center;width:30px"><input type="checkbox" ${active.length&&active.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${active.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
+        <th style="text-align:center;width:42px;background:var(--s2)"><label style="display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:2px;border-radius:4px" title="이 테이블 전체 선택/해제"><input type="checkbox" ${active.length&&active.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${active.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:16px;height:16px;accent-color:var(--gold)"></label></th>
         <th style="white-space:nowrap">접수일 ${_renderAsColFilterBtn('date')}</th>
         <th style="text-align:center;white-space:nowrap">고객사 ${_renderAsColFilterBtn('client')}</th>
         <th>품목</th><th style="text-align:center">수량</th>
@@ -3328,7 +3328,7 @@ function renderAS(){
     <div class="ch"><div class="ch-t">✅ 완료 / 반송 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${done.length}건${currentGroupName?` · ${currentGroupName} 필터`:''})</span></div></div>
     <div style="overflow-x:auto"><table>
       <thead><tr>
-        <th style="text-align:center;width:30px"><input type="checkbox" ${done.length&&done.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${done.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
+        <th style="text-align:center;width:42px;background:var(--s2)"><label style="display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:2px;border-radius:4px" title="이 테이블 전체 선택/해제"><input type="checkbox" ${done.length&&done.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${done.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:16px;height:16px;accent-color:var(--gold)"></label></th>
         <th style="white-space:nowrap">접수일 ${_renderAsColFilterBtn('date')}</th>
         <th style="text-align:center;white-space:nowrap">고객사 ${_renderAsColFilterBtn('client')}</th>
         <th>품목</th><th style="text-align:center">수량</th>
@@ -10578,7 +10578,7 @@ function loadFilesToBuf(files,key){
   files.forEach(f=>{
     const r=new FileReader();
     r.onload=ev=>{
-      if(key==='smpImg'){if(smpImgBuf.length>=4)return;smpImgBuf.push({url:ev.target.result,name:f.name});}
+      if(key==='smpImg'){if(smpImgBuf.length>=9)return;smpImgBuf.push({url:ev.target.result,name:f.name});}
       renderSmpPrev();
     };
     r.readAsDataURL(f);
@@ -10739,7 +10739,7 @@ function _classifyAndLoad(files, origin){
         nm=`pasted_${ts}.${ex}`;
       }
       if(kind==='img'){
-        if(smpImgBuf.length>=4){ showToast('⚠ 예시 이미지는 최대 4장까지','var(--org)',2000); return; }
+        if(smpImgBuf.length>=9){ showToast('⚠ 예시 이미지는 최대 9장까지','var(--org)',2000); return; }
         smpImgBuf.push({url:ev.target.result,name:nm,type:f.type||'image/jpeg'});
       } else if(kind==='src'){
         smpSrcBuf.push({name:nm,type:f.type||'application/octet-stream',size:f.size,url:ev.target.result});
@@ -10757,7 +10757,7 @@ function moveSmpFile(fromBuf, fromIdx, toBuf){
   const src=window[fromBuf];
   const dst=window[toBuf];
   if(!src||!dst||!src[fromIdx])return;
-  if(toBuf==='smpImgBuf' && dst.length>=4){ showToast('⚠ 예시 이미지는 최대 4장까지','var(--org)',2000); return; }
+  if(toBuf==='smpImgBuf' && dst.length>=9){ showToast('⚠ 예시 이미지는 최대 9장까지','var(--org)',2000); return; }
   const [item]=src.splice(fromIdx,1);
   dst.push(item);
   renderSmpPrev();
@@ -16853,9 +16853,9 @@ function pickSmProduct(kind, id){
     row.costPrice = +p.costPrice || 0;
     row.unitPrice = +p.price || 0;  // 제품DB 판매가 → 샘플단가
     row._unitAutoSet = false; // 명시적으로 가져온 단가니까 자동 ×2 안 함
-    // 이미지가 있으면 첫 1장 가져옴
+    // 이미지가 있으면 첨부 (최대 9장)
     if(Array.isArray(p.imgs) && p.imgs.length){
-      row.imgs = [...p.imgs.slice(0, 4)];
+      row.imgs = [...p.imgs.slice(0, 9)];
     }
     showToast(`✓ "${p.code||p.name}" 정보로 행 ${rowIdx+1} 채움`,'var(--grn)', 3000);
   } else if(kind === 'smp'){
@@ -16879,9 +16879,9 @@ function pickSmProduct(kind, id){
     if(s.devNote || s.caution){
       row.memo = [s.devNote, s.caution].filter(Boolean).join(' · ');
     }
-    // 이미지·작지서·CAD도 함께 가져옴 (재의뢰니까)
+    // 이미지·작지서·CAD도 함께 가져옴 (재의뢰니까, 이미지 최대 9장)
     if(Array.isArray(s.imgs) && s.imgs.length){
-      row.imgs = [...s.imgs.slice(0, 4)];
+      row.imgs = [...s.imgs.slice(0, 9)];
     }
     if(Array.isArray(s.sourceDoc) && s.sourceDoc.length){
       row.sourceDoc = [...s.sourceDoc];
@@ -18097,13 +18097,26 @@ function _buildSmpPreviewHtml(){
   const factoryNotice = (document.getElementById('s_factoryNotice')?.value || '').trim();
   const co = (typeof company !== 'undefined' && company) ? company : {name:'이케이아이엔티'};
 
-  // 샘플 이미지 — smpImgBuf는 글로벌 let 선언이라 window 접근이 안 됨, 직접 참조
+  // 샘플 이미지 수집 (다중 소스 — 최대한 다 보여주기)
+  // 1순위: 현재 편집 중인 모달의 smpImgBuf (사용자가 새로 추가/제거한 게 반영됨)
+  // 2순위: 편집 중인 의뢰서 ID가 있으면 samples에서 원본 imgs 가져옴 (모달이 안 열려있는 케이스 대비)
   let smpImgs = [];
   try {
-    if(typeof smpImgBuf !== 'undefined' && Array.isArray(smpImgBuf)){
-      smpImgs = smpImgBuf;
+    if(typeof smpImgBuf !== 'undefined' && Array.isArray(smpImgBuf) && smpImgBuf.length){
+      smpImgs = [...smpImgBuf];
     }
-  } catch(e){ smpImgs = []; }
+  } catch(e){}
+  // smpImgBuf가 비었으면 samples에서 fallback
+  if(!smpImgs.length){
+    try {
+      const sid = gv('s_id');
+      if(sid && typeof samples !== 'undefined' && Array.isArray(samples)){
+        const s = samples.find(x => String(x.id) === String(sid));
+        if(s && Array.isArray(s.imgs)) smpImgs = [...s.imgs];
+      }
+    } catch(e){}
+  }
+  console.log('[샘플 미리보기] 이미지 수:', smpImgs.length, '소스:', smpImgs.length && smpImgBuf?.length === smpImgs.length ? 'smpImgBuf' : 'samples fallback');
 
   // 이전 설정 불러오기 (localStorage)
   let prevCfg = {size: 320, cols: 2};
@@ -19320,20 +19333,38 @@ async function deleteChecklistFromNotion(notionId){
 }
 // 노션에서 체크리스트 불러오기 (페이지 진입 시 1회)
 async function pullChecklistsFromNotion(){
-  if(!notionCfg.workerUrl || !notionCfg.checklistDb) return;
+  if(!notionCfg.workerUrl || !notionCfg.checklistDb){
+    console.log('[Checklist Pull] 건너뜀 — workerUrl 또는 checklistDb 미설정',
+      {workerUrl:!!notionCfg.workerUrl, checklistDb:!!notionCfg.checklistDb});
+    return;
+  }
   try{
+    console.log('[Checklist Pull] 시작 — DB:', notionCfg.checklistDb);
     const rows = await nQueryAll(notionCfg.checklistDb);
-    if(!Array.isArray(rows)) return;
-    const wk = [], mn = [];
-    rows.forEach(row=>{
+    if(!Array.isArray(rows)){
+      console.warn('[Checklist Pull] 응답이 배열이 아님:', rows);
+      return;
+    }
+    console.log('[Checklist Pull] 노션 row 개수:', rows.length);
+    const wk = [], mn = [], skipped = [];
+    rows.forEach((row, idx)=>{
       const p = row.properties || {};
       const text = np.title(p['할일']) || '';
       const kind = np.select(p['종류']) || '주간';
       const done = np.check(p['완료']);
-      if(!text) return;
-      const item = { text, done, id: Date.now()+Math.random(), _notionId: row.id };
+      if(!text){
+        skipped.push({idx, reason:'텍스트 없음', props: Object.keys(p)});
+        return;
+      }
+      const item = { text, done, id: Date.now()+Math.random()+idx, _notionId: row.id };
       if(kind === '월간') mn.push(item); else wk.push(item);
     });
+    console.log('[Checklist Pull] 결과 — 주간:', wk.length, '월간:', mn.length, '건너뜀:', skipped.length);
+    if(skipped.length) console.warn('[Checklist Pull] 건너뛴 row:', skipped);
+    if(wk.length === 0 && rows.length > 0){
+      console.warn('[Checklist Pull] ⚠ 노션에 row가 있지만 주간 항목이 0건 — DB 필드명 확인 필요 (할일/종류/완료)');
+      console.log('[Checklist Pull] 첫 row의 속성 키들:', Object.keys(rows[0].properties||{}));
+    }
     // 노션의 데이터를 진실의 원천으로 (다른 컴퓨터에서도 일관성 유지)
     weekChecklist = wk;
     monthChecklist = mn;
