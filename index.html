@@ -17876,6 +17876,8 @@ function parseOrdQty(v){
 
 function renderOrdRows(){
   const w=document.getElementById('ordRowsWrap');if(!w)return;
+  // 발주 모달 열려있을 때 클립보드 paste 리스너 등록 (이미지 붙여넣기 지원)
+  if(typeof _ensureOrdPasteListener === 'function') _ensureOrdPasteListener();
 
   // 컬럼 헤더 (맨 위에 1회만) + 공유 datalist
   // datalist는 자동완성 힌트일 뿐 — 사용자는 자유롭게 직접 입력 가능
@@ -17914,12 +17916,14 @@ function renderOrdRows(){
       <div style="font-size:10px;color:var(--t3);text-align:center">${i+1}</div>
       <button title="품번 검색" onclick="openItemSearch(${i})" style="padding:3px 5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;cursor:pointer;font-size:13px;line-height:1">🔍</button>
       <!-- 🖼 이미지 칸 (클릭/드래그/붙여넣기로 이미지 추가) -->
-      <div style="position:relative;width:64px;height:64px;border:1.5px dashed ${r.img?'var(--gold-line)':'var(--bdr)'};border-radius:6px;background:${r.img?'transparent':'var(--s2)'};overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0"
+      <div data-ord-img-row="${i}" style="position:relative;width:64px;height:64px;border:1.5px dashed ${r.img?'var(--gold-line)':'var(--bdr)'};border-radius:6px;background:${r.img?'transparent':'var(--s2)'};overflow:hidden;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:border-color .15s,background .15s"
         ondragover="event.preventDefault();this.style.borderColor='var(--gold)';this.style.background='var(--gold-bg)'"
         ondragleave="this.style.borderColor='${r.img?'var(--gold-line)':'var(--bdr)'}';this.style.background='${r.img?'transparent':'var(--s2)'}'"
         ondrop="_handleOrdRowImageDrop(event,${i})"
+        onmouseenter="window._ordImgHoverIdx=${i};this.style.borderColor='var(--gold)';this.style.boxShadow='0 0 0 2px rgba(167,131,57,.15)'"
+        onmouseleave="if(window._ordImgHoverIdx===${i})window._ordImgHoverIdx=-1;this.style.borderColor='${r.img?'var(--gold-line)':'var(--bdr)'}';this.style.boxShadow=''"
         onclick="${r.img?`openPrevList([{url:'${String(r.img).replace(/'/g,"\\\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\\\'")}'}],0,false)`:`document.getElementById('ordRowImgInp_${i}').click()`}"
-        title="${r.img?'클릭하여 큰 미리보기':'클릭/드래그로 이미지 첨부'}">
+        title="${r.img?'클릭하여 큰 미리보기 · 우상단 X로 제거':'클릭/드래그/Ctrl+V 붙여넣기로 이미지 첨부'}">
         ${r.img
           ? `<img src="${r.img}" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none">
              <button onclick="event.stopPropagation();ordRowsBuf[${i}].img='';renderOrdRows()" title="이미지 제거" style="position:absolute;top:1px;right:1px;width:18px;height:18px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:50%;cursor:pointer;font-size:11px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center;padding:0">×</button>`
@@ -18052,6 +18056,60 @@ function _readOrdRowImage(file, rowIdx){
     showToast(`✓ 행 ${rowIdx+1}에 이미지 첨부됨`, 'var(--grn)', 1800);
   };
   r.readAsDataURL(file);
+}
+
+// 발주 모달 전역 paste 핸들러 — 마우스가 이미지 칸 위에 있을 때 Ctrl+V로 붙여넣기
+window._ordImgHoverIdx = -1;
+function _handleOrdRowImagePaste(ev){
+  // 발주 모달이 열려있을 때만
+  const mOrd = document.getElementById('mOrd');
+  if(!mOrd || !mOrd.classList.contains('on')) return;
+  const items = ev.clipboardData?.items;
+  if(!items || !items.length) return;
+  // 이미지 아이템 찾기
+  let imgFile = null;
+  for(let i=0; i<items.length; i++){
+    const item = items[i];
+    if(item.kind === 'file' && (item.type||'').startsWith('image/')){
+      imgFile = item.getAsFile();
+      break;
+    }
+  }
+  if(!imgFile) return;
+
+  // 어느 행에 붙여넣을지 결정
+  let targetIdx = window._ordImgHoverIdx;
+  if(targetIdx < 0 || !ordRowsBuf[targetIdx]){
+    // 호버 중인 칸이 없으면 — 첫 빈 이미지 칸을 찾거나, 없으면 첫 행
+    targetIdx = ordRowsBuf.findIndex(r => !r.img);
+    if(targetIdx < 0){
+      // 모든 행에 이미지가 있으면 사용자에게 안내
+      showToast('⚠ 이미지 칸 위에 마우스를 올린 상태에서 Ctrl+V를 눌러주세요','var(--org)',3000);
+      return;
+    }
+  }
+
+  // 다른 input/textarea에 포커스되어 있을 때는 paste 동작 우선
+  // 단, 발주 모달의 텍스트 입력이 활성화되어 있다면 그대로 두고, 이미지 칸 위에 있을 때만 이미지 처리
+  const activeEl = document.activeElement;
+  const isTextInput = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+  if(isTextInput && window._ordImgHoverIdx < 0) return; // 텍스트 필드에 있고 호버도 없으면 그대로 두기
+
+  // 이미지 칸에 호버 중이거나 빈 칸이 있으면 → 이미지 붙여넣기
+  ev.preventDefault();
+  ev.stopPropagation();
+  _readOrdRowImage(imgFile, targetIdx);
+}
+// 발주 모달 열릴 때만 paste 리스너 등록 (중복 등록 방지)
+function _ensureOrdPasteListener(){
+  if(window._ordPasteListenerAttached) return;
+  document.addEventListener('paste', _handleOrdRowImagePaste);
+  window._ordPasteListenerAttached = true;
+}
+function _removeOrdPasteListener(){
+  if(!window._ordPasteListenerAttached) return;
+  document.removeEventListener('paste', _handleOrdRowImagePaste);
+  window._ordPasteListenerAttached = false;
 }
 
 // ════════════════════════════════
