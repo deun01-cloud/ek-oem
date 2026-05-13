@@ -874,6 +874,15 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>공통 메모</label><input class="fi" id="sm_commonMemo" placeholder="모든 품목에 적용될 메모"></div>
   </div>
 
+  <!-- 🚨 공장 주의사항 — 의뢰서 미리보기에 빨간 강조 박스로 표시됨 (모든 품목 공통) -->
+  <div style="margin-top:8px;margin-bottom:6px">
+    <label style="display:block;font-size:11.5px;color:var(--red);font-weight:700;margin-bottom:5px">
+      🚨 공장 주의사항 <span style="color:var(--t3);font-weight:400;font-size:10.5px">(모든 품목 공통 — 의뢰서 미리보기에 빨간 박스로 강조 표시됨)</span>
+    </label>
+    <textarea id="sm_factoryNotice" placeholder="예: 도금 두께 ​2미크론 필수 / 광택 마감 / 모서리 둥글게 / CAD 도면 확인 후 작업 / 색상 정확히 맞춰주세요 등" rows="2"
+      style="width:100%;padding:8px 12px;font-size:12.5px;border:1.5px solid rgba(192,48,48,.3);border-radius:6px;background:rgba(192,48,48,.04);font-family:inherit;resize:vertical;color:var(--t1);line-height:1.5"></textarea>
+  </div>
+
   <div class="form-sec">📋 의뢰 품목 <span style="font-size:10.5px;color:var(--t3);font-weight:400">— 같은 의뢰서 안에서 여러 품목 등록</span>
     <button class="btn bgo bs" onclick="smMultiAddRow()" style="float:right;font-size:11px">+ 품목 추가</button>
   </div>
@@ -17153,6 +17162,7 @@ function openSmpMultiModal(prefillRows){
     setVal('sm_factShip', '');
     setVal('sm_status', '의뢰');
     setVal('sm_commonMemo', '');
+    setVal('sm_factoryNotice', '');
     renderSmMultiRows();
   }, 50);
   openM('mSmpMulti');
@@ -17203,6 +17213,7 @@ async function saveSmpMulti(){
   const factShip = gv('sm_factShip');
   const status = gv('sm_status') || '의뢰';
   const commonMemo = gv('sm_commonMemo');
+  const factoryNotice = (gv('sm_factoryNotice') || '').trim();  // 🚨 공장 주의사항 (모든 품목 공통)
   const now = new Date().toISOString();
   // 의뢰서 그룹 ID (같은 의뢰서 안의 행들을 묶기 위함)
   const groupId = 'smg_' + Date.now();
@@ -17254,6 +17265,7 @@ async function saveSmpMulti(){
       devNote: [commonMemo, row.memo].filter(Boolean).join(' · '),
       notes: [],
       caution: '',
+      factoryNotice: factoryNotice,  // 🚨 공장 주의사항 (모든 품목 공통)
       itemNo: '', card: '', invNo: '', itemCode: ''
     };
 
