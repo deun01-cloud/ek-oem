@@ -18164,76 +18164,70 @@ function _buildSmpPreviewHtml(){
   const factoryNotice = (document.getElementById('s_factoryNotice')?.value || '').trim();
   const co = (typeof company !== 'undefined' && company) ? company : {name:'이케이아이엔티'};
 
-  // 샘플 이미지 수집 (다중 소스 — 최대한 다 보여주기)
-  // 1순위: 현재 편집 중인 모달의 smpImgBuf (사용자가 새로 추가/제거한 게 반영됨)
-  // 2순위: 편집 중인 의뢰서 ID가 있으면 samples에서 원본 imgs 가져옴
-  // 3순위: sourceDoc/cadFiles에 들어있는 이미지 파일도 합침
-  //   (붙여넣기 이미지는 sourceDoc으로 분류되는 동작 때문에, 결과적으로 다 보여주기)
+  // 샘플 이미지 수집 (다중 소스 — 최대한 다 보여주기, 중복 제거)
+  // 각 항목에 origin 정보를 함께 저장 → 삭제 시 정확한 원본 배열에서 제거 가능
+  // origin: 'img' (smpImgBuf/s.imgs) | 'src' (smpSrcBuf/s.sourceDoc) | 'cad' (smpCadBuf/s.cadFiles)
   const isImgLike = (item) => {
     if(!item) return false;
     const t = (item.type || '').toLowerCase();
     const nm = (item.name || '').toLowerCase();
     if(t.startsWith('image/')) return true;
     if(/\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(nm)) return true;
-    // url이 data:image/... 로 시작하면 이미지
     const u = typeof item === 'string' ? item : (item.url || '');
     if(typeof u === 'string' && /^data:image\//i.test(u)) return true;
     return false;
   };
-  let smpImgs = [];
-  try {
-    if(typeof smpImgBuf !== 'undefined' && Array.isArray(smpImgBuf) && smpImgBuf.length){
-      smpImgs = [...smpImgBuf];
+  // 이미지 식별 키 — URL 우선, 없으면 name+size 조합으로 중복 탐지
+  const imgKey = (item) => {
+    if(!item) return '';
+    const u = typeof item === 'string' ? item : (item.url || '');
+    if(u) return 'u:' + u.slice(0, 200);  // base64는 앞 200자만 비교해도 동일성 충분
+    const nm = (item.name || '').toLowerCase();
+    const sz = item.size || 0;
+    return 'n:' + nm + '_' + sz;
+  };
+
+  // 어떤 소스에서 이미지를 가져올지 결정
+  // 모달이 열려있으면 (smpImgBuf 등 사용) — 현재 편집 상태 반영
+  // 모달이 닫혀있으면 (samples에서 가져옴) — 저장된 데이터 그대로
+  let srcImgs = [], srcSrcs = [], srcCads = [];
+  const sid = gv('s_id');
+  const isModalOpen = (typeof smpImgBuf !== 'undefined') && document.getElementById('mSmp')?.classList.contains('on');
+
+  if(isModalOpen){
+    srcImgs = Array.isArray(smpImgBuf) ? smpImgBuf : [];
+    srcSrcs = Array.isArray(smpSrcBuf) ? smpSrcBuf : [];
+    srcCads = Array.isArray(smpCadBuf) ? smpCadBuf : [];
+  } else if(sid && typeof samples !== 'undefined'){
+    const s = samples.find(x => String(x.id) === String(sid));
+    if(s){
+      srcImgs = Array.isArray(s.imgs) ? s.imgs : [];
+      srcSrcs = Array.isArray(s.sourceDoc) ? s.sourceDoc : [];
+      srcCads = Array.isArray(s.cadFiles) ? s.cadFiles : [];
     }
-  } catch(e){}
-  // smpImgBuf가 비었으면 samples에서 fallback
-  let usedFallback = false;
-  if(!smpImgs.length){
-    try {
-      const sid = gv('s_id');
-      if(sid && typeof samples !== 'undefined' && Array.isArray(samples)){
-        const s = samples.find(x => String(x.id) === String(sid));
-        if(s && Array.isArray(s.imgs) && s.imgs.length){
-          smpImgs = [...s.imgs];
-          usedFallback = true;
-        }
-      }
-    } catch(e){}
   }
-  // sourceDoc / cadFiles에 들어있는 이미지 파일도 합치기 (현재 모달의 버퍼 우선, 없으면 samples)
-  try {
-    let srcArr = [], cadArr = [];
-    if(typeof smpSrcBuf !== 'undefined' && Array.isArray(smpSrcBuf) && smpSrcBuf.length){
-      srcArr = smpSrcBuf;
-    } else {
-      const sid = gv('s_id');
-      const s = (sid && typeof samples !== 'undefined') ? samples.find(x => String(x.id) === String(sid)) : null;
-      if(s){
-        if(Array.isArray(s.sourceDoc)) srcArr = s.sourceDoc;
-      }
-    }
-    if(typeof smpCadBuf !== 'undefined' && Array.isArray(smpCadBuf) && smpCadBuf.length){
-      cadArr = smpCadBuf;
-    } else {
-      const sid = gv('s_id');
-      const s = (sid && typeof samples !== 'undefined') ? samples.find(x => String(x.id) === String(sid)) : null;
-      if(s && Array.isArray(s.cadFiles)) cadArr = s.cadFiles;
-    }
-    // 이미지로 보이는 것만 추가 (중복 url 제거)
-    const existingUrls = new Set(smpImgs.map(im => typeof im === 'string' ? im : (im?.url || '')));
-    [...srcArr, ...cadArr].forEach(it => {
-      if(!isImgLike(it)) return;
-      const u = typeof it === 'string' ? it : (it?.url || '');
-      if(!u || existingUrls.has(u)) return;
-      smpImgs.push(it);
-      existingUrls.add(u);
-    });
-  } catch(e){ console.warn('[샘플 미리보기] sourceDoc/cadFiles 스캔 실패:', e); }
+
+  // 중복 제거하면서 순서대로 수집
+  const seen = new Set();
+  const smpImgs = [];
+  const addImage = (item, origin, idx) => {
+    if(!isImgLike(item)) return;
+    const key = imgKey(item);
+    if(!key || seen.has(key)) return;
+    seen.add(key);
+    smpImgs.push({ ...item, _origin: origin, _originIdx: idx });
+  };
+  srcImgs.forEach((it, i) => addImage(it, 'img', i));
+  srcSrcs.forEach((it, i) => addImage(it, 'src', i));
+  srcCads.forEach((it, i) => addImage(it, 'cad', i));
+
+  // 미리보기 그리드/삭제 핸들러용으로 윈도우에 노출
+  window._smpPrevImgs = smpImgs;
+  window._smpPrevIsModalOpen = isModalOpen;
+  window._smpPrevSampleId = sid;
 
   console.log('[샘플 미리보기] 최종 이미지 수:', smpImgs.length,
-    '(smpImgBuf:', smpImgBuf?.length || 0,
-    ', samples fallback:', usedFallback,
-    ', sourceDoc/cadFiles 추가됨:', smpImgs.length - (smpImgBuf?.length || (usedFallback ? smpImgs.length : 0)), ')');
+    '(소스 — imgs:', srcImgs.length, ', sourceDoc:', srcSrcs.length, ', cadFiles:', srcCads.length, ', 중복제거 후:', smpImgs.length, ')');
 
   // 이전 설정 불러오기 (localStorage)
   let prevCfg = {size: 320, cols: 2};
@@ -18362,9 +18356,12 @@ function _renderSmpPrevImgGrid(){
   if(!grid) return;
   const imgs = window._smpPrevImgs || [];
   const size = +document.getElementById('smpPrevImgSize')?.value || 320;
-  // _ordPrevEsc 안전 호출
   const esc = (typeof _ordPrevEsc === 'function') ? _ordPrevEsc : (s=>String(s||''));
-  grid.innerHTML = imgs.map((url, i) => `
+  grid.innerHTML = imgs.map((img, i) => {
+    const url = typeof img === 'string' ? img : (img?.url || '');
+    const origin = img?._origin || 'img';
+    const originLabel = origin === 'src' ? '작지서' : (origin === 'cad' ? 'CAD' : '');
+    return `
     <div class="smp-prev-img-item" draggable="true" data-idx="${i}"
          ondragstart="_smpPrevImgDragStart(event,${i})"
          ondragover="_smpPrevImgDragOver(event)"
@@ -18374,8 +18371,78 @@ function _renderSmpPrevImgGrid(){
          style="background:#fff;border:1px solid #ddd;border-radius:6px;padding:8px;display:flex;align-items:center;justify-content:center;min-height:${Math.min(size,260)}px;cursor:move;position:relative;transition:border-color .15s,background .15s">
       <img src="${esc(url)}" style="max-width:100%;max-height:${size}px;object-fit:contain;display:block;pointer-events:none">
       <span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,.55);color:#fff;font-size:9.5pt;font-weight:700;padding:1px 7px;border-radius:10px;font-family:inherit" data-no-print="1">${i+1}</span>
+      ${originLabel ? `<span style="position:absolute;top:4px;left:42px;background:rgba(122,77,181,.85);color:#fff;font-size:8.5pt;font-weight:600;padding:1px 6px;border-radius:8px;font-family:inherit" data-no-print="1" title="원본 위치: ${origin === 'src' ? '작업지시서' : 'CAD 파일'}">${originLabel}</span>` : ''}
+      <button onclick="_deleteSmpPrevImg(${i},event)" style="position:absolute;top:4px;right:4px;width:24px;height:24px;background:rgba(192,48,48,.9);color:#fff;border:none;border-radius:50%;font-size:13pt;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;line-height:1;font-family:inherit;box-shadow:0 1px 3px rgba(0,0,0,.2)" data-no-print="1" title="이 이미지 삭제">×</button>
     </div>
-  `).join('');
+  `;}).join('');
+}
+
+// 이미지 삭제 — 원본 배열(smpImgBuf/smpSrcBuf/smpCadBuf 또는 samples의 imgs/sourceDoc/cadFiles)에서도 제거
+function _deleteSmpPrevImg(idx, ev){
+  if(ev){ ev.stopPropagation(); ev.preventDefault(); }
+  const imgs = window._smpPrevImgs || [];
+  const target = imgs[idx];
+  if(!target){ return; }
+  if(!confirm('이 이미지를 삭제하시겠습니까?')) return;
+
+  const origin = target._origin || 'img';
+  const isModalOpen = window._smpPrevIsModalOpen;
+  const sid = window._smpPrevSampleId;
+  const targetUrl = target.url || (typeof target === 'string' ? target : '');
+
+  // 원본 배열에서 같은 URL 찾아 제거
+  const removeFromArr = (arr) => {
+    if(!Array.isArray(arr)) return false;
+    const findIdx = arr.findIndex(it => {
+      const u = (typeof it === 'string') ? it : (it?.url || '');
+      return u === targetUrl;
+    });
+    if(findIdx >= 0){
+      arr.splice(findIdx, 1);
+      return true;
+    }
+    return false;
+  };
+
+  let removed = false;
+  if(isModalOpen){
+    // 모달 버퍼에서 제거
+    if(origin === 'img' && typeof smpImgBuf !== 'undefined') removed = removeFromArr(smpImgBuf);
+    else if(origin === 'src' && typeof smpSrcBuf !== 'undefined') removed = removeFromArr(smpSrcBuf);
+    else if(origin === 'cad' && typeof smpCadBuf !== 'undefined') removed = removeFromArr(smpCadBuf);
+    // 모달의 썸네일도 갱신
+    if(typeof renderSmpPrev === 'function') renderSmpPrev();
+    if(typeof renderSmpCadPrev === 'function') renderSmpCadPrev();
+    if(removed && typeof showToast === 'function') showToast('🗑 이미지 삭제됨 (저장 시 반영)', 'var(--grn)', 2000);
+  } else if(sid && typeof samples !== 'undefined'){
+    // samples 원본에서 직접 제거 → localStorage 저장 + 노션 sync
+    const s = samples.find(x => String(x.id) === String(sid));
+    if(s){
+      if(origin === 'img') removed = removeFromArr(s.imgs);
+      else if(origin === 'src') removed = removeFromArr(s.sourceDoc);
+      else if(origin === 'cad') removed = removeFromArr(s.cadFiles);
+      if(removed){
+        try { if(typeof save === 'function') save(); } catch(e){}
+        if(typeof showToast === 'function') showToast('🗑 이미지 삭제됨', 'var(--grn)', 2000);
+        // 노션 동기화 (있으면)
+        if(typeof syncSampleToNotion === 'function' && notionCfg?.smpDb){
+          syncSampleToNotion(s, true).catch(e => console.warn('샘플 노션 동기화 실패:', e));
+        }
+      }
+    }
+  }
+
+  if(!removed){
+    if(typeof showToast === 'function') showToast('⚠ 원본에서 찾지 못했습니다', 'var(--org)', 2500);
+    return;
+  }
+
+  // 미리보기 다시 빌드 (수집 로직을 처음부터 다시 돌려서 정확한 상태 반영)
+  const body = document.getElementById('mOrdPreview_body');
+  if(body){
+    body.innerHTML = `<div id="ordPreviewContent" style="background:#fff;color:#000;padding:24px;border-radius:4px;font-family:'맑은 고딕','Malgun Gothic',sans-serif">${_buildSmpPreviewHtml()}</div>`;
+    setTimeout(() => _renderSmpPrevImgGrid(), 50);
+  }
 }
 
 function _updateSmpPrevImgLayout(){
@@ -18431,25 +18498,77 @@ function _smpPrevImgDrop(ev, targetIdx){
   if(_smpPrevDragIdx < 0 || _smpPrevDragIdx === targetIdx) return;
   const imgs = window._smpPrevImgs || [];
   if(!imgs.length) return;
-  // 미리보기용 _smpPrevImgs 순서 변경
+
+  // 미리보기 표시용 _smpPrevImgs 순서 변경
   const [moved] = imgs.splice(_smpPrevDragIdx, 1);
   imgs.splice(targetIdx, 0, moved);
-  // 실제 smpImgBuf 원본도 같이 재정렬 (의뢰서 저장 시 반영되도록)
+
+  // 원본 배열들을 같은 순서대로 재구성 (origin별로 분리해서 각자 재정렬)
   try {
-    if(typeof smpImgBuf !== 'undefined' && Array.isArray(smpImgBuf) && smpImgBuf.length === imgs.length + 0){
-      // 원본도 같은 순서로 (url 기준 매칭)
-      const newOrder = [];
-      const used = new Set();
-      imgs.forEach(url => {
-        const found = smpImgBuf.findIndex((it, idx) => !used.has(idx) && ((typeof it === 'string' && it === url) || (it && it.url === url)));
-        if(found >= 0){ newOrder.push(smpImgBuf[found]); used.add(found); }
-      });
-      // 매칭 안 된 항목은 뒤에 그대로
-      smpImgBuf.forEach((it, idx) => { if(!used.has(idx)) newOrder.push(it); });
-      smpImgBuf.length = 0;
-      newOrder.forEach(it => smpImgBuf.push(it));
+    const isModalOpen = window._smpPrevIsModalOpen;
+    const sid = window._smpPrevSampleId;
+    // origin별로 새 순서대로 추출
+    const newImgOrder = imgs.filter(im => im._origin === 'img');
+    const newSrcOrder = imgs.filter(im => im._origin === 'src');
+    const newCadOrder = imgs.filter(im => im._origin === 'cad');
+
+    // origin별 원본 배열 찾기
+    let targetImg, targetSrc, targetCad;
+    if(isModalOpen){
+      targetImg = (typeof smpImgBuf !== 'undefined') ? smpImgBuf : null;
+      targetSrc = (typeof smpSrcBuf !== 'undefined') ? smpSrcBuf : null;
+      targetCad = (typeof smpCadBuf !== 'undefined') ? smpCadBuf : null;
+    } else if(sid && typeof samples !== 'undefined'){
+      const s = samples.find(x => String(x.id) === String(sid));
+      if(s){
+        targetImg = s.imgs;
+        targetSrc = s.sourceDoc;
+        targetCad = s.cadFiles;
+      }
     }
-  } catch(e){ console.warn('smpImgBuf 순서 동기화 실패:', e); }
+
+    // 각 origin 배열을 새 순서대로 재정렬 (이미지 외 항목은 뒤에 보존)
+    const reorderArr = (arr, newOrder) => {
+      if(!Array.isArray(arr) || !newOrder.length) return;
+      const isImgItem = (it) => {
+        const t = (it?.type || '').toLowerCase();
+        const nm = (it?.name || '').toLowerCase();
+        const u = typeof it === 'string' ? it : (it?.url || '');
+        return t.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(nm) || /^data:image\//i.test(u);
+      };
+      const urlOf = (it) => typeof it === 'string' ? it : (it?.url || '');
+      // 이미지 항목과 비이미지 항목 분리
+      const nonImgItems = arr.filter(it => !isImgItem(it));
+      // newOrder의 url을 따라 원본에서 이미지 항목 매칭
+      const usedIdx = new Set();
+      const newImgItems = [];
+      newOrder.forEach(prevItem => {
+        const targetUrl = urlOf(prevItem);
+        const foundIdx = arr.findIndex((it, idx) => !usedIdx.has(idx) && isImgItem(it) && urlOf(it) === targetUrl);
+        if(foundIdx >= 0){
+          newImgItems.push(arr[foundIdx]);
+          usedIdx.add(foundIdx);
+        }
+      });
+      // 누락된 이미지(중복 제거에서 빠졌던 것들)도 뒤에 추가
+      arr.forEach((it, idx) => {
+        if(!usedIdx.has(idx) && isImgItem(it)) newImgItems.push(it);
+      });
+      // 배열 비우고 재구성: 이미지 순서대로 + 비이미지 그대로
+      arr.length = 0;
+      newImgItems.forEach(it => arr.push(it));
+      nonImgItems.forEach(it => arr.push(it));
+    };
+
+    reorderArr(targetImg, newImgOrder);
+    reorderArr(targetSrc, newSrcOrder);
+    reorderArr(targetCad, newCadOrder);
+
+    // samples를 수정한 경우 저장
+    if(!isModalOpen && sid && typeof save === 'function'){
+      try { save(); } catch(e){}
+    }
+  } catch(e){ console.warn('이미지 순서 동기화 실패:', e); }
   _smpPrevDragIdx = -1;
   _renderSmpPrevImgGrid();
 }
