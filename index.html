@@ -18042,7 +18042,17 @@ async function captureOrdPreview(){
   const filename = isSmp
     ? '샘플의뢰서_' + (gv('s_name')||'미리보기')
     : '발주서_' + (gv('o_no')||gv('o_vendor')||'미리보기');
-  await _captureElementToImage(content, filename);
+  // 캡쳐 전: 컨트롤(슬라이더/버튼/번호배지) 임시 숨김
+  const hidden = [];
+  content.querySelectorAll('[data-no-print="1"]').forEach(el => {
+    hidden.push([el, el.style.display]);
+    el.style.display = 'none';
+  });
+  try {
+    await _captureElementToImage(content, filename);
+  } finally {
+    hidden.forEach(([el, prev]) => { el.style.display = prev || ''; });
+  }
 }
 function printOrdPreview(){
   const content = document.getElementById('ordPreviewContent') || document.getElementById('mOrdPreview_body');
@@ -18051,7 +18061,17 @@ function printOrdPreview(){
   const title = isSmp
     ? '샘플 의뢰서 — ' + (gv('s_name')||'')
     : '발주서 — ' + (gv('o_vendor')||'');
-  _printElement(content, title);
+  // 인쇄 전: 컨트롤 임시 숨김
+  const hidden = [];
+  content.querySelectorAll('[data-no-print="1"]').forEach(el => {
+    hidden.push([el, el.style.display]);
+    el.style.display = 'none';
+  });
+  try {
+    _printElement(content, title);
+  } finally {
+    setTimeout(()=>{ hidden.forEach(([el, prev]) => { el.style.display = prev || ''; }); }, 800);
+  }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -18077,98 +18097,116 @@ function _buildSmpPreviewHtml(){
   const factoryNotice = (document.getElementById('s_factoryNotice')?.value || '').trim();
   const co = (typeof company !== 'undefined' && company) ? company : {name:'이케이아이엔티'};
 
-  // 샘플 이미지 (있으면 표시)
-  const imgs = (typeof pdImgBuf !== 'undefined') ? [] : []; // sample용 이미지 버퍼는 별도
-  // 샘플 모달의 이미지 버퍼 추정 — smpImgBuf 등이 있을 수 있음
+  // 샘플 이미지 — smpImgBuf는 글로벌 let 선언이라 window 접근이 안 됨, 직접 참조
   let smpImgs = [];
-  if(typeof window.smpImgBuf !== 'undefined' && Array.isArray(window.smpImgBuf)){
-    smpImgs = window.smpImgBuf;
-  }
+  try {
+    if(typeof smpImgBuf !== 'undefined' && Array.isArray(smpImgBuf)){
+      smpImgs = smpImgBuf;
+    }
+  } catch(e){ smpImgs = []; }
+
+  // 이전 설정 불러오기 (localStorage)
+  let prevCfg = {size: 320, cols: 2};
+  try {
+    const saved = localStorage.getItem('_smpPrevImgCfg');
+    if(saved) prevCfg = Object.assign(prevCfg, JSON.parse(saved));
+  } catch(e){}
+  // 윈도우에 현재 이미지 목록 노출 (드래그앤드롭/렌더링용)
+  window._smpPrevImgs = smpImgs.map(img => typeof img === 'string' ? img : (img?.url || '')).filter(Boolean);
+
   const imgHtml = smpImgs.length > 0
-    ? smpImgs.slice(0,4).map(img => {
-        const url = typeof img === 'string' ? img : (img?.url || '');
-        if(!url) return '';
-        return `<img src="${_ordPrevEsc(url)}" style="max-width:200px;max-height:200px;object-fit:contain;border:1px solid #ddd;margin:4px">`;
-      }).join('')
-    : `<div style="width:200px;height:200px;background:#f5f5f5;border:1px dashed #ccc;display:inline-flex;align-items:center;justify-content:center;color:#999;font-size:11pt">참고 이미지 없음</div>`;
+    ? `<div id="smpPrevImgControls" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:6px;margin-bottom:10px" data-no-print="1">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:10.5pt;color:#555;font-weight:600">크기</span>
+          <input type="range" id="smpPrevImgSize" min="120" max="700" step="20" value="${prevCfg.size}" oninput="_updateSmpPrevImgLayout()" style="width:140px;cursor:pointer">
+          <span id="smpPrevImgSizeLabel" style="font-size:10pt;color:#888;min-width:48px;font-family:monospace">${prevCfg.size}px</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <span style="font-size:10.5pt;color:#555;font-weight:600;margin-right:4px">열</span>
+          ${[1,2,3,4].map(n=>`<button type="button" onclick="_setSmpPrevImgCols(${n})" id="smpPrevImgColBtn${n}" style="padding:4px 12px;font-size:10.5pt;border:1px solid ${prevCfg.cols===n?'#1a6db5':'#ccc'};background:${prevCfg.cols===n?'#e3f0fc':'#fff'};color:${prevCfg.cols===n?'#1a6db5':'#555'};border-radius:4px;cursor:pointer;font-weight:${prevCfg.cols===n?'700':'500'};font-family:inherit">${n}</button>`).join('')}
+        </div>
+        <span style="font-size:9.5pt;color:#999;margin-left:auto">💡 이미지를 드래그해서 순서 변경</span>
+      </div>
+      <div id="smpPrevImgGrid" style="display:grid;grid-template-columns:repeat(${prevCfg.cols},1fr);gap:10px;width:100%"></div>`
+    : `<div style="width:100%;height:300px;background:#f5f5f5;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;color:#999;font-size:11pt">참고 이미지 없음</div>`;
 
   return `
     <div style="max-width:1000px;margin:0 auto">
-      <h1 style="font-size:19pt;font-weight:800;margin:0 0 12px;letter-spacing:1px;text-align:center">샘 플  의 뢰 서</h1>
+      <h1 style="font-size:17pt;font-weight:800;margin:0 0 10px;letter-spacing:1px;text-align:center">샘 플  의 뢰 서</h1>
 
-      ${factoryNotice ? `<div style="border:3px solid #c5302a;background:linear-gradient(90deg,#fff5f5,#fff);border-radius:8px;padding:14px 18px;margin-bottom:14px;box-shadow:0 2px 6px rgba(192,48,48,.15)">
-        <div style="font-size:13pt;font-weight:800;color:#c5302a;margin-bottom:6px;display:flex;align-items:center;gap:8px">
-          <span style="font-size:18pt">🚨</span> 공장 주의사항 — 반드시 확인 (FACTORY NOTICE)
+      ${factoryNotice ? `<div style="border:3px solid #c5302a;background:linear-gradient(90deg,#fff5f5,#fff);border-radius:8px;padding:12px 16px;margin-bottom:12px;box-shadow:0 2px 6px rgba(192,48,48,.15)">
+        <div style="font-size:12pt;font-weight:800;color:#c5302a;margin-bottom:5px;display:flex;align-items:center;gap:8px">
+          <span style="font-size:16pt">🚨</span> 공장 주의사항 — 반드시 확인 (FACTORY NOTICE)
         </div>
-        <div style="font-size:13pt;font-weight:600;color:#7a1a17;white-space:pre-wrap;line-height:1.6">${_ordPrevEsc(factoryNotice)}</div>
+        <div style="font-size:12pt;font-weight:600;color:#7a1a17;white-space:pre-wrap;line-height:1.5">${_ordPrevEsc(factoryNotice)}</div>
       </div>` : ''}
 
       <!-- 헤더 정보 -->
-      <table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:10.5pt">
+      <table style="width:100%;border-collapse:collapse;margin-bottom:8px;font-size:9.5pt">
         <tr>
-          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700;width:110px">의뢰처(상호)</td>
-          <td style="border:1px solid #999;padding:6px 9px;font-weight:700">${_ordPrevEsc(co.name||'')}</td>
-          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700;width:90px">의뢰일</td>
-          <td style="border:1px solid #999;padding:6px 9px;background:#fff8c5">${_ordPrevEsc(reqDate)}</td>
+          <td style="border:1px solid #999;padding:4px 8px;background:#f0f0f0;font-weight:700;width:100px">의뢰처(상호)</td>
+          <td style="border:1px solid #999;padding:4px 8px;font-weight:700">${_ordPrevEsc(co.name||'')}</td>
+          <td style="border:1px solid #999;padding:4px 8px;background:#f0f0f0;font-weight:700;width:80px">의뢰일</td>
+          <td style="border:1px solid #999;padding:4px 8px;background:#fff8c5">${_ordPrevEsc(reqDate)}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">담당자</td>
-          <td style="border:1px solid #999;padding:6px 9px">${_ordPrevEsc(co.ceo||'')} / ${_ordPrevEsc(co.tel||'')}</td>
-          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">납기일</td>
-          <td style="border:1px solid #999;padding:6px 9px;background:#fff8c5">${_ordPrevEsc(due)}${factShip?` (공장: ${_ordPrevEsc(factShip)})`:''}</td>
+          <td style="border:1px solid #999;padding:4px 8px;background:#f0f0f0;font-weight:700">담당자</td>
+          <td style="border:1px solid #999;padding:4px 8px">${_ordPrevEsc(co.ceo||'')} / ${_ordPrevEsc(co.tel||'')}</td>
+          <td style="border:1px solid #999;padding:4px 8px;background:#f0f0f0;font-weight:700">납기일</td>
+          <td style="border:1px solid #999;padding:4px 8px;background:#fff8c5">${_ordPrevEsc(due)}${factShip?` (공장: ${_ordPrevEsc(factShip)})`:''}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">공급 공장</td>
-          <td style="border:1px solid #999;padding:6px 9px" colspan="3">${_ordPrevEsc(vendor)}</td>
+          <td style="border:1px solid #999;padding:4px 8px;background:#f0f0f0;font-weight:700">공급 공장</td>
+          <td style="border:1px solid #999;padding:4px 8px" colspan="3">${_ordPrevEsc(vendor)}</td>
         </tr>
       </table>
 
       <!-- 품목 상세 -->
-      <h2 style="font-size:12pt;font-weight:700;margin:14px 0 6px;border-bottom:2px solid #333;padding-bottom:5px">📦 의뢰 품목 정보</h2>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:10.5pt">
+      <h2 style="font-size:11pt;font-weight:700;margin:10px 0 5px;border-bottom:2px solid #333;padding-bottom:4px">📦 의뢰 품목 정보</h2>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:10px;font-size:9.5pt">
         <tr>
-          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700;width:110px">샘플명</td>
-          <td style="border:1px solid #999;padding:7px 10px;font-size:12pt;font-weight:700" colspan="3">${_ordPrevEsc(name)}</td>
+          <td style="border:1px solid #999;padding:5px 8px;background:#f0f0f0;font-weight:700;width:100px">샘플명</td>
+          <td style="border:1px solid #999;padding:5px 8px;font-size:11pt;font-weight:700" colspan="3">${_ordPrevEsc(name)}</td>
         </tr>
         ${code ? `<tr>
-          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">품목코드</td>
-          <td style="border:1px solid #999;padding:7px 10px;font-family:monospace" colspan="3">${_ordPrevEsc(code)}</td>
+          <td style="border:1px solid #999;padding:5px 8px;background:#f0f0f0;font-weight:700">품목코드</td>
+          <td style="border:1px solid #999;padding:5px 8px;font-family:monospace" colspan="3">${_ordPrevEsc(code)}</td>
         </tr>` : ''}
         <tr>
-          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">아이템 유형</td>
-          <td style="border:1px solid #999;padding:7px 10px">${_ordPrevEsc(type)}</td>
-          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700;width:110px">발주량</td>
-          <td style="border:1px solid #999;padding:7px 10px;font-size:12pt;font-weight:700">${_ordPrevEsc(qty)}</td>
+          <td style="border:1px solid #999;padding:5px 8px;background:#f0f0f0;font-weight:700">아이템 유형</td>
+          <td style="border:1px solid #999;padding:5px 8px">${_ordPrevEsc(type)}</td>
+          <td style="border:1px solid #999;padding:5px 8px;background:#f0f0f0;font-weight:700;width:100px">발주량</td>
+          <td style="border:1px solid #999;padding:5px 8px;font-size:11pt;font-weight:700">${_ordPrevEsc(qty)}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">외경 / 길이</td>
-          <td style="border:1px solid #999;padding:7px 10px">${_ordPrevEsc(sz1)}</td>
-          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">호수 / 사이즈</td>
-          <td style="border:1px solid #999;padding:7px 10px">${_ordPrevEsc(sz2)}</td>
+          <td style="border:1px solid #999;padding:5px 8px;background:#f0f0f0;font-weight:700">외경 / 길이</td>
+          <td style="border:1px solid #999;padding:5px 8px">${_ordPrevEsc(sz1)}</td>
+          <td style="border:1px solid #999;padding:5px 8px;background:#f0f0f0;font-weight:700">호수 / 사이즈</td>
+          <td style="border:1px solid #999;padding:5px 8px">${_ordPrevEsc(sz2)}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">중량 (g)</td>
-          <td style="border:1px solid #999;padding:7px 10px">${_ordPrevEsc(wt)}</td>
-          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">각인</td>
-          <td style="border:1px solid #999;padding:7px 10px">${_ordPrevEsc(engr)}</td>
+          <td style="border:1px solid #999;padding:5px 8px;background:#f0f0f0;font-weight:700">중량 (g)</td>
+          <td style="border:1px solid #999;padding:5px 8px">${_ordPrevEsc(wt)}</td>
+          <td style="border:1px solid #999;padding:5px 8px;background:#f0f0f0;font-weight:700">각인</td>
+          <td style="border:1px solid #999;padding:5px 8px">${_ordPrevEsc(engr)}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">소재</td>
-          <td style="border:1px solid #999;padding:7px 10px;font-weight:600">${_ordPrevEsc(mat)}</td>
-          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">도금</td>
-          <td style="border:1px solid #999;padding:7px 10px;font-weight:600">${_ordPrevEsc(plating)}</td>
+          <td style="border:1px solid #999;padding:5px 8px;background:#f0f0f0;font-weight:700">소재</td>
+          <td style="border:1px solid #999;padding:5px 8px;font-weight:600">${_ordPrevEsc(mat)}</td>
+          <td style="border:1px solid #999;padding:5px 8px;background:#f0f0f0;font-weight:700">도금</td>
+          <td style="border:1px solid #999;padding:5px 8px;font-weight:600">${_ordPrevEsc(plating)}</td>
         </tr>
       </table>
 
-      <!-- 참고 이미지 -->
-      <h2 style="font-size:12pt;font-weight:700;margin:14px 0 6px;border-bottom:2px solid #333;padding-bottom:5px">🖼 참고 이미지</h2>
-      <div style="text-align:center;padding:8px;background:#fafafa;border:1px solid #eee;border-radius:4px">
+      <!-- 참고 이미지 (크게) -->
+      <h2 style="font-size:12pt;font-weight:700;margin:14px 0 8px;border-bottom:2px solid #333;padding-bottom:5px">🖼 참고 이미지${smpImgs.length>0?` <span style="font-size:10pt;font-weight:500;color:#666">(${smpImgs.length}장)</span>`:''}</h2>
+      <div style="padding:12px;background:#fafafa;border:1px solid #eee;border-radius:6px">
         ${imgHtml}
       </div>
 
-      ${memo ? `<div style="border:1px solid #ccc;border-radius:4px;padding:8px 12px;background:#f9f9f9;margin-top:12px">
+      ${memo ? `<div style="border:1px solid #ccc;border-radius:4px;padding:7px 11px;background:#f9f9f9;margin-top:10px">
         <div style="font-size:9pt;color:#999;margin-bottom:3px">📝 메모 / 특이사항</div>
-        <div style="font-size:10.5pt;white-space:pre-wrap">${_ordPrevEsc(memo)}</div>
+        <div style="font-size:10pt;white-space:pre-wrap">${_ordPrevEsc(memo)}</div>
       </div>` : ''}
     </div>
   `;
@@ -18177,6 +18215,132 @@ function _buildSmpPreviewHtml(){
 function refreshInlineSmpPreview(){
   // no-op — 미리보기는 클릭 시 즉시 빌드됨
 }
+
+// ════════════════════════════════════════════════════════════════
+// 샘플 의뢰서 미리보기 — 참고 이미지 컨트롤 (크기/열/드래그앤드롭)
+// ════════════════════════════════════════════════════════════════
+function _saveSmpPrevImgCfg(){
+  try {
+    const size = +document.getElementById('smpPrevImgSize')?.value || 320;
+    const cols = +(window._smpPrevCols) || 2;
+    localStorage.setItem('_smpPrevImgCfg', JSON.stringify({size, cols}));
+  } catch(e){}
+}
+
+function _renderSmpPrevImgGrid(){
+  const grid = document.getElementById('smpPrevImgGrid');
+  if(!grid) return;
+  const imgs = window._smpPrevImgs || [];
+  const size = +document.getElementById('smpPrevImgSize')?.value || 320;
+  // _ordPrevEsc 안전 호출
+  const esc = (typeof _ordPrevEsc === 'function') ? _ordPrevEsc : (s=>String(s||''));
+  grid.innerHTML = imgs.map((url, i) => `
+    <div class="smp-prev-img-item" draggable="true" data-idx="${i}"
+         ondragstart="_smpPrevImgDragStart(event,${i})"
+         ondragover="_smpPrevImgDragOver(event)"
+         ondragleave="_smpPrevImgDragLeave(event)"
+         ondrop="_smpPrevImgDrop(event,${i})"
+         ondragend="_smpPrevImgDragEnd(event)"
+         style="background:#fff;border:1px solid #ddd;border-radius:6px;padding:8px;display:flex;align-items:center;justify-content:center;min-height:${Math.min(size,260)}px;cursor:move;position:relative;transition:border-color .15s,background .15s">
+      <img src="${esc(url)}" style="max-width:100%;max-height:${size}px;object-fit:contain;display:block;pointer-events:none">
+      <span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,.55);color:#fff;font-size:9.5pt;font-weight:700;padding:1px 7px;border-radius:10px;font-family:inherit" data-no-print="1">${i+1}</span>
+    </div>
+  `).join('');
+}
+
+function _updateSmpPrevImgLayout(){
+  const sizeEl = document.getElementById('smpPrevImgSize');
+  const lbl = document.getElementById('smpPrevImgSizeLabel');
+  if(sizeEl && lbl) lbl.textContent = sizeEl.value + 'px';
+  _renderSmpPrevImgGrid();
+  _saveSmpPrevImgCfg();
+}
+
+function _setSmpPrevImgCols(n){
+  window._smpPrevCols = n;
+  const grid = document.getElementById('smpPrevImgGrid');
+  if(grid) grid.style.gridTemplateColumns = `repeat(${n},1fr)`;
+  // 버튼 활성 상태 갱신
+  [1,2,3,4].forEach(i => {
+    const btn = document.getElementById('smpPrevImgColBtn'+i);
+    if(!btn) return;
+    const on = i===n;
+    btn.style.border = '1px solid ' + (on?'#1a6db5':'#ccc');
+    btn.style.background = on?'#e3f0fc':'#fff';
+    btn.style.color = on?'#1a6db5':'#555';
+    btn.style.fontWeight = on?'700':'500';
+  });
+  _saveSmpPrevImgCfg();
+}
+
+// 드래그앤드롭 — 순서 변경
+let _smpPrevDragIdx = -1;
+function _smpPrevImgDragStart(ev, idx){
+  _smpPrevDragIdx = idx;
+  ev.dataTransfer.effectAllowed = 'move';
+  // 살짝 투명도
+  if(ev.currentTarget && ev.currentTarget.style) ev.currentTarget.style.opacity = '0.4';
+}
+function _smpPrevImgDragOver(ev){
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  if(ev.currentTarget && ev.currentTarget.style){
+    ev.currentTarget.style.borderColor = '#1a6db5';
+    ev.currentTarget.style.background = '#e3f0fc';
+  }
+}
+function _smpPrevImgDragLeave(ev){
+  if(ev.currentTarget && ev.currentTarget.style){
+    ev.currentTarget.style.borderColor = '#ddd';
+    ev.currentTarget.style.background = '#fff';
+  }
+}
+function _smpPrevImgDrop(ev, targetIdx){
+  ev.preventDefault();
+  ev.stopPropagation();
+  if(_smpPrevDragIdx < 0 || _smpPrevDragIdx === targetIdx) return;
+  const imgs = window._smpPrevImgs || [];
+  if(!imgs.length) return;
+  // 미리보기용 _smpPrevImgs 순서 변경
+  const [moved] = imgs.splice(_smpPrevDragIdx, 1);
+  imgs.splice(targetIdx, 0, moved);
+  // 실제 smpImgBuf 원본도 같이 재정렬 (의뢰서 저장 시 반영되도록)
+  try {
+    if(typeof smpImgBuf !== 'undefined' && Array.isArray(smpImgBuf) && smpImgBuf.length === imgs.length + 0){
+      // 원본도 같은 순서로 (url 기준 매칭)
+      const newOrder = [];
+      const used = new Set();
+      imgs.forEach(url => {
+        const found = smpImgBuf.findIndex((it, idx) => !used.has(idx) && ((typeof it === 'string' && it === url) || (it && it.url === url)));
+        if(found >= 0){ newOrder.push(smpImgBuf[found]); used.add(found); }
+      });
+      // 매칭 안 된 항목은 뒤에 그대로
+      smpImgBuf.forEach((it, idx) => { if(!used.has(idx)) newOrder.push(it); });
+      smpImgBuf.length = 0;
+      newOrder.forEach(it => smpImgBuf.push(it));
+    }
+  } catch(e){ console.warn('smpImgBuf 순서 동기화 실패:', e); }
+  _smpPrevDragIdx = -1;
+  _renderSmpPrevImgGrid();
+}
+function _smpPrevImgDragEnd(ev){
+  if(ev.currentTarget && ev.currentTarget.style) ev.currentTarget.style.opacity = '1';
+  // 모든 카드 스타일 원복
+  document.querySelectorAll('.smp-prev-img-item').forEach(el => {
+    el.style.borderColor = '#ddd';
+    el.style.background = '#fff';
+    el.style.opacity = '1';
+  });
+  _smpPrevDragIdx = -1;
+}
+
+// 캡쳐/인쇄 시 컨트롤 숨김 (data-no-print 속성 활용)
+function _hideSmpPrevControls(hide){
+  document.querySelectorAll('[data-no-print="1"]').forEach(el => {
+    el.style.display = hide ? 'none' : '';
+  });
+}
+
 function openSmpPreviewFullscreen(action){
   const body = document.getElementById('mOrdPreview_body');
   const title = document.getElementById('mOrdPreview_title');
@@ -18186,10 +18350,19 @@ function openSmpPreviewFullscreen(action){
   window._ordPreviewSource = 'modal';
   window._previewIsSample = true;
   openM('mOrdPreview');
+  // 저장된 cols 적용 후 이미지 그리드 렌더
+  setTimeout(()=>{
+    try {
+      const saved = localStorage.getItem('_smpPrevImgCfg');
+      const cfg = saved ? JSON.parse(saved) : {cols:2};
+      window._smpPrevCols = cfg.cols || 2;
+    } catch(e){ window._smpPrevCols = 2; }
+    _renderSmpPrevImgGrid();
+  }, 50);
   if(action === 'capture'){
-    setTimeout(()=>captureOrdPreview(), 300);
+    setTimeout(()=>{ _hideSmpPrevControls(true); captureOrdPreview(); setTimeout(()=>_hideSmpPrevControls(false), 600); }, 300);
   } else if(action === 'print'){
-    setTimeout(()=>printOrdPreview(), 300);
+    setTimeout(()=>{ _hideSmpPrevControls(true); printOrdPreview(); setTimeout(()=>_hideSmpPrevControls(false), 600); }, 300);
   }
 }
 // 기존 함수명 호환
