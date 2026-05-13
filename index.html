@@ -17974,6 +17974,31 @@ function openOrdModal(idOrNull){
         showToast(`✓ ${priceResult.filled}개 행의 단가를 제품DB에서 자동으로 가져옴`, 'var(--grn)', 3000);
       }
     }
+    // 🔗 itemCode 자동 매칭 — 품번이 비어있는 행이 제품DB와 이름 일치하면 자동 연결
+    // (저장 시 발주서를 다시 열 때 또는 새로고침 후 자동 복원)
+    let codeMatchedCount = 0;
+    ordRowsBuf.forEach(r => {
+      if(r.itemCode || !(r.name||'').trim()) return; // 이미 연결됐거나 이름 없음
+      const p = (typeof findProductByOrderRow === 'function')
+        ? findProductByOrderRow(r)
+        : (productDB||[]).find(x => (x.name||'').trim().toLowerCase() === r.name.trim().toLowerCase());
+      if(p && p.code){
+        r.itemCode = p.code;
+        // 이미지도 비어있으면 제품DB의 이미지 승계
+        if(!r.img && p.imgs && p.imgs[0]){
+          const first = p.imgs[0];
+          r.img = typeof first === 'string' ? first : (first.url || '');
+        }
+        // 다른 비어있는 필드들도 보강
+        if(p.plating && !r.plating) r.plating = p.plating;
+        if(p.mat && !r.mat) r.mat = p.mat;
+        if(p.size && !r.size) r.size = p.size;
+        codeMatchedCount++;
+      }
+    });
+    if(codeMatchedCount > 0 && typeof showToast === 'function'){
+      showToast(`🔗 ${codeMatchedCount}개 행을 제품DB와 자동 연결 (저장 시 반영)`, 'var(--blu)', 3500);
+    }
   }
   // 요청 출고일 변경 이력 표시
   const shipHistEl=document.getElementById('o_shipHistArea');
@@ -18190,10 +18215,14 @@ function renderOrdRows(){
       <input class="fi" type="number" value="${r.unitPrice||''}" oninput="ordRowsBuf[${i}].unitPrice=+this.value" placeholder="단가" style="font-size:11px;padding:4px 6px;text-align:right">
       <button onclick="ordRowsBuf.splice(${i},1);renderOrdRows()" style="padding:3px 5px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-size:12px;color:var(--t3)">×</button>
     </div>
-    ${!r.itemCode && (r.name||'').trim() ? `<div style="display:flex;justify-content:flex-end;padding:2px 32px 0 0">
-      <button onclick="_registerOrdRowToProductDB(${i})" style="font-size:10.5px;padding:2px 9px;background:transparent;color:var(--blu);border:none;cursor:pointer;font-family:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px"
-        title="이 품목 정보(품명·도금·소재·규격·단가·이미지)를 제품DB에 새 항목으로 등록합니다">+ 이 품목을 제품DB에 등록</button>
-    </div>` : ''}
+    ${(r.name||'').trim() ? (
+      !r.itemCode ?
+        `<div style="display:flex;justify-content:flex-end;padding:2px 32px 0 0">
+          <button onclick="_registerOrdRowToProductDB(${i})" style="font-size:10.5px;padding:2px 9px;background:transparent;color:var(--blu);border:none;cursor:pointer;font-family:inherit;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px"
+            title="이 품목 정보(품명·도금·소재·규격·단가·이미지)를 제품DB에 새 항목으로 등록합니다">+ 이 품목을 제품DB에 등록</button>
+        </div>`
+      : ''
+    ) : ''}
 
     <!-- 입고 현황 (발주수량 있을 때만) -->
     ${ordQty>0?(()=>{
@@ -19310,18 +19339,40 @@ async function saveOrd(forceOverwrite){
   if(notionCfg.workerUrl && hasRowImgs){
     showToast('🔄 품목 이미지 업로드 중...','var(--blu)',2500);
     const imgBuf=cleanRows.map((r,i)=>r.img&&String(r.img).startsWith('data:')?{url:r.img,name:(r.name||'item')+'_'+i+'.png',type:'image/png'}:null);
-    const uploaded=await uploadImagesToR2(imgBuf.filter(Boolean));
-    // 업로드된 순서대로 다시 rows에 매핑
-    let uIdx=0;
-    cleanRows=cleanRows.map(r=>{
-      if(r.img && String(r.img).startsWith('data:')){
-        const up=uploaded[uIdx++];
-        return {...r, img: up?.url||r.img, imgR2Key: up?.r2Key};
+    const imgsToUpload = imgBuf.filter(Boolean);
+    console.log(`[발주 저장] 행 이미지 R2 업로드 시도: ${imgsToUpload.length}건`);
+    try {
+      const uploaded=await uploadImagesToR2(imgsToUpload);
+      console.log(`[발주 저장] R2 업로드 결과:`, uploaded.map(u => u?.url ? 'OK' : 'FAIL'));
+      // 업로드된 순서대로 다시 rows에 매핑
+      let uIdx=0;
+      let failedCount = 0;
+      cleanRows=cleanRows.map(r=>{
+        if(r.img && String(r.img).startsWith('data:')){
+          const up=uploaded[uIdx++];
+          if(!up?.url){
+            failedCount++;
+            // 업로드 실패 — base64 그대로 두면 노션 JSON 청크에서 깨짐
+            // 임시로 빈 문자열로 두고 사용자에게 경고
+            return {...r, img: '', _imgUploadFailed: true};
+          }
+          return {...r, img: up.url, imgR2Key: up.r2Key};
+        }
+        return r;
+      });
+      if(failedCount > 0){
+        showToast(`⚠ 품목 이미지 ${failedCount}건 업로드 실패 — 다시 첨부해 주세요`, 'var(--red)', 5000);
       }
-      return r;
-    });
-    // 현재 버퍼도 동기화
-    ordRowsBuf=cleanRows.map(r=>({...r}));
+      // 현재 버퍼도 동기화
+      ordRowsBuf=cleanRows.map(r=>({...r}));
+    } catch(e){
+      console.error('[발주 저장] 행 이미지 R2 업로드 실패:', e);
+      showToast(`⚠ 이미지 업로드 오류 — 저장은 계속됩니다만 이미지가 사라질 수 있습니다: ${e.message||''}`, 'var(--red)', 5000);
+    }
+  } else if(hasRowImgs && !notionCfg.workerUrl){
+    // Worker URL 없으면 base64로만 저장되는데, 노션 JSON 청크에서 큰 base64가 깨질 위험 있음
+    console.warn('[발주 저장] Worker URL 없음 — 품목 이미지가 base64로 저장됨 (노션 동기화 시 깨질 수 있음)');
+    showToast('⚠ Notion Worker URL이 없어 이미지가 클라우드 저장되지 않습니다 (설정에서 확인)','var(--org)',4000);
   }
 
   // 첨부 파일 중 아직 base64인 것이 있으면 R2에 업로드 후 URL로 교체
