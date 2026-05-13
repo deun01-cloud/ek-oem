@@ -2520,6 +2520,181 @@ function printASInvoice(){
 let _asVendorFilter=''; // 빈 문자열 = 전체
 function setASVendorFilter(v){ _asVendorFilter=v||''; renderAS(); }
 
+function _hasAnyAsColFilter(){
+  return !!(_asColFilter.dateFrom || _asColFilter.dateTo || _asColFilter.client || _asColFilter.status || _asColFilter.billing);
+}
+
+// 헤더 컬럼 옆 필터 버튼 (활성 상태면 강조)
+function _renderAsColFilterBtn(name){
+  const isActive = (name === 'date')
+    ? (_asColFilter.dateFrom || _asColFilter.dateTo)
+    : !!_asColFilter[name];
+  const isOpen = _asFilterOpen === name;
+  const bg = isActive ? 'var(--gold-bg)' : 'transparent';
+  const color = isActive ? 'var(--gold-lt)' : 'var(--t3)';
+  const border = isActive ? '1px solid var(--gold)' : '1px solid transparent';
+  const icon = isActive ? '▼' : '▽';
+  return `<button onclick="toggleAsColFilter('${name}')" style="margin-left:4px;padding:1px 5px;font-size:9px;background:${bg};color:${color};border:${border};border-radius:3px;cursor:pointer;font-family:inherit" title="필터">${icon}</button>`;
+}
+
+// 필터가 활성화되어 있거나 드롭다운이 열려있으면 필터 행 렌더링
+function _renderAsActiveFilterRow(items){
+  if(!_asFilterOpen && !_hasAnyAsColFilter()) return '';
+
+  // 고객사 목록 (현재 표시되는 데이터에서 추출)
+  const clientSet = new Set();
+  items.forEach(a => {
+    if(a.client) clientSet.add(a.client.trim());
+  });
+  const clientList = [...clientSet].sort();
+
+  // 활성 필터 요약 칩 행
+  const chips = [];
+  if(_asColFilter.dateFrom || _asColFilter.dateTo){
+    const label = _asColFilter.dateFrom && _asColFilter.dateTo
+      ? `${_asColFilter.dateFrom} ~ ${_asColFilter.dateTo}`
+      : (_asColFilter.dateFrom ? `${_asColFilter.dateFrom} 이후` : `${_asColFilter.dateTo} 이전`);
+    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:10px;font-size:10.5px;color:var(--gold-lt);font-weight:600">📅 ${label} <button onclick="clearAsColFilter('date')" style="background:none;border:none;cursor:pointer;color:var(--gold-lt);padding:0 2px;font-size:11px">✕</button></span>`);
+  }
+  if(_asColFilter.client){
+    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:10px;font-size:10.5px;color:var(--gold-lt);font-weight:600">🏢 ${_asColFilter.client} <button onclick="clearAsColFilter('client')" style="background:none;border:none;cursor:pointer;color:var(--gold-lt);padding:0 2px;font-size:11px">✕</button></span>`);
+  }
+  if(_asColFilter.status){
+    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:10px;font-size:10.5px;color:var(--gold-lt);font-weight:600">🔧 ${_asColFilter.status} <button onclick="clearAsColFilter('status')" style="background:none;border:none;cursor:pointer;color:var(--gold-lt);padding:0 2px;font-size:11px">✕</button></span>`);
+  }
+  if(_asColFilter.billing){
+    chips.push(`<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:10px;font-size:10.5px;color:var(--gold-lt);font-weight:600">💰 ${_asColFilter.billing} <button onclick="clearAsColFilter('billing')" style="background:none;border:none;cursor:pointer;color:var(--gold-lt);padding:0 2px;font-size:11px">✕</button></span>`);
+  }
+
+  // 열린 필터 드롭다운 영역
+  let dropdown = '';
+  if(_asFilterOpen === 'date'){
+    dropdown = `<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--s2);border:1px solid var(--gold-line);border-radius:6px">
+      <span style="font-size:11px;color:var(--t2);font-weight:600">📅 접수일 범위:</span>
+      <input type="date" value="${_asColFilter.dateFrom}" oninput="setAsColFilter('dateFrom',this.value)" style="padding:3px 6px;font-size:11px;border:1px solid var(--bdr);border-radius:4px;font-family:inherit">
+      <span style="color:var(--t3)">~</span>
+      <input type="date" value="${_asColFilter.dateTo}" oninput="setAsColFilter('dateTo',this.value)" style="padding:3px 6px;font-size:11px;border:1px solid var(--bdr);border-radius:4px;font-family:inherit">
+      <button onclick="clearAsColFilter('date')" style="padding:3px 8px;font-size:10.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">초기화</button>
+      <span style="flex:1"></span>
+      <button onclick="toggleAsColFilter('date')" style="padding:3px 8px;font-size:10.5px;background:var(--blu);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">닫기</button>
+    </div>`;
+  } else if(_asFilterOpen === 'client'){
+    dropdown = `<div style="padding:8px 12px;background:var(--s2);border:1px solid var(--gold-line);border-radius:6px">
+      <div style="font-size:11px;color:var(--t2);font-weight:600;margin-bottom:6px">🏢 고객사 선택:</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        <button onclick="clearAsColFilter('client')" style="padding:3px 10px;font-size:11px;background:${!_asColFilter.client?'var(--gold-bg)':'var(--s1)'};border:1px solid ${!_asColFilter.client?'var(--gold)':'var(--bdr)'};border-radius:12px;cursor:pointer;font-family:inherit;color:${!_asColFilter.client?'var(--gold-lt)':'var(--t2)'};font-weight:${!_asColFilter.client?'700':'500'}">전체</button>
+        ${clientList.map(c => `<button onclick="setAsColFilter('client','${c.replace(/'/g,"\\'")}')" style="padding:3px 10px;font-size:11px;background:${_asColFilter.client===c?'var(--gold-bg)':'var(--s1)'};border:1px solid ${_asColFilter.client===c?'var(--gold)':'var(--bdr)'};border-radius:12px;cursor:pointer;font-family:inherit;color:${_asColFilter.client===c?'var(--gold-lt)':'var(--t2)'};font-weight:${_asColFilter.client===c?'700':'500'}">${c}</button>`).join('')}
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:6px">
+        <button onclick="toggleAsColFilter('client')" style="padding:3px 8px;font-size:10.5px;background:var(--blu);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">닫기</button>
+      </div>
+    </div>`;
+  } else if(_asFilterOpen === 'status'){
+    const opts = ['접수','수리중','완료','반송'];
+    dropdown = `<div style="padding:8px 12px;background:var(--s2);border:1px solid var(--gold-line);border-radius:6px">
+      <div style="font-size:11px;color:var(--t2);font-weight:600;margin-bottom:6px">🔧 진행 상태:</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        <button onclick="clearAsColFilter('status')" style="padding:3px 10px;font-size:11px;background:${!_asColFilter.status?'var(--gold-bg)':'var(--s1)'};border:1px solid ${!_asColFilter.status?'var(--gold)':'var(--bdr)'};border-radius:12px;cursor:pointer;font-family:inherit;color:${!_asColFilter.status?'var(--gold-lt)':'var(--t2)'};font-weight:${!_asColFilter.status?'700':'500'}">전체</button>
+        ${opts.map(s => `<button onclick="setAsColFilter('status','${s}')" style="padding:3px 10px;font-size:11px;background:${_asColFilter.status===s?'var(--gold-bg)':'var(--s1)'};border:1px solid ${_asColFilter.status===s?'var(--gold)':'var(--bdr)'};border-radius:12px;cursor:pointer;font-family:inherit;color:${_asColFilter.status===s?'var(--gold-lt)':'var(--t2)'};font-weight:${_asColFilter.status===s?'700':'500'}">${s}</button>`).join('')}
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:6px">
+        <button onclick="toggleAsColFilter('status')" style="padding:3px 8px;font-size:10.5px;background:var(--blu);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">닫기</button>
+      </div>
+    </div>`;
+  } else if(_asFilterOpen === 'billing'){
+    const opts = ['미청구','청구 예정','청구 완료','무상처리'];
+    dropdown = `<div style="padding:8px 12px;background:var(--s2);border:1px solid var(--gold-line);border-radius:6px">
+      <div style="font-size:11px;color:var(--t2);font-weight:600;margin-bottom:6px">💰 청구 상태:</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap">
+        <button onclick="clearAsColFilter('billing')" style="padding:3px 10px;font-size:11px;background:${!_asColFilter.billing?'var(--gold-bg)':'var(--s1)'};border:1px solid ${!_asColFilter.billing?'var(--gold)':'var(--bdr)'};border-radius:12px;cursor:pointer;font-family:inherit;color:${!_asColFilter.billing?'var(--gold-lt)':'var(--t2)'};font-weight:${!_asColFilter.billing?'700':'500'}">전체</button>
+        ${opts.map(s => `<button onclick="setAsColFilter('billing','${s}')" style="padding:3px 10px;font-size:11px;background:${_asColFilter.billing===s?'var(--gold-bg)':'var(--s1)'};border:1px solid ${_asColFilter.billing===s?'var(--gold)':'var(--bdr)'};border-radius:12px;cursor:pointer;font-family:inherit;color:${_asColFilter.billing===s?'var(--gold-lt)':'var(--t2)'};font-weight:${_asColFilter.billing===s?'700':'500'}">${s}</button>`).join('')}
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:6px">
+        <button onclick="toggleAsColFilter('billing')" style="padding:3px 8px;font-size:10.5px;background:var(--blu);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">닫기</button>
+      </div>
+    </div>`;
+  }
+
+  // 활성 칩 행
+  const chipRow = chips.length > 0 ? `<tr><td colspan="12" style="padding:8px 10px;background:var(--s1);border-bottom:1px solid var(--bdr)">
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--t3);font-weight:600">활성 필터:</span>
+      ${chips.join(' ')}
+      <button onclick="clearAllAsColFilters()" style="margin-left:auto;padding:2px 8px;font-size:10.5px;background:var(--red-bg);color:var(--red);border:1px solid rgba(192,48,48,.3);border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600">전체 해제</button>
+    </div>
+  </td></tr>` : '';
+
+  // 드롭다운 행
+  const dropdownRow = dropdown ? `<tr><td colspan="12" style="padding:0 10px 8px;background:transparent">${dropdown}</td></tr>` : '';
+
+  return chipRow + dropdownRow;
+}
+
+// ════════════════════════════════════════════════════════════════
+// AS 컬럼 필터 (접수일/고객사/진행상태/청구상태)
+// ════════════════════════════════════════════════════════════════
+let _asColFilter = {
+  dateFrom: '',     // 접수일 시작 (YYYY-MM-DD)
+  dateTo: '',       // 접수일 끝
+  client: '',       // 고객사 이름 (정확 일치)
+  status: '',       // 진행상태
+  billing: ''       // 청구상태
+};
+let _asFilterOpen = ''; // 현재 열린 필터 드롭다운: 'date' | 'client' | 'status' | 'billing' | ''
+
+function toggleAsColFilter(name){
+  _asFilterOpen = _asFilterOpen === name ? '' : name;
+  renderAS();
+}
+function setAsColFilter(field, value){
+  _asColFilter[field] = value || '';
+  renderAS();
+}
+function clearAsColFilter(field){
+  if(field === 'date'){
+    _asColFilter.dateFrom = '';
+    _asColFilter.dateTo = '';
+  } else {
+    _asColFilter[field] = '';
+  }
+  _asFilterOpen = '';
+  renderAS();
+}
+function clearAllAsColFilters(){
+  _asColFilter = {dateFrom:'', dateTo:'', client:'', status:'', billing:''};
+  _asFilterOpen = '';
+  renderAS();
+}
+function applyAsColFilters(items){
+  return items.filter(a => {
+    // 접수일 범위
+    if(_asColFilter.dateFrom){
+      const d = (a.date||'').slice(0,10);
+      if(!d || d < _asColFilter.dateFrom) return false;
+    }
+    if(_asColFilter.dateTo){
+      const d = (a.date||'').slice(0,10);
+      if(!d || d > _asColFilter.dateTo) return false;
+    }
+    // 고객사 (정확 일치 — 이름 또는 initials)
+    if(_asColFilter.client){
+      const targetClient = _asColFilter.client;
+      const itemClient = (a.client||'').trim();
+      const itemInit = getVendorInit(a.client) || '';
+      if(itemClient !== targetClient && itemInit !== targetClient) return false;
+    }
+    // 진행상태
+    if(_asColFilter.status){
+      if((a.status||'접수') !== _asColFilter.status) return false;
+    }
+    // 청구상태
+    if(_asColFilter.billing){
+      if((a.billing||'미청구') !== _asColFilter.billing) return false;
+    }
+    return true;
+  });
+}
+
 // AS 선택 상태
 let _asSelected = new Set();
 function toggleASSelect(id, ev){
@@ -2543,6 +2718,179 @@ function clearASSelection(){
   _asSelected.clear();
   renderAS();
 }
+
+// ════════════════════════════════════════════════════════════════
+// 선택된 AS들 → 거래명세서 발행 (고객사별 자동 묶음)
+// 발주서 흐름과 동일 — 체크박스 선택 후 한 번에 발행
+// 같은 고객사면 하나의 명세서로, 여러 고객사면 각각 별도 명세서
+// ════════════════════════════════════════════════════════════════
+async function publishSelectedASInvoice(){
+  console.log('[AS 명세서 발행] 시작 - 선택 항목:', _asSelected.size);
+  if(_asSelected.size === 0){
+    showToast('⚠ 선택된 항목이 없습니다','var(--red)');
+    return;
+  }
+  if(!requireNotion('invDb', '거래명세서')){
+    console.warn('[AS 명세서 발행] Notion 미연결 → 중단');
+    return;
+  }
+
+  const selectedItems = asItems.filter(a => _asSelected.has(+a.id));
+  console.log('[AS 명세서 발행] 선택된 AS items:', selectedItems.length);
+  if(!selectedItems.length){
+    showToast('⚠ 선택된 항목을 찾을 수 없습니다 — 페이지를 새로고침해 주세요','var(--red)', 4000);
+    return;
+  }
+
+  // 청구 가능 항목만 필터 (고객불량)
+  const billable = selectedItems.filter(a => a.defectType === '고객불량');
+  const notBillable = selectedItems.filter(a => a.defectType !== '고객불량');
+  const alreadyBilled = billable.filter(a => a.billing === '청구 완료');
+  const ready = billable.filter(a => a.billing === '미청구' || a.billing === '청구 예정');
+  console.log('[AS 명세서 발행] 필터:', {ready: ready.length, alreadyBilled: alreadyBilled.length, notBillable: notBillable.length});
+
+  if(ready.length === 0){
+    let msg = '⚠ 청구 가능한 AS가 없습니다.\n';
+    if(notBillable.length > 0) msg += `\n· ${notBillable.length}건: 고객불량이 아님 (입고불량/미설정)`;
+    if(alreadyBilled.length > 0) msg += `\n· ${alreadyBilled.length}건: 이미 청구 완료`;
+    showToast(msg, 'var(--red)', 5000);
+    return;
+  }
+
+  // 고객사별로 그룹화 (initials 기준)
+  const byVendor = {};
+  ready.forEach(a => {
+    const init = getVendorInit(a.client) || a.client || '미분류';
+    if(!byVendor[init]) byVendor[init] = {
+      vendor: a.client,
+      initials: init,
+      items: []
+    };
+    byVendor[init].items.push(a);
+  });
+  const vendorGroups = Object.values(byVendor);
+
+  // 확인 메시지
+  let msg = `선택한 AS ${selectedItems.length}건 중 ${ready.length}건을 거래명세서로 발행합니다.\n\n`;
+  if(vendorGroups.length === 1){
+    const g = vendorGroups[0];
+    const totalAmt = g.items.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
+    msg += `📋 ${g.vendor} (${g.items.length}건, ${totalAmt.toLocaleString()}원)\n   → 하나의 거래명세서로 묶어 발행`;
+  } else {
+    msg += `📊 ${vendorGroups.length}개 고객사 — 각 고객사별로 별도 명세서 발행:\n`;
+    vendorGroups.forEach(g => {
+      const totalAmt = g.items.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
+      msg += `\n  · ${g.vendor}: ${g.items.length}건, ${totalAmt.toLocaleString()}원`;
+    });
+  }
+  if(notBillable.length > 0){
+    msg += `\n\n⚠ ${notBillable.length}건은 고객불량이 아니라 제외됩니다.`;
+  }
+  if(alreadyBilled.length > 0){
+    msg += `\n⚠ ${alreadyBilled.length}건은 이미 청구 완료라 제외됩니다.`;
+  }
+
+  showConfirm(msg, async ()=>{
+    let issuedCount = 0;
+    let failedCount = 0;
+    const issuedInvoices = [];
+
+    showToast(`🔄 ${vendorGroups.length}개 거래명세서 발행 중...`, 'var(--blu)', 3000);
+
+    for(const group of vendorGroups){
+      try {
+        const today = toLocalDateStr(new Date());
+        const supplyAmt = group.items.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
+        const tax = Math.round(supplyAmt * 0.1);
+        const total = supplyAmt + tax;
+
+        // 발주번호 자동 생성 (AS-YYMMDD-NNN 형식)
+        const yy = today.slice(2,4) + today.slice(5,7) + today.slice(8,10);
+        const todayInvs = invoiceHistory.filter(v => (v.ordNo||'').startsWith('AS-' + yy));
+        const seqNum = String(todayInvs.length + issuedCount + 1).padStart(3, '0');
+        const ordNo = `AS-${yy}-${seqNum}`;
+
+        const newInv = {
+          id: (typeof _genSafeId === 'function') ? _genSafeId(issuedCount) : Date.now() + issuedCount,
+          createdAt: new Date().toISOString(),
+          vendor: group.vendor,
+          ordNo: ordNo,
+          issuedAt: today,
+          shipDate: today,
+          items: group.items.map(a => ({
+            name: a.item || 'AS 수리',
+            code: '',
+            qty: +a.qty || 1,
+            unit: +a.unitCost || 0,
+            note: `AS: ${a.desc || ''}`
+          })),
+          supplyAmt: supplyAmt,
+          tax: tax,
+          total: total,
+          taxIncluded: true,
+          status: '발행완료',
+          payments: [],
+          totalPaid: 0,
+          paymentRatio: 0,
+          memo: `AS 거래명세서 — ${group.items.length}건 묶음 발행 (선택 발행)`,
+          _fromAS: true,
+          _isStandalone: true,
+          _asItemIds: group.items.map(a => a.id),
+          _invStage: 'billing'
+        };
+
+        // 노션에 push
+        if(typeof syncInvoiceToNotion === 'function'){
+          await syncInvoiceToNotion(newInv, false);
+          newInv._syncedAt = new Date().toISOString();
+        }
+
+        invoiceHistory.unshift(newInv);
+        issuedInvoices.push(newInv);
+
+        // 해당 AS들의 청구상태 갱신
+        for(const a of group.items){
+          const idx = asItems.findIndex(x => x.id === a.id);
+          if(idx >= 0){
+            asItems[idx].billing = '청구 완료';
+            asItems[idx]._linkedInvoiceId = newInv.id;
+            asItems[idx]._linkedInvoiceNo = newInv.ordNo;
+            if(asItems[idx]._notionId && typeof syncASToNotion === 'function'){
+              try {
+                await syncASToNotion(asItems[idx], true);
+              } catch(e){
+                console.warn('AS 업데이트 실패 (백그라운드):', e);
+              }
+            }
+          }
+        }
+
+        issuedCount++;
+      } catch(e){
+        console.error('거래명세서 발행 실패:', group.vendor, e);
+        failedCount++;
+      }
+      if(vendorGroups.indexOf(group) < vendorGroups.length - 1){
+        await new Promise(r => setTimeout(r, 300));
+      }
+    }
+
+    save();
+    _asSelected.clear();
+    renderAS();
+    updateBadges();
+
+    if(failedCount > 0){
+      showToast(`⚠ 거래명세서 ${issuedCount}건 발행 / ${failedCount}건 실패`, 'var(--org)', 6000);
+    } else {
+      showToast(`✓ 거래명세서 ${issuedCount}건 발행 완료 — 거래명세서 탭에서 확인`, 'var(--grn)', 5000);
+      console.log('발행된 거래명세서:', issuedInvoices.map(v => ({
+        ordNo: v.ordNo, vendor: v.vendor, total: v.total, items: v.items.length
+      })));
+    }
+  }, vendorGroups.length === 1 ? '거래명세서 발행' : '거래명세서 다중 발행', '🧾', '발행', 'blu');
+}
+
 function deleteSelectedAS(){
   if(_asSelected.size===0){
     showToast('⚠ 선택된 항목이 없습니다','var(--red)');
@@ -2570,7 +2918,7 @@ function deleteSelectedAS(){
   },'⚠ AS 일괄 삭제','🗑','삭제','var(--red)');
 }
 
-function updateASField(id, field, value, ev){
+async function updateASField(id, field, value, ev){
   if(ev) ev.stopPropagation();
   const i = asItems.findIndex(x=>x.id==id);
   if(i<0) return;
@@ -2580,20 +2928,27 @@ function updateASField(id, field, value, ev){
     const linked = invoiceHistory.find(v => String(v.id) === String(asItems[i]._linkedInvoiceId));
     if(linked){
       showToast(`⚠ 이 AS는 거래명세서 ${linked.ordNo}에 묶여 있어 청구상태를 되돌릴 수 없습니다`, 'var(--red)', 3500);
-      // 화면 상태 원복: 재렌더로 select가 원래 값으로 돌아감
       if(typeof renderAS === 'function') renderAS();
       return;
     }
   }
   asItems[i] = {...asItems[i], [field]: value};
   save();
-  // Notion 동기화 (백그라운드)
-  if(notionCfg.workerUrl && notionCfg.asDb){
-    debouncedSync('as', asItems[i], true);
+  // 🔒 즉시 Notion 동기화 — 디바운스 X (새로고침 시 손실 방지)
+  if(notionCfg.workerUrl && notionCfg.asDb && asItems[i]._notionId){
+    try {
+      await syncASToNotion(asItems[i], true);
+      asItems[i]._syncedAt = new Date().toISOString();
+      showToast('✓ 변경됨 (Notion 동기화 완료)','var(--grn)',1500);
+    } catch(e){
+      console.error('AS 인라인 수정 노션 sync 실패:', e);
+      showToast(`⚠ Notion 동기화 실패 — 로컬엔 저장됨 (${e.message||'네트워크 오류'})`, 'var(--org)', 5000);
+    }
+  } else {
+    showToast('✓ 변경됨','var(--grn)',1200);
   }
   renderAS();
   updateBadges();
-  showToast('✓ 변경됨','var(--grn)',1200);
 }
 
 let _asSubtab = 'active'; // 'active' | 'done'
@@ -2652,8 +3007,10 @@ function renderAS(){
     return aInit === _asVendorFilter;
   };
   const filteredAll = asItems.filter(filterFn);
-  const active = filteredAll.filter(a=>a.status!=='완료'&&a.status!=='반송');
-  const done = filteredAll.filter(a=>a.status==='완료'||a.status==='반송');
+  // 컬럼 필터 적용
+  const colFiltered = applyAsColFilters(filteredAll);
+  const active = colFiltered.filter(a=>a.status!=='완료'&&a.status!=='반송');
+  const done = colFiltered.filter(a=>a.status==='완료'||a.status==='반송');
   const pending = filteredAll.filter(a=>a.billing==='미청구'||a.billing==='청구 예정');
   const pendingAmt = pending.reduce((s,a)=>s+(a.qty||1)*(a.unitCost||0),0);
 
@@ -2788,11 +3145,15 @@ function renderAS(){
     <div style="overflow-x:auto"><table>
       <thead><tr>
         <th style="text-align:center;width:30px"><input type="checkbox" ${active.length&&active.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${active.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
-        <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
+        <th style="white-space:nowrap">접수일 ${_renderAsColFilterBtn('date')}</th>
+        <th style="text-align:center;white-space:nowrap">고객사 ${_renderAsColFilterBtn('client')}</th>
+        <th>품목</th><th style="text-align:center">수량</th>
         <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th>
-        <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
-      </tr></thead>
-      <tbody>${active.length?active.map(asRow).join(''):`<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 진행 중 AS 없음`:'진행 중인 AS 없음'}</td></tr>`}</tbody>
+        <th style="white-space:nowrap">진행 상태 ${_renderAsColFilterBtn('status')}</th>
+        <th style="white-space:nowrap">청구 상태 ${_renderAsColFilterBtn('billing')}</th>
+        <th>완료 예정</th><th>비고</th>
+      </tr>${_renderAsActiveFilterRow(filteredAll)}</thead>
+      <tbody>${active.length?active.map(asRow).join(''):`<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 진행 중 AS 없음`:_hasAnyAsColFilter()?'필터에 해당하는 AS 없음':'진행 중인 AS 없음'}</td></tr>`}</tbody>
     </table></div>
   </div>
   ` : `
@@ -2801,11 +3162,15 @@ function renderAS(){
     <div style="overflow-x:auto"><table>
       <thead><tr>
         <th style="text-align:center;width:30px"><input type="checkbox" ${done.length&&done.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${done.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
-        <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
+        <th style="white-space:nowrap">접수일 ${_renderAsColFilterBtn('date')}</th>
+        <th style="text-align:center;white-space:nowrap">고객사 ${_renderAsColFilterBtn('client')}</th>
+        <th>품목</th><th style="text-align:center">수량</th>
         <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th>
-        <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
-      </tr></thead>
-      <tbody>${done.length?done.map(asRow).join(''):`<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 완료/반송된 AS 없음`:'완료/반송된 AS 없음'}</td></tr>`}</tbody>
+        <th style="white-space:nowrap">진행 상태 ${_renderAsColFilterBtn('status')}</th>
+        <th style="white-space:nowrap">청구 상태 ${_renderAsColFilterBtn('billing')}</th>
+        <th>완료 예정</th><th>비고</th>
+      </tr>${_renderAsActiveFilterRow(filteredAll)}</thead>
+      <tbody>${done.length?done.map(asRow).join(''):`<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 완료/반송된 AS 없음`:_hasAnyAsColFilter()?'필터에 해당하는 AS 없음':'완료/반송된 AS 없음'}</td></tr>`}</tbody>
     </table></div>
   </div>
   `}`;
@@ -3314,6 +3679,63 @@ async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
 // 제품 DB
 // ════════════════════════════════
 let pdImgBuf=[], _importRows=[];
+
+// ════════════════════════════════════════════════════════════════
+// 🔒 안전한 ID 생성기 — JavaScript safe integer 범위 내에서 절대 충돌 없는 ID
+// ════════════════════════════════════════════════════════════════
+// Number.MAX_SAFE_INTEGER = 2^53 - 1 = 9,007,199,254,740,991
+// Date.now() 범위 = 약 1.7 * 10^12 (2026년 기준)
+// 안전 베이스 = 5 * 10^15 (Date.now()의 약 3000배 — 절대 안 겹침)
+let _safeIdCounter = 0;
+window._genSafeId = function(extra){
+  const baseId = 5e15 + _safeIdCounter + (extra || 0);
+  _safeIdCounter++;
+  return baseId;
+};
+
+// ════════════════════════════════════════════════════════════════
+// 🔒 productDB ID 중복 진단/수정 도구 (페이지 로드 시 즉시 사용 가능)
+// 콘솔에 window.diagnoseProductIds() 또는 window.diagnoseProductIds(true) 입력
+// ════════════════════════════════════════════════════════════════
+window.diagnoseProductIds = function(autoFix){
+  if(typeof productDB === 'undefined' || !Array.isArray(productDB)){
+    console.error('productDB가 아직 초기화되지 않음');
+    return;
+  }
+  const idGroups = {};
+  productDB.forEach((p, idx) => {
+    const key = String(p.id);
+    if(!idGroups[key]) idGroups[key] = [];
+    idGroups[key].push({idx, code:p.code, name:p.name, notionId:p._notionId});
+  });
+  const dups = Object.entries(idGroups).filter(([k,v]) => v.length > 1);
+  console.log('=== productDB ID 중복 진단 ===');
+  console.log('총 제품:', productDB.length);
+  console.log('고유 ID:', Object.keys(idGroups).length);
+  console.log('중복된 ID 그룹:', dups.length);
+  if(dups.length > 0){
+    console.log('상세 (상위 10개):');
+    dups.slice(0, 10).forEach(([id, items]) => {
+      console.log(`  id=${id} (${items.length}개):`, items);
+    });
+    if(autoFix){
+      console.log('🔧 자동 수정 시작 — safe integer 범위 내에서 모든 ID 재부여');
+      const safeBase = 5e15;
+      productDB.forEach((p, idx) => {
+        p.id = safeBase + idx;
+      });
+      if(typeof save === 'function') save();
+      if(typeof renderTab === 'function') renderTab();
+      console.log(`✓ 전체 ${productDB.length}개 항목에 새 고유 id 부여됨`);
+      console.log('⚠ 노션은 _notionId 사용하므로 영향 없음');
+    } else {
+      console.log('자동 수정하려면: window.diagnoseProductIds(true)');
+    }
+  } else {
+    console.log('✓ ID 중복 없음 — 데이터 무결성 정상');
+  }
+  return {total: productDB.length, unique: Object.keys(idGroups).length, dups: dups.length};
+};
 let pdSearch='', pdFilterType='전체', pdFilterMat='전체', pdPage=1, pdLowOnly=false;
 
 // 한글 IME 안전 + 디바운스 검색
@@ -3620,6 +4042,9 @@ function renderProducts(){
           const isOut=stock<=0;
           const stkColor=isOut?'var(--red)':isLow?'var(--org)':'var(--grn)';
           const stkBg=isOut?'var(--red-bg)':isLow?'var(--org-bg)':'var(--grn-bg)';
+          // 🔒 클릭 핸들러용 식별자 — _notionId가 있으면 우선 (전역 고유), 없으면 id
+          // 문자열로 감싸 number/string 혼동 방지
+          const clickId = "'" + String(p._notionId || p.id).replace(/'/g, "\\'") + "'";
           // 첫 번째 이미지 추출 (string or {url})
           let thumbUrl='';
           if(Array.isArray(p.imgs)&&p.imgs.length){
@@ -3628,20 +4053,20 @@ function renderProducts(){
           }
           const thumbCell=thumbUrl
             ? `<img src="${thumbUrl}" loading="lazy" onclick="event.stopPropagation();openPrevList(${JSON.stringify(p.imgs).replace(/"/g,'&quot;')},0,false)" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--bdr);cursor:pointer;display:block">`
-            : `<div onclick="openProductModal(${p.id})" style="width:38px;height:38px;background:var(--s2);border:1px dashed var(--bdr);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--t3);cursor:pointer" title="사진 없음 — 클릭해서 추가">📷</div>`;
+            : `<div onclick="openProductModal(${clickId})" style="width:38px;height:38px;background:var(--s2);border:1px dashed var(--bdr);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--t3);cursor:pointer" title="사진 없음 — 클릭해서 추가">📷</div>`;
           return `
         <tr style="border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
           <td style="padding:7px 10px" onclick="event.stopPropagation()">
             <input type="checkbox" class="pd-chk" value="${p.id}" onchange="pdUpdateBulkBar()">
           </td>
           <td style="padding:5px 6px" onclick="event.stopPropagation()">${thumbCell}</td>
-          <td style="padding:7px 10px;font-family:monospace;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.code||'—'}</td>
-          <td style="padding:7px 10px;font-weight:600;color:var(--t1)" onclick="openProductModal(${p.id})">${p.name}</td>
-          <td style="padding:7px 10px;text-align:center" onclick="openProductModal(${p.id})">
+          <td style="padding:7px 10px;font-family:monospace;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${clickId})">${p.code||'—'}</td>
+          <td style="padding:7px 10px;font-weight:600;color:var(--t1)" onclick="openProductModal(${clickId})">${p.name}</td>
+          <td style="padding:7px 10px;text-align:center" onclick="openProductModal(${clickId})">
             <span style="font-size:10px;padding:2px 7px;border-radius:10px;background:var(--s2);border:1px solid var(--bdr);white-space:nowrap">${p.type||'기타'}</span>
           </td>
-          <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);white-space:nowrap" onclick="openProductModal(${p.id})">${p.mat||'—'}</td>
-          <td style="padding:7px 10px" onclick="openProductModal(${p.id})">
+          <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);white-space:nowrap" onclick="openProductModal(${clickId})">${p.mat||'—'}</td>
+          <td style="padding:7px 10px" onclick="openProductModal(${clickId})">
             ${p.plating?`<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt)">${p.plating}</span>`:'—'}
           </td>
           <td style="padding:7px 10px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
@@ -3651,9 +4076,9 @@ function renderProducts(){
               <button onclick="quickStockChange(${p.id},+1)" title="+1" style="width:22px;height:22px;border:1px solid var(--bdr);border-radius:4px;background:var(--s1);color:var(--t2);cursor:pointer;font-size:12px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center">＋</button>
             </div>
           </td>
-          <td style="padding:7px 10px;text-align:right;font-weight:700;color:var(--gold-lt);white-space:nowrap" onclick="openProductModal(${p.id})">${p.price?p.price.toLocaleString()+'원':'—'}</td>
-          <td style="padding:7px 10px;text-align:right;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.costPrice?p.costPrice.toLocaleString()+'원':'—'}</td>
-          <td style="padding:7px 10px;text-align:center;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.lastModified||'—'}</td>
+          <td style="padding:7px 10px;text-align:right;font-weight:700;color:var(--gold-lt);white-space:nowrap" onclick="openProductModal(${clickId})">${p.price?p.price.toLocaleString()+'원':'—'}</td>
+          <td style="padding:7px 10px;text-align:right;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${clickId})">${p.costPrice?p.costPrice.toLocaleString()+'원':'—'}</td>
+          <td style="padding:7px 10px;text-align:center;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${clickId})">${p.lastModified||'—'}</td>
           <td style="padding:7px 10px;text-align:center" onclick="event.stopPropagation()">
             <button onclick="pdDeleteOne(${p.id})" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 5px;border-radius:4px" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--t3)'" title="삭제">🗑</button>
           </td>
@@ -3808,7 +4233,23 @@ function pdDeleteAll(){
 
 // ── 제품 모달 ──
 function openProductModal(idOrNull){
-  const p=idOrNull?productDB.find(x=>x.id==idOrNull):null;
+  // 🔒 정확한 매칭 — id 충돌 방지
+  // 1순위: _notionId가 idOrNull과 일치
+  // 2순위: id 일치 (느슨한 비교 대신 엄격한 문자열 비교)
+  let p = null;
+  if(idOrNull){
+    const target = String(idOrNull);
+    const candidates = productDB.filter(x =>
+      String(x.id) === target || String(x._notionId) === target
+    );
+    if(candidates.length > 1){
+      console.warn('[제품DB] ID 중복 발견 — 같은 ID를 가진 제품 ' + candidates.length + '개:', candidates.map(c => ({id:c.id, code:c.code, name:c.name, notionId:c._notionId})));
+      if(typeof showToast === 'function'){
+        showToast(`⚠ ID 중복 감지: "${target}"에 매칭되는 제품 ${candidates.length}개 — 콘솔 확인 필요`, 'var(--red)', 6000);
+      }
+    }
+    p = candidates[0] || null;
+  }
   pdImgBuf=p?[...(p.imgs||[])]:[];
   sv('pd_id',p?p.id:'');sv('pd_code',p?p.code:'');sv('pd_name',p?p.name:'');
   sv('pd_type',p?p.type:'EARRING');sv('pd_mat',p?p.mat:'브라스 (BRASS)');
@@ -3982,7 +4423,7 @@ function renderPdImgPrev(){
       <button onclick="pdImgBuf.splice(${i},1);renderPdImgPrev()" style="position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;border:none;border-radius:50%;width:17px;height:17px;font-size:11px;cursor:pointer;line-height:1;padding:0">×</button>
     </div>`).join('');
 }
-function saveProduct(){
+async function saveProduct(){
   const code=gv('pd_code'), name=gv('pd_name');
   if(!name) return showToast('⚠ 품목명을 입력해 주세요','var(--red)');
   const id=gv('pd_id');
@@ -4192,16 +4633,47 @@ function saveProduct(){
       showToast('✓ 제품 저장됨','var(--grn)');
     }
     if(typeof syncSels==='function') syncSels();
-    // Notion 동기화 — 수정만 디바운싱 (신규는 위에서 await로 처리됨)
+    // 🔒 Notion 동기화 — 수정 시에도 즉시(await) 동기화
+    // (디바운스로 했더니 새로고침 시 노션엔 옛 이미지가 남아 사라지는 문제 → 즉시 동기화로 변경)
     if(savedProduct && id){
-      debouncedSync('product', savedProduct, true);
+      try {
+        if(typeof showToast === 'function') showToast('🔄 Notion에 변경사항 저장 중...', 'var(--blu)', 1500);
+        await syncProductToNotion(savedProduct, true);
+        savedProduct._syncedAt = new Date().toISOString();
+      } catch(e){
+        console.error('[제품 수정] Notion 동기화 실패:', e);
+        if(typeof showToast === 'function'){
+          showToast(`⚠ Notion 동기화 실패 — 로컬엔 저장됐지만 다른 기기엔 반영 안 될 수 있습니다 (${e.message||'네트워크 오류'})`, 'var(--red)', 7000);
+        }
+      }
     }
   };
   if(notionCfg.workerUrl && pdImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
     showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
-    uploadImagesToR2([...pdImgBuf]).then(uploaded=>doSaveProduct(uploaded));
+    try {
+      const uploaded = await uploadImagesToR2([...pdImgBuf]);
+      const stillBase64 = uploaded.filter(img => img.url && img.url.startsWith('data:'));
+      if(stillBase64.length > 0){
+        const proceed = confirm(
+          `⚠ 이미지 ${stillBase64.length}개가 R2 업로드 실패\n\n` +
+          `이대로 저장하면 base64로 노션에 저장되지만 — 노션 크기 제한(2MB)을 넘으면 사진이 손실됩니다.\n\n` +
+          `계속하시겠습니까?\n\n` +
+          `· 확인 → 그대로 저장 (사진 손실 위험 있음)\n` +
+          `· 취소 → 저장 중단 (네트워크 확인 후 재시도)`
+        );
+        if(!proceed){
+          showToast('저장 취소 — Worker/R2 연결 상태를 확인하세요','var(--org)',5000);
+          return;
+        }
+      }
+      await doSaveProduct(uploaded);
+    } catch(e){
+      console.error('이미지 업로드 실패:', e);
+      showToast(`❌ 이미지 업로드 실패: ${e.message||'알 수 없는 오류'} — 저장 취소됨`,'var(--red)',6000);
+      return;
+    }
   } else {
-    doSaveProduct(obj.imgs);
+    await doSaveProduct(obj.imgs);
   }
 }
 function deleteProduct(){
@@ -6954,9 +7426,9 @@ async function pullFromNotion(opts){
 
       // 2단계: 기존처럼 병합 (로컬 _notionId 일치 항목 보존)
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map(x=>[x._notionId,x]));
-      const merged=remoteDedupe.map(r=>{
+      const merged=remoteDedupe.map((r, mergeIdx)=>{
         const prev=byNotionId[r._notionId];
-        if(!prev) return {id:Date.now()+Math.random(), ...r};
+        if(!prev) return {id:_genSafeId(mergeIdx), ...r};
         const out={...r, id:prev.id};
         idFields.forEach(f=>{
           // 배열 필드: 로컬이 더 많은 항목을 가지고 있으면 로컬 유지 (데이터 유실 방지)
@@ -7072,8 +7544,8 @@ async function pullFromNotion(opts){
           });
           out[hit.i]=merged;
         } else {
-          // 신규 항목 추가
-          out.push({id:Date.now()+Math.random(), ...r});
+          // 신규 항목 추가 — safe ID 생성기 사용
+          out.push({id:_genSafeId(out.length), ...r});
         }
       }
       return out;
@@ -8633,6 +9105,57 @@ function autoFillItemCodesFromDB(rows){
     }
   });
   return {matched, total:rows.length};
+}
+
+// 발주서 행 자동 매칭 — 품명 입력 후 포커스 빠질 때 호출
+// 같은 품명이 제품DB에 있으면 itemCode·단가·도금·소재·사이즈·이미지 자동 채움
+function _autoMatchOrdRow(idx){
+  const r = ordRowsBuf[idx];
+  if(!r || !r.name || !r.name.trim()) return;
+  if(r.itemCode) return; // 이미 매칭됨
+  if(!productDB || !productDB.length) return;
+  const p = (typeof findProductByOrderRow === 'function')
+    ? findProductByOrderRow(r)
+    : productDB.find(x => x.name && x.name.trim() === r.name.trim());
+  if(!p) return;
+  // 비어있는 필드만 채움 (사용자 입력 보호)
+  if(p.code && !r.itemCode) r.itemCode = p.code;
+  if(p.price && !r.unitPrice) r.unitPrice = p.price;
+  if(p.plating && !r.plating) r.plating = p.plating;
+  if(p.mat && !r.mat) r.mat = p.mat;
+  if(p.size && !r.size) r.size = p.size;
+  if(p.imgs && p.imgs[0] && !r.img){
+    const first = p.imgs[0];
+    r.img = typeof first === 'string' ? first : (first.url || '');
+  }
+  if(typeof renderOrdRows === 'function') renderOrdRows();
+  if(typeof showToast === 'function'){
+    showToast(`✓ "${p.code||p.name}" 제품DB에서 매칭 — 행 ${idx+1} 자동 채움`, 'var(--grn)', 2500);
+  }
+}
+
+// 거래명세서 행 자동 매칭 — 품명 입력 후 포커스 빠질 때 호출
+function _autoMatchInvRow(idx){
+  const r = _invRowsBuf[idx];
+  if(!r || !r.name || !r.name.trim()) return;
+  if(r.code) return;
+  if(!productDB || !productDB.length) return;
+  const q = r.name.trim().toLowerCase();
+  let p = productDB.find(x => (x.name||'').trim().toLowerCase() === q);
+  if(!p){
+    const candidates = productDB.filter(x =>
+      (x.name||'').toLowerCase().includes(q) || q.includes((x.name||'').toLowerCase())
+    );
+    if(candidates.length === 1) p = candidates[0];
+  }
+  if(!p) return;
+  if(p.code && !r.code) r.code = p.code;
+  if(p.price && !r.unit) r.unit = +p.price;
+  if(typeof _renderInvRows === 'function') _renderInvRows();
+  if(typeof _updateInvRowCalc === 'function') _updateInvRowCalc(idx);
+  if(typeof showToast === 'function'){
+    showToast(`✓ "${p.code||p.name}" 제품DB에서 매칭 — 단가 ${(+p.price||0).toLocaleString()}원 자동 채움`, 'var(--grn)', 2500);
+  }
 }
 
 // 발주서 rows의 단가가 비어있거나 0인 행을 productDB에서 자동으로 채워줌
@@ -16675,9 +17198,19 @@ function renderOrdRows(){
           <img src="${r.img}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1.5px solid var(--gold-line);cursor:pointer;flex-shrink:0"
             onclick="openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\'")}'}],0,false)"
             title="클릭하여 미리보기">
-          <input class="fi" value="${r.name||''}" oninput="ordRowsBuf[${i}].name=this.value" placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;flex:1;min-width:0">
+          <input class="fi" value="${r.name||''}"
+            oncompositionstart="this._composing=true"
+            oncompositionend="this._composing=false;ordRowsBuf[${i}].name=this.value"
+            oninput="if(!this._composing)ordRowsBuf[${i}].name=this.value"
+            onblur="_autoMatchOrdRow(${i})"
+            placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;flex:1;min-width:0">
           <button onclick="ordRowsBuf[${i}].img='';renderOrdRows()" title="이미지 제거" style="padding:2px 5px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;font-size:10px;color:var(--t3);flex-shrink:0">🗑</button>
-        </div>`:`<input class="fi" value="${r.name||''}" oninput="ordRowsBuf[${i}].name=this.value" placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;width:100%">`}
+        </div>`:`<input class="fi" value="${r.name||''}"
+            oncompositionstart="this._composing=true"
+            oncompositionend="this._composing=false;ordRowsBuf[${i}].name=this.value"
+            oninput="if(!this._composing)ordRowsBuf[${i}].name=this.value"
+            onblur="_autoMatchOrdRow(${i})"
+            placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;width:100%">`}
         ${r.itemCode?`<div style="font-size:9.5px;color:var(--gold-lt);margin-top:2px;font-weight:600">📌 ${r.itemCode}</div>`:''}
       </div>
       <div style="position:relative">
@@ -21847,7 +22380,12 @@ function _renderInvRows(){
       return `
       <div style="display:grid;grid-template-columns:30px 2fr 1.2fr 0.8fr 1fr 1.2fr 30px;gap:4px 4px;align-items:center;margin-bottom:6px;padding-bottom:3px;border-bottom:1px dashed transparent">
         <div style="text-align:center;font-size:11px;color:var(--t3);font-weight:600">${i+1}</div>
-        <input class="fi" id="sivName_${i}" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].name=this.value" placeholder="품명" style="font-size:11.5px;padding:4px 6px">
+        <input class="fi" id="sivName_${i}" value="${(r.name||'').replace(/"/g,'&quot;')}"
+          oncompositionstart="this._composing=true"
+          oncompositionend="this._composing=false;_invRowsBuf[${i}].name=this.value"
+          oninput="if(!this._composing)_invRowsBuf[${i}].name=this.value"
+          onblur="_autoMatchInvRow(${i})"
+          placeholder="품명" style="font-size:11.5px;padding:4px 6px">
         <input class="fi" id="sivCode_${i}" value="${(r.code||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].code=this.value;_updateInvRowCalc(${i})" placeholder="품번 (재고 연동)" style="font-size:11px;padding:4px 6px;font-family:monospace">
         <input class="fi" id="sivQty_${i}" type="number" value="${r.qty||1}" oninput="_invRowsBuf[${i}].qty=+this.value;_updateInvRowCalc(${i})" style="font-size:11.5px;padding:4px 6px;text-align:center">
         <input class="fi" id="sivUnit_${i}" type="number" value="${r.unit||0}" oninput="_invRowsBuf[${i}].unit=+this.value;_updateInvRowCalc(${i})" placeholder="0" style="font-size:11.5px;padding:4px 6px;text-align:right">
