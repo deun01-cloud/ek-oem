@@ -5371,6 +5371,30 @@ function setInvStatus(s){ invFilter.status=s; renderInvoiceHistory(); }
 function setInvVendor(v){ invFilter.vendor=v; renderInvoiceHistory(); }
 function setInvMonth(m){ invFilter.month=m; renderInvoiceHistory(); }
 function setInvKind(k){ invFilter.kind=k||'all'; renderInvoiceHistory(); }
+
+// 거래명세서 선택 관리 (체크박스로 선택한 명세서 ID 저장)
+let _invSelected = new Set();
+function toggleInvSelect(id, ev){
+  if(ev){ ev.stopPropagation(); }
+  id = +id;
+  if(_invSelected.has(id)) _invSelected.delete(id);
+  else _invSelected.add(id);
+  renderInvoiceHistory();
+}
+function toggleInvSelectAll(ids, ev){
+  if(ev){ ev.stopPropagation(); }
+  const allSelected = ids.length && ids.every(i => _invSelected.has(+i));
+  if(allSelected){
+    ids.forEach(i => _invSelected.delete(+i));
+  } else {
+    ids.forEach(i => _invSelected.add(+i));
+  }
+  renderInvoiceHistory();
+}
+function clearInvSelection(){
+  _invSelected.clear();
+  renderInvoiceHistory();
+}
 function setInvSubTab(t){
   invFilter.subTab=t;
   // 페이지 새로고침 시 항상 '미청구'(draft) 탭으로 시작하도록 localStorage 저장은 안 함
@@ -5627,18 +5651,37 @@ function renderInvoiceHistory(){
   if(notionCfg.workerUrl && notionCfg.invDb){
     h+='<button onclick="cleanupNotionInvoiceZombies()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);font-weight:600" title="Notion에만 남아있는 좀비 페이지를 모두 archive — 로컬에 없는 페이지만 정리">🧹 Notion 좀비 정리</button>';
   }
-  h+='<button onclick="openSalesExcelExport()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--grn);background:var(--grn-bg);color:var(--grn);font-weight:600">📊 매출내역 엑셀 다운로드</button>';
+  var selectedCount = _invSelected ? _invSelected.size : 0;
+  var excelBtnLabel = selectedCount > 0 ? '📊 매출내역 엑셀 다운로드 (' + selectedCount + '건 선택)' : '📊 매출내역 엑셀 다운로드';
+  var excelBtnStyle = selectedCount > 0
+    ? 'padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--grn);background:var(--grn);color:#fff;font-weight:700;box-shadow:0 1px 3px rgba(46,139,44,.25)'
+    : 'padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--grn);background:var(--grn-bg);color:var(--grn);font-weight:600';
+  h+='<button onclick="openSalesExcelExport()" style="'+excelBtnStyle+'">'+excelBtnLabel+'</button>';
   h+='<button onclick="openConsolidationModal()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid #7A4DB5;background:rgba(122,77,181,.10);color:#7A4DB5;font-weight:600" title="고객사+월 선택 → 그 달 거래명세서를 묶어 한 장의 청구서로 발행 (선금 자동 차감)">📑 합본 청구서 작성</button>';
   h+='<button onclick="openStandaloneInvoiceModal(null)" style="padding:5px 14px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--gold-line);background:var(--gold);color:#fff;font-weight:700" title="발주서 없이 재고 판매용 거래명세서 작성">+ 거래명세서 작성</button></div>';
   h+='</div>';
 
   // 테이블
   h+='<div class="card" style="padding:0">';
+  // 선택된 항목이 있으면 상단에 배너
+  if(selectedCount > 0){
+    h+='<div style="padding:8px 14px;background:rgba(139,105,20,.08);border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px;font-size:11.5px">';
+    h+='<span style="font-weight:700;color:var(--gold-lt)">✓ '+selectedCount+'건 선택됨</span>';
+    h+='<button onclick="clearInvSelection()" style="padding:3px 10px;font-size:10.5px;border:1px solid var(--bdr);background:#fff;border-radius:10px;cursor:pointer;font-family:inherit;color:var(--t2)">× 선택 해제</button>';
+    h+='<span style="color:var(--t3);margin-left:4px">매출내역 엑셀 다운로드 시 선택된 항목만 포함됩니다</span>';
+    h+='</div>';
+  }
   h+='<div style="padding:10px 14px;border-bottom:1px solid var(--bdr)">';
   h+='<span style="font-size:12px;font-weight:600">총 <b>'+list.length+'</b>건 · 합계 <b style="color:var(--gold-lt)">'+(tAmt?tAmt.toLocaleString()+'원':'-')+'</b></span></div>';
   if(list.length){
     h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">';
     h+='<thead><tr style="background:var(--s2);border-bottom:2px solid var(--bdr)">';
+    // 전체선택 체크박스
+    var allIds = list.map(function(v){ return v.id; });
+    var allChecked = allIds.length && allIds.every(function(i){ return _invSelected.has(+i); });
+    h+='<th style="padding:8px 6px;text-align:center;width:36px;background:var(--s2)" title="이 목록 전체 선택/해제">'
+      +'<input type="checkbox" '+(allChecked?'checked':'')+' onclick="toggleInvSelectAll(['+allIds.join(',')+'],event)" style="cursor:pointer;width:16px;height:16px;accent-color:var(--gold)">'
+      +'</th>';
     h+='<th onclick="invToggleSort(\'date\')" style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" title="클릭하여 발행일 정렬">발행일'+_invSortIndicator('date')+'</th>';
     h+='<th onclick="invToggleSort(\'vendor\')" style="padding:8px 10px;text-align:left;font-weight:600;cursor:pointer;user-select:none" title="클릭하여 고객사 정렬">고객사'+_invSortIndicator('vendor')+'</th>';
     h+='<th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap" title="명세서 종류 (발주/샘플/AS/재고/합본) 및 번호">구분 / 번호</th>';
@@ -5667,7 +5710,10 @@ function renderInvoiceHistory(){
           stageChip = '<span style="display:inline-block;margin-top:3px;padding:1px 6px;font-size:9.5px;font-weight:600;background:'+stageBg+';color:'+stageColor+';border:1px solid '+stageBd+';border-radius:8px">'+stageLabel+'</span>';
         }
       }
-      h+='<tr style="'+rowBg+'border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background=\'var(--s2)\'" onmouseout="this.style.background=\''+(isCons?'rgba(122,77,181,.05)':'')+'\'">';
+      var isChecked = _invSelected.has(+v.id);
+      var checkedBg = isChecked ? 'background:rgba(139,105,20,.06);' : '';
+      h+='<tr style="'+(checkedBg||rowBg)+'border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background=\'var(--s2)\'" onmouseout="this.style.background=\''+(isChecked?'rgba(139,105,20,.06)':(isCons?'rgba(122,77,181,.05)':''))+'\'">';
+      h+='<td style="padding:8px 6px;text-align:center;width:36px"><input type="checkbox" '+(isChecked?'checked':'')+' onclick="toggleInvSelect('+v.id+',event)" style="cursor:pointer;width:15px;height:15px;accent-color:var(--gold)"></td>';
       h+='<td onclick="'+clickFn+'" style="padding:8px 10px;white-space:nowrap;color:var(--t3)"><div>'+v.issuedAt+'</div>'+stageChip+'</td>';
       h+='<td onclick="'+clickFn+'" style="padding:8px 10px;font-weight:600">'+v.vendor+'</td>';
       // 발주번호 컬럼 분기:
@@ -6177,18 +6223,27 @@ function openSalesExcelExport(){
     showToast('⚠ 발행된 거래명세서가 없습니다','var(--org)', 2500);
     return;
   }
-  // 현재 탭 이름 표시 — 다운로드 범위가 무엇인지 사용자에게 명확히
-  const subTab = (invFilter && invFilter.subTab) || 'all';
-  const tabLabels = {
-    draft: '📋 미청구',
-    billing: '💰 청구',
-    done: '✓ 완료',
-    consolidated: '📑 합본',
-    all: '📋 모든 명세서'
-  };
+  // ▶ 선택된 항목이 있으면 "선택 모드"로 안내
+  const isSelectionMode = _invSelected && _invSelected.size > 0;
   const tabInfo = document.getElementById('sex_tabInfo');
-  if(tabInfo){
-    tabInfo.innerHTML = `현재 탭: <strong>${tabLabels[subTab]||subTab}</strong> · 이 탭에 보이는 명세서만 다운로드됩니다`;
+  if(isSelectionMode){
+    if(tabInfo){
+      tabInfo.innerHTML = `✓ 체크박스로 선택한 <strong>${_invSelected.size}건</strong>만 다운로드됩니다 · 기간/거래처 필터는 무시됩니다`
+        + ' <button onclick="clearInvSelection();closeM(\'mSalesExcel\');" style="margin-left:8px;padding:2px 8px;font-size:10.5px;border:1px solid var(--bdr);background:#fff;border-radius:10px;cursor:pointer;font-family:inherit;color:var(--t2)">× 선택 해제</button>';
+    }
+  } else {
+    // 기존: 현재 탭 안내
+    const subTab = (invFilter && invFilter.subTab) || 'all';
+    const tabLabels = {
+      draft: '📋 미청구',
+      billing: '💰 청구',
+      done: '✓ 완료',
+      consolidated: '📑 합본',
+      all: '📋 모든 명세서'
+    };
+    if(tabInfo){
+      tabInfo.innerHTML = `현재 탭: <strong>${tabLabels[subTab]||subTab}</strong> · 이 탭에 보이는 명세서만 다운로드됩니다 <span style="color:var(--t3);font-weight:400">(개별 선택하려면 체크박스 사용)</span>`;
+    }
   }
   // 기간 초기값: 최근 3개월
   const today = new Date();
@@ -6200,6 +6255,12 @@ function openSalesExcelExport(){
   const vSel = document.getElementById('sex_vendor');
   vSel.innerHTML = '<option value="">전체 거래처</option>' +
     vendors.map(v=>`<option value="${v.replace(/"/g,'&quot;')}">${v}</option>`).join('');
+  // 선택 모드면 기간/거래처 필터 비활성화 (시각적으로도)
+  const dateFromEl = document.getElementById('sex_from');
+  const dateToEl   = document.getElementById('sex_to');
+  if(dateFromEl) dateFromEl.disabled = isSelectionMode;
+  if(dateToEl)   dateToEl.disabled = isSelectionMode;
+  if(vSel)       vSel.disabled = isSelectionMode;
   // 프리뷰 업데이트
   updateSexPreview();
   // 입력 이벤트 리스너 (실시간 프리뷰)
@@ -6235,9 +6296,15 @@ function sexSetRange(type){
 }
 
 // 조건에 맞는 거래명세서 추출
-// 기간/거래처 필터 외에, 현재 화면에 보고 있는 탭(subTab)도 같이 적용
-// → 탭에 보이는 항목들만 다운로드되도록
+// 선택된 항목(체크박스)이 있으면 그것만 반환 (기간/거래처 필터는 무시)
+// 선택 없으면 기존 로직: 기간/거래처 필터 + 현재 탭(subTab) 필터 적용
 function getFilteredInvoicesForExport(){
+  // 선택된 항목 우선
+  if(_invSelected && _invSelected.size > 0){
+    return invoiceHistory
+      .filter(v => _invSelected.has(+v.id))
+      .sort((a,b) => (a.issuedAt||'').localeCompare(b.issuedAt||''));
+  }
   const from = gv('sex_from');
   const to   = gv('sex_to');
   const vendor = gv('sex_vendor');
