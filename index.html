@@ -809,18 +809,29 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 
   <div id="s_dueHistArea"></div>
 
-  <!-- 📋 인라인 샘플 의뢰서 미리보기 (중국 공장 전송용 캡쳐 포맷) -->
-  <div style="margin-top:16px;border:2px dashed var(--blu);border-radius:8px;padding:12px;background:var(--s1)">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-      <span style="font-size:13px;font-weight:700;color:var(--blu)">📋 공장 전송용 샘플 의뢰서 미리보기</span>
-      <span style="font-size:10.5px;color:var(--t3)">(입력 즉시 갱신 — 단가 미포함)</span>
-      <span style="flex:1"></span>
-      <button onclick="captureInlineSmpPreview()" style="padding:5px 12px;font-size:11.5px;background:var(--blu);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit;font-weight:600" title="미리보기 영역을 이미지로 저장">📸 이미지 저장</button>
-      <button onclick="printInlineSmpPreview()" style="padding:5px 12px;font-size:11.5px;background:var(--gold);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit;font-weight:600" title="인쇄 또는 PDF로 저장">🖨 인쇄/PDF</button>
-      <button onclick="refreshInlineSmpPreview()" style="padding:5px 10px;font-size:11.5px;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--t2)" title="현재 입력값으로 다시 그리기">🔄 새로고침</button>
+  <!-- 🚨 공장 주의사항 — 샘플 의뢰서 미리보기에 빨간 강조 박스로 표시됨 -->
+  <div style="margin-top:14px">
+    <label style="display:block;font-size:11.5px;color:var(--red);font-weight:700;margin-bottom:5px">
+      🚨 공장 주의사항 <span style="color:var(--t3);font-weight:400;font-size:10.5px">(샘플 의뢰서 미리보기에 빨간 박스로 강조 표시됨)</span>
+    </label>
+    <textarea id="s_factoryNotice" placeholder="예: 도금 두께 ​2미크론 필수 / 광택 마감 / 모서리 둥글게 / CAD 도면 확인 후 작업 / 색상 정확히 맞춰주세요 등" rows="3"
+      style="width:100%;padding:8px 12px;font-size:12.5px;border:1.5px solid rgba(192,48,48,.3);border-radius:6px;background:rgba(192,48,48,.04);font-family:inherit;resize:vertical;color:var(--t1);line-height:1.5"
+      oninput="window._smpFactoryNotice=this.value"></textarea>
+  </div>
+
+  <!-- 📋 공장 전송용 샘플 의뢰서 — 클릭 시 큰 모달로 열림 -->
+  <div onclick="openSmpPreviewFullscreen()" style="margin-top:14px;padding:14px 18px;background:linear-gradient(135deg,var(--blu-bg),var(--s1));border:1.5px solid rgba(60,108,170,.3);border-radius:10px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:14px"
+    onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(60,108,170,.15)';this.style.borderColor='var(--blu)'"
+    onmouseout="this.style.transform='';this.style.boxShadow='';this.style.borderColor='rgba(60,108,170,.3)'">
+    <div style="font-size:26px;flex-shrink:0">📋</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:13px;font-weight:700;color:var(--blu);margin-bottom:2px">공장 전송용 샘플 의뢰서 미리보기</div>
+      <div style="font-size:11px;color:var(--t3)">클릭하면 새 창으로 열림 — 캡쳐해서 중국 공장에 전송 (단가 미포함)</div>
     </div>
-    <div id="s_inlinePreview" style="background:#fff;color:#000;border:1px solid #ccc;border-radius:4px;padding:18px;font-family:'맑은 고딕','Malgun Gothic',sans-serif;max-height:600px;overflow:auto">
-      <!-- refreshInlineSmpPreview()로 채워짐 -->
+    <div style="display:flex;gap:6px;flex-shrink:0" onclick="event.stopPropagation()">
+      <button onclick="openSmpPreviewFullscreen()" style="padding:7px 14px;font-size:11.5px;background:var(--blu);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600">👁 미리보기</button>
+      <button onclick="openSmpPreviewFullscreen('capture')" style="padding:7px 14px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;color:var(--t1)" title="이미지 저장">📸</button>
+      <button onclick="openSmpPreviewFullscreen('print')" style="padding:7px 14px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;color:var(--t1)" title="인쇄/PDF">🖨</button>
     </div>
   </div>
 
@@ -828,7 +839,6 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <button class="btn bgo" onclick="closeM('mSmp')">취소</button>
     <button class="btn bp-red" id="s_delBtn" onclick="deleteSmp()" style="display:none">삭제</button>
     <button class="btn bgo" id="s_invBtn" onclick="saveAndInvoice()" style="display:none;border-color:var(--gold);color:var(--gold-lt)">🧾 명세서 발행</button>
-    <button class="btn bs" onclick="openSmpPreview()" style="background:var(--blu-bg);border:1px solid rgba(60,108,170,.3);color:var(--blu);font-weight:600" title="더 큰 화면에서 보기">📋 크게 보기</button>
     <button class="btn bp-grn" id="s_cfmBtn" onclick="confirmSmp()" style="display:none">✓ 확정 → 발주 생성</button>
     <button class="btn bp" id="s_saveBtn" onclick="saveSmp()" style="font-size:13px;padding:7px 20px">✓ 샘플 등록</button>
   </div>
@@ -940,39 +950,51 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 
   <div id="o_shipHistArea"></div>
 
-  <!-- 📋 인라인 발주서 미리보기 (중국 공장 전송용 캡쳐 포맷) -->
-  <div style="margin-top:16px;border:2px dashed var(--blu);border-radius:8px;padding:12px;background:var(--s1)">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
-      <span style="font-size:13px;font-weight:700;color:var(--blu)">📋 공장 전송용 발주서 미리보기</span>
-      <span style="font-size:10.5px;color:var(--t3)">(입력 즉시 갱신 — 캡쳐해서 중국 공장에 전송 / 단가 미포함)</span>
-      <span style="flex:1"></span>
-      <button onclick="captureInlineOrdPreview()" style="padding:5px 12px;font-size:11.5px;background:var(--blu);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit;font-weight:600" title="미리보기 영역을 이미지로 저장">📸 이미지 저장</button>
-      <button onclick="printInlineOrdPreview()" style="padding:5px 12px;font-size:11.5px;background:var(--gold);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit;font-weight:600" title="인쇄 또는 PDF로 저장">🖨 인쇄/PDF</button>
-      <button onclick="refreshInlineOrdPreview()" style="padding:5px 10px;font-size:11.5px;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--t2)" title="현재 입력값으로 다시 그리기">🔄 새로고침</button>
+  <!-- 🚨 공장 주의사항 — 발주서 미리보기에 빨간 강조 박스로 표시됨 -->
+  <div style="margin-top:14px">
+    <label style="display:block;font-size:11.5px;color:var(--red);font-weight:700;margin-bottom:5px">
+      🚨 공장 주의사항 <span style="color:var(--t3);font-weight:400;font-size:10.5px">(발주서 미리보기에 빨간 박스로 강조 표시됨)</span>
+    </label>
+    <textarea id="o_factoryNotice" placeholder="예: 도금 두께 ​2미크론 필수 / 광택 마감 / 포장 시 개별 비닐 필수 / 검수 후 출고 등" rows="3"
+      style="width:100%;padding:8px 12px;font-size:12.5px;border:1.5px solid rgba(192,48,48,.3);border-radius:6px;background:rgba(192,48,48,.04);font-family:inherit;resize:vertical;color:var(--t1);line-height:1.5"
+      oninput="window._ordFactoryNotice=this.value"></textarea>
+  </div>
+
+  <!-- 📋 공장 전송용 발주서 — 클릭 시 큰 모달로 열림 -->
+  <div onclick="openOrdPreviewFullscreen()" style="margin-top:14px;padding:14px 18px;background:linear-gradient(135deg,var(--blu-bg),var(--s1));border:1.5px solid rgba(60,108,170,.3);border-radius:10px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:14px"
+    onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(60,108,170,.15)';this.style.borderColor='var(--blu)'"
+    onmouseout="this.style.transform='';this.style.boxShadow='';this.style.borderColor='rgba(60,108,170,.3)'">
+    <div style="font-size:26px;flex-shrink:0">📋</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:13px;font-weight:700;color:var(--blu);margin-bottom:2px">공장 전송용 발주서 미리보기</div>
+      <div style="font-size:11px;color:var(--t3)">클릭하면 새 창으로 열림 — 캡쳐해서 중국 공장에 전송 (단가 미포함)</div>
     </div>
-    <div id="o_inlinePreview" style="background:#fff;color:#000;border:1px solid #ccc;border-radius:4px;padding:18px;font-family:'맑은 고딕','Malgun Gothic',sans-serif;max-height:600px;overflow:auto">
-      <!-- refreshInlineOrdPreview()로 채워짐 -->
+    <div style="display:flex;gap:6px;flex-shrink:0" onclick="event.stopPropagation()">
+      <button onclick="openOrdPreviewFullscreen()" style="padding:7px 14px;font-size:11.5px;background:var(--blu);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600">👁 미리보기</button>
+      <button onclick="openOrdPreviewFullscreen('capture')" style="padding:7px 14px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;color:var(--t1)" title="이미지 저장">📸</button>
+      <button onclick="openOrdPreviewFullscreen('print')" style="padding:7px 14px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;color:var(--t1)" title="인쇄/PDF">🖨</button>
     </div>
   </div>
 
   <div class="ma">
     <button class="btn bgo" onclick="closeM('mOrd')">취소</button>
     <button class="btn bp-red" id="o_delBtn" onclick="deleteOrd()" style="display:none">삭제</button>
-    <button class="btn bs" onclick="openOrdPreview()" style="background:var(--blu-bg);border:1px solid rgba(60,108,170,.3);color:var(--blu);font-weight:600" title="더 큰 화면에서 보기">📋 크게 보기</button>
     <button class="btn bp" onclick="saveOrd()">저장</button>
   </div>
 </div></div>
 
 <!-- 발주서/샘플의뢰서 미리보기 모달 (중국 공장 전송용 캡처 포맷) -->
-<div class="ov" id="mOrdPreview"><div class="modal" style="max-width:1100px;width:96vw;max-height:92vh">
-  <div class="mt" style="display:flex;align-items:center;gap:10px">
-    <span>📋 <span id="mOrdPreview_title">발주서 미리보기</span></span>
+<div class="ov" id="mOrdPreview"><div class="modal" style="max-width:1100px;width:96vw;max-height:92vh;transition:all .25s">
+  <div class="mt" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span style="font-size:14px;font-weight:700">📋 <span id="mOrdPreview_title">발주서 미리보기</span></span>
+    <span style="font-size:11px;color:var(--t3);font-weight:400">(공장 전송용 — 단가 미포함)</span>
     <span style="flex:1"></span>
+    <button id="previewFsBtn" class="btn bs" onclick="_togglePreviewFullscreen()" style="background:var(--s2);border:1px solid var(--bdr);color:var(--t1);font-weight:600" title="전체화면 토글">⛶ 전체화면</button>
     <button class="btn bs" onclick="printOrdPreview()" style="background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);font-weight:600" title="인쇄 또는 PDF로 저장">🖨 인쇄/PDF</button>
     <button class="btn bs" onclick="captureOrdPreview()" style="background:var(--blu-bg);border:1px solid rgba(60,108,170,.3);color:var(--blu);font-weight:600" title="이미지로 저장 (캡처 대용)">📸 이미지 저장</button>
   </div>
   <div id="mOrdPreview_body" style="padding:14px;background:var(--s1);overflow:auto;max-height:calc(92vh - 110px)">
-    <!-- 미리보기 내용은 openOrdPreview/openSmpPreview에서 채움 -->
+    <!-- 미리보기 내용은 openOrdPreviewFullscreen/openSmpPreviewFullscreen에서 채움 -->
   </div>
   <div class="ma">
     <button class="btn bgo" onclick="closeM('mOrdPreview')">닫기</button>
@@ -7135,6 +7157,7 @@ function mapNotionSample(row){
     desc:     np.text(p['메모']),
     devNote:  legacyDevNote,
     caution:  legacyCaution,
+    factoryNotice: legacyCaution, // 🚨 공장 주의사항 (caution과 같은 필드 사용)
     notes,
     type:     np.select(p['유형']),
     plating:  np.select(p['도금']),
@@ -7212,6 +7235,7 @@ function mapNotionOrder(row){
     date:    np.date(p['발주일']),
     ship:    np.date(p['요청출고일']),
     factShip:np.date(p['공장출고일']),
+    factoryNotice: np.text(p['공장주의사항']) || '',
     status:  np.select(p['상태']) || '진행중',
     rows,
     files,
@@ -8297,7 +8321,7 @@ async function syncSampleToNotion(s, update){
     "발주량":{"rich_text":[{"text":{"content":s.qty||''}}]},
     "메모":{"rich_text":[{"text":{"content":(s.desc||'').slice(0,2000)}}]},
     "개발사항":{"rich_text":[{"text":{"content":notesJson.slice(0,2000)}}]},
-    "주의사항":{"rich_text":[{"text":{"content":''}}]},
+    "주의사항":{"rich_text":[{"text":{"content":(s.factoryNotice||'').slice(0,2000)}}]},
   };
   if(s.type)    p["유형"]={"select":{"name":s.type}};
   if(s.plating) p["도금"]={"select":{"name":s.plating}};
@@ -8374,6 +8398,7 @@ async function syncOrderToNotion(o, update){
         ? 'JSON::'+JSON.stringify(o.memoList)
         : (o.memo||'')
     )},
+    "공장주의사항":{"rich_text":chunkRichText(o.factoryNotice||'')},
     "상태":{"select":{"name":o.status||'진행중'}},
   };
   if(o.date) p["발주일"]={"date":{"start":o.date}};
@@ -16178,6 +16203,9 @@ function openSmpModal(idOrNull){
   sv('s_sz1',s?s.sz1:'');sv('s_sz2',s?s.sz2:'');sv('s_sz3',s?s.sz3:'');sv('s_sz4',s?s.sz4:'');
   sv('s_mat',s?s.mat:'');setSelect('s_plating',s?s.plating:'');
   sv('s_wt',s?s.wt:'');sv('s_engr',s?s.engr:'');sv('s_card',s?s.card:'');
+  // 🚨 공장 주의사항 로드
+  sv('s_factoryNotice', s?(s.factoryNotice||''):'');
+  window._smpFactoryNotice = s?(s.factoryNotice||''):'';
   // 개발/주의 체크리스트 로드 (기존 devNote/caution은 자동으로 항목화)
   smpNotesBuf = loadSmpNotes(s);
   renderSmpNotes();
@@ -17173,6 +17201,7 @@ function saveSmp(){
     sz1:gv('s_sz1'), sz2:gv('s_sz2'), sz3:gv('s_sz3'), sz4:gv('s_sz4'),
     mat:gv('s_mat'), plating:gv('s_plating'), wt:gv('s_wt'),
     engr:gv('s_engr'), card:gv('s_card'),
+    factoryNotice: gv('s_factoryNotice') || '',  // 🚨 공장 주의사항
     notes: smpNotesBuf.map(n=>({text:String(n.text||'').trim(), checked:!!n.checked})).filter(n=>n.text),
     status:gv('s_status'),
     imgs:[...smpImgBuf], sourceDoc:[...(smpSrcBuf||[])], cadFiles:[...smpCadBuf],
@@ -17382,6 +17411,9 @@ function openOrdModal(idOrNull){
   sv('o_id',o?o.id:'');sv('o_vendor',o?o.vendor:'');sv('o_date',o?o.date:todayStr);sv('o_ship',o?o.ship:'');
   sv('o_factShip',o?o.factShip||'':'');
   sv('o_manager',o?o.manager:'');sv('o_no',o?o.no||'':'');sv('o_memo',o?o.memo:'');
+  // 🚨 공장 주의사항 로드
+  sv('o_factoryNotice', o?(o.factoryNotice||''):'');
+  window._ordFactoryNotice = o?(o.factoryNotice||''):'';
   // 메모 체크리스트 로드 (기존 memo 텍스트는 자동 항목화)
   ordMemoBuf = loadOrdMemos(o);
   renderOrdMemos();
@@ -17812,87 +17844,96 @@ function _buildOrdPreviewHtml(){
   const manager = gv('o_manager') || '';
   const ordNo = gv('o_no') || '(자동생성 예정)';
   const memo = gv('o_memo') || '';
+  // 🚨 공장 주의사항 — 강조 빨간 박스로 표시
+  const factoryNotice = (document.getElementById('o_factoryNotice')?.value || '').trim();
   const rows = (typeof ordRowsBuf !== 'undefined' && Array.isArray(ordRowsBuf)) ? ordRowsBuf : [];
   const co = (typeof company !== 'undefined' && company) ? company : {name:'이케이아이엔티'};
 
   // 행별 HTML (단가/금액 컬럼 없음)
   const rowsHtml = rows.length === 0
-    ? `<tr><td colspan="9" style="padding:30px;text-align:center;color:#999;font-size:14pt">품목을 추가하세요</td></tr>`
+    ? `<tr><td colspan="9" style="padding:24px;text-align:center;color:#999;font-size:11pt">품목을 추가하세요</td></tr>`
     : rows.map((r, i) => {
         const imgHtml = r.img
-          ? `<img src="${_ordPrevEsc(r.img)}" style="max-width:140px;max-height:140px;object-fit:contain;display:block;margin:0 auto">`
-          : `<div style="width:120px;height:120px;background:#f5f5f5;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;color:#999;font-size:11pt;margin:0 auto">사진 없음</div>`;
+          ? `<img src="${_ordPrevEsc(r.img)}" style="max-width:120px;max-height:120px;object-fit:contain;display:block;margin:0 auto">`
+          : `<div style="width:100px;height:100px;background:#f5f5f5;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;color:#999;font-size:9pt;margin:0 auto">사진 없음</div>`;
         return `<tr>
-          <td style="border:1px solid #999;padding:10px 8px;text-align:center;font-size:11pt;color:#1a4b8c;text-decoration:underline">${_ordPrevEsc(orderDate)}</td>
-          <td style="border:1px solid #999;padding:10px 8px;text-align:center;font-size:11pt;color:#1a4b8c">${_ordPrevEsc(reqShip)}</td>
-          <td style="border:1px solid #999;padding:10px 8px;text-align:center;font-size:11pt;font-family:monospace">${_ordPrevEsc(r.itemCode||'')}</td>
-          <td style="border:1px solid #999;padding:10px 12px;font-size:13pt;font-weight:600">${_ordPrevEsc(r.name||'')}</td>
-          <td style="border:1px solid #999;padding:10px 8px;text-align:center;font-size:14pt;font-weight:700">${_ordPrevEsc(r.qty||'')}</td>
-          <td style="border:1px solid #999;padding:8px;text-align:center;background:#fafafa">${imgHtml}</td>
-          <td style="border:1px solid #999;padding:10px 8px;text-align:center;font-size:11pt">${_ordPrevEsc(r.plating||'')}</td>
-          <td style="border:1px solid #999;padding:10px 8px;text-align:center;font-size:11pt">${_ordPrevEsc(r.mat||'')}</td>
-          <td style="border:1px solid #999;padding:10px 8px;text-align:center;font-size:11pt">${_ordPrevEsc(r.size||'')}</td>
-          <td style="border:1px solid #999;padding:10px 8px;font-size:11pt;color:#666">${_ordPrevEsc(r.note||'')}</td>
+          <td style="border:1px solid #999;padding:7px 6px;text-align:center;font-size:9.5pt;color:#1a4b8c;text-decoration:underline">${_ordPrevEsc(orderDate)}</td>
+          <td style="border:1px solid #999;padding:7px 6px;text-align:center;font-size:9.5pt;color:#1a4b8c">${_ordPrevEsc(reqShip)}</td>
+          <td style="border:1px solid #999;padding:7px 6px;text-align:center;font-size:9.5pt;font-family:monospace">${_ordPrevEsc(r.itemCode||'')}</td>
+          <td style="border:1px solid #999;padding:7px 10px;font-size:11pt;font-weight:600">${_ordPrevEsc(r.name||'')}</td>
+          <td style="border:1px solid #999;padding:7px 6px;text-align:center;font-size:12pt;font-weight:700">${_ordPrevEsc(r.qty||'')}</td>
+          <td style="border:1px solid #999;padding:6px;text-align:center;background:#fafafa">${imgHtml}</td>
+          <td style="border:1px solid #999;padding:7px 6px;text-align:center;font-size:9.5pt">${_ordPrevEsc(r.plating||'')}</td>
+          <td style="border:1px solid #999;padding:7px 6px;text-align:center;font-size:9.5pt">${_ordPrevEsc(r.mat||'')}</td>
+          <td style="border:1px solid #999;padding:7px 6px;text-align:center;font-size:9.5pt">${_ordPrevEsc(r.size||'')}</td>
+          <td style="border:1px solid #999;padding:7px 6px;font-size:9.5pt;color:#666">${_ordPrevEsc(r.note||'')}</td>
         </tr>`;
       }).join('');
 
   return `
     <div style="max-width:1050px;margin:0 auto">
       <!-- 헤더: 회사 정보 + 발주서 제목 -->
-      <h1 style="font-size:22pt;font-weight:800;margin:0 0 14px;letter-spacing:1px">${_ordPrevEsc(co.name||'EK')} 오 더 발 주 서</h1>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12pt">
+      <h1 style="font-size:19pt;font-weight:800;margin:0 0 12px;letter-spacing:1px">${_ordPrevEsc(co.name||'EK')} 오 더 발 주 서</h1>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:10.5pt">
         <tr>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700;width:90px">주문일자</td>
-          <td style="border:1px solid #999;padding:8px 10px;background:#fff8c5">${_ordPrevEsc(orderDate)}</td>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700;width:90px">등록번호</td>
-          <td style="border:1px solid #999;padding:8px 10px;color:#c5302a;font-weight:700">${_ordPrevEsc(co.brn||'—')}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700;width:90px">주문일자</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#fff8c5">${_ordPrevEsc(orderDate)}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700;width:90px">등록번호</td>
+          <td style="border:1px solid #999;padding:6px 9px;color:#c5302a;font-weight:700">${_ordPrevEsc(co.brn||'—')}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700">주문번호</td>
-          <td style="border:1px solid #999;padding:8px 10px">${_ordPrevEsc(ordNo)}</td>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700">상호</td>
-          <td style="border:1px solid #999;padding:8px 10px;font-weight:700">${_ordPrevEsc(co.name||'')}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">주문번호</td>
+          <td style="border:1px solid #999;padding:6px 9px">${_ordPrevEsc(ordNo)}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">상호</td>
+          <td style="border:1px solid #999;padding:6px 9px;font-weight:700">${_ordPrevEsc(co.name||'')}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700">담당자</td>
-          <td style="border:1px solid #999;padding:8px 10px">${_ordPrevEsc(manager)}</td>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700">주소</td>
-          <td style="border:1px solid #999;padding:8px 10px">${_ordPrevEsc(co.addr||'')}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">담당자</td>
+          <td style="border:1px solid #999;padding:6px 9px">${_ordPrevEsc(manager)}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">주소</td>
+          <td style="border:1px solid #999;padding:6px 9px">${_ordPrevEsc(co.addr||'')}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700">발주 연락</td>
-          <td style="border:1px solid #999;padding:8px 10px"></td>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700">담당자</td>
-          <td style="border:1px solid #999;padding:8px 10px">${_ordPrevEsc(co.ceo||'')} / ${_ordPrevEsc(co.tel||'')}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">발주 연락</td>
+          <td style="border:1px solid #999;padding:6px 9px"></td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">담당자</td>
+          <td style="border:1px solid #999;padding:6px 9px">${_ordPrevEsc(co.ceo||'')} / ${_ordPrevEsc(co.tel||'')}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700">납품예정</td>
-          <td style="border:1px solid #999;padding:8px 10px" colspan="3">${factShip?_ordPrevEsc(factShip)+' (공장 출고일)':_ordPrevEsc(reqShip)+' (요청 출고일)'}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">납품예정</td>
+          <td style="border:1px solid #999;padding:6px 9px" colspan="3">${factShip?_ordPrevEsc(factShip)+' (공장 출고일)':_ordPrevEsc(reqShip)+' (요청 출고일)'}</td>
         </tr>
       </table>
+
+      ${factoryNotice ? `<div style="border:3px solid #c5302a;background:linear-gradient(90deg,#fff5f5,#fff);border-radius:8px;padding:14px 18px;margin-bottom:14px;box-shadow:0 2px 6px rgba(192,48,48,.15)">
+        <div style="font-size:13pt;font-weight:800;color:#c5302a;margin-bottom:6px;display:flex;align-items:center;gap:8px">
+          <span style="font-size:18pt">🚨</span> 공장 주의사항 — 반드시 확인 (FACTORY NOTICE)
+        </div>
+        <div style="font-size:13pt;font-weight:600;color:#7a1a17;white-space:pre-wrap;line-height:1.6">${_ordPrevEsc(factoryNotice)}</div>
+      </div>` : ''}
 
       <!-- 본문 테이블 -->
       <table style="width:100%;border-collapse:collapse;margin-bottom:14px">
         <thead>
           <tr style="background:#fff8c5">
-            <th style="border:1px solid #999;padding:10px 6px;font-size:11pt;font-weight:700">발주일자</th>
-            <th style="border:1px solid #999;padding:10px 6px;font-size:11pt;font-weight:700">납기일자</th>
-            <th style="border:1px solid #999;padding:10px 6px;font-size:11pt;font-weight:700">품목코드</th>
-            <th style="border:1px solid #999;padding:10px 6px;font-size:11pt;font-weight:700">품목명(규격)</th>
-            <th style="border:1px solid #999;padding:10px 6px;font-size:11pt;font-weight:700;width:60px">수량</th>
-            <th style="border:1px solid #999;padding:10px 6px;font-size:11pt;font-weight:700;width:160px">이미지</th>
-            <th style="border:1px solid #999;padding:10px 6px;font-size:11pt;font-weight:700">도금</th>
-            <th style="border:1px solid #999;padding:10px 6px;font-size:11pt;font-weight:700">소재</th>
-            <th style="border:1px solid #999;padding:10px 6px;font-size:11pt;font-weight:700">사이즈</th>
-            <th style="border:1px solid #999;padding:10px 6px;font-size:11pt;font-weight:700">적요</th>
+            <th style="border:1px solid #999;padding:7px 5px;font-size:9.5pt;font-weight:700">발주일자</th>
+            <th style="border:1px solid #999;padding:7px 5px;font-size:9.5pt;font-weight:700">납기일자</th>
+            <th style="border:1px solid #999;padding:7px 5px;font-size:9.5pt;font-weight:700">품목코드</th>
+            <th style="border:1px solid #999;padding:7px 5px;font-size:9.5pt;font-weight:700">품목명(규격)</th>
+            <th style="border:1px solid #999;padding:7px 5px;font-size:9.5pt;font-weight:700;width:55px">수량</th>
+            <th style="border:1px solid #999;padding:7px 5px;font-size:9.5pt;font-weight:700;width:140px">이미지</th>
+            <th style="border:1px solid #999;padding:7px 5px;font-size:9.5pt;font-weight:700">도금</th>
+            <th style="border:1px solid #999;padding:7px 5px;font-size:9.5pt;font-weight:700">소재</th>
+            <th style="border:1px solid #999;padding:7px 5px;font-size:9.5pt;font-weight:700">사이즈</th>
+            <th style="border:1px solid #999;padding:7px 5px;font-size:9.5pt;font-weight:700">적요</th>
           </tr>
         </thead>
         <tbody>${rowsHtml}</tbody>
       </table>
 
-      ${memo ? `<div style="border:1px solid #ccc;border-radius:4px;padding:10px 14px;background:#f9f9f9;margin-top:10px">
-        <div style="font-size:10pt;color:#999;margin-bottom:4px">📝 메모/특이사항</div>
-        <div style="font-size:11pt;white-space:pre-wrap">${_ordPrevEsc(memo)}</div>
+      ${memo ? `<div style="border:1px solid #ccc;border-radius:4px;padding:8px 12px;background:#f9f9f9;margin-top:8px">
+        <div style="font-size:9pt;color:#999;margin-bottom:3px">📝 메모/특이사항</div>
+        <div style="font-size:10pt;white-space:pre-wrap">${_ordPrevEsc(memo)}</div>
       </div>` : ''}
     </div>
   `;
@@ -17906,39 +17947,79 @@ function refreshInlineOrdPreview(){
 }
 
 // 큰 모달로 열기
-function openOrdPreview(){
+function openOrdPreviewFullscreen(action){
   const body = document.getElementById('mOrdPreview_body');
   const title = document.getElementById('mOrdPreview_title');
   if(!body) return;
-  if(title) title.textContent = '발주서 미리보기 — 캡쳐용';
-  body.innerHTML = `<div style="background:#fff;color:#000;padding:24px;border-radius:4px;font-family:'맑은 고딕','Malgun Gothic',sans-serif">${_buildOrdPreviewHtml()}</div>`;
-  // 큰 모달용 - 인쇄/캡쳐 버튼이 이 콘텐츠를 가리키도록
+  if(title) title.textContent = '📋 발주서 미리보기 — 공장 전송용';
+  body.innerHTML = `<div id="ordPreviewContent" style="background:#fff;color:#000;padding:24px;border-radius:4px;font-family:'맑은 고딕','Malgun Gothic',sans-serif">${_buildOrdPreviewHtml()}</div>`;
   window._ordPreviewSource = 'modal';
+  window._previewIsSample = false;
   openM('mOrdPreview');
+  // 액션 자동 트리거 (📸 또는 🖨 버튼으로 바로 열린 경우)
+  if(action === 'capture'){
+    setTimeout(()=>captureOrdPreview(), 300);
+  } else if(action === 'print'){
+    setTimeout(()=>printOrdPreview(), 300);
+  }
+}
+// 기존 함수명 호환
+function openOrdPreview(){ openOrdPreviewFullscreen(); }
+
+// 전체화면 토글
+function _togglePreviewFullscreen(){
+  const modal = document.querySelector('#mOrdPreview .modal');
+  if(!modal) return;
+  if(modal._fullscreen){
+    modal.style.maxWidth = '1100px';
+    modal.style.width = '96vw';
+    modal.style.maxHeight = '92vh';
+    modal._fullscreen = false;
+    const btn = document.getElementById('previewFsBtn');
+    if(btn) btn.innerHTML = '⛶ 전체화면';
+  } else {
+    modal.style.maxWidth = '100vw';
+    modal.style.width = '100vw';
+    modal.style.height = '100vh';
+    modal.style.maxHeight = '100vh';
+    modal.style.borderRadius = '0';
+    modal._fullscreen = true;
+    const btn = document.getElementById('previewFsBtn');
+    if(btn) btn.innerHTML = '✕ 전체화면 해제';
+  }
 }
 
-// 이미지 캡쳐 (인라인)
+// 이미지 캡쳐 (인라인) - 인라인이 없어졌으니 모달 본문에서
 async function captureInlineOrdPreview(){
-  const el = document.getElementById('o_inlinePreview');
-  if(!el){ showToast('미리보기 영역을 찾을 수 없습니다','var(--red)'); return; }
-  await _captureElementToImage(el, '발주서_' + (gv('o_no')||gv('o_vendor')||'미리보기'));
+  openOrdPreviewFullscreen('capture');
 }
-// 인쇄 (인라인)
+// 인쇄 (인라인) - 모달 본문에서
 function printInlineOrdPreview(){
-  const el = document.getElementById('o_inlinePreview');
-  if(!el){ showToast('미리보기 영역을 찾을 수 없습니다','var(--red)'); return; }
-  _printElement(el, '발주서 — ' + (gv('o_vendor')||''));
+  openOrdPreviewFullscreen('print');
+}
+// 새로고침 (인라인 미리보기는 사라졌으니 더 이상 쓸 일 없지만 호환용)
+function refreshInlineOrdPreview(){
+  // no-op — 미리보기는 클릭 시 즉시 빌드됨
 }
 // 큰 모달용 캡쳐/인쇄
 async function captureOrdPreview(){
-  const body = document.getElementById('mOrdPreview_body');
-  if(!body){ showToast('미리보기를 먼저 열어주세요','var(--red)'); return; }
-  await _captureElementToImage(body, '발주서_' + (gv('o_no')||gv('o_vendor')||'미리보기'));
+  // 본문 컨텐츠만 캡쳐 (헤더 버튼 제외) — ordPreviewContent 우선
+  const content = document.getElementById('ordPreviewContent') || document.getElementById('mOrdPreview_body');
+  if(!content){ showToast('미리보기를 먼저 열어주세요','var(--red)'); return; }
+  const isSmp = window._previewIsSample === true;
+  const filename = isSmp
+    ? '샘플의뢰서_' + (gv('s_name')||'미리보기')
+    : '발주서_' + (gv('o_no')||gv('o_vendor')||'미리보기');
+  await _captureElementToImage(content, filename);
 }
 function printOrdPreview(){
-  const body = document.getElementById('mOrdPreview_body');
-  if(!body){ showToast('미리보기를 먼저 열어주세요','var(--red)'); return; }
-  _printElement(body, '발주서 — ' + (gv('o_vendor')||''));
+  const content = document.getElementById('ordPreviewContent') || document.getElementById('mOrdPreview_body');
+  if(!content){ showToast('미리보기를 먼저 열어주세요','var(--red)'); return; }
+  const isSmp = window._previewIsSample === true;
+  const title = isSmp
+    ? '샘플 의뢰서 — ' + (gv('s_name')||'')
+    : '발주서 — ' + (gv('o_vendor')||'');
+  _printElement(content, title);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -17960,6 +18041,8 @@ function _buildSmpPreviewHtml(){
   const plating = gv('s_plating') || '';
   const engr = gv('s_engr') || '';
   const memo = gv('s_memo') || '';
+  // 🚨 공장 주의사항 — 강조 빨간 박스로 표시
+  const factoryNotice = (document.getElementById('s_factoryNotice')?.value || '').trim();
   const co = (typeof company !== 'undefined' && company) ? company : {name:'이케이아이엔티'};
 
   // 샘플 이미지 (있으면 표시)
@@ -17979,101 +18062,111 @@ function _buildSmpPreviewHtml(){
 
   return `
     <div style="max-width:1000px;margin:0 auto">
-      <h1 style="font-size:22pt;font-weight:800;margin:0 0 14px;letter-spacing:1px;text-align:center">샘 플  의 뢰 서</h1>
+      <h1 style="font-size:19pt;font-weight:800;margin:0 0 12px;letter-spacing:1px;text-align:center">샘 플  의 뢰 서</h1>
+
+      ${factoryNotice ? `<div style="border:3px solid #c5302a;background:linear-gradient(90deg,#fff5f5,#fff);border-radius:8px;padding:14px 18px;margin-bottom:14px;box-shadow:0 2px 6px rgba(192,48,48,.15)">
+        <div style="font-size:13pt;font-weight:800;color:#c5302a;margin-bottom:6px;display:flex;align-items:center;gap:8px">
+          <span style="font-size:18pt">🚨</span> 공장 주의사항 — 반드시 확인 (FACTORY NOTICE)
+        </div>
+        <div style="font-size:13pt;font-weight:600;color:#7a1a17;white-space:pre-wrap;line-height:1.6">${_ordPrevEsc(factoryNotice)}</div>
+      </div>` : ''}
 
       <!-- 헤더 정보 -->
-      <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12pt">
+      <table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:10.5pt">
         <tr>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700;width:110px">의뢰처(상호)</td>
-          <td style="border:1px solid #999;padding:8px 10px;font-weight:700">${_ordPrevEsc(co.name||'')}</td>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700;width:90px">의뢰일</td>
-          <td style="border:1px solid #999;padding:8px 10px;background:#fff8c5">${_ordPrevEsc(reqDate)}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700;width:110px">의뢰처(상호)</td>
+          <td style="border:1px solid #999;padding:6px 9px;font-weight:700">${_ordPrevEsc(co.name||'')}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700;width:90px">의뢰일</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#fff8c5">${_ordPrevEsc(reqDate)}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700">담당자</td>
-          <td style="border:1px solid #999;padding:8px 10px">${_ordPrevEsc(co.ceo||'')} / ${_ordPrevEsc(co.tel||'')}</td>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700">납기일</td>
-          <td style="border:1px solid #999;padding:8px 10px;background:#fff8c5">${_ordPrevEsc(due)}${factShip?` (공장: ${_ordPrevEsc(factShip)})`:''}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">담당자</td>
+          <td style="border:1px solid #999;padding:6px 9px">${_ordPrevEsc(co.ceo||'')} / ${_ordPrevEsc(co.tel||'')}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">납기일</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#fff8c5">${_ordPrevEsc(due)}${factShip?` (공장: ${_ordPrevEsc(factShip)})`:''}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:8px 10px;background:#f0f0f0;font-weight:700">공급 공장</td>
-          <td style="border:1px solid #999;padding:8px 10px" colspan="3">${_ordPrevEsc(vendor)}</td>
+          <td style="border:1px solid #999;padding:6px 9px;background:#f0f0f0;font-weight:700">공급 공장</td>
+          <td style="border:1px solid #999;padding:6px 9px" colspan="3">${_ordPrevEsc(vendor)}</td>
         </tr>
       </table>
 
       <!-- 품목 상세 -->
-      <h2 style="font-size:14pt;font-weight:700;margin:18px 0 8px;border-bottom:2px solid #333;padding-bottom:6px">📦 의뢰 품목 정보</h2>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:14px;font-size:12pt">
+      <h2 style="font-size:12pt;font-weight:700;margin:14px 0 6px;border-bottom:2px solid #333;padding-bottom:5px">📦 의뢰 품목 정보</h2>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:10.5pt">
         <tr>
-          <td style="border:1px solid #999;padding:10px 12px;background:#f0f0f0;font-weight:700;width:110px">샘플명</td>
-          <td style="border:1px solid #999;padding:10px 12px;font-size:14pt;font-weight:700" colspan="3">${_ordPrevEsc(name)}</td>
+          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700;width:110px">샘플명</td>
+          <td style="border:1px solid #999;padding:7px 10px;font-size:12pt;font-weight:700" colspan="3">${_ordPrevEsc(name)}</td>
         </tr>
         ${code ? `<tr>
-          <td style="border:1px solid #999;padding:10px 12px;background:#f0f0f0;font-weight:700">품목코드</td>
-          <td style="border:1px solid #999;padding:10px 12px;font-family:monospace" colspan="3">${_ordPrevEsc(code)}</td>
+          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">품목코드</td>
+          <td style="border:1px solid #999;padding:7px 10px;font-family:monospace" colspan="3">${_ordPrevEsc(code)}</td>
         </tr>` : ''}
         <tr>
-          <td style="border:1px solid #999;padding:10px 12px;background:#f0f0f0;font-weight:700">아이템 유형</td>
-          <td style="border:1px solid #999;padding:10px 12px">${_ordPrevEsc(type)}</td>
-          <td style="border:1px solid #999;padding:10px 12px;background:#f0f0f0;font-weight:700;width:110px">발주량</td>
-          <td style="border:1px solid #999;padding:10px 12px;font-size:14pt;font-weight:700">${_ordPrevEsc(qty)}</td>
+          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">아이템 유형</td>
+          <td style="border:1px solid #999;padding:7px 10px">${_ordPrevEsc(type)}</td>
+          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700;width:110px">발주량</td>
+          <td style="border:1px solid #999;padding:7px 10px;font-size:12pt;font-weight:700">${_ordPrevEsc(qty)}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:10px 12px;background:#f0f0f0;font-weight:700">외경 / 길이</td>
-          <td style="border:1px solid #999;padding:10px 12px">${_ordPrevEsc(sz1)}</td>
-          <td style="border:1px solid #999;padding:10px 12px;background:#f0f0f0;font-weight:700">호수 / 사이즈</td>
-          <td style="border:1px solid #999;padding:10px 12px">${_ordPrevEsc(sz2)}</td>
+          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">외경 / 길이</td>
+          <td style="border:1px solid #999;padding:7px 10px">${_ordPrevEsc(sz1)}</td>
+          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">호수 / 사이즈</td>
+          <td style="border:1px solid #999;padding:7px 10px">${_ordPrevEsc(sz2)}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:10px 12px;background:#f0f0f0;font-weight:700">중량 (g)</td>
-          <td style="border:1px solid #999;padding:10px 12px">${_ordPrevEsc(wt)}</td>
-          <td style="border:1px solid #999;padding:10px 12px;background:#f0f0f0;font-weight:700">각인</td>
-          <td style="border:1px solid #999;padding:10px 12px">${_ordPrevEsc(engr)}</td>
+          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">중량 (g)</td>
+          <td style="border:1px solid #999;padding:7px 10px">${_ordPrevEsc(wt)}</td>
+          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">각인</td>
+          <td style="border:1px solid #999;padding:7px 10px">${_ordPrevEsc(engr)}</td>
         </tr>
         <tr>
-          <td style="border:1px solid #999;padding:10px 12px;background:#f0f0f0;font-weight:700">소재</td>
-          <td style="border:1px solid #999;padding:10px 12px;font-weight:600">${_ordPrevEsc(mat)}</td>
-          <td style="border:1px solid #999;padding:10px 12px;background:#f0f0f0;font-weight:700">도금</td>
-          <td style="border:1px solid #999;padding:10px 12px;font-weight:600">${_ordPrevEsc(plating)}</td>
+          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">소재</td>
+          <td style="border:1px solid #999;padding:7px 10px;font-weight:600">${_ordPrevEsc(mat)}</td>
+          <td style="border:1px solid #999;padding:7px 10px;background:#f0f0f0;font-weight:700">도금</td>
+          <td style="border:1px solid #999;padding:7px 10px;font-weight:600">${_ordPrevEsc(plating)}</td>
         </tr>
       </table>
 
       <!-- 참고 이미지 -->
-      <h2 style="font-size:14pt;font-weight:700;margin:18px 0 8px;border-bottom:2px solid #333;padding-bottom:6px">🖼 참고 이미지</h2>
-      <div style="text-align:center;padding:10px;background:#fafafa;border:1px solid #eee;border-radius:4px">
+      <h2 style="font-size:12pt;font-weight:700;margin:14px 0 6px;border-bottom:2px solid #333;padding-bottom:5px">🖼 참고 이미지</h2>
+      <div style="text-align:center;padding:8px;background:#fafafa;border:1px solid #eee;border-radius:4px">
         ${imgHtml}
       </div>
 
-      ${memo ? `<div style="border:1px solid #ccc;border-radius:4px;padding:10px 14px;background:#f9f9f9;margin-top:14px">
-        <div style="font-size:10pt;color:#999;margin-bottom:4px">📝 메모 / 특이사항</div>
-        <div style="font-size:12pt;white-space:pre-wrap">${_ordPrevEsc(memo)}</div>
+      ${memo ? `<div style="border:1px solid #ccc;border-radius:4px;padding:8px 12px;background:#f9f9f9;margin-top:12px">
+        <div style="font-size:9pt;color:#999;margin-bottom:3px">📝 메모 / 특이사항</div>
+        <div style="font-size:10.5pt;white-space:pre-wrap">${_ordPrevEsc(memo)}</div>
       </div>` : ''}
     </div>
   `;
 }
 
 function refreshInlineSmpPreview(){
-  const el = document.getElementById('s_inlinePreview');
-  if(!el) return;
-  el.innerHTML = _buildSmpPreviewHtml();
+  // no-op — 미리보기는 클릭 시 즉시 빌드됨
 }
-function openSmpPreview(){
+function openSmpPreviewFullscreen(action){
   const body = document.getElementById('mOrdPreview_body');
   const title = document.getElementById('mOrdPreview_title');
   if(!body) return;
-  if(title) title.textContent = '샘플 의뢰서 미리보기 — 캡쳐용';
-  body.innerHTML = `<div style="background:#fff;color:#000;padding:24px;border-radius:4px;font-family:'맑은 고딕','Malgun Gothic',sans-serif">${_buildSmpPreviewHtml()}</div>`;
+  if(title) title.textContent = '📋 샘플 의뢰서 미리보기 — 공장 전송용';
+  body.innerHTML = `<div id="ordPreviewContent" style="background:#fff;color:#000;padding:24px;border-radius:4px;font-family:'맑은 고딕','Malgun Gothic',sans-serif">${_buildSmpPreviewHtml()}</div>`;
+  window._ordPreviewSource = 'modal';
+  window._previewIsSample = true;
   openM('mOrdPreview');
+  if(action === 'capture'){
+    setTimeout(()=>captureOrdPreview(), 300);
+  } else if(action === 'print'){
+    setTimeout(()=>printOrdPreview(), 300);
+  }
 }
+// 기존 함수명 호환
+function openSmpPreview(){ openSmpPreviewFullscreen(); }
 async function captureInlineSmpPreview(){
-  const el = document.getElementById('s_inlinePreview');
-  if(!el){ showToast('미리보기 영역을 찾을 수 없습니다','var(--red)'); return; }
-  await _captureElementToImage(el, '샘플의뢰서_' + (gv('s_name')||'미리보기'));
+  openSmpPreviewFullscreen('capture');
 }
 function printInlineSmpPreview(){
-  const el = document.getElementById('s_inlinePreview');
-  if(!el){ showToast('미리보기 영역을 찾을 수 없습니다','var(--red)'); return; }
-  _printElement(el, '샘플 의뢰서 — ' + (gv('s_name')||''));
+  openSmpPreviewFullscreen('print');
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -18206,7 +18299,7 @@ async function saveOrd(forceOverwrite){
   if(!ordNoVal || isLegacyOrdNo){
     ordNoVal = genOrderNo(vendor, gv('o_date')||todayStr);
   }
-  const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),factShip:gv('o_factShip'),manager:gv('o_manager'),no:ordNoVal,memo:memoText,memoList,rows:cleanRows,files:filesToSave};
+  const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),factShip:gv('o_factShip'),manager:gv('o_manager'),no:ordNoVal,memo:memoText,memoList,rows:cleanRows,files:filesToSave,factoryNotice:gv('o_factoryNotice')||''};
   let ordId;
   let stockReceiveResult={matched:0,unmatched:0}; // 신규 입고로 인한 재고 증가 결과
   if(id){
