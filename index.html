@@ -5801,6 +5801,8 @@ function confirmOrdDoc(){
       status:'발행완료',memo:''
     };
     invoiceHistory.unshift(invRec);
+    // 📤 거래명세서 발행 = 출고 → 재고 자동 차감
+    const shipResult = applyInvoiceToStock(invRec);
     // ⚠ 단계 3: 거래명세서 발행 시 출고완료 자동 처리하던 로직 제거
     // 이제 출고완료는 거래명세서 입금 100% 도달 시점에 자동 처리됨 (checkAutoCompleteShipment)
     // 또는 사용자가 수동으로 발주 모달에서 출고완료 처리
@@ -5810,6 +5812,12 @@ function confirmOrdDoc(){
       syncInvoiceToNotion(invRec, false).then(()=>{
         if(invRec._notionId) showToast('✓ Notion에 저장됨','var(--grn)',2000);
       });
+    }
+    // 재고 차감 결과 토스트
+    if(shipResult.matched){
+      let msg = `📤 재고 ${shipResult.matched}건 자동 차감 (출고)`;
+      if(shipResult.unmatched) msg += ` · ${shipResult.unmatched}건 미매칭`;
+      showToast(msg, 'var(--blu)', 3500);
     }
     showPrintPreview('🧾 거래명세서',`<div style="font-family:'Noto Sans KR',sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#222">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #8B6914">
@@ -10407,6 +10415,46 @@ function revertOrderShipFromStock(o){
 }
 
 // 발주 입고 history 기록 시 재고 자동 증가 (특정 row + 입고 1건)
+// 거래명세서 발행 = 출고 → 재고 자동 차감
+// items 각 행마다 제품DB 매칭 후 -수량
+// 중복 방지: invRec._stockApplied = true 플래그
+function applyInvoiceToStock(inv){
+  if(!inv || !Array.isArray(inv.items)) return {matched:0, unmatched:0};
+  if(inv._stockApplied){
+    console.log(`[Invoice→Stock] 이미 처리된 명세서 (id:${inv.id}), 스킵`);
+    return {matched:0, unmatched:0};
+  }
+  let matched=0, unmatched=0;
+  inv.items.forEach((it, idx)=>{
+    const qty = +it.qty || 0;
+    if(!qty) return;
+    // 제품DB 매칭: 1) 품번 우선  2) 이름 차선
+    let p = null;
+    if(it.code){
+      p = productDB.find(x => (x.code||'').toLowerCase() === String(it.code).toLowerCase());
+    }
+    if(!p && it.name){
+      p = productDB.find(x => (x.name||'').toLowerCase() === String(it.name).trim().toLowerCase());
+    }
+    if(p){
+      applyStockChange({
+        productId: p.id,
+        delta: -qty,
+        type: 'invoice_ship',
+        refId: inv.id,
+        refLabel: inv.ordNo || ('명세서_'+inv.id),
+        note: `명세서 ${inv.vendor||''} ${inv.ordNo||''} 출고`
+      });
+      matched++;
+    } else {
+      unmatched++;
+    }
+  });
+  inv._stockApplied = true; // 중복 방지 플래그
+  console.log(`[Invoice→Stock] 명세서 ${inv.ordNo||inv.id}: ${matched}건 차감, ${unmatched}건 미매칭`);
+  return {matched, unmatched};
+}
+
 function applyOrderReceiveToStock(o, rowIdx, hist){
   if(!o||!o.rows||!o.rows[rowIdx]||!hist) return false;
   const r=o.rows[rowIdx];
@@ -10417,6 +10465,24 @@ function applyOrderReceiveToStock(o, rowIdx, hist){
     productId:p.id, delta:+qty, type:'order_recv',
     refId:o.id, refLabel:o.no||'',
     note:`발주 ${o.vendor||''} ${o.no||''} 입고 ${hist.date||''}`
+  });
+  return true;
+}
+
+// 입고 이력의 수량 변경에 따른 차액(delta) 기반 재고 조정
+// 같은 hist에 대한 추가 입고/수정/감소를 모두 처리
+function applyStockChangeByDelta(o, rowIdx, hist, histIdx, delta){
+  if(!o||!o.rows||!o.rows[rowIdx]||!hist||!delta) return false;
+  const r=o.rows[rowIdx];
+  const p=findProductByOrderRow(r);
+  if(!p) return false;
+  applyStockChange({
+    productId: p.id,
+    delta: +delta,
+    type: delta > 0 ? 'order_recv' : 'order_recv_adjust',
+    refId: o.id,
+    refLabel: o.no || '',
+    note: `발주 ${o.vendor||''} ${o.no||''} 입고${delta>0?'':' 수정'} ${hist.date||''}`
   });
   return true;
 }
@@ -16421,8 +16487,10 @@ function completeOrd(ordId){
       // 연결된 공정도 shipped=true
       const linkedProcs=procItems.filter(p=>p.orderId===ordId);
       linkedProcs.forEach(p=>{ p.shipped=true; });
-      // 재고 자동 차감 (제품DB와 매칭되는 품목만)
-      const stockResult=applyOrderShipToStock(o);
+      // ⚠ 재고 자동 차감 제거됨 (2026-05 정책 변경)
+      // 이유: 발주서 = 공장에 보내는 입고 예정. 출고가 아님.
+      // 입고: rcvHistory 추가 시 자동 +N
+      // 출고: 거래명세서 발행 시 자동 -N
       // 발주 이미지 → 제품DB 자동 동기화 (품번 매칭 + 기존 사진 없는 경우만)
       const imgResult=syncOrderImagesToProducts(o);
       // 4-A: 거래명세서 단계 자동 이동 (draft → billing)
@@ -16435,12 +16503,8 @@ function completeOrd(ordId){
       linkedProcs.forEach(p=>{
         if(p._notionId) debouncedSync('proc', p, true);
       });
-      // 토스트: 재고 차감 + 이미지 동기화 결과 포함
+      // 토스트: 이미지 동기화 결과만 표시
       let msg=`✓ "${o.vendor||'발주서'}" 출고완료`;
-      if(stockResult.matched){
-        msg+=` · 재고 ${stockResult.matched}건 자동 차감`;
-        if(stockResult.unmatched) msg+=` (제품DB 매칭 ${stockResult.unmatched}건 누락)`;
-      }
       if(imgResult.synced){
         msg+=` · 🖼 사진 ${imgResult.synced}건 제품DB 등록`;
       }
@@ -16468,8 +16532,7 @@ function revertOrdComplete(ordId){
         p.shipped=false;
         if(p._notionId) debouncedSync('proc', p, true);
       });
-      // 재고 차감 복원
-      revertOrderShipFromStock(o);
+      // ⚠ 재고 복원 제거됨 — 발주 출고완료 시 자동 차감이 없어져서 복원도 불필요
       save();
       debouncedSync('order', o, true);
       showToast(`↺ "${o.vendor||'발주서'}" 진행중으로 되돌림`,'var(--blu)',2500);
@@ -19803,26 +19866,28 @@ async function saveOrd(forceOverwrite){
         obj.shipHistory = prev.shipHistory;
       }
       // ── 신규 입고 항목 자동 재고 반영 ──
-      // 각 row마다 이전 rcvHistory보다 새로 추가된 입고가 있으면 재고에 반영
-      const prevRows=prev.rows||[];
+      // 각 입고 이력에 _stockApplied 플래그 + appliedQty 저장 → 중복 방지 + 차액만 반영
       cleanRows.forEach((newRow, ri)=>{
-        const prevRow=prevRows.find(pr=>(pr.itemCode&&pr.itemCode===newRow.itemCode)||pr.name===newRow.name);
-        const prevHist=(prevRow&&prevRow.rcvHistory)?prevRow.rcvHistory:[];
         const newHist=newRow.rcvHistory||[];
-        // 단순 비교: 새 항목이 prev보다 많으면 추가된 만큼만 반영
-        // (편의상 "새로 추가된 끝부분"만 처리)
-        if(newHist.length>prevHist.length){
-          for(let h=prevHist.length;h<newHist.length;h++){
-            const hist=newHist[h];
-            if(!hist||!+hist.qty)continue;
-            const tempOrder={id:+id||ordId, vendor, no:obj.no, rows:cleanRows};
-            if(applyOrderReceiveToStock(tempOrder, ri, hist)){
-              stockReceiveResult.matched++;
-            } else {
-              stockReceiveResult.unmatched++;
-            }
+        newHist.forEach((hist, hi)=>{
+          if(!hist) return;
+          const targetQty = +hist.qty || 0;
+          const appliedQty = +hist._appliedQty || 0;
+          const delta = targetQty - appliedQty;
+          if(delta === 0) return; // 변경 없음
+          const tempOrder={id:+id||ordId, vendor, no:obj.no, rows:cleanRows};
+          // delta가 양수면 추가 입고, 음수면 차감 (수량 줄임)
+          const ok = applyStockChangeByDelta(tempOrder, ri, hist, hi, delta);
+          if(ok){
+            // 적용된 수량 기록 (다음 저장 시 차액 계산용)
+            hist._appliedQty = targetQty;
+            if(delta > 0) stockReceiveResult.matched++;
+          } else if(targetQty > 0 && appliedQty === 0){
+            // 첫 등록인데 매칭 실패 — unmatched 카운트
+            stockReceiveResult.unmatched++;
           }
-        }
+        });
+        // 삭제된 입고 이력은 별도로 추적 안 함 — 사용자가 수동 처리 (드물고, 자동 차감 시 위험)
       });
       orders[i]={...orders[i],...obj};
     }
