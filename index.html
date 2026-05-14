@@ -383,6 +383,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <button class="tab-btn" onclick="switchTab('sample',this)" data-tab="sample">◉ 샘플의뢰 <span class="tb-badge" id="bdgS" style="display:none">0</span></button>
     <button class="tab-btn" onclick="switchTab('order',this)" data-tab="order">▦ 생산관리 <span class="tb-badge" id="bdgO" style="display:none">0</span><span class="tb-badge" id="bdgP" style="display:none">0</span></button>
     <button class="tab-btn" onclick="switchTab('as',this)" data-tab="as">🔧 AS관리 <span class="tb-badge" id="bdgAS" style="display:none">0</span></button>
+    <button class="tab-btn" onclick="switchTab('io',this)" data-tab="io">📦 입출고 <span class="tb-badge" id="bdgIO" style="display:none">0</span></button>
     <button class="tab-btn" onclick="switchTab('products',this)" data-tab="products">📦 제품DB</button>
     <button class="tab-btn" onclick="switchTab('sales',this)" data-tab="sales">📊 영업관리</button>
     <button class="tab-btn" onclick="switchTab('invoices',this)" data-tab="invoices">🧾 거래명세서</button>
@@ -1523,6 +1524,84 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
 </div></div>
 
+<!-- 📦 입출고 등록 모달 -->
+<div class="ov" id="mIO"><div class="modal" style="max-width:720px">
+  <div class="mt" id="mIO_t">📦 입출고 등록</div>
+  <input type="hidden" id="io_id">
+  <div class="fr3">
+    <div class="fg"><label>일자 *</label><input class="fi" type="date" id="io_date"></div>
+    <div class="fg"><label>구분 *</label>
+      <select class="fs" id="io_kind">
+        <option value="입고">📥 입고</option>
+        <option value="출고">📤 출고</option>
+        <option value="검수">🔍 검수</option>
+        <option value="반품">↩ 반품</option>
+      </select>
+    </div>
+    <div class="fg"><label>흐름</label>
+      <select class="fs" id="io_flow">
+        <option value="">선택</option>
+        <option value="중국→한국">🇨🇳→🇰🇷 중국→한국</option>
+        <option value="한국→고객">📦→👤 한국→고객</option>
+        <option value="고객→AS">👤→🔧 고객→AS</option>
+        <option value="AS→고객">🔧→👤 AS→고객</option>
+        <option value="공장→공장">🏭→🏭 공장→공장</option>
+        <option value="기타">기타</option>
+      </select>
+    </div>
+  </div>
+  <div class="fr3">
+    <div class="fg" style="position:relative"><label>고객사/공장 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(이니셜 또는 이름)</span></label>
+      <input class="fi" id="io_vendor" placeholder="예: VT, BW, 비비케이트" autocomplete="off"
+        oninput="renderIoVendorDropdown(this.value)" onfocus="renderIoVendorDropdown(this.value)"
+        onblur="setTimeout(hideIoVendorDropdown,180)">
+      <div id="ioVendorDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;margin-top:2px;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1)"></div>
+    </div>
+    <div class="fg"><label>수량</label><input class="fi" type="number" id="io_qty" placeholder="총 수량 (선택)"></div>
+    <div class="fg"><label>송장번호 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(택배)</span></label><input class="fi" id="io_invoice" placeholder="옵션"></div>
+  </div>
+  <div class="fg"><label>품목 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(여러 개면 쉼표로 구분)</span></label>
+    <input class="fi" id="io_items" placeholder="예: 모이사 사각 파베 귀걸이 30개, 드롭 목걸이 10개">
+  </div>
+  <div class="fg"><label>제목 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(비우면 자동 생성: VT_출고 등)</span></label>
+    <input class="fi" id="io_title" placeholder="자동 생성">
+  </div>
+  <div class="fg"><label>메모</label>
+    <textarea class="fta" id="io_memo" rows="3" placeholder="자유 메모 — 잔디처럼 자유롭게 작성"></textarea>
+  </div>
+  <!-- 📷 사진 첨부 -->
+  <div class="fg">
+    <label style="display:flex;justify-content:space-between;align-items:center">
+      <span>📷 사진 첨부 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(송장·박스·증빙)</span></span>
+      <span style="font-size:9.5px;color:var(--t3);font-weight:400">드래그·클릭·Ctrl+V</span>
+    </label>
+    <div id="ioFileDz" ondragover="event.preventDefault();this.style.background='var(--gold-bg)';this.style.borderColor='var(--gold)'"
+      ondragleave="this.style.background='';this.style.borderColor=''"
+      ondrop="_handleIoFileDrop(event)"
+      onclick="document.getElementById('ioFileInp').click()"
+      style="border:1.5px dashed var(--bdr);border-radius:6px;padding:14px;text-align:center;cursor:pointer;background:var(--s2);transition:all .15s;font-size:11px;color:var(--t3)">
+      <span style="font-size:16px;margin-right:4px">📷</span> 이미지를 드래그하거나 클릭 · <b>Ctrl+V</b>로 붙여넣기
+      <input type="file" id="ioFileInp" accept="image/*" multiple style="display:none" onchange="_handleIoFileSelect(event)">
+    </div>
+    <div id="ioFilePrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
+  </div>
+  <div class="fr2">
+    <div class="fg">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="io_applyStock" style="margin:0">
+        <span>📊 제품DB 재고에 자동 반영</span>
+        <span style="font-size:9.5px;color:var(--t3);font-weight:400">(입고: +수량 / 출고: -수량)</span>
+      </label>
+    </div>
+    <div class="fg"><label>등록자 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(옵션)</span></label><input class="fi" id="io_user" placeholder="이름"></div>
+  </div>
+  <div class="ma">
+    <button class="btn bgo" onclick="closeM('mIO')">취소</button>
+    <button class="btn bp-red" id="io_delBtn" onclick="deleteIO()" style="display:none">삭제</button>
+    <button class="btn bp" onclick="saveIO()">저장</button>
+  </div>
+</div></div>
+
 <!-- AS 관리 모달 -->
 <div class="ov" id="mAS"><div class="modal wide">
   <div class="mt" id="mAS_t">🔧 AS 접수</div>
@@ -1585,6 +1664,24 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       <option>접수</option><option>수리중</option><option>완료</option><option>반송</option>
     </select>
   </div>
+
+  <!-- 📷 사진 첨부 -->
+  <div class="fg">
+    <label style="display:flex;justify-content:space-between;align-items:center">
+      <span>📷 사진 첨부 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(불량 부위·증상·수리 전후 사진 등)</span></span>
+      <span style="font-size:9.5px;color:var(--t3);font-weight:400">드래그·클릭·Ctrl+V 붙여넣기</span>
+    </label>
+    <div id="asFileDz" ondragover="event.preventDefault();this.style.background='var(--gold-bg)';this.style.borderColor='var(--gold)'"
+      ondragleave="this.style.background='';this.style.borderColor=''"
+      ondrop="_handleAsFileDrop(event)"
+      onclick="document.getElementById('asFileInp').click()"
+      style="border:1.5px dashed var(--bdr);border-radius:6px;padding:14px;text-align:center;cursor:pointer;background:var(--s2);transition:all .15s;font-size:11px;color:var(--t3)">
+      <span style="font-size:16px;margin-right:4px">📷</span> 이미지를 드래그하거나 클릭 · <b>Ctrl+V</b>로 붙여넣기
+      <input type="file" id="asFileInp" accept="image/*" multiple style="display:none" onchange="_handleAsFileSelect(event)">
+    </div>
+    <div id="asFilePrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
+  </div>
+
   <div class="fg"><label>비고</label><textarea class="fta" id="as_note" rows="2"></textarea></div>
   <div class="ma">
     <button class="btn bgo" onclick="_asAIPasteCleanup();closeM('mAS')">취소</button>
@@ -2011,7 +2108,7 @@ function toggleOrdVendorFilter(v){
 }
 
 // data
-let samples=[], orders=[], procItems=[], tasks=[], asItems=[], productDB=[], invoiceHistory=[];
+let samples=[], orders=[], procItems=[], tasks=[], asItems=[], productDB=[], invoiceHistory=[], ioItems=[];
 let inquiries=[]; // 고객사 문의 관리
 let newDesigns=[]; // 신규 디자인 제안 관리
 let stockHistory=[]; // 재고 변동 이력
@@ -2671,6 +2768,9 @@ function openASModal(idOrNull){
   sv('as_desc',a?a.desc:'');sv('as_note',a?a.note:'');
   sv('as_billing',a?a.billing:'미청구');sv('as_status',a?a.status:'접수');
   sv('as_defectType', a?(a.defectType||''):'');
+  // 📷 파일 버퍼 초기화 — 기존 AS에 첨부 파일이 있으면 불러옴
+  asFileBuf = (a && Array.isArray(a.files)) ? a.files.map(f => ({...f})) : [];
+  _renderAsFilePrev();
   document.getElementById('as_delBtn').style.display=a?'':'none';
   document.getElementById('as_invBtn').style.display=a?'':'none';
   document.getElementById('mAS_t').textContent=a?'🔧 AS 수정':'🔧 AS 접수';
@@ -2682,9 +2782,119 @@ function openASModal(idOrNull){
   window._asParsed=null;
   calcASTotal();
   openM('mAS');
-  // Ctrl+V 리스너 (신규 등록 시만)
+  // Ctrl+V 리스너 (신규 등록 시는 AI paste, 수정 시는 사진 paste)
   if(!a) _asAIPasteSetup();
   else _asAIPasteCleanup();
+  // 사진 paste 리스너는 항상 활성화
+  _ensureAsPhotoPasteListener();
+}
+
+// ════════════════════════════════
+// AS 사진 첨부 — 드래그/클릭/Ctrl+V
+// ════════════════════════════════
+let asFileBuf = [];
+
+function _handleAsFileSelect(ev){
+  const files = ev.target.files;
+  if(!files || !files.length) return;
+  Array.from(files).forEach(f => _readAsFile(f));
+  ev.target.value = '';
+}
+function _handleAsFileDrop(ev){
+  ev.preventDefault();
+  ev.stopPropagation();
+  const dz = ev.currentTarget;
+  if(dz?.style){ dz.style.background = ''; dz.style.borderColor = ''; }
+  const files = ev.dataTransfer?.files;
+  if(!files || !files.length) return;
+  Array.from(files).forEach(f => {
+    if((f.type||'').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic)$/i.test(f.name||'')){
+      _readAsFile(f);
+    }
+  });
+}
+function _readAsFile(file){
+  const r = new FileReader();
+  r.onload = ev => {
+    asFileBuf.push({
+      name: file.name || 'image',
+      type: file.type || 'image/png',
+      size: file.size,
+      url: ev.target.result
+    });
+    _renderAsFilePrev();
+  };
+  r.readAsDataURL(file);
+}
+function _renderAsFilePrev(){
+  const el = document.getElementById('asFilePrev');
+  if(!el) return;
+  el.innerHTML = asFileBuf.map((f, i) => {
+    const isImg = (f.type||'').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic)$/i.test((f.name||'').toLowerCase());
+    const isR2 = f.url && !String(f.url).startsWith('data:');
+    const sz = f.size ? (f.size > 1048576 ? (f.size/1048576).toFixed(1)+'MB' : Math.round(f.size/1024)+'KB') : '';
+    const statusBadge = isR2
+      ? '<span style="font-size:9px;background:rgba(46,139,44,.12);color:var(--grn);padding:1px 5px;border-radius:3px;font-weight:600" title="클라우드 저장됨">☁ 저장됨</span>'
+      : '<span style="font-size:9px;background:rgba(168,90,16,.12);color:var(--org);padding:1px 5px;border-radius:3px;font-weight:600" title="저장 시 클라우드 업로드">💾 로컬</span>';
+    if(isImg && f.url){
+      return `<div style="position:relative;width:96px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px;overflow:hidden;cursor:pointer"
+        onclick="openFilePreviewList(asFileBuf,${i})"
+        title="${(f.name||'').replace(/"/g,'&quot;')}">
+        <img src="${f.url}" style="width:100%;height:80px;object-fit:cover;display:block;background:#fafafa;pointer-events:none">
+        <div style="padding:4px 7px;font-size:10.5px;background:var(--s1);border-top:1px solid var(--bdr)">
+          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2);font-weight:500;line-height:1.2">${f.name||'사진'}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;gap:4px">
+            ${sz?`<span style="font-size:9px;color:var(--t3)">${sz}</span>`:'<span></span>'}
+            ${statusBadge}
+          </div>
+        </div>
+        <button onclick="event.stopPropagation();asFileBuf.splice(${i},1);_renderAsFilePrev()"
+          style="position:absolute;top:3px;right:3px;width:20px;height:20px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:50%;cursor:pointer;font-size:12px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center;padding:0"
+          title="제거">×</button>
+      </div>`;
+    }
+    return `<div style="display:inline-flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:5px 9px;font-size:11px">
+      <span>📎</span>
+      <span style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2);font-weight:500">${f.name||'파일'}</span>
+      ${sz?`<span style="font-size:9.5px;color:var(--t3)">${sz}</span>`:''}
+      ${statusBadge}
+      <button onclick="event.stopPropagation();asFileBuf.splice(${i},1);_renderAsFilePrev()" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:0 2px" title="제거">×</button>
+    </div>`;
+  }).join('');
+}
+
+// AS 모달 사진 paste 핸들러 (AI paste와 다름 — 새 사진을 첨부)
+function _handleAsPhotoPaste(ev){
+  // AS 모달이 열려있을 때만
+  const mAS = document.getElementById('mAS');
+  if(!mAS || !mAS.classList.contains('open')) return;
+  // AI paste 영역에 포커스 있을 때는 그쪽이 처리 — 사진 영역으로 라우팅 안 함
+  const activeEl = document.activeElement;
+  const isOnAIArea = activeEl && activeEl.closest && activeEl.closest('#asAiArea');
+  if(isOnAIArea) return;
+  const items = ev.clipboardData?.items;
+  if(!items || !items.length) return;
+  let imgFile = null;
+  for(let i=0; i<items.length; i++){
+    const item = items[i];
+    if(item.kind === 'file' && (item.type||'').startsWith('image/')){
+      imgFile = item.getAsFile();
+      break;
+    }
+  }
+  if(!imgFile) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  // 클립보드 이미지는 보통 이름 없음 → 타임스탬프 부여
+  const ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+  const renamed = new File([imgFile], imgFile.name && imgFile.name !== 'image.png' ? imgFile.name : `paste_${ts}.png`, {type:imgFile.type});
+  _readAsFile(renamed);
+  showToast('📋 사진 붙여넣기 완료','var(--grn)',1500);
+}
+function _ensureAsPhotoPasteListener(){
+  if(window._asPhotoPasteAttached) return;
+  document.addEventListener('paste', _handleAsPhotoPaste);
+  window._asPhotoPasteAttached = true;
 }
 
 async function saveAS(){
@@ -2692,6 +2902,33 @@ async function saveAS(){
   const id=gv('as_id');
   // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
   if(!id && !requireNotion('asDb', 'AS')) return;
+
+  // 📷 사진 R2 업로드 (base64 → URL 변환)
+  let filesForSave = asFileBuf.map(f => ({...f}));
+  const hasBase64 = filesForSave.some(f => f.url && String(f.url).startsWith('data:'));
+  if(notionCfg.workerUrl && hasBase64){
+    showToast('🔄 사진 업로드 중...','var(--blu)',2500);
+    const toUpload = filesForSave.filter(f => f.url && String(f.url).startsWith('data:'));
+    try {
+      const uploaded = await uploadImagesToR2(toUpload);
+      let uIdx = 0;
+      filesForSave = filesForSave.map(f => {
+        if(f.url && String(f.url).startsWith('data:')){
+          const up = uploaded[uIdx++];
+          if(up?.url) return {...f, url: up.url, r2Key: up.r2Key};
+          return f; // 실패 — 일단 base64 유지
+        }
+        return f;
+      });
+      // 버퍼도 업데이트해서 다음 저장 시 재업로드 안 되도록
+      asFileBuf = filesForSave.map(f => ({...f}));
+      _renderAsFilePrev();
+    } catch(e){
+      console.warn('AS 사진 업로드 실패:', e);
+      showToast('⚠ 사진 업로드 일부 실패 — 다시 시도해 주세요','var(--org)',3500);
+    }
+  }
+
   const obj={
     client,date:gv('as_date'),due:gv('as_due'),
     shipDate:gv('as_shipDate')||'', // 출고일 (청구서 그룹 기준)
@@ -2699,7 +2936,8 @@ async function saveAS(){
     unitCost:+gv('as_unitCost')||0,
     desc:gv('as_desc'),note:gv('as_note'),
     defectType:gv('as_defectType'),
-    billing:gv('as_billing'),status:gv('as_status')
+    billing:gv('as_billing'),status:gv('as_status'),
+    files: filesForSave  // 📷 첨부 사진
   };
   if(id){
     const i=asItems.findIndex(x=>x.id==id);
@@ -7072,6 +7310,7 @@ let notionCfg = {
   ndDb:    '201b2b17b3924161b636134229f532ee', // 신규 디자인 제안
   inqDb:   '28ad79cef0bc4895a4815827f3cb7da2', // 고객사 문의
   quoteDb: 'eeda4d95607c411da6b3a69bb6a732cc', // 📋 견적 DB
+  ioDb:    'a6024595f92f4f039493e907492b8eef', // 📦 입출고 현황 (잔디 출입고 채널 대체)
   checklistDb: '', // 📋 주간/월간 업무 목표 — 사용자가 노션 설정에서 DB ID 입력
   strictMode: true, // 🔒 노션 진실의 원천 모드 — 항상 ON (모든 데이터 적용)
 };
@@ -7499,8 +7738,9 @@ function mapNotionSample(row){
     }
   } else {
     legacyDevNote = devText;
-    legacyCaution = cautionText;
   }
+  // 🔧 factoryNotice는 notes 유무와 무관하게 항상 "주의사항" 필드에서 가져옴
+  legacyCaution = cautionText;
   // 파일 필드 복원
   const parseFilesJson = (txt)=>{
     if(!txt) return [];
@@ -7683,6 +7923,15 @@ function mapNotionTask(row){
 }
 function mapNotionAS(row){
   const p=row.properties||{};
+  // 사진 JSON 복원
+  let files = [];
+  const filesText = np.text(p['사진JSON']);
+  if(filesText){
+    try {
+      const parsed = JSON.parse(filesText);
+      if(Array.isArray(parsed)) files = parsed;
+    } catch(e){ /* 무시 */ }
+  }
   return{
     _notionId:row.id,
     item:    np.title(p['품목']),
@@ -7697,6 +7946,33 @@ function mapNotionAS(row){
     status:  np.select(p['진행상태'])||'접수',
     billing: np.select(p['청구상태'])||'미청구',
     defectType: np.select(p['수리종류'])||'',
+    files,
+  };
+}
+function mapNotionIO(row){
+  const p=row.properties||{};
+  // 노션 파일 속성 → 우리 구조
+  const filesRaw = p['사진']?.files || [];
+  const files = filesRaw.map(f=>({
+    name: f.name || 'photo',
+    type: 'image/png',
+    url: (f.type==='external' ? f.external?.url : f.file?.url) || ''
+  })).filter(f=>f.url);
+  return {
+    _notionId: row.id,
+    title:     np.title(p['제목']),
+    date:      np.date(p['일자']),
+    kind:      np.select(p['구분']) || '출고',
+    flow:      np.select(p['흐름']) || '',
+    vendor:    np.text(p['고객사/공장']),
+    items:     np.text(p['품목']),
+    qty:       np.number(p['수량']) || 0,
+    invoiceNo: np.text(p['송장번호']),
+    memo:      np.text(p['메모']),
+    applyStock:!!(p['재고반영']?.checkbox),
+    user:      np.text(p['등록자']),
+    files,
+    createdAt: row.created_time || new Date().toISOString()
   };
 }
 function mapNotionInquiry(row){
@@ -7717,6 +7993,15 @@ function mapNotionInquiry(row){
 }
 function mapNotionProduct(row){
   const p=row.properties||{};
+  // 이미지 JSON 복원
+  let imgs = [];
+  const imgsText = np.text(p['이미지JSON']);
+  if(imgsText){
+    try {
+      const parsed = JSON.parse(imgsText);
+      if(Array.isArray(parsed)) imgs = parsed;
+    } catch(e){ /* 무시 */ }
+  }
   return{
     _notionId:row.id,
     code:       np.title(p['품목코드']),
@@ -7727,7 +8012,9 @@ function mapNotionProduct(row){
     size:       np.text(p['규격']),
     metal:      np.text(p['금속종류']),
     platingSpec:np.text(p['도금스펙']),
+    vendor:     np.text(p['업체']),
     memo:       np.text(p['메모']),
+    imgs,
     price:      np.number(p['출고단가']),
     costPrice:  np.number(p['입고단가']),
     cnyPrice:   np.number(p['위안화입고단가']),
@@ -7736,6 +8023,7 @@ function mapNotionProduct(row){
     marginPct:  np.number(p['마진율']),
     priceManual:!!np.check(p['출고단가수동']),
     stock:      np.number(p['재고수량']),
+    safetyStock:np.number(p['안전재고']),
     weight:     np.number(p['중량']),
     createdDate:  np.date(p['최초등록일']),
     lastModified: np.date(p['최종수정일']),
@@ -8086,7 +8374,7 @@ async function pullFromNotion(opts){
     };
 
     // 9개 DB를 병렬 쿼리 (증분 모드면 since 이후만 받음) + 견적 DB
-    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows,qtRows]=await Promise.all([
+    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows,qtRows,ioRows]=await Promise.all([
       notionCfg.smpDb   ? _wrapQuery('샘플의뢰',     notionCfg.smpDb,    nQueryAll(notionCfg.smpDb,    sinceFor(notionCfg.smpDb),   callOpts)) : Promise.resolve([]),
       notionCfg.ordDb   ? _wrapQuery('발주서',       notionCfg.ordDb,    nQueryAll(notionCfg.ordDb,    sinceFor(notionCfg.ordDb),   callOpts)) : Promise.resolve([]),
       notionCfg.procDb  ? _wrapQuery('공정관리',     notionCfg.procDb,   nQueryAll(notionCfg.procDb,   sinceFor(notionCfg.procDb),  callOpts)) : Promise.resolve([]),
@@ -8098,6 +8386,7 @@ async function pullFromNotion(opts){
       notionCfg.invDb   ? _wrapQuery('거래명세서',   notionCfg.invDb,    nQueryAll(notionCfg.invDb,    sinceFor(notionCfg.invDb),   callOpts)) : Promise.resolve([]),
       notionCfg.inqDb   ? _wrapQuery('고객사문의',   notionCfg.inqDb,    nQueryAll(notionCfg.inqDb,    sinceFor(notionCfg.inqDb),   callOpts)) : Promise.resolve([]),
       notionCfg.quoteDb ? _wrapQuery('견적서',       notionCfg.quoteDb,  nQueryAll(notionCfg.quoteDb,  sinceFor(notionCfg.quoteDb), callOpts)) : Promise.resolve([]),
+      notionCfg.ioDb    ? _wrapQuery('입출고',       notionCfg.ioDb,     nQueryAll(notionCfg.ioDb,     sinceFor(notionCfg.ioDb),    callOpts)) : Promise.resolve([]),
     ]);
 
     if(showProgress) _hideSyncProgress();
@@ -8326,10 +8615,11 @@ async function pullFromNotion(opts){
     clients       = mergeRows(cliRows,  clients,        mapNotionClient,    [], '고객사',   notionCfg.clientDb);
     tasks         = mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
     asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        [], 'AS',       notionCfg.asDb);
-    productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['imgs','importSource','createdAt'], '제품DB',   notionCfg.productDb);
+    productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['importSource','createdAt'], '제품DB',   notionCfg.productDb);
     invoiceHistory= mergeRows(invRows,  invoiceHistory, mapNotionInvoice,   ['items','ordId'], '청구이력', notionCfg.invDb);
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
+    ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files'], '입출고', notionCfg.ioDb);
 
     // 풀 모드를 성공적으로 마쳤다면 마지막 풀 동기화 시각 기록
     if(!useIncremental){
@@ -8618,6 +8908,7 @@ const _syncFnMap = {
   product:   (o,u)=>syncProductToNotion(o,u),
   inquiry:   (o,u)=>syncInqToNotion(o,u),
   invoice:   (o,u)=>syncInvoiceToNotion(o,u),
+  io:        (o,u)=>updateIoInNotion(o),
 };
 
 function debouncedSync(type, obj, isUpdate){
@@ -8989,6 +9280,13 @@ async function syncASToNotion(a, update){
     throw new Error('Notion 미연결: AS관리 DB');
   }
   const total=(a.qty||1)*(a.unitCost||0);
+  // 사진 JSON 직렬화 (R2 URL만, base64는 제외)
+  const filesForNotion = ()=>{
+    const arr = Array.isArray(a.files) ? a.files : [];
+    const httpsOnly = arr.filter(f=>f && f.url && String(f.url).startsWith('http'))
+      .map(f=>({name:f.name||'', url:f.url, type:f.type||'', r2Key:f.r2Key||''}));
+    return httpsOnly.length ? JSON.stringify(httpsOnly).slice(0,1999) : '';
+  };
   const p={
     "품목":{"title":[{"text":{"content":a.item||''}}]},
     "고객사":{"rich_text":[{"text":{"content":a.client||''}}]},
@@ -8997,6 +9295,7 @@ async function syncASToNotion(a, update){
     "합계":{"number":total},
     "증상내용":{"rich_text":[{"text":{"content":a.desc||''}}]},
     "비고":{"rich_text":[{"text":{"content":a.note||''}}]},
+    "사진JSON":{"rich_text":[{"text":{"content": filesForNotion()}}]},
   };
   if(a.date) p["접수일"]={"date":{"start":a.date}};
   if(a.due)  p["완료예정일"]={"date":{"start":a.due}};
@@ -9107,13 +9406,27 @@ async function syncProductToNotion(pd, update){
   if(!notionCfg.workerUrl||!notionCfg.productDb){
     throw new Error('Notion 미연결: Worker URL 또는 제품DB ID가 설정되지 않음');
   }
+  // 이미지 JSON 직렬화 (R2 URL만, base64는 제외)
+  const imgsForNotion = ()=>{
+    const arr = Array.isArray(pd.imgs) ? pd.imgs : [];
+    const httpsOnly = arr.filter(im => {
+      const url = typeof im === 'string' ? im : (im?.url || '');
+      return url && String(url).startsWith('http');
+    }).map(im => {
+      if(typeof im === 'string') return {url: im, name:'', r2Key:''};
+      return {name: im.name||'', url: im.url, type: im.type||'', r2Key: im.r2Key||''};
+    });
+    return httpsOnly.length ? JSON.stringify(httpsOnly).slice(0,1999) : '';
+  };
   const p={
     "품목코드":{"title":[{"text":{"content":pd.code||''}}]},
     "품목명":{"rich_text":[{"text":{"content":pd.name||''}}]},
     "규격":{"rich_text":[{"text":{"content":pd.size||''}}]},
     "금속종류":{"rich_text":[{"text":{"content":pd.metal||''}}]},
     "도금스펙":{"rich_text":[{"text":{"content":pd.platingSpec||''}}]},
+    "업체":{"rich_text":[{"text":{"content":pd.vendor||''}}]},
     "메모":{"rich_text":[{"text":{"content":(pd.memo||'').slice(0,2000)}}]},
+    "이미지JSON":{"rich_text":[{"text":{"content": imgsForNotion()}}]},
     "출고단가":{"number":+pd.price||0},
     "입고단가":{"number":+pd.costPrice||0},
     "위안화입고단가":{"number":+pd.cnyPrice||0},
@@ -9122,6 +9435,7 @@ async function syncProductToNotion(pd, update){
     "마진율":{"number":+pd.marginPct||0},
     "출고단가수동":{"checkbox":!!pd.priceManual},
     "재고수량":{"number":+pd.stock||0},
+    "안전재고":{"number":+pd.safetyStock||0},
     "중량":{"number":+pd.weight||0},
   };
   if(pd.type)    p["유형"]={"select":{"name":pd.type}};
@@ -9413,7 +9727,7 @@ let prevImages=[], prevIdx=0;
 // ════════════════════════════════
 // STORAGE
 // ════════════════════════════════
-const SK={s:'ek3_smp',o:'ek3_ord',p:'ek3_proc',t:'ek3_task',a:'ek3_as',pd:'ek3_products',iv:'ek3_invoices',sh:'ek3_stock_hist'};
+const SK={s:'ek3_smp',o:'ek3_ord',p:'ek3_proc',t:'ek3_task',a:'ek3_as',pd:'ek3_products',iv:'ek3_invoices',sh:'ek3_stock_hist',io:'ek3_io'};
 function save(){
   const saveKey=(key, data, label)=>{
     try{
@@ -9435,6 +9749,7 @@ function save(){
     products: saveKey(SK.pd, productDB, '제품DB'),
     invoices: saveKey(SK.iv, invoiceHistory, '청구이력'),
     stockHist: saveKey(SK.sh, stockHistory, '재고이력'),
+    io: saveKey(SK.io, ioItems, '입출고'),
   };
   // 디버깅: 실패가 있으면 전체 용량 진단
   if(Object.values(results).some(v=>!v)){
@@ -9454,6 +9769,7 @@ function load(){
     const pd=localStorage.getItem(SK.pd);if(pd)productDB=JSON.parse(pd);
     const iv=localStorage.getItem(SK.iv);if(iv)invoiceHistory=JSON.parse(iv);
     const sh=localStorage.getItem(SK.sh);if(sh)stockHistory=JSON.parse(sh);
+    const io=localStorage.getItem(SK.io);if(io)ioItems=JSON.parse(io);
   }catch(e){}
   // 🔄 마이그레이션: "확정" 상태 → "완료"로 일괄 변환
   // (워크플로우 변경: 의뢰→제작중→수정중→완료→발주, "확정" 상태 폐기)
@@ -13335,6 +13651,7 @@ function switchTab(tab,el){
   else if(tab==='order') acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button>';
   else if(tab==='schedule') acts.innerHTML='<button class="btn bp bs" onclick="openTaskModal()">+ 업무 추가</button>';
   else if(tab==='sales') acts.innerHTML='<button class="btn bp bs" onclick="openClModal(null)">+ 고객사 등록</button><button class="btn bgo bs" onclick="openPropModal(null)">+ 영업 등록</button><button class="btn bgo bs" onclick="openClientImport()">📥 고객사 엑셀 업로드</button>';
+  else if(tab==='io') acts.innerHTML='<button class="btn bp bs" onclick="openIOModal(null)">+ 입출고 등록</button>';
   renderTab();updateBadges();
   // 탭 전환 시 silent 동기화 (마지막 동기화 후 30초 이상 지났을 때만)
   if(notionCfg.workerUrl && Date.now()-_lastSyncAt > 30000){
@@ -13345,6 +13662,7 @@ function renderTab(){
   const c=document.getElementById('content');c.innerHTML='';
   if(currentTab==='sales'){renderSalesTab();return;}
   if(currentTab==='as'){renderAS();return;}
+  if(currentTab==='io'){renderIO();return;}
   if(currentTab==='products'){renderProducts();return;}
   if(currentTab==='invoices'){renderInvoiceHistory();return;}
   ({dash:renderDash,sample:renderSample,order:renderOrder,schedule:renderSchedule}[currentTab]||renderDash)();
@@ -26453,6 +26771,489 @@ function handlePropImages(ev){
   // input 초기화 — 같은 파일 재선택 가능하게
   try{ ev.target.value=''; }catch(e){}
 }
+
+// ════════════════════════════════════════════════════════════════
+// 📦 입출고 (IO) — 잔디 출입고 채널 대체용 하이브리드 기록
+// ════════════════════════════════════════════════════════════════
+let ioFileBuf = [];
+let ioFilter = { kind:'전체', flow:'전체', vendor:'', search:'', period:'all' };
+
+function renderIO(){
+  const c=document.getElementById('cont');if(!c)return;
+  // 통계
+  const total=ioItems.length;
+  const today=toLocalDateStr(new Date());
+  const todayCount=ioItems.filter(x=>x.date===today).length;
+  const thisMonth=today.slice(0,7);
+  const monthCount=ioItems.filter(x=>(x.date||'').startsWith(thisMonth)).length;
+  const inCount=ioItems.filter(x=>x.kind==='입고').length;
+  const outCount=ioItems.filter(x=>x.kind==='출고').length;
+
+  // 필터링
+  let list=[...ioItems];
+  if(ioFilter.kind!=='전체') list=list.filter(x=>x.kind===ioFilter.kind);
+  if(ioFilter.flow!=='전체') list=list.filter(x=>x.flow===ioFilter.flow);
+  if(ioFilter.vendor) list=list.filter(x=>(x.vendor||'').toLowerCase().includes(ioFilter.vendor.toLowerCase()));
+  if(ioFilter.search){
+    const q=ioFilter.search.toLowerCase();
+    list=list.filter(x=>((x.title||'')+' '+(x.items||'')+' '+(x.memo||'')+' '+(x.invoiceNo||'')).toLowerCase().includes(q));
+  }
+  if(ioFilter.period==='today') list=list.filter(x=>x.date===today);
+  else if(ioFilter.period==='week'){
+    const wk=new Date();wk.setDate(wk.getDate()-7);
+    const wkStr=toLocalDateStr(wk);
+    list=list.filter(x=>x.date>=wkStr);
+  }
+  else if(ioFilter.period==='month') list=list.filter(x=>(x.date||'').startsWith(thisMonth));
+  // 정렬: 최신 createdAt 우선, 같으면 date 내림차순
+  list.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'') || (b.date||'').localeCompare(a.date||''));
+
+  const KIND_BADGE={
+    '입고':'background:rgba(46,139,44,.12);color:var(--grn);border-color:rgba(46,139,44,.3)',
+    '출고':'background:rgba(192,48,48,.12);color:var(--red);border-color:rgba(192,48,48,.3)',
+    '검수':'background:rgba(26,109,181,.12);color:var(--blu);border-color:rgba(26,109,181,.3)',
+    '반품':'background:rgba(168,90,16,.12);color:var(--org);border-color:rgba(168,90,16,.3)'
+  };
+  const KIND_ICON={'입고':'📥','출고':'📤','검수':'🔍','반품':'↩'};
+
+  c.innerHTML=`
+  <!-- 통계 KPI -->
+  <div class="kpis">
+    <div class="kpi k-b"><div class="kpi-l">전체 기록</div><div class="kpi-v">${total}</div><div class="kpi-d">건</div></div>
+    <div class="kpi k-g"><div class="kpi-l">입고</div><div class="kpi-v">${inCount}</div><div class="kpi-d">건</div></div>
+    <div class="kpi k-r"><div class="kpi-l">출고</div><div class="kpi-v">${outCount}</div><div class="kpi-d">건</div></div>
+    <div class="kpi k-p"><div class="kpi-l">이번 달</div><div class="kpi-v">${monthCount}</div><div class="kpi-d">건</div></div>
+  </div>
+
+  <!-- 필터 -->
+  <div class="card">
+    <div class="ch" style="flex-wrap:wrap;gap:8px">
+      <div class="ch-t">📦 입출고 기록 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${list.length}건)</span></div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <input class="search-box" placeholder="검색..." value="${ioFilter.search.replace(/"/g,'&quot;')}" oninput="ioFilter.search=this.value;renderIO()" style="width:180px">
+        <input class="search-box" placeholder="고객사" value="${ioFilter.vendor.replace(/"/g,'&quot;')}" oninput="ioFilter.vendor=this.value;renderIO()" style="width:100px">
+      </div>
+    </div>
+    <div class="frow">
+      ${['전체','입고','출고','검수','반품'].map(k=>{
+        const cnt=k==='전체'?ioItems.length:ioItems.filter(x=>x.kind===k).length;
+        return `<span class="fc ${ioFilter.kind===k?'on':''}" onclick="ioFilter.kind='${k}';renderIO()">${k} <span style="font-size:9.5px;opacity:.7">${cnt}</span></span>`;
+      }).join('')}
+      <span style="margin:0 4px;color:var(--bdr)">|</span>
+      ${['all','today','week','month'].map(p=>{
+        const lbl={all:'전체기간',today:'오늘',week:'1주',month:'1개월'}[p];
+        return `<span class="fc ${ioFilter.period===p?'on':''}" onclick="ioFilter.period='${p}';renderIO()">${lbl}</span>`;
+      }).join('')}
+      ${ioFilter.flow!=='전체' ? `<span style="margin:0 4px;color:var(--bdr)">|</span><span class="fc on" onclick="ioFilter.flow='전체';renderIO()">${ioFilter.flow} ✕</span>`
+        : `<span style="margin-left:auto;font-size:10.5px;color:var(--t3)">흐름:</span>${['중국→한국','한국→고객','고객→AS','AS→고객','공장→공장'].map(f=>`<span class="fc" onclick="ioFilter.flow='${f}';renderIO()" style="font-size:10.5px">${f}</span>`).join('')}`}
+    </div>
+  </div>
+
+  <!-- 피드 -->
+  <div class="card" style="padding:0">
+    ${list.length === 0 ? `
+      <div style="padding:60px 20px;text-align:center;color:var(--t3)">
+        <div style="font-size:48px;margin-bottom:8px">📦</div>
+        <div style="font-size:14px;margin-bottom:4px">기록이 없습니다</div>
+        <div style="font-size:11px">우측 상단 "+ 입출고 등록" 버튼으로 첫 기록을 추가하세요</div>
+      </div>
+    ` : `<div style="max-height:calc(100vh - 280px);overflow-y:auto">
+    ${list.map(io=>{
+      const kindStyle = KIND_BADGE[io.kind] || '';
+      const kindIcon = KIND_ICON[io.kind] || '📦';
+      const photos = Array.isArray(io.files) ? io.files.filter(f=>{
+        const t=(f.type||'').toLowerCase(); const n=(f.name||'').toLowerCase();
+        return t.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|heic)$/i.test(n);
+      }) : [];
+      const dt = io.createdAt ? new Date(io.createdAt) : null;
+      const timeStr = dt ? `${(dt.getMonth()+1)}/${dt.getDate()} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}` : '';
+      const photosKey = '_ioPhotos_' + io.id;
+      window[photosKey] = photos;
+      return `
+      <div onclick="openIOModal(${io.id})" style="display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--bdr);cursor:pointer;transition:background .12s" onmouseenter="this.style.background='var(--s2)'" onmouseleave="this.style.background=''">
+        <!-- 좌측: 구분/일자 칼럼 -->
+        <div style="flex-shrink:0;width:80px;text-align:center">
+          <div style="display:inline-block;padding:3px 8px;border:1px solid;border-radius:12px;font-size:10.5px;font-weight:700;${kindStyle}">${kindIcon} ${io.kind||'기록'}</div>
+          <div style="font-size:10px;color:var(--t3);margin-top:4px">${io.date||''}</div>
+          ${timeStr ? `<div style="font-size:9px;color:var(--t3)">${timeStr}</div>` : ''}
+        </div>
+        <!-- 중앙: 제목/내용 -->
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
+            ${io.vendor ? `<span style="display:inline-block;padding:2px 7px;background:var(--gold-bg);color:var(--gold-lt);border-radius:10px;font-size:10px;font-weight:700">${io.vendor}</span>` : ''}
+            ${io.flow ? `<span style="font-size:10px;color:var(--t3)">${io.flow}</span>` : ''}
+            ${io.qty ? `<span style="font-size:10px;color:var(--t2);font-weight:600">· ${io.qty}개</span>` : ''}
+            ${io.invoiceNo ? `<span style="font-size:9.5px;color:var(--t3);font-family:monospace">· 송장 ${io.invoiceNo}</span>` : ''}
+            ${io.applyStock ? `<span style="font-size:9.5px;color:var(--grn);font-weight:600" title="재고에 반영됨">✓ 재고반영</span>` : ''}
+          </div>
+          <div style="font-size:13px;font-weight:600;color:var(--t1);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${io.title || (io.vendor ? `${io.vendor}_${io.kind}` : (io.kind||'기록'))}</div>
+          ${io.items ? `<div style="font-size:11px;color:var(--t2);margin-bottom:3px;line-height:1.4">📦 ${io.items}</div>` : ''}
+          ${io.memo ? `<div style="font-size:11px;color:var(--t3);white-space:pre-wrap;line-height:1.4;max-height:2.8em;overflow:hidden;text-overflow:ellipsis">${io.memo}</div>` : ''}
+          ${io.user ? `<div style="font-size:10px;color:var(--t3);margin-top:3px">— ${io.user}</div>` : ''}
+        </div>
+        <!-- 우측: 사진 썸네일 -->
+        ${photos.length ? `<div style="flex-shrink:0;display:flex;gap:4px" onclick="event.stopPropagation()">
+          ${photos.slice(0,3).map((p,i)=>`<div onclick="openPrevList(window['${photosKey}'],${i},true)" style="width:60px;height:60px;border-radius:6px;overflow:hidden;border:1.5px solid var(--bdr);cursor:pointer;position:relative">
+            <img src="${p.url}" style="width:100%;height:100%;object-fit:cover;display:block">
+            ${i===2 && photos.length>3 ? `<div style="position:absolute;inset:0;background:rgba(0,0,0,.6);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">+${photos.length-2}</div>` : ''}
+          </div>`).join('')}
+        </div>` : ''}
+      </div>`;
+    }).join('')}
+    </div>`}
+  </div>
+  `;
+}
+
+// 입출고 모달 열기
+function openIOModal(idOrNull){
+  const io = idOrNull ? ioItems.find(x=>x.id==idOrNull) : null;
+  sv('io_id', io?io.id:'');
+  sv('io_date', io?io.date:todayStr);
+  sv('io_kind', io?io.kind:'출고');
+  sv('io_flow', io?(io.flow||''):'');
+  sv('io_vendor', io?(io.vendor||''):'');
+  sv('io_qty', io?(io.qty||''):'');
+  sv('io_invoice', io?(io.invoiceNo||''):'');
+  sv('io_items', io?(io.items||''):'');
+  sv('io_title', io?(io.title||''):'');
+  sv('io_memo', io?(io.memo||''):'');
+  sv('io_user', io?(io.user||''):'');
+  document.getElementById('io_applyStock').checked = io ? !!io.applyStock : false;
+  // 파일 버퍼 초기화
+  ioFileBuf = (io && Array.isArray(io.files)) ? io.files.map(f=>({...f})) : [];
+  _renderIoFilePrev();
+  document.getElementById('io_delBtn').style.display = io ? '' : 'none';
+  document.getElementById('mIO_t').textContent = io ? '📦 입출고 수정' : '📦 입출고 등록';
+  openM('mIO');
+  _ensureIoPasteListener();
+}
+
+// 입출고 저장
+async function saveIO(){
+  const id = gv('io_id');
+  if(!id && !requireNotion('ioDb', '입출고')) return;
+  const kind = gv('io_kind');
+  if(!kind){ showToast('⚠ 구분을 선택해 주세요','var(--red)'); return; }
+
+  // 사진 R2 업로드
+  let filesForSave = ioFileBuf.map(f=>({...f}));
+  const hasBase64 = filesForSave.some(f=>f.url && String(f.url).startsWith('data:'));
+  if(notionCfg.workerUrl && hasBase64){
+    showToast('🔄 사진 업로드 중...','var(--blu)',2500);
+    const toUpload = filesForSave.filter(f=>f.url && String(f.url).startsWith('data:'));
+    try {
+      const uploaded = await uploadImagesToR2(toUpload);
+      let uIdx=0;
+      filesForSave = filesForSave.map(f=>{
+        if(f.url && String(f.url).startsWith('data:')){
+          const up = uploaded[uIdx++];
+          if(up?.url) return {...f, url:up.url, r2Key:up.r2Key};
+        }
+        return f;
+      });
+      ioFileBuf = filesForSave.map(f=>({...f}));
+      _renderIoFilePrev();
+    } catch(e){ console.warn('IO 사진 업로드 실패:', e); }
+  }
+
+  // 자동 제목 (비어있으면)
+  let title = (gv('io_title')||'').trim();
+  if(!title){
+    const vendor = (gv('io_vendor')||'').trim();
+    title = vendor ? `${vendor}_${kind}` : `${kind} ${gv('io_date')}`;
+  }
+
+  const applyStock = document.getElementById('io_applyStock').checked;
+
+  const obj = {
+    date: gv('io_date') || todayStr,
+    kind,
+    flow: gv('io_flow') || '',
+    vendor: gv('io_vendor') || '',
+    qty: +gv('io_qty') || 0,
+    invoiceNo: gv('io_invoice') || '',
+    items: gv('io_items') || '',
+    title,
+    memo: gv('io_memo') || '',
+    user: gv('io_user') || '',
+    applyStock,
+    files: filesForSave
+  };
+
+  if(id){
+    const i = ioItems.findIndex(x=>x.id==id);
+    if(i>=0){
+      ioItems[i] = {...ioItems[i], ...obj};
+      if(typeof debouncedSync === 'function') debouncedSync('io', ioItems[i], true);
+    }
+  } else {
+    const ni = {id:Date.now(), createdAt:new Date().toISOString(), ...obj};
+    // 노션 push 성공해야만 로컬 추가 (strict mode)
+    try {
+      const notionPage = await pushIoToNotion(ni);
+      if(notionPage?.id) ni._notionId = notionPage.id;
+      ioItems.unshift(ni);
+    } catch(e){
+      console.error('IO 노션 push 실패:', e);
+      showToast(`⚠ 노션 저장 실패: ${e.message||''}`,'var(--red)',5000);
+      return;
+    }
+  }
+
+  // 재고 자동 반영 (옵션)
+  if(applyStock && !id){
+    _applyIoToStock(obj);
+  }
+
+  save();
+  closeM('mIO');
+  renderTab();
+  updateBadges();
+  showToast(`✓ ${kind} 기록 ${id?'수정':'등록'}됨${applyStock?' · 재고 반영됨':''}`, 'var(--grn)', 3000);
+}
+
+// 입출고 삭제
+function deleteIO(){
+  const id = gv('io_id');
+  if(!id) return;
+  const io = ioItems.find(x=>x.id==id);
+  showConfirm(`"${io?.title||'기록'}"을 삭제합니다.`, async ()=>{
+    if(io?._notionId && notionCfg.workerUrl){
+      try { await deleteIoFromNotion(io); } catch(e){ console.warn('IO 노션 삭제 실패:', e); }
+    }
+    ioItems = ioItems.filter(x=>x.id!=id);
+    save();
+    closeM('mIO');
+    renderTab();
+    updateBadges();
+    showToast('🗑 삭제됨','var(--grn)',2000);
+  });
+}
+
+// 입고/출고 → 제품DB 재고 자동 반영
+function _applyIoToStock(io){
+  if(!Array.isArray(productDB) || !productDB.length) return;
+  if(!io.items) return;
+  // 품목 문자열을 쉼표로 분리해서 각 품목명·수량 시도
+  const parts = io.items.split(/[,\n;]+/).map(s=>s.trim()).filter(Boolean);
+  const sign = io.kind === '입고' ? 1 : (io.kind === '출고' ? -1 : 0);
+  if(!sign) return;
+  let applied = 0;
+  parts.forEach(part=>{
+    // "품목명 30개" 형태에서 수량 추출
+    const m = part.match(/^(.+?)\s*(\d+)\s*(?:개|EA|ea|pcs)?$/);
+    const name = m ? m[1].trim() : part;
+    const qty = m ? parseInt(m[2],10) : io.qty;
+    if(!qty) return;
+    const prod = productDB.find(p =>
+      (p.name||'').toLowerCase() === name.toLowerCase() ||
+      (p.code||'').toLowerCase() === name.toLowerCase()
+    );
+    if(prod){
+      prod.stock = (+prod.stock||0) + (sign * qty);
+      if(typeof syncProductToNotion === 'function') syncProductToNotion(prod, true).catch(()=>{});
+      applied++;
+    }
+  });
+  if(applied){
+    console.log(`[IO] 재고 자동 반영: ${applied}건 (${io.kind})`);
+  }
+}
+
+// ── 입출고 사진 핸들러 ──
+function _handleIoFileSelect(ev){
+  const files = ev.target.files;
+  if(!files || !files.length) return;
+  Array.from(files).forEach(f=>_readIoFile(f));
+  ev.target.value='';
+}
+function _handleIoFileDrop(ev){
+  ev.preventDefault();
+  ev.stopPropagation();
+  const dz = ev.currentTarget;
+  if(dz?.style){ dz.style.background=''; dz.style.borderColor=''; }
+  const files = ev.dataTransfer?.files;
+  if(!files || !files.length) return;
+  Array.from(files).forEach(f=>{
+    if((f.type||'').startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|heic)$/i.test(f.name||'')){
+      _readIoFile(f);
+    }
+  });
+}
+function _readIoFile(file){
+  const r = new FileReader();
+  r.onload = ev => {
+    ioFileBuf.push({name:file.name||'image', type:file.type||'image/png', size:file.size, url:ev.target.result});
+    _renderIoFilePrev();
+  };
+  r.readAsDataURL(file);
+}
+function _renderIoFilePrev(){
+  const el = document.getElementById('ioFilePrev');
+  if(!el) return;
+  el.innerHTML = ioFileBuf.map((f,i)=>{
+    const isImg = (f.type||'').startsWith('image/');
+    const isR2 = f.url && !String(f.url).startsWith('data:');
+    const sz = f.size ? (f.size>1048576?(f.size/1048576).toFixed(1)+'MB':Math.round(f.size/1024)+'KB') : '';
+    const badge = isR2
+      ? '<span style="font-size:9px;background:rgba(46,139,44,.12);color:var(--grn);padding:1px 5px;border-radius:3px;font-weight:600">☁ 저장됨</span>'
+      : '<span style="font-size:9px;background:rgba(168,90,16,.12);color:var(--org);padding:1px 5px;border-radius:3px;font-weight:600">💾 로컬</span>';
+    if(isImg && f.url){
+      return `<div style="position:relative;width:96px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px;overflow:hidden;cursor:pointer"
+        onclick="openFilePreviewList(ioFileBuf,${i})"
+        title="${(f.name||'').replace(/"/g,'&quot;')}">
+        <img src="${f.url}" style="width:100%;height:80px;object-fit:cover;display:block;background:#fafafa;pointer-events:none">
+        <div style="padding:4px 7px;font-size:10.5px;background:var(--s1);border-top:1px solid var(--bdr)">
+          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2);font-weight:500;line-height:1.2">${f.name||'사진'}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;gap:4px">
+            ${sz?`<span style="font-size:9px;color:var(--t3)">${sz}</span>`:'<span></span>'}
+            ${badge}
+          </div>
+        </div>
+        <button onclick="event.stopPropagation();ioFileBuf.splice(${i},1);_renderIoFilePrev()"
+          style="position:absolute;top:3px;right:3px;width:20px;height:20px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:50%;cursor:pointer;font-size:12px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center;padding:0">×</button>
+      </div>`;
+    }
+    return '';
+  }).join('');
+}
+// IO 모달 paste 핸들러
+function _handleIoPaste(ev){
+  const m = document.getElementById('mIO');
+  if(!m || !m.classList.contains('open')) return;
+  const activeEl = document.activeElement;
+  if(activeEl && (activeEl.tagName==='TEXTAREA')) return; // 메모에는 텍스트 paste 우선
+  const items = ev.clipboardData?.items;
+  if(!items) return;
+  for(let i=0;i<items.length;i++){
+    if(items[i].kind==='file' && (items[i].type||'').startsWith('image/')){
+      const f = items[i].getAsFile();
+      if(f){
+        ev.preventDefault();
+        const ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+        const renamed = new File([f], f.name && f.name!=='image.png' ? f.name : `paste_${ts}.png`, {type:f.type});
+        _readIoFile(renamed);
+        showToast('📋 사진 붙여넣기 완료','var(--grn)',1500);
+        return;
+      }
+    }
+  }
+}
+function _ensureIoPasteListener(){
+  if(window._ioPasteAttached) return;
+  document.addEventListener('paste', _handleIoPaste);
+  window._ioPasteAttached = true;
+}
+
+// ── 고객사 드롭다운 (간단 자동완성) ──
+function renderIoVendorDropdown(query){
+  const el = document.getElementById('ioVendorDropdown');
+  if(!el) return;
+  const q = (query||'').trim().toLowerCase();
+  if(typeof clients === 'undefined' || !Array.isArray(clients) || !clients.length){
+    el.style.display = 'none';
+    return;
+  }
+  const matches = clients.filter(c=>{
+    const nm=(c.name||'').toLowerCase(), ini=(c.initials||'').toLowerCase();
+    return !q || nm.includes(q) || ini.includes(q);
+  }).slice(0, 8);
+  if(!matches.length){ el.style.display='none'; return; }
+  el.innerHTML = matches.map(c=>`
+    <div onmousedown="event.preventDefault();sv('io_vendor','${(c.initials||c.name||'').replace(/'/g,"\\\\'")}');hideIoVendorDropdown()"
+      style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--bdr);font-size:12px"
+      onmouseenter="this.style.background='var(--s2)'" onmouseleave="this.style.background=''">
+      ${c.initials?`<span style="background:var(--gold-bg);color:var(--gold-lt);padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;margin-right:6px">${c.initials}</span>`:''}
+      ${c.name||''}
+    </div>
+  `).join('');
+  el.style.display = 'block';
+}
+function hideIoVendorDropdown(){
+  const el = document.getElementById('ioVendorDropdown');
+  if(el) el.style.display = 'none';
+}
+
+// ────────────────────────────────────────
+// 노션 동기화: IO push / pull / delete
+// ────────────────────────────────────────
+async function pushIoToNotion(io){
+  if(!notionCfg.workerUrl || !notionCfg.ioDb) throw new Error('Notion 설정 누락');
+  const props = {
+    "제목": { title: [{ text: { content: io.title || '기록' } }] },
+    "일자": { date: io.date ? { start: io.date } : null },
+    "구분": io.kind ? { select: { name: io.kind } } : null,
+    "흐름": io.flow ? { select: { name: io.flow } } : null,
+    "고객사/공장": io.vendor ? { rich_text: [{ text: { content: io.vendor } }] } : { rich_text: [] },
+    "품목": io.items ? { rich_text: [{ text: { content: String(io.items).slice(0,1999) } }] } : { rich_text: [] },
+    "수량": typeof io.qty==='number' ? { number: io.qty } : null,
+    "송장번호": io.invoiceNo ? { rich_text: [{ text: { content: io.invoiceNo } }] } : { rich_text: [] },
+    "메모": io.memo ? { rich_text: [{ text: { content: String(io.memo).slice(0,1999) } }] } : { rich_text: [] },
+    "재고반영": { checkbox: !!io.applyStock },
+    "등록자": io.user ? { rich_text: [{ text: { content: io.user } }] } : { rich_text: [] }
+  };
+  // 사진 — R2 URL만 (base64는 제외)
+  const photoUrls = (io.files||[]).filter(f=>f.url && !String(f.url).startsWith('data:')).map(f=>({
+    name: (f.name||'photo').slice(0,90),
+    type: 'external',
+    external: { url: f.url }
+  }));
+  if(photoUrls.length) props["사진"] = { files: photoUrls };
+
+  // null 값 제거
+  Object.keys(props).forEach(k=>{ if(props[k]===null) delete props[k]; });
+
+  const r = await fetch(notionCfg.workerUrl + '/createPage', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ database_id: notionCfg.ioDb, properties: props })
+  });
+  if(!r.ok) throw new Error('Notion HTTP '+r.status);
+  return await r.json();
+}
+
+async function updateIoInNotion(io){
+  if(!io._notionId || !notionCfg.workerUrl) return;
+  const props = {
+    "제목": { title: [{ text: { content: io.title || '기록' } }] },
+    "일자": io.date ? { date: { start: io.date } } : null,
+    "구분": io.kind ? { select: { name: io.kind } } : null,
+    "흐름": io.flow ? { select: { name: io.flow } } : null,
+    "고객사/공장": { rich_text: io.vendor ? [{ text: { content: io.vendor } }] : [] },
+    "품목": { rich_text: io.items ? [{ text: { content: String(io.items).slice(0,1999) } }] : [] },
+    "수량": { number: +io.qty || 0 },
+    "송장번호": { rich_text: io.invoiceNo ? [{ text: { content: io.invoiceNo } }] : [] },
+    "메모": { rich_text: io.memo ? [{ text: { content: String(io.memo).slice(0,1999) } }] : [] },
+    "재고반영": { checkbox: !!io.applyStock },
+    "등록자": { rich_text: io.user ? [{ text: { content: io.user } }] : [] }
+  };
+  const photoUrls = (io.files||[]).filter(f=>f.url && !String(f.url).startsWith('data:')).map(f=>({
+    name: (f.name||'photo').slice(0,90), type:'external', external:{ url: f.url }
+  }));
+  if(photoUrls.length) props["사진"] = { files: photoUrls };
+  Object.keys(props).forEach(k=>{ if(props[k]===null) delete props[k]; });
+  try {
+    await fetch(notionCfg.workerUrl + '/updatePage', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ page_id: io._notionId, properties: props })
+    });
+  } catch(e){ console.warn('IO 노션 update 실패:', e); }
+}
+
+async function deleteIoFromNotion(io){
+  if(!io._notionId || !notionCfg.workerUrl) return;
+  try {
+    await fetch(notionCfg.workerUrl + '/archivePage', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ page_id: io._notionId })
+    });
+  } catch(e){ console.warn('IO 노션 archive 실패:', e); }
+}
+
+// debouncedSync에서 'io' 케이스 처리하도록 — 기존 함수가 동적으로 호출하므로 등록
+window._ioSyncHandler = updateIoInNotion;
+
 </script>
 </body>
 </html>
