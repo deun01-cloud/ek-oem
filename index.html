@@ -13621,7 +13621,7 @@ body{background:#fff;padding:14px}
 // ════════════════════════════════
 // TAB NAVIGATION
 // ════════════════════════════════
-const TAB_TITLES={dash:'대시보드',sample:'샘플 의뢰 관리',order:'생산관리',schedule:'업무 일지',sales:'영업 관리',as:'AS 관리',products:'제품 DB',invoices:'거래명세서'};
+const TAB_TITLES={dash:'대시보드',sample:'샘플 의뢰 관리',order:'생산관리',schedule:'업무 일지',sales:'영업 관리',as:'AS 관리',io:'입출고 현황',products:'제품 DB',invoices:'거래명세서'};
 // 탭 이름(data-tab)으로 버튼 엘리먼트 찾기 — 탭 순서 변경에 견고
 function getTabBtn(tabName){
   return document.querySelector('.tab-btn[data-tab="'+tabName+'"]');
@@ -20477,7 +20477,7 @@ function initLastTab(){
   try{
     const stored = localStorage.getItem('ek3_lastTab');
     // 유효한 탭 이름인지 확인
-    const validTabs = ['dash','sample','order','schedule','as','products','sales','invoices'];
+    const validTabs = ['dash','sample','order','schedule','as','io','products','sales','invoices'];
     if(stored && validTabs.includes(stored)) lastTab = stored;
   }catch(e){}
   try{
@@ -26780,14 +26780,8 @@ let ioFilter = { kind:'전체', flow:'전체', vendor:'', search:'', period:'all
 
 function renderIO(){
   const c=document.getElementById('content');if(!c)return;
-  // 통계
-  const total=ioItems.length;
   const today=toLocalDateStr(new Date());
-  const todayCount=ioItems.filter(x=>x.date===today).length;
   const thisMonth=today.slice(0,7);
-  const monthCount=ioItems.filter(x=>(x.date||'').startsWith(thisMonth)).length;
-  const inCount=ioItems.filter(x=>x.kind==='입고').length;
-  const outCount=ioItems.filter(x=>x.kind==='출고').length;
 
   // 필터링
   let list=[...ioItems];
@@ -26817,14 +26811,6 @@ function renderIO(){
   const KIND_ICON={'입고':'📥','출고':'📤','검수':'🔍','반품':'↩'};
 
   c.innerHTML=`
-  <!-- 통계 KPI -->
-  <div class="kpis">
-    <div class="kpi k-b"><div class="kpi-l">전체 기록</div><div class="kpi-v">${total}</div><div class="kpi-d">건</div></div>
-    <div class="kpi k-g"><div class="kpi-l">입고</div><div class="kpi-v">${inCount}</div><div class="kpi-d">건</div></div>
-    <div class="kpi k-r"><div class="kpi-l">출고</div><div class="kpi-v">${outCount}</div><div class="kpi-d">건</div></div>
-    <div class="kpi k-p"><div class="kpi-l">이번 달</div><div class="kpi-v">${monthCount}</div><div class="kpi-d">건</div></div>
-  </div>
-
   <!-- 필터 -->
   <div class="card">
     <div class="ch" style="flex-wrap:wrap;gap:8px">
