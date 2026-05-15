@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#FAF8F3">
+<!-- 🔄 캐시 방지 — 항상 최신 파일 받기 -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>EK OEM · Mobile</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -74,7 +78,7 @@ a{color:inherit;text-decoration:none}
 .cal-h-btns{display:flex;gap:4px}
 .cal-h-btns button{width:30px;height:30px;border-radius:6px;background:var(--s2);font-size:14px;color:var(--t2);font-weight:600;display:flex;align-items:center;justify-content:center}
 .cal-h-btns button:active{background:var(--s3)}
-.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--bdr-lt);border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden}
+.cal-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--bdr-lt);border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden}
 .cal-dh{background:var(--s2);text-align:center;padding:6px 0;font-size:10.5px;font-weight:600;color:var(--t2)}
 .cal-dh.sun{color:var(--red)}
 .cal-dh.sat{color:var(--blu)}
@@ -131,6 +135,15 @@ a{color:inherit;text-decoration:none}
 .fbar::-webkit-scrollbar{display:none}
 .fbar button{flex-shrink:0;padding:6px 12px;background:var(--s2);border-radius:14px;font-size:11.5px;font-weight:600;color:var(--t2);border:1px solid transparent;white-space:nowrap}
 .fbar button.active{background:var(--gold-lt);color:#fff;border-color:var(--gold-lt)}
+
+/* 고객사 필터 바 (서브 필터) */
+.cli-fbar{display:flex;gap:5px;overflow-x:auto;padding:0 0 8px;-webkit-overflow-scrolling:touch;margin-top:-4px}
+.cli-fbar::-webkit-scrollbar{display:none}
+.cli-fbar button{flex-shrink:0;padding:5px 10px;background:var(--s1);border:1px solid var(--bdr);border-radius:12px;font-size:11px;font-weight:600;color:var(--t2);white-space:nowrap;display:flex;align-items:center;gap:5px}
+.cli-fbar button.active{background:var(--gold-bg);color:var(--gold-lt);border-color:var(--gold-line)}
+.cli-fbar .cli-bdg{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:3px;font-size:8.5px;font-weight:700;color:#fff;letter-spacing:0}
+.cli-fbar .cli-cnt{font-size:9.5px;color:var(--t3);font-weight:500;margin-left:1px}
+.cli-fbar button.active .cli-cnt{color:var(--gold-lt)}
 
 .fab{position:fixed;right:16px;bottom:calc(80px + var(--safe-bot));width:54px;height:54px;border-radius:50%;background:var(--gold-lt);color:#fff;font-size:26px;font-weight:300;box-shadow:0 4px 12px rgba(139,105,20,.4);display:flex;align-items:center;justify-content:center;z-index:80;transition:transform .15s}
 .fab:active{transform:scale(.92)}
@@ -268,7 +281,7 @@ a{color:inherit;text-decoration:none}
 <body>
 
 <div class="topbar">
-  <div class="brand" onclick="openNotionSettings()" style="cursor:pointer">EK <small>OEM Mobile</small></div>
+  <div class="brand" onclick="openNotionSettings()" style="cursor:pointer">EK <small>OEM Mobile <span style="opacity:.5;font-size:9px;margin-left:2px" id="appVer"></span></small></div>
   <div class="tb-right">
     <button class="sync-btn" id="syncBtn" onclick="manualSync()"><span class="sync-dot"></span><span id="syncLabel">동기화</span></button>
   </div>
@@ -321,6 +334,7 @@ a{color:inherit;text-decoration:none}
     <button data-st="hold" onclick="setOrdFilter('hold')">보류</button>
     <button data-st="all" onclick="setOrdFilter('all')">전체</button>
   </div>
+  <div class="cli-fbar" id="ordCliFbar"></div>
   <div class="card">
     <div class="card-h"><div class="card-h-t">발주서 <span class="cnt" id="ordCnt">0</span></div></div>
     <div id="ordList"></div>
@@ -335,6 +349,7 @@ a{color:inherit;text-decoration:none}
     <button data-st="done" onclick="setSmpFilter('done')">완료</button>
     <button data-st="all" onclick="setSmpFilter('all')">전체</button>
   </div>
+  <div class="cli-fbar" id="smpCliFbar"></div>
   <div class="card">
     <div class="card-h"><div class="card-h-t">샘플 의뢰 <span class="cnt" id="smpCnt">0</span></div></div>
     <div id="smpList"></div>
@@ -544,8 +559,8 @@ function goPage(id){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.pg===id));
   closeDayPop();
   if(id==='pgDash') renderDash();
-  else if(id==='pgOrd') renderOrdList();
-  else if(id==='pgSmp') renderSmpList();
+  else if(id==='pgOrd'){ renderOrdCliFilter(); renderOrdList(); }
+  else if(id==='pgSmp'){ renderSmpCliFilter(); renderSmpList(); }
   else if(id==='pgIO') renderIoList();
   else if(id==='pgMore') renderMorePage();
 }
@@ -675,29 +690,62 @@ function mapNotionSample(row){
 
 function mapNotionOrder(row){
   const p=row.properties||{};
+  // 우선 품목상세JSON에서 완전 복원 시도
   let rows=[];
-  const rowsText = np.text(p['품목JSON']);
-  if(rowsText){
-    try{ const parsed=JSON.parse(rowsText); if(Array.isArray(parsed)) rows=parsed; }catch(e){}
+  const rowsJson = np.text(p['품목상세JSON']);
+  if(rowsJson){
+    try{
+      const parsed = JSON.parse(rowsJson);
+      if(Array.isArray(parsed)) rows = parsed;
+    }catch(e){}
   }
-  let memoList=[];
-  const memoLText = np.text(p['메모체크리스트']);
-  if(memoLText){
-    try{ const parsed=JSON.parse(memoLText); if(Array.isArray(parsed)) memoList=parsed.map(m=>({text:String(m.text||''),checked:!!m.checked})); }catch(e){}
+  // 폴백: 품목목록 텍스트에서 기본 rows 복원 ("A ×3, B ×2")
+  if(!rows.length){
+    const itemStr = np.text(p['품목목록']);
+    if(itemStr){
+      rows = itemStr.split(',').map(s=>{
+        const m = s.trim().match(/^(.+?)\s*×\s*(\d+)$/);
+        return m ? {name:m[1].trim(), qty:m[2], plating:'실버', mat:'브라스 (BRASS)', size:'', note:''} : null;
+      }).filter(Boolean);
+    }
+  }
+  // 첨부파일 JSON 복원
+  let files = [];
+  const filesJson = np.text(p['첨부파일JSON']);
+  if(filesJson){
+    try{
+      const parsed = JSON.parse(filesJson);
+      if(Array.isArray(parsed)) files = parsed;
+    }catch(e){}
+  }
+  // 메모에서 memoList 파싱 (JSON:: prefix면 체크리스트)
+  const memoText = np.text(p['메모']) || '';
+  let memoList = [];
+  let legacyMemo = memoText;
+  if(memoText.startsWith('JSON::')){
+    try{
+      const parsed = JSON.parse(memoText.slice(6));
+      if(Array.isArray(parsed)){
+        memoList = parsed.map(m=>({text:String(m.text||''), checked:!!m.checked}));
+        legacyMemo = '';
+      }
+    }catch(e){}
   }
   return {
     _notionId:row.id,
-    vendor:  np.title(p['업체']),
-    no:      np.text(p['발주번호']),
+    no:      np.title(p['발주번호']),  // title 필드 ← 발주번호
+    vendor:  np.text(p['업체명']),     // text 필드 ← 업체명
     manager: np.text(p['담당자']),
-    memo:    np.text(p['메모']),
-    factoryNotice: np.text(p['공장주의사항']),
+    memo:    legacyMemo,
     memoList,
     rows,
-    date:    np.date(p['주문일자']),
+    files,
+    date:    np.date(p['발주일']),
     ship:    np.date(p['요청출고일']),
     factShip:np.date(p['공장출고일']),
-    status:  np.select(p['상태']) || '진행중'
+    factoryNotice: np.text(p['공장주의사항']) || '',
+    status:  np.select(p['상태']) || '진행중',
+    createdAt: row.created_time || new Date().toISOString()
   };
 }
 
@@ -1111,38 +1159,67 @@ function renderTaskDay(){
     list.innerHTML = `<div class="empty" style="padding:24px 14px"><div class="icn" style="font-size:30px">📭</div><div style="font-size:12px">이 날짜에는 업무가 없습니다</div></div>`;
     return;
   }
-  // 카테고리 색상
-  const catCls = (cat) => ({
-    '업무':'bizu', '커머스':'bcom',
-    '발주출고':'bord', '샘플출고':'bsmp',
-    '중국입고':'bship', '중국출고':'bship'
-  })[cat] || 'bizu';
 
-  list.innerHTML = all.map(t => {
-    if(t.auto){
-      // 자동 항목 — 클릭하면 원본 보기
-      const checkClass = t.done ? 'done' : 'auto';
-      const checkContent = t.done ? '✓' : '○';
-      return `<div class="task-row" onclick="${t.click}">
-        <div class="task-chk ${checkClass}" title="${escapeHtml(t.doneReason||'')}">${checkContent}</div>
-        <span class="task-cat ${catCls(t.cat)}">${t.cat}</span>
-        <div class="task-content">
-          <div class="ct${t.done?' done':''}">${escapeHtml(t.cont)}</div>
-          ${t.doneReason ? `<div class="meta">${escapeHtml(t.doneReason)}</div>` : ''}
-        </div>
-      </div>`;
-    } else {
-      // 수동 항목 — 체크박스 토글 + 클릭 시 편집
-      return `<div class="task-row">
-        <div class="task-chk ${t.done?'done':''}" onclick="event.stopPropagation();toggleTask(${t.id})">${t.done?'✓':''}</div>
-        <span class="task-cat ${catCls(t.cat)}">${t.cat||'업무'}</span>
-        <div class="task-content" onclick="openTaskEdit(${t.id})">
-          <div class="ct${t.done?' done':''}">${escapeHtml(t.cont||'')}</div>
-          ${t.note ? `<div class="meta">${escapeHtml(t.note)}</div>` : ''}
-        </div>
-      </div>`;
-    }
-  }).join('');
+  // 카테고리 정의 — 순서 + 색상 + 아이콘
+  const CAT_DEFS = [
+    {cat:'업무',     ico:'📋', color:'var(--prp)', bg:'var(--prp-bg)'},
+    {cat:'커머스',   ico:'🛍', color:'var(--grn)', bg:'var(--grn-bg)'},
+    {cat:'발주출고', ico:'📦', color:'var(--org)', bg:'var(--org-bg)'},
+    {cat:'샘플출고', ico:'💎', color:'var(--blu)', bg:'var(--blu-bg)'},
+    {cat:'중국입고', ico:'🇨🇳', color:'var(--red)', bg:'var(--red-bg)'},
+    {cat:'중국출고', ico:'🇰🇷', color:'var(--red)', bg:'var(--red-bg)'}
+  ];
+
+  // 카테고리별 그룹화
+  const grouped = {};
+  CAT_DEFS.forEach(d => { grouped[d.cat] = []; });
+  all.forEach(t => {
+    const cat = t.cat || '업무';
+    if(grouped[cat]) grouped[cat].push(t);
+    else grouped['업무'].push(t); // 미지정은 업무로
+  });
+
+  // 카테고리별 섹션 렌더
+  let html = '';
+  CAT_DEFS.forEach(d => {
+    const items = grouped[d.cat];
+    if(!items.length) return; // 빈 섹션은 숨김
+
+    // 섹션 헤더
+    const doneCount = items.filter(t => t.done).length;
+    html += `<div style="background:${d.bg};border-left:3px solid ${d.color};padding:8px 14px;display:flex;align-items:center;justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:13px">${d.ico}</span>
+        <span style="font-size:12px;font-weight:700;color:${d.color}">${d.cat}</span>
+        <span style="font-size:10.5px;color:var(--t3);font-weight:500">${doneCount}/${items.length}</span>
+      </div>
+    </div>`;
+
+    // 섹션 아이템들
+    html += items.map(t => {
+      if(t.auto){
+        const checkClass = t.done ? 'done' : 'auto';
+        const checkContent = t.done ? '✓' : '○';
+        return `<div class="task-row" onclick="${t.click}" style="padding-left:22px">
+          <div class="task-chk ${checkClass}" title="${escapeHtml(t.doneReason||'')}">${checkContent}</div>
+          <div class="task-content">
+            <div class="ct${t.done?' done':''}">${escapeHtml(t.cont)}</div>
+            ${t.doneReason ? `<div class="meta">${escapeHtml(t.doneReason)}</div>` : ''}
+          </div>
+        </div>`;
+      } else {
+        return `<div class="task-row" style="padding-left:22px">
+          <div class="task-chk ${t.done?'done':''}" onclick="event.stopPropagation();toggleTask(${t.id})">${t.done?'✓':''}</div>
+          <div class="task-content" onclick="openTaskEdit(${t.id})">
+            <div class="ct${t.done?' done':''}">${escapeHtml(t.cont||'')}</div>
+            ${t.note ? `<div class="meta">${escapeHtml(t.note)}</div>` : ''}
+          </div>
+        </div>`;
+      }
+    }).join('');
+  });
+
+  list.innerHTML = html;
 }
 
 async function toggleTask(taskId){
@@ -1502,29 +1579,44 @@ function renderCal(){
   const y=calCur.getFullYear(), m=calCur.getMonth();
   document.getElementById('calMo').textContent = `${y}.${pad2(m+1)}`;
   const first=new Date(y,m,1), last=new Date(y,m+1,0);
-  const dows=['일','월','화','수','목','금','토'];
+  // 평일만 (월~금)
+  const dows=['월','화','수','목','금'];
   const today=toLocalDateStr(new Date());
-  let html = dows.map((d,i)=>`<div class="cal-dh ${i===0?'sun':i===6?'sat':''}">${d}</div>`).join('');
-  for(let i=0;i<first.getDay();i++){
-    const pd = new Date(y,m,-(first.getDay()-1-i));
+  let html = dows.map((d,i)=>`<div class="cal-dh">${d}</div>`).join('');
+  // 첫 주: 월요일부터 시작 (Date.getDay(): 일=0, 월=1, ... 토=6)
+  // 월요일까지 비우기 (이전 달의 평일도 회색으로 표시)
+  const firstDow = first.getDay();  // 1=월, ..., 5=금, 0=일, 6=토
+  // 월요일 = 0번째 셀, 금요일 = 4번째 셀
+  let startOffset = 0;
+  if(firstDow === 0) startOffset = 0;       // 일 → 다음 월부터 시작 (셀 0)
+  else if(firstDow === 6) startOffset = 0;  // 토 → 다음 월부터 시작 (셀 0)
+  else startOffset = firstDow - 1;          // 월=0, 화=1, ..., 금=4
+  // 이전 달 평일 채우기 (회색)
+  for(let i=0; i<startOffset; i++){
+    const pd = new Date(y, m, -(startOffset-1-i));
     html += `<div class="cal-c other"><div class="dn">${pd.getDate()}</div></div>`;
   }
-  for(let d=1;d<=last.getDate();d++){
+  // 이번 달 모든 날 → 평일만 표시
+  let weekCellCount = startOffset;
+  for(let d=1; d<=last.getDate(); d++){
     const dt = new Date(y,m,d), ds = toLocalDateStr(dt), dow = dt.getDay();
+    // 토/일 스킵
+    if(dow === 0 || dow === 6) continue;
     const evs = dayEvents(ds);
     const cls=['cal-c'];
-    if(dow===0) cls.push('sun');
-    if(dow===6) cls.push('sat');
     if(KR_HOLIDAYS[ds]) cls.push('holiday');
     if(ds===today) cls.push('today');
     if(evs.length) cls.push('has-ev');
     let evHtml = evs.slice(0,2).map(e=>`<div class="cal-ev ${e.cls}${e.done?' done':''}">${escapeHtml(e.t)}</div>`).join('');
     if(evs.length>2) evHtml += `<div class="cal-ev-more">+${evs.length-2}</div>`;
     html += `<div class="${cls.join(' ')}" onclick="openDayPop('${ds}')"><div class="dn">${d}</div>${evHtml}</div>`;
+    weekCellCount++;
   }
-  const totalCells = first.getDay() + last.getDate();
-  const rem = (7 - totalCells % 7) % 7;
-  for(let i=1;i<=rem;i++) html += `<div class="cal-c other"><div class="dn">${i}</div></div>`;
+  // 마지막 주 평일 빈 셀 (다음 달)
+  const rem = (5 - weekCellCount % 5) % 5;
+  for(let i=1; i<=rem; i++){
+    html += `<div class="cal-c other"><div class="dn">${i}</div></div>`;
+  }
   document.getElementById('calGrid').innerHTML = html;
 }
 
@@ -1575,22 +1667,72 @@ function openDayPop(ds){
 function closeDayPop(){ document.getElementById('dayPop').classList.remove('open'); }
 
 function _ordStLabel(s){
-  return {'진행중':'의뢰','제작중':'제작중','수정중':'수정중','출고완료':'완료','보류':'보류','취소':'취소'}[s]||s;
+  return {'진행중':'진행중','제작중':'제작중','수정중':'수정중','출고완료':'완료','보류':'보류','취소':'취소'}[s]||s;
 }
 
 // ──── 발주 리스트 ────
 let _ordFilter = 'active';
+let _ordCliFilter = 'all';  // 고객사 필터 ('all' 또는 고객사명)
+
 function setOrdFilter(f){
   _ordFilter = f;
   document.querySelectorAll('#pgOrd .fbar button').forEach(b=>b.classList.toggle('active', b.dataset.st===f));
+  renderOrdCliFilter();  // 상태 변경 시 고객사 카운트도 재계산
   renderOrdList();
 }
-function renderOrdList(){
-  const q = (document.getElementById('ordSearch')?.value||'').toLowerCase();
+function setOrdCliFilter(c){
+  _ordCliFilter = c;
+  document.querySelectorAll('#ordCliFbar button').forEach(b=>b.classList.toggle('active', b.dataset.cli===c));
+  renderOrdList();
+}
+
+// 현재 상태 필터 적용된 발주 (고객사 필터는 적용 안함)
+function _getOrdAfterStatusFilter(){
   let list = orders.slice();
   if(_ordFilter==='active') list = list.filter(o=>{ const st=o.status||'진행중'; return st!=='출고완료'&&st!=='취소'&&st!=='보류'; });
   else if(_ordFilter==='done') list = list.filter(o=>o.status==='출고완료');
   else if(_ordFilter==='hold') list = list.filter(o=>o.status==='보류');
+  return list;
+}
+
+function renderOrdCliFilter(){
+  const wrap = document.getElementById('ordCliFbar');
+  if(!wrap) return;
+  // 현재 상태 필터 적용 후 고객사별 카운트
+  const list = _getOrdAfterStatusFilter();
+  const vendorCount = {};
+  list.forEach(o => {
+    const v = (o.vendor||'').trim();
+    if(!v) return;
+    vendorCount[v] = (vendorCount[v]||0) + 1;
+  });
+  // 정렬: 카운트 많은 순 → 가나다순
+  const sorted = Object.entries(vendorCount).sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0],'ko'));
+  if(!sorted.length){
+    wrap.innerHTML = '';
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = 'flex';
+  // 전체 칩 + 각 고객사 칩
+  const totalCount = list.length;
+  const allChip = `<button class="${_ordCliFilter==='all'?'active':''}" data-cli="all" onclick="setOrdCliFilter('all')">전체 <span class="cli-cnt">${totalCount}</span></button>`;
+  const chips = sorted.map(([name, count]) => {
+    const initial = getInitial(name);
+    const color = strColor(name);
+    const isAct = _ordCliFilter === name;
+    return `<button class="${isAct?'active':''}" data-cli="${escapeHtml(name)}" onclick="setOrdCliFilter('${name.replace(/'/g,"\\'")}')"><span class="cli-bdg" style="background:${color}">${initial}</span>${escapeHtml(name)} <span class="cli-cnt">${count}</span></button>`;
+  }).join('');
+  wrap.innerHTML = allChip + chips;
+}
+
+function renderOrdList(){
+  const q = (document.getElementById('ordSearch')?.value||'').toLowerCase();
+  let list = _getOrdAfterStatusFilter();
+  // 고객사 필터
+  if(_ordCliFilter !== 'all'){
+    list = list.filter(o => (o.vendor||'').trim() === _ordCliFilter);
+  }
   if(q) list = list.filter(o=>{
     return (o.vendor||'').toLowerCase().includes(q) || (o.no||'').toLowerCase().includes(q) || (o.rows||[]).some(r=>(r.name||'').toLowerCase().includes(q));
   });
@@ -1627,16 +1769,62 @@ function renderOrdList(){
 
 // ──── 샘플 리스트 ────
 let _smpFilter = 'active';
+let _smpCliFilter = 'all';
+
 function setSmpFilter(f){
   _smpFilter = f;
   document.querySelectorAll('#pgSmp .fbar button').forEach(b=>b.classList.toggle('active', b.dataset.st===f));
+  renderSmpCliFilter();
   renderSmpList();
 }
-function renderSmpList(){
-  const q = (document.getElementById('smpSearch')?.value||'').toLowerCase();
+function setSmpCliFilter(c){
+  _smpCliFilter = c;
+  document.querySelectorAll('#smpCliFbar button').forEach(b=>b.classList.toggle('active', b.dataset.cli===c));
+  renderSmpList();
+}
+
+function _getSmpAfterStatusFilter(){
   let list = samples.slice();
   if(_smpFilter==='active') list = list.filter(s=>{ const st=s.status||'의뢰'; return st!=='완료'&&st!=='확정'&&st!=='취소'; });
   else if(_smpFilter==='done') list = list.filter(s=>{ const st=s.status||'의뢰'; return st==='완료'||st==='확정'; });
+  return list;
+}
+
+function renderSmpCliFilter(){
+  const wrap = document.getElementById('smpCliFbar');
+  if(!wrap) return;
+  const list = _getSmpAfterStatusFilter();
+  const mgrCount = {};
+  list.forEach(s => {
+    const m = (s.manager||'').trim();
+    if(!m) return;
+    mgrCount[m] = (mgrCount[m]||0) + 1;
+  });
+  const sorted = Object.entries(mgrCount).sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0],'ko'));
+  if(!sorted.length){
+    wrap.innerHTML = '';
+    wrap.style.display = 'none';
+    return;
+  }
+  wrap.style.display = 'flex';
+  const totalCount = list.length;
+  const allChip = `<button class="${_smpCliFilter==='all'?'active':''}" data-cli="all" onclick="setSmpCliFilter('all')">전체 <span class="cli-cnt">${totalCount}</span></button>`;
+  const chips = sorted.map(([name, count]) => {
+    const initial = getInitial(name);
+    const color = strColor(name);
+    const isAct = _smpCliFilter === name;
+    return `<button class="${isAct?'active':''}" data-cli="${escapeHtml(name)}" onclick="setSmpCliFilter('${name.replace(/'/g,"\\'")}')"><span class="cli-bdg" style="background:${color}">${initial}</span>${escapeHtml(name)} <span class="cli-cnt">${count}</span></button>`;
+  }).join('');
+  wrap.innerHTML = allChip + chips;
+}
+
+function renderSmpList(){
+  const q = (document.getElementById('smpSearch')?.value||'').toLowerCase();
+  let list = _getSmpAfterStatusFilter();
+  // 고객사(담당자) 필터
+  if(_smpCliFilter !== 'all'){
+    list = list.filter(s => (s.manager||'').trim() === _smpCliFilter);
+  }
   if(q) list = list.filter(s=>(s.name||'').toLowerCase().includes(q) || (s.itemCode||'').toLowerCase().includes(q));
   list.sort((a,b)=>(b.due||b.reqDate||'').localeCompare(a.due||a.reqDate||''));
   document.getElementById('smpCnt').textContent = list.length;
@@ -2091,11 +2279,11 @@ async function saveOrdEdit(ordId){
         "상태":{select:{name:updated.status}},
         "메모":{rich_text:[{text:{content:updated.memo||''}}]},
         "공장주의사항":{rich_text:[{text:{content:updated.factoryNotice||''}}]},
-        "품목JSON":{rich_text:[{text:{content:JSON.stringify(updated.rows||[]).slice(0,2000)}}]}
+        "품목상세JSON":{rich_text:[{text:{content:JSON.stringify(updated.rows||[]).slice(0,2000)}}]}
       };
       if(updated.ship) props["요청출고일"] = {date:{start:updated.ship}};
       if(updated.factShip) props["공장출고일"] = {date:{start:updated.factShip}};
-      if(updated.date) props["주문일자"] = {date:{start:updated.date}};
+      if(updated.date) props["발주일"] = {date:{start:updated.date}};
       await nUpdate(o._notionId, props);
       showToast('✓ 수정 완료','success');
     }catch(e){
@@ -3294,8 +3482,63 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 초기화
 // ════════════════════════════════════════════
-window.onload = ()=>{
+// ════════════════════════════════════════════
+// 🔄 버전 관리 & 자동 캐시 비우기
+// ════════════════════════════════════════════
+// 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
+const APP_VERSION = '2026-05-15-08';  // YYYY-MM-DD-NN 형식 — 배포 시마다 +1
+
+async function checkAppVersion(){
+  const savedVer = localStorage.getItem('ek_app_version');
+  if(savedVer === APP_VERSION){
+    // 같은 버전 — 정상 진행
+    return false;
+  }
+  // 최초 실행이면 그냥 저장만
+  if(!savedVer){
+    localStorage.setItem('ek_app_version', APP_VERSION);
+    return false;
+  }
+  // 버전이 다름 → 캐시 비우기
+  console.log(`[버전 변경] ${savedVer} → ${APP_VERSION} — 캐시 비우는 중...`);
+  showToast('🔄 새 버전 감지 — 캐시 비우는 중...', 'info');
+
+  try{
+    // 1. Service Worker 등록 해제 (혹시 있으면)
+    if('serviceWorker' in navigator){
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for(const reg of regs){ await reg.unregister(); }
+    }
+    // 2. Cache API 비우기 (브라우저 캐시)
+    if('caches' in window){
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+  }catch(e){
+    console.warn('캐시 비우기 일부 실패:', e);
+  }
+
+  // 3. 버전 업데이트
+  localStorage.setItem('ek_app_version', APP_VERSION);
+  // 4. 강제 새로고침 (캐시 무시)
+  setTimeout(()=>{
+    // URL에 timestamp 붙여서 강제 새로 다운로드
+    const url = new URL(window.location.href);
+    url.searchParams.set('_v', APP_VERSION);
+    window.location.replace(url.toString());
+  }, 800);
+  return true;  // 새로고침 진행 중 → 나머지 init 중단
+}
+
+window.onload = async ()=>{
+  // 🔄 먼저 버전 체크
+  const isReloading = await checkAppVersion();
+  if(isReloading) return;  // 새로고침 진행 중이면 init 중단
+
   loadAll();
+  // 버전 표시
+  const verEl = document.getElementById('appVer');
+  if(verEl) verEl.textContent = 'v' + APP_VERSION.slice(-2);
   renderDash();
   // 알림: 노션 미설정 시 안내
   if(!notionCfg || !notionCfg.workerUrl){
