@@ -920,9 +920,19 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
   <div class="fr3">
     <div class="fg"><label>공장 출고일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(중국 출고 일정)</span></label><input class="fi" type="date" id="o_factShip"></div>
-    <div class="fg"><label>담당자</label><input class="fi" id="o_manager" placeholder="담당자명"></div>
+    <div class="fg"><label>진행 상황</label>
+      <select class="fs" id="o_status" onchange="_onOrdStatusChange(this.value)">
+        <option value="진행중">의뢰</option>
+        <option value="제작중">제작중</option>
+        <option value="수정중">수정중</option>
+        <option value="출고완료">완료</option>
+        <option value="보류">보류</option>
+        <option value="취소">취소</option>
+      </select>
+    </div>
     <div class="fg"><label>발주번호 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(빈칸이면 자동생성: 이니셜+MMDD)</span></label><input class="fi" id="o_no" placeholder="예: VT0414 (자동생성)"></div>
   </div>
+  <input type="hidden" id="o_manager">
 
   <div class="form-sec">품목 내역</div>
   <div id="ordRowsWrap"></div>
@@ -1159,12 +1169,21 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 <!-- 품번 검색 모달 -->
 <div class="ov" id="mItemSearch"><div class="modal wide" style="max-width:680px">
   <div class="mt">🔍 품번 / 샘플 검색</div>
-  <div style="margin-bottom:12px">
+  <div style="margin-bottom:8px">
     <input class="fi" id="itemSearchQ" placeholder="품번코드 (VTBB...), 샘플명, 소재 등으로 검색..." oninput="renderItemSearchResults()" style="font-size:13px;padding:8px 12px">
+  </div>
+  <!-- 다중 선택 모드 토글 + 카운터 -->
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;padding:6px 10px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;font-size:11.5px">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--gold-lt);font-weight:600">
+      <input type="checkbox" id="itemSearchMulti" onchange="_toggleItemSearchMulti()" style="margin:0">
+      ☑ 다중 선택 모드
+    </label>
+    <span id="itemSearchSelCount" style="color:var(--t3)">단일 선택 — 클릭하여 즉시 적용</span>
   </div>
   <div id="itemSearchResults" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
   <div class="ma">
     <button class="btn bgo" onclick="closeM('mItemSearch')">닫기</button>
+    <button class="btn bp" id="itemSearchApplyBtn" onclick="applySelectedProductsToRows()" style="display:none">✓ 선택한 0건 일괄 추가</button>
   </div>
 </div></div>
 
@@ -1541,33 +1560,38 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>흐름</label>
       <select class="fs" id="io_flow">
         <option value="">선택</option>
-        <option value="중국→한국">🇨🇳→🇰🇷 중국→한국</option>
-        <option value="한국→고객">📦→👤 한국→고객</option>
-        <option value="고객→AS">👤→🔧 고객→AS</option>
-        <option value="AS→고객">🔧→👤 AS→고객</option>
-        <option value="공장→공장">🏭→🏭 공장→공장</option>
+        <option value="중국→한국">중국→한국</option>
+        <option value="한국→고객">한국→고객</option>
+        <option value="고객→AS">고객→AS</option>
+        <option value="AS→고객">AS→고객</option>
+        <option value="공장→공장">공장→공장</option>
         <option value="기타">기타</option>
       </select>
     </div>
   </div>
   <div class="fr3">
     <div class="fg" style="position:relative"><label>고객사/공장 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(이니셜 또는 이름)</span></label>
-      <input class="fi" id="io_vendor" placeholder="예: VT, BW, 비비케이트" autocomplete="off"
+      <input class="fi" id="io_vendor" autocomplete="off"
         oninput="renderIoVendorDropdown(this.value)" onfocus="renderIoVendorDropdown(this.value)"
         onblur="setTimeout(hideIoVendorDropdown,180)">
       <div id="ioVendorDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;margin-top:2px;max-height:200px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,.1)"></div>
     </div>
-    <div class="fg"><label>수량</label><input class="fi" type="number" id="io_qty" placeholder="총 수량 (선택)"></div>
-    <div class="fg"><label>송장번호 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(택배)</span></label><input class="fi" id="io_invoice" placeholder="옵션"></div>
+    <div class="fg"><label>수량 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(선택)</span></label><input class="fi" type="number" id="io_qty"></div>
+    <div class="fg"><label>송장번호 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(택배 · 선택)</span></label><input class="fi" id="io_invoice"></div>
   </div>
-  <div class="fg"><label>품목 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(여러 개면 쉼표로 구분)</span></label>
-    <input class="fi" id="io_items" placeholder="예: 모이사 사각 파베 귀걸이 30개, 드롭 목걸이 10개">
+  <div class="fg" style="position:relative"><label>품목 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(여러 개면 쉼표로 구분)</span></label>
+    <input class="fi" id="io_items" autocomplete="off"
+      oninput="ioItemSearch(this)"
+      onfocus="ioItemSearch(this)"
+      onblur="setTimeout(()=>{const d=document.getElementById('ioItemDrop');if(d)d.style.display='none'},200)"
+      onkeydown="_ioItemKeydown(event)">
+    <div id="ioItemDrop" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--s1);border:1px solid var(--bdr);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.08);max-height:280px;overflow-y:auto;margin-top:2px"></div>
   </div>
   <div class="fg"><label>제목 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(비우면 자동 생성: VT_출고 등)</span></label>
-    <input class="fi" id="io_title" placeholder="자동 생성">
+    <input class="fi" id="io_title">
   </div>
   <div class="fg"><label>메모</label>
-    <textarea class="fta" id="io_memo" rows="3" placeholder="자유 메모 — 잔디처럼 자유롭게 작성"></textarea>
+    <textarea class="fta" id="io_memo" rows="3"></textarea>
   </div>
   <!-- 📷 사진 첨부 -->
   <div class="fg">
@@ -1593,7 +1617,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <span style="font-size:9.5px;color:var(--t3);font-weight:400">(입고: +수량 / 출고: -수량)</span>
       </label>
     </div>
-    <div class="fg"><label>등록자 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(옵션)</span></label><input class="fi" id="io_user" placeholder="이름"></div>
+    <div class="fg"><label>등록자 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(옵션)</span></label><input class="fi" id="io_user"></div>
   </div>
   <div class="ma">
     <button class="btn bgo" onclick="closeM('mIO')">취소</button>
@@ -1638,14 +1662,45 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>출고일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(청구서 그룹 기준)</span></label><input class="fi" type="date" id="as_shipDate"></div>
   </div>
   <div class="fr2">
-    <div class="fg"><label>품번 / 품목명</label><input class="fi" id="as_item" placeholder="EK-ER-2604-001 / 11mm 원형 스톤 이어링"></div>
-    <div class="fg"><label>수량</label><input class="fi" type="number" id="as_qty" placeholder="1" min="1" value="1" oninput="calcASTotal()"></div>
+    <div class="fg" style="position:relative"><label>품번 / 품목명</label>
+      <input class="fi" id="as_item" autocomplete="off"
+        oninput="asItemSearch(this.value)"
+        onfocus="asItemSearch(this.value)"
+        onblur="setTimeout(()=>{const d=document.getElementById('asItemDrop');if(d)d.style.display='none'},200)">
+      <div id="asItemDrop" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--s1);border:1px solid var(--bdr);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.08);max-height:280px;overflow-y:auto;margin-top:2px"></div>
+    </div>
+    <div class="fg"><label>총 수량 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(아래 수리행 수량 합산 자동)</span></label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input class="fi" type="number" id="as_qty" min="0" value="0" style="flex:1" readonly>
+        <button type="button" onclick="document.getElementById('as_qty').readOnly=!document.getElementById('as_qty').readOnly;this.textContent=document.getElementById('as_qty').readOnly?'✎':'✓'" style="background:none;border:1px solid var(--bdr);border-radius:4px;padding:4px 8px;cursor:pointer;font-size:11px" title="수동 편집 토글">✎</button>
+      </div>
+    </div>
   </div>
-  <div class="fg"><label>증상 / 수리 내용</label><textarea class="fta" id="as_desc" rows="2" placeholder="도금 벗겨짐, 클래스프 파손 등"></textarea></div>
-  <div class="form-sec">수리 비용</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
-    <div class="fg"><label>개당 수리비 (원)</label><input class="fi" type="number" id="as_unitCost" placeholder="0" min="0" oninput="calcASTotal()"></div>
-    <div class="fg"><label>합계</label><div id="as_totalDisp" style="height:32px;display:flex;align-items:center;font-size:14px;font-weight:700;color:var(--gold-lt)">—</div></div>
+  <div class="fg"><label>증상 / 수리 내용 요약 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(명세서 표시용 · 자동 채워짐, 직접 수정 가능)</span></label>
+    <textarea class="fta" id="as_desc" rows="2"
+      oninput="this.dataset.userEdited='true'"></textarea>
+  </div>
+
+  <!-- 🔧 수리 항목 그리드 (다중 행) -->
+  <div class="form-sec" style="display:flex;justify-content:space-between;align-items:center">
+    <span>🔧 수리 항목</span>
+    <button type="button" class="btn bgo bs" onclick="_addAsRepairRow()" style="font-size:11px;padding:3px 10px">+ 수리 행 추가</button>
+  </div>
+  <div id="asRepairGrid" style="margin-bottom:8px">
+    <!-- 동적 생성: 행 헤더 + 행 1~N + 합계 -->
+  </div>
+
+  <!-- 💰 비용 합산 -->
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-top:4px">
+    <div class="fg"><label>물류비 (원) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(택배비 등)</span></label>
+      <input class="fi" type="number" id="as_shippingFee" min="0" value="0" oninput="calcASTotal()">
+    </div>
+    <div class="fg"><label>부가세 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(10%)</span></label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;height:32px;padding:0 10px;border:1px solid var(--bdr);border-radius:6px;background:var(--s1)">
+        <input type="checkbox" id="as_vatIncluded" onchange="calcASTotal()" style="margin:0">
+        <span id="as_vatLabel" style="font-size:11px;color:var(--t2)">VAT 10% 포함</span>
+      </label>
+    </div>
     <div class="fg"><label>수리종류</label>
       <select class="fs" id="as_defectType">
         <option value="">선택</option>
@@ -1659,6 +1714,21 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       </select>
     </div>
   </div>
+
+  <!-- 합계 요약 박스 -->
+  <div id="asTotalSummary" style="margin:8px 0;padding:10px 14px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;font-size:11.5px;color:var(--t2);line-height:1.7">
+    <div style="display:flex;justify-content:space-between"><span>수리 소계</span><span id="as_subtotalDisp">0원</span></div>
+    <div style="display:flex;justify-content:space-between" id="as_shipRow"><span>+ 물류비</span><span id="as_shipDisp">0원</span></div>
+    <div style="display:flex;justify-content:space-between" id="as_vatRow"><span>+ 부가세 (10%)</span><span id="as_vatDisp">0원</span></div>
+    <div style="display:flex;justify-content:space-between;border-top:1px solid var(--gold-line);margin-top:6px;padding-top:6px;font-weight:700;color:var(--gold-lt);font-size:13px">
+      <span>합계</span>
+      <span id="as_totalDisp">0원</span>
+    </div>
+  </div>
+
+  <!-- 숨겨진 단일가 (호환용 — 기존 필드 유지) -->
+  <input type="hidden" id="as_unitCost" value="0">
+
   <div class="fg"><label>상태</label>
     <select class="fs" id="as_status">
       <option>접수</option><option>수리중</option><option>완료</option><option>반송</option>
@@ -2169,12 +2239,126 @@ function renderDueHistory(history, label){
 // ════════════════════════════════
 // AS 관리
 // ════════════════════════════════
+// ════════════════════════════════════════════
+// AS 모달: 수리 행 그리드 (다중 사유 지원)
+// ════════════════════════════════════════════
+let asRepairsBuf = []; // [{reason, qty, unitCost}]
+
+// AS 한 건의 수리 합계 계산 (repairs 우선, 호환용 qty*unitCost 폴백)
+function asItemTotal(a, opt){
+  opt = opt || {};
+  const repairs = Array.isArray(a.repairs) && a.repairs.length
+    ? a.repairs
+    : [{qty:+a.qty||1, unitCost:+a.unitCost||0}];
+  const subtotal = repairs.reduce((s,r)=>s+(+r.qty||0)*(+r.unitCost||0), 0);
+  if(opt.subtotalOnly) return subtotal;
+  const shipping = +a.shippingFee||0;
+  const vatIncl = !!a.vatIncluded;
+  const vat = vatIncl ? Math.round((subtotal + shipping) * 0.1) : 0;
+  return subtotal + shipping + vat;
+}
+
+function _renderAsRepairGrid(){
+  const cont = document.getElementById('asRepairGrid');
+  if(!cont) return;
+  if(!asRepairsBuf.length){
+    asRepairsBuf.push({reason:'', qty:1, unitCost:0});
+  }
+  // 헤더
+  let html = `
+    <div style="display:grid;grid-template-columns:32px 1fr 80px 110px 110px 28px;gap:6px;align-items:center;font-size:10.5px;color:var(--t3);font-weight:600;padding:0 4px 4px;border-bottom:1px solid var(--bdr);margin-bottom:4px">
+      <div>#</div>
+      <div>수리 사유</div>
+      <div style="text-align:center">수량 (EA)</div>
+      <div style="text-align:right">개당가 (원)</div>
+      <div style="text-align:right">소계</div>
+      <div></div>
+    </div>
+  `;
+  // 행들
+  html += asRepairsBuf.map((r, i)=>{
+    const sub = (+r.qty||0) * (+r.unitCost||0);
+    return `
+    <div style="display:grid;grid-template-columns:32px 1fr 80px 110px 110px 28px;gap:6px;align-items:center;padding:3px 4px;border-bottom:1px solid var(--s2)">
+      <div style="text-align:center;font-size:11px;color:var(--t3)">${i+1}</div>
+      <input class="fi" value="${(r.reason||'').replace(/"/g,'&quot;')}"
+        oninput="asRepairsBuf[${i}].reason=this.value;_renderAsRepairSummary()" style="font-size:11.5px;height:30px">
+      <input class="fi" type="number" value="${r.qty||''}" min="0"
+        oninput="asRepairsBuf[${i}].qty=+this.value||0;_renderAsRepairSummary();_recalcAsTotalQty();calcASTotal()" style="font-size:11.5px;height:30px;text-align:center">
+      <input class="fi" type="number" value="${r.unitCost||''}" min="0"
+        oninput="asRepairsBuf[${i}].unitCost=+this.value||0;_renderAsRepairSummary();calcASTotal()" style="font-size:11.5px;height:30px;text-align:right">
+      <div id="as_rowSub_${i}" style="text-align:right;font-size:11.5px;color:var(--t2);font-weight:600;padding:0 4px">${sub.toLocaleString()}원</div>
+      <button type="button" onclick="_removeAsRepairRow(${i})" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:0" title="행 삭제">×</button>
+    </div>`;
+  }).join('');
+  cont.innerHTML = html;
+}
+
+function _addAsRepairRow(){
+  asRepairsBuf.push({reason:'', qty:1, unitCost:0});
+  _renderAsRepairGrid();
+  _recalcAsTotalQty();
+  calcASTotal();
+}
+
+function _removeAsRepairRow(idx){
+  if(asRepairsBuf.length<=1){
+    asRepairsBuf[0] = {reason:'', qty:1, unitCost:0};
+  } else {
+    asRepairsBuf.splice(idx, 1);
+  }
+  _renderAsRepairGrid();
+  _recalcAsTotalQty();
+  calcASTotal();
+}
+
+// 행 소계만 다시 그림 (성능)
+function _renderAsRepairSummary(){
+  asRepairsBuf.forEach((r,i)=>{
+    const el = document.getElementById('as_rowSub_'+i);
+    if(el){
+      const sub = (+r.qty||0) * (+r.unitCost||0);
+      el.textContent = sub.toLocaleString()+'원';
+    }
+  });
+  // 증상/수리 요약 자동 채움 (사용자가 수정하지 않았으면)
+  const descEl = document.getElementById('as_desc');
+  if(descEl && (!descEl.dataset.userEdited || descEl.dataset.userEdited==='false')){
+    const parts = asRepairsBuf
+      .filter(r=>r.reason && +r.qty)
+      .map(r=>`${r.reason} ${r.qty}EA`);
+    descEl.value = parts.join(', ');
+  }
+}
+
+// 총 수량 = 행들의 수량 합산 (수동 편집 모드가 아닐 때만)
+function _recalcAsTotalQty(){
+  const qtyEl = document.getElementById('as_qty');
+  if(!qtyEl || !qtyEl.readOnly) return;
+  const total = asRepairsBuf.reduce((s,r)=>s+(+r.qty||0), 0);
+  qtyEl.value = total;
+}
+
+// 합계 계산 — 새 로직 (행 소계 + 물류비 + 부가세)
 function calcASTotal(){
-  const qty=+(document.getElementById('as_qty')?.value)||1;
-  const unit=+(document.getElementById('as_unitCost')?.value)||0;
-  const total=qty*unit;
-  const el=document.getElementById('as_totalDisp');
-  if(el) el.textContent=total>0?total.toLocaleString()+'원':'—';
+  // 행 소계
+  const subtotal = asRepairsBuf.reduce((s,r)=>s + (+r.qty||0) * (+r.unitCost||0), 0);
+  const shipping = +(document.getElementById('as_shippingFee')?.value)||0;
+  const vatIncl = !!document.getElementById('as_vatIncluded')?.checked;
+  const vatBase = subtotal + shipping;
+  const vat = vatIncl ? Math.round(vatBase * 0.1) : 0;
+  const total = vatBase + vat;
+  // 표시
+  const setText = (id, txt)=>{ const el=document.getElementById(id); if(el) el.textContent=txt; };
+  setText('as_subtotalDisp', subtotal.toLocaleString()+'원');
+  setText('as_shipDisp', shipping.toLocaleString()+'원');
+  setText('as_vatDisp', vat.toLocaleString()+'원');
+  setText('as_totalDisp', total.toLocaleString()+'원');
+  // 호환용 hidden — 행이 1개일 때만 의미가 있음
+  const hidU = document.getElementById('as_unitCost');
+  if(hidU && asRepairsBuf.length===1){
+    hidU.value = +asRepairsBuf[0].unitCost||0;
+  }
 }
 
 // ── AS 고객사 검색 자동완성 ──
@@ -2247,6 +2431,94 @@ function asClientPick(name){
   const inp=document.getElementById('as_client');
   if(inp) inp.value=name;
   const drop=document.getElementById('asClientDrop');
+  if(drop) drop.style.display='none';
+}
+
+// ── AS 품목명 자동완성: 제품DB + 기존 AS 이력 ──
+function asItemSearch(q){
+  const drop=document.getElementById('asItemDrop');
+  if(!drop) return;
+  const query=(q||'').trim().toLowerCase();
+
+  const seen=new Set();
+  const candidates=[];
+
+  // 1) 제품DB — 품명 + 품번 검색
+  (productDB||[]).forEach(p=>{
+    const name=(p.name||'').trim();
+    const code=(p.code||'').trim();
+    const key = code || name;
+    if(!key || seen.has(key)) return;
+    seen.add(key);
+    candidates.push({
+      name,
+      code,
+      price: +p.price || 0,
+      img: (p.imgs && p.imgs[0]) ? (typeof p.imgs[0]==='string' ? p.imgs[0] : p.imgs[0].url) : '',
+      source:'db'
+    });
+  });
+  // 2) 기존 AS의 품목명 (DB에 없는 것만)
+  (asItems||[]).forEach(a=>{
+    const name=(a.item||'').trim();
+    if(!name || seen.has(name)) return;
+    seen.add(name);
+    candidates.push({
+      name,
+      code:'',
+      price: +a.unitCost||0,
+      source:'history'
+    });
+  });
+
+  // 필터
+  let matches=candidates;
+  if(query){
+    matches=candidates.filter(c=>{
+      const nm=(c.name||'').toLowerCase();
+      const cd=(c.code||'').toLowerCase();
+      return nm.includes(query) || (cd && cd.includes(query));
+    });
+  }
+  matches=matches.slice(0,10);
+
+  if(!matches.length){
+    drop.style.display='none';
+    return;
+  }
+
+  drop.innerHTML=matches.map(c=>{
+    const sourceIcon = c.source==='db'
+      ? '<span style="font-size:9px;color:var(--blu);background:rgba(26,109,181,.1);padding:1px 5px;border-radius:3px">📦DB</span>'
+      : '<span style="font-size:9px;color:var(--t3);background:var(--s2);padding:1px 5px;border-radius:3px">AS이력</span>';
+    const thumb = c.img
+      ? `<img src="${c.img}" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0">`
+      : '<div style="width:28px;height:28px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;color:var(--t3)">📷</div>';
+    const codeHtml = c.code ? `<span style="font-family:monospace;font-size:10px;color:var(--gold-lt);background:var(--gold-bg);padding:1px 5px;border-radius:3px;margin-right:4px">${c.code}</span>` : '';
+    const escName = (c.name||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    const escCode = (c.code||'').replace(/'/g,"\\'");
+    return `<div onmousedown="asItemPick('${escName}','${escCode}')"
+      style="display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--bdr);font-size:12px"
+      onmouseover="this.style.background='var(--s2)'"
+      onmouseout="this.style.background='transparent'">
+      ${thumb}
+      <div style="flex:1;min-width:0;overflow:hidden">
+        <div style="font-weight:500;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${codeHtml}${c.name||'<span style="color:var(--t3)">이름 없음</span>'}</div>
+        ${c.price ? `<div style="font-size:10px;color:var(--t3);margin-top:1px">출고단가 ${c.price.toLocaleString()}원</div>` : ''}
+      </div>
+      ${sourceIcon}
+    </div>`;
+  }).join('');
+  drop.style.display='block';
+}
+
+function asItemPick(name, code){
+  const inp=document.getElementById('as_item');
+  if(inp){
+    // 품번이 있으면 "품번 / 품명" 형태, 없으면 품명만
+    inp.value = code ? `${code} / ${name}` : name;
+  }
+  const drop=document.getElementById('asItemDrop');
   if(drop) drop.style.display='none';
 }
 
@@ -2764,10 +3036,40 @@ function openASModal(idOrNull){
   sv('as_id',a?a.id:'');
   sv('as_client',a?a.client:'');sv('as_date',a?a.date:todayStr);sv('as_due',a?a.due:'');
   sv('as_shipDate', a?(a.shipDate||''):'');
-  sv('as_item',a?a.item:'');sv('as_qty',a?a.qty:1);sv('as_unitCost',a?a.unitCost:'');
+  sv('as_item',a?a.item:'');
   sv('as_desc',a?a.desc:'');sv('as_note',a?a.note:'');
   sv('as_billing',a?a.billing:'미청구');sv('as_status',a?a.status:'접수');
   sv('as_defectType', a?(a.defectType||''):'');
+
+  // 🔧 수리 항목 버퍼 초기화 (기존 데이터 마이그레이션)
+  if(a && Array.isArray(a.repairs) && a.repairs.length){
+    asRepairsBuf = a.repairs.map(r=>({reason:r.reason||'', qty:+r.qty||0, unitCost:+r.unitCost||0}));
+  } else if(a && (a.unitCost||a.qty)){
+    // 기존 단일 행 데이터를 한 줄로 마이그레이션
+    asRepairsBuf = [{reason: a.desc||'', qty:+a.qty||1, unitCost:+a.unitCost||0}];
+  } else {
+    asRepairsBuf = [{reason:'', qty:1, unitCost:0}];
+  }
+  _renderAsRepairGrid();
+
+  // 💰 물류비 + 부가세
+  sv('as_shippingFee', a?(a.shippingFee||0):0);
+  document.getElementById('as_vatIncluded').checked = !!(a && a.vatIncluded);
+
+  // 총 수량 — 기존엔 수동 입력값. repairs로 마이그된 경우 합산값으로
+  const qtyEl = document.getElementById('as_qty');
+  if(a && Array.isArray(a.repairs) && a.repairs.length){
+    qtyEl.value = a.repairs.reduce((s,r)=>s+(+r.qty||0), 0);
+    qtyEl.readOnly = true;
+  } else {
+    qtyEl.value = a?(a.qty||0):0;
+    qtyEl.readOnly = true;
+  }
+
+  // 증상 텍스트 — 자동 채움 모드 (사용자가 직접 수정한 적 없으면 자동 갱신)
+  const descEl = document.getElementById('as_desc');
+  if(descEl) descEl.dataset.userEdited = a && a.desc ? 'true' : 'false';
+
   // 📷 파일 버퍼 초기화 — 기존 AS에 첨부 파일이 있으면 불러옴
   asFileBuf = (a && Array.isArray(a.files)) ? a.files.map(f => ({...f})) : [];
   _renderAsFilePrev();
@@ -2929,11 +3231,29 @@ async function saveAS(){
     }
   }
 
+  // 🔧 수리 항목 정리 (빈 행 제거)
+  const repairs = asRepairsBuf
+    .filter(r => (r.reason||'').trim() || +r.qty || +r.unitCost)
+    .map(r => ({reason: (r.reason||'').trim(), qty: +r.qty||0, unitCost: +r.unitCost||0}));
+  const subtotal = repairs.reduce((s,r)=>s + r.qty * r.unitCost, 0);
+  const shippingFee = +gv('as_shippingFee')||0;
+  const vatIncluded = !!document.getElementById('as_vatIncluded')?.checked;
+  const vat = vatIncluded ? Math.round((subtotal + shippingFee) * 0.1) : 0;
+  const total = subtotal + shippingFee + vat;
+  const totalQty = repairs.reduce((s,r)=>s + r.qty, 0);
+
   const obj={
     client,date:gv('as_date'),due:gv('as_due'),
     shipDate:gv('as_shipDate')||'', // 출고일 (청구서 그룹 기준)
-    item:gv('as_item'),qty:+gv('as_qty')||1,
-    unitCost:+gv('as_unitCost')||0,
+    item:gv('as_item'),
+    qty: totalQty || (+gv('as_qty')||1),
+    // 호환용 단일가 (가장 비싼 수리 단가 또는 평균)
+    unitCost: repairs.length === 1 ? repairs[0].unitCost
+            : (totalQty > 0 ? Math.round(subtotal / totalQty) : 0),
+    repairs,            // 🔧 새 — 수리 행 배열
+    shippingFee,        // 💰 새 — 물류비
+    vatIncluded,        // 💰 새 — 부가세 포함 여부
+    totalAmount: total, // 💰 새 — 합계 (캐시값)
     desc:gv('as_desc'),note:gv('as_note'),
     defectType:gv('as_defectType'),
     billing:gv('as_billing'),status:gv('as_status'),
@@ -3514,7 +3834,7 @@ function renderAS(){
   const active = colFiltered.filter(a=>a.status!=='완료'&&a.status!=='반송');
   const done = colFiltered.filter(a=>a.status==='완료'||a.status==='반송');
   const pending = filteredAll.filter(a=>a.billing==='미청구'||a.billing==='청구 예정');
-  const pendingAmt = pending.reduce((s,a)=>s+(a.qty||1)*(a.unitCost||0),0);
+  const pendingAmt = pending.reduce((s,a)=>s+asItemTotal(a),0);
 
   // 현재 필터 그룹의 대표 이름
   const currentGroupName = _asVendorFilter && vendorGroups[_asVendorFilter]
@@ -3557,7 +3877,7 @@ function renderAS(){
       <td style="font-size:11.5px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.item||'—'}</td>
       <td style="text-align:center;color:var(--t2)">${a.qty||1}</td>
       <td style="text-align:right;font-weight:600;color:var(--gold-lt)">${a.unitCost?(+(a.unitCost)).toLocaleString()+'원':'—'}</td>
-      <td style="text-align:right;color:var(--t1);font-weight:600">${a.unitCost?((a.qty||1)*(a.unitCost)).toLocaleString()+'원':'—'}</td>
+      <td style="text-align:right;color:var(--t1);font-weight:600">${(()=>{const t=asItemTotal(a);return t?t.toLocaleString()+'원':'—';})()}</td>
       <td style="text-align:center">${inlineSelect(a.id,'defectType',a.defectType||'',DEFECT_OPTS,DEFECT_COLOR)}</td>
       <td>${inlineSelect(a.id,'status',a.status||'접수',STATUS_OPTS,STATUS_COLOR)}</td>
       <td>${inlineSelect(a.id,'billing',a.billing||'미청구',BILL_OPTS,BILL_COLOR)}</td>
@@ -3956,9 +4276,17 @@ function downloadASInvoicePDF(){
   });
   // 이니셜로 헤더 — 이미지처럼 "WB AS"
   const headerInit = ctx.init || '';
-  const grandTotal = selected.reduce((s,a) => s + (+a.qty||1)*(+a.unitCost||0), 0);
-  const grandVAT = Math.round(grandTotal * 0.1);
-  const grandWithVAT = grandTotal + grandVAT;
+  // 새 합계 계산: 각 AS의 repairs + shippingFee + vatIncluded 반영
+  const grandSubtotal = selected.reduce((s,a)=>{
+    const repairs = Array.isArray(a.repairs) && a.repairs.length
+      ? a.repairs
+      : [{qty:+a.qty||1, unitCost:+a.unitCost||0}];
+    return s + repairs.reduce((rs,r)=>rs+(+r.qty||0)*(+r.unitCost||0), 0);
+  }, 0);
+  const grandShipping = selected.reduce((s,a)=>s+(+a.shippingFee||0), 0);
+  const grandHasVAT = selected.some(a=>a.vatIncluded);
+  const grandVAT = grandHasVAT ? Math.round((grandSubtotal + grandShipping) * 0.1) : 0;
+  const grandWithVAT = grandSubtotal + grandShipping + grandVAT;
   let groupsHtml = '';
   groupKeys.forEach(k => {
     const items = groups[k];
@@ -3971,20 +4299,45 @@ function downloadASInvoicePDF(){
     const groupVAT = Math.round(groupTotal * 0.1);
     const groupWithVAT = groupTotal + groupVAT;
     let rowsHtml = '';
-    items.forEach((a, i) => {
-      const total = (+a.qty||1)*(+a.unitCost||0);
+    let itemNo = 0;
+    items.forEach((a) => {
+      itemNo++;
+      // 단가/합계 계산: repairs 배열이 있으면 그것을 사용, 없으면 단일행 호환
+      const repairs = Array.isArray(a.repairs) && a.repairs.length
+        ? a.repairs
+        : [{reason: a.desc||'', qty:+a.qty||1, unitCost:+a.unitCost||0}];
+      const itemSubtotal = repairs.reduce((s,r)=>s+(+r.qty||0)*(+r.unitCost||0), 0);
+      const totalQty = repairs.reduce((s,r)=>s+(+r.qty||0), 0);
       const asType = a.defectType === '고객불량' ? '고객' : '일반';
-      rowsHtml += `
+      const itemName = (a.item||'').replace(/</g,'&lt;');
+      // 첫 행에 품목명 + rowspan
+      const rs = repairs.length;
+      repairs.forEach((r, ri)=>{
+        const lineTotal = (+r.qty||0) * (+r.unitCost||0);
+        const reasonText = (r.reason||'').replace(/</g,'&lt;') || '-';
+        rowsHtml += `
         <tr>
-          <td style="text-align:center;padding:6px 4px;border:1px solid #999">${i+1}</td>
-          <td style="padding:6px 8px;border:1px solid #999">${(a.item||'').replace(/</g,'&lt;')}</td>
-          <td style="text-align:center;padding:6px 4px;border:1px solid #999">${a.qty||1}</td>
-          <td style="padding:6px 8px;border:1px solid #999;font-size:10.5px">${(a.desc||'').replace(/</g,'&lt;')}</td>
-          <td style="text-align:right;padding:6px 8px;border:1px solid #999">${(+a.unitCost||0).toLocaleString()}</td>
-          <td style="text-align:right;padding:6px 8px;border:1px solid #999;font-weight:600">${total.toLocaleString()}</td>
-          <td style="text-align:center;padding:6px 4px;border:1px solid #999">${asType}</td>
+          ${ri===0 ? `<td rowspan="${rs}" style="text-align:center;padding:6px 4px;border:1px solid #999;vertical-align:middle">${itemNo}</td>` : ''}
+          ${ri===0 ? `<td rowspan="${rs}" style="padding:6px 8px;border:1px solid #999;vertical-align:middle">${itemName}</td>` : ''}
+          ${ri===0 ? `<td rowspan="${rs}" style="text-align:center;padding:6px 4px;border:1px solid #999;vertical-align:middle">${totalQty}</td>` : ''}
+          <td style="padding:5px 8px;border:1px solid #999;font-size:10.5px">${r.qty||0}EA · ${reasonText}</td>
+          <td style="text-align:right;padding:5px 8px;border:1px solid #999">${(+r.unitCost||0).toLocaleString()}</td>
+          <td style="text-align:right;padding:5px 8px;border:1px solid #999;font-weight:600">${lineTotal.toLocaleString()}</td>
+          ${ri===0 ? `<td rowspan="${rs}" style="text-align:center;padding:6px 4px;border:1px solid #999;vertical-align:middle">${asType}</td>` : ''}
         </tr>`;
+      });
     });
+    // 그룹 합계 재계산 (repairs 기준)
+    const calcGroupTotal = items.reduce((s,a)=>{
+      const repairs = Array.isArray(a.repairs) && a.repairs.length
+        ? a.repairs
+        : [{qty:+a.qty||1, unitCost:+a.unitCost||0}];
+      return s + repairs.reduce((rs,r)=>rs+(+r.qty||0)*(+r.unitCost||0), 0);
+    }, 0);
+    const groupShipping = items.reduce((s,a)=>s+(+a.shippingFee||0), 0);
+    const groupHasVAT = items.some(a=>a.vatIncluded);
+    const recalcVAT = groupHasVAT ? Math.round((calcGroupTotal + groupShipping) * 0.1) : 0;
+    const recalcWithVAT = calcGroupTotal + groupShipping + recalcVAT;
     groupsHtml += `
       <div style="margin-bottom:18px">
         <div style="font-size:13px;font-weight:600;margin-bottom:4px">${dateLabel}</div>
@@ -3993,18 +4346,33 @@ function downloadASInvoicePDF(){
             <tr style="background:#f4d8e8">
               <th style="text-align:center;padding:6px 4px;border:1px solid #999;width:36px">no</th>
               <th style="text-align:center;padding:6px 8px;border:1px solid #999">공장 제품명</th>
-              <th style="text-align:center;padding:6px 4px;border:1px solid #999;width:90px">입고 수량/<br>불량 수량</th>
-              <th style="text-align:center;padding:6px 8px;border:1px solid #999">수리 수량 & 수리내용</th>
+              <th style="text-align:center;padding:6px 4px;border:1px solid #999;width:80px">총 수량</th>
+              <th style="text-align:center;padding:6px 8px;border:1px solid #999">수리내용 (사유별)</th>
               <th style="text-align:center;padding:6px 8px;border:1px solid #999;width:90px">개당수리단가</th>
-              <th style="text-align:center;padding:6px 8px;border:1px solid #999;width:100px">최종비용</th>
+              <th style="text-align:center;padding:6px 8px;border:1px solid #999;width:100px">행 소계</th>
               <th style="text-align:center;padding:6px 4px;border:1px solid #999;width:50px">AS</th>
             </tr>
           </thead>
           <tbody>
             ${rowsHtml}
+            <tr style="background:#f8f4ec">
+              <td colspan="5" style="text-align:right;padding:5px 10px;border:1px solid #999">수리 소계</td>
+              <td style="text-align:right;padding:5px 10px;border:1px solid #999">${calcGroupTotal.toLocaleString()}</td>
+              <td style="border:1px solid #999"></td>
+            </tr>
+            ${groupShipping > 0 ? `<tr style="background:#f8f4ec">
+              <td colspan="5" style="text-align:right;padding:5px 10px;border:1px solid #999">+ 물류비</td>
+              <td style="text-align:right;padding:5px 10px;border:1px solid #999">${groupShipping.toLocaleString()}</td>
+              <td style="border:1px solid #999"></td>
+            </tr>` : ''}
+            ${groupHasVAT ? `<tr style="background:#f8f4ec">
+              <td colspan="5" style="text-align:right;padding:5px 10px;border:1px solid #999">+ 부가세 (10%)</td>
+              <td style="text-align:right;padding:5px 10px;border:1px solid #999">${recalcVAT.toLocaleString()}</td>
+              <td style="border:1px solid #999"></td>
+            </tr>` : ''}
             <tr style="background:#fff7c0;font-weight:700">
-              <td colspan="5" style="text-align:right;padding:6px 10px;border:1px solid #999">최종합계 (+VAT) (+택배비:0)</td>
-              <td style="text-align:right;padding:6px 10px;border:1px solid #999">${groupWithVAT.toLocaleString()}</td>
+              <td colspan="5" style="text-align:right;padding:6px 10px;border:1px solid #999">최종합계</td>
+              <td style="text-align:right;padding:6px 10px;border:1px solid #999">${recalcWithVAT.toLocaleString()}</td>
               <td style="border:1px solid #999"></td>
             </tr>
           </tbody>
@@ -7940,6 +8308,17 @@ function mapNotionAS(row){
       if(Array.isArray(parsed)) files = parsed;
     } catch(e){ /* 무시 */ }
   }
+  // 수리 내역 JSON 복원
+  let repairs = [];
+  const repairsText = np.text(p['수리내역JSON']);
+  if(repairsText){
+    try {
+      const parsed = JSON.parse(repairsText);
+      if(Array.isArray(parsed)){
+        repairs = parsed.map(r=>({reason:r.reason||'', qty:+r.qty||0, unitCost:+r.unitCost||0}));
+      }
+    } catch(e){ /* 무시 */ }
+  }
   return{
     _notionId:row.id,
     item:    np.title(p['품목']),
@@ -7948,6 +8327,10 @@ function mapNotionAS(row){
     note:    np.text(p['비고']),
     qty:     np.number(p['수량'])||1,
     unitCost:np.number(p['개당수리비']),
+    totalAmount: np.number(p['합계']),
+    repairs,
+    shippingFee: np.number(p['물류비'])||0,
+    vatIncluded: !!(p['부가세포함']?.checkbox),
     date:    np.date(p['접수일']),
     due:     np.date(p['완료예정일']),
     shipDate:np.date(p['출고일']),
@@ -9287,7 +9670,14 @@ async function syncASToNotion(a, update){
   if(!notionCfg.workerUrl||!notionCfg.asDb){
     throw new Error('Notion 미연결: AS관리 DB');
   }
-  const total=(a.qty||1)*(a.unitCost||0);
+  // 합계 — totalAmount가 있으면 사용 (수리행 + 물류 + VAT 반영된 값)
+  const total = (a.totalAmount != null) ? a.totalAmount : (a.qty||1)*(a.unitCost||0);
+  // 수리 내역 JSON 직렬화
+  const repairsJson = ()=>{
+    const arr = Array.isArray(a.repairs) ? a.repairs : [];
+    if(!arr.length) return '';
+    return JSON.stringify(arr.map(r=>({reason:r.reason||'', qty:+r.qty||0, unitCost:+r.unitCost||0}))).slice(0,1999);
+  };
   // 사진 JSON 직렬화 (R2 URL만, base64는 제외)
   const filesForNotion = ()=>{
     const arr = Array.isArray(a.files) ? a.files : [];
@@ -9304,6 +9694,9 @@ async function syncASToNotion(a, update){
     "증상내용":{"rich_text":[{"text":{"content":a.desc||''}}]},
     "비고":{"rich_text":[{"text":{"content":a.note||''}}]},
     "사진JSON":{"rich_text":[{"text":{"content": filesForNotion()}}]},
+    "수리내역JSON":{"rich_text":[{"text":{"content": repairsJson()}}]},
+    "물류비":{"number":+a.shippingFee||0},
+    "부가세포함":{"checkbox": !!a.vatIncluded},
   };
   if(a.date) p["접수일"]={"date":{"start":a.date}};
   if(a.due)  p["완료예정일"]={"date":{"start":a.due}};
@@ -16510,6 +16903,11 @@ function completeOrd(ordId){
       }
       showToast(msg,'var(--grn)',3500);
       renderTab(); updateBadges();
+      // 모달이 열려있으면 상태 select도 갱신
+      const stSel = document.getElementById('o_status');
+      if(stSel && document.getElementById('mOrd')?.classList.contains('open')){
+        stSel.value = '출고완료';
+      }
     },
     '출고 완료 처리',
     '✓',
@@ -16537,6 +16935,11 @@ function revertOrdComplete(ordId){
       debouncedSync('order', o, true);
       showToast(`↺ "${o.vendor||'발주서'}" 진행중으로 되돌림`,'var(--blu)',2500);
       renderTab(); updateBadges();
+      // 모달이 열려있으면 상태 select도 갱신
+      const stSel = document.getElementById('o_status');
+      if(stSel && document.getElementById('mOrd')?.classList.contains('open')){
+        stSel.value = '진행중';
+      }
     },
     '완료 되돌리기',
     '↺',
@@ -18424,6 +18827,73 @@ function ordMemoDrop(toIdx){
   renderOrdMemos();
 }
 
+// 발주 모달 상태 select 변경 핸들러
+// "출고완료"는 별도 워크플로우(완료 처리)가 있으니 — completeOrd 호출 권유
+// 다른 상태(보류, 의뢰=진행중, 제작중, 수정중, 취소)는 즉시 반영
+function _onOrdStatusChange(newStatus){
+  const id = +document.getElementById('o_id').value;
+  const o = id ? orders.find(x=>x.id===id) : null;
+  // 신규 등록 모드 — 그냥 select 값만 유지하고 저장 시 반영
+  if(!o){
+    return;
+  }
+  const oldStatus = o.status || '진행중';
+  if(oldStatus === newStatus) return;
+
+  // "완료" 선택 시 — 출고완료 처리(자동 동기화 + 거래명세서 단계 이동 등) 흐름 타기
+  if(newStatus === '출고완료'){
+    // select를 일단 원래대로 되돌리고 completeOrd 다이얼로그를 띄움
+    document.getElementById('o_status').value = oldStatus;
+    completeOrd(id);
+    // completeOrd 완료 후 select 동기화는 모달 다시 열거나 별도 추적
+    setTimeout(()=>{
+      const cur = orders.find(x=>x.id===id);
+      if(cur) document.getElementById('o_status').value = cur.status || '진행중';
+    }, 800);
+    return;
+  }
+
+  // "출고완료"에서 다른 상태로 → 되돌리기 확인
+  if(oldStatus === '출고완료' && newStatus !== '출고완료'){
+    document.getElementById('o_status').value = oldStatus;
+    showConfirm(
+      `"${o.vendor||'발주서'}"의 출고완료 처리를 해제하고 "${_ordStatusLabel(newStatus)}"로 변경합니다.`,
+      ()=>{
+        o.status = newStatus;
+        delete o.completedAt;
+        // 연결된 공정 shipped 해제
+        procItems.filter(p=>p.orderId===id).forEach(p=>{
+          p.shipped=false;
+          if(p._notionId) debouncedSync('proc', p, true);
+        });
+        save();
+        debouncedSync('order', o, true);
+        document.getElementById('o_status').value = newStatus;
+        renderTab(); updateBadges();
+        showToast(`✓ 상태 변경: ${_ordStatusLabel(newStatus)}`, 'var(--blu)', 2000);
+      },
+      '출고완료 해제',
+      '↺',
+      '변경',
+      'blu'
+    );
+    return;
+  }
+
+  // 일반 상태 변경 — 즉시 반영
+  o.status = newStatus;
+  save();
+  debouncedSync('order', o, true);
+  renderTab(); updateBadges();
+  showToast(`✓ 상태 변경: ${_ordStatusLabel(newStatus)}`, 'var(--grn)', 2000);
+}
+
+// 발주 상태 한글 라벨
+function _ordStatusLabel(s){
+  const map = {'진행중':'의뢰','제작중':'제작중','수정중':'수정중','출고완료':'완료','보류':'보류','취소':'취소'};
+  return map[s] || s;
+}
+
 function openOrdModal(idOrNull){
   const o=idOrNull?orders.find(x=>x.id==idOrNull):null;
   ordFileBuf=o?(o.files||[]):[]; // load existing files
@@ -18484,6 +18954,8 @@ function openOrdModal(idOrNull){
   }
   // 충돌 감지: 수정 모드면 현재 노션 last_edited_time 스냅샷 기록
   if(o && o._notionId) recordEditStart(o._notionId);
+  // 발주 상태 select 초기화 (수정 모드면 기존 값, 신규면 진행중)
+  sv('o_status', o ? (o.status || '진행중') : '진행중');
   renderOrdRows();openM('mOrd');
 
   // 발주 모달 전용 paste 리스너 등록 (이전 리스너가 있으면 제거)
@@ -18680,7 +19152,10 @@ function renderOrdRows(){
           oninput="if(!this._composing)ordRowsBuf[${i}].name=this.value"
           onblur="_autoMatchOrdRow(${i})"
           placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;width:100%">
-        ${r.itemCode?`<div style="font-size:9.5px;color:var(--gold-lt);margin-top:2px;font-weight:600">📌 ${r.itemCode}</div>`:''}
+        ${r.itemCode?`<div style="font-size:9.5px;color:var(--gold-lt);margin-top:2px;font-weight:600">📌 ${r.itemCode}${(()=>{
+          const p=(productDB||[]).find(x=>(x.code||'').toLowerCase()===String(r.itemCode).toLowerCase());
+          return p ? `<span style="color:var(--t3);font-weight:400;margin-left:6px">· 재고 ${(+p.stock||0).toLocaleString()}</span>` : '';
+        })()}</div>`:''}
       </div>
       <div style="position:relative">
         <input class="fi search-box-tracked" id="ordRowQty_${i}" value="${r.qty||''}" oninput="ordRowsBuf[${i}].qty=this.value;renderOrdRows()" placeholder="발주량" style="font-size:11.5px;padding:4px 7px;text-align:center;width:100%" title="발주 수량 (예: 80, '각 20개 (총 80개)')">
@@ -18893,13 +19368,145 @@ let _itemSearchPdPage = 1;
 let _itemSearchSmpPage = 1;
 const ISEARCH_PAGE_SIZE = 20;
 
+// 검색 모달 다중 선택 상태
+let _itemSearchMulti = false;
+let _itemSearchSelectedPd = new Set(); // 선택된 제품DB id들
+let _itemSearchSelectedSmp = new Set(); // 선택된 샘플 id들
+
 function openItemSearch(rowIdx){
   _itemSearchRowIdx = rowIdx;
   _itemSearchPdPage = 1;
   _itemSearchSmpPage = 1;
+  // 다중 선택 상태 초기화
+  _itemSearchMulti = false;
+  _itemSearchSelectedPd.clear();
+  _itemSearchSelectedSmp.clear();
+  const mCheck = document.getElementById('itemSearchMulti');
+  if(mCheck) mCheck.checked = false;
+  _updateItemSearchSelCount();
   sv('itemSearchQ','');
   renderItemSearchResults();
   openM('mItemSearch');
+}
+
+// 다중 선택 모드 토글
+function _toggleItemSearchMulti(){
+  const cb = document.getElementById('itemSearchMulti');
+  _itemSearchMulti = !!cb?.checked;
+  if(!_itemSearchMulti){
+    _itemSearchSelectedPd.clear();
+    _itemSearchSelectedSmp.clear();
+  }
+  _updateItemSearchSelCount();
+  renderItemSearchResults();
+}
+
+// 선택 카운터 + 버튼 라벨 갱신
+function _updateItemSearchSelCount(){
+  const countEl = document.getElementById('itemSearchSelCount');
+  const btn = document.getElementById('itemSearchApplyBtn');
+  if(!countEl || !btn) return;
+  const total = _itemSearchSelectedPd.size + _itemSearchSelectedSmp.size;
+  if(_itemSearchMulti){
+    countEl.innerHTML = total > 0
+      ? `<b style="color:var(--gold-lt)">${total}건 선택됨</b> — 일괄 추가 버튼 클릭`
+      : '체크박스로 여러 품목 선택';
+    btn.style.display = total > 0 ? '' : 'none';
+    btn.textContent = `✓ 선택한 ${total}건 일괄 추가`;
+  } else {
+    countEl.textContent = '단일 선택 — 클릭하여 즉시 적용';
+    btn.style.display = 'none';
+  }
+}
+
+// 항목 선택/해제 토글
+function _toggleItemSearchPick(type, id, ev){
+  if(ev) ev.stopPropagation();
+  const set = type === 'pd' ? _itemSearchSelectedPd : _itemSearchSelectedSmp;
+  if(set.has(id)) set.delete(id);
+  else set.add(id);
+  _updateItemSearchSelCount();
+  renderItemSearchResults();
+}
+
+// 선택된 항목들을 발주 행으로 일괄 추가
+function applySelectedProductsToRows(){
+  if(!_itemSearchMulti) return;
+  const pdIds = [..._itemSearchSelectedPd];
+  const smpIds = [..._itemSearchSelectedSmp];
+  if(!pdIds.length && !smpIds.length) return;
+
+  // 현재 행 인덱스: 시작은 _itemSearchRowIdx, 그 이후는 새 행 추가
+  let curIdx = _itemSearchRowIdx;
+  // 현재 행이 완전히 비어있는지 (이름/품번 모두 없음)
+  const startRow = ordRowsBuf[curIdx];
+  const startIsEmpty = startRow && !(startRow.name||'').trim() && !(startRow.itemCode||'').trim();
+
+  let addedCount = 0;
+
+  const applyOne = (data) => {
+    // data: {name, code, plating, mat, size, price, img}
+    if(curIdx >= ordRowsBuf.length){
+      // 새 행 추가
+      ordRowsBuf.push({name:'', qty:'', plating:'실버', mat:'브라스 (BRASS)', size:'', note:''});
+    }
+    const row = ordRowsBuf[curIdx];
+    row.name = data.code ? `${data.name} [${data.code}]` : data.name;
+    row.itemCode = data.code || '';
+    row.plating = data.plating || row.plating;
+    row.mat = data.mat || row.mat;
+    row.size = data.size || row.size;
+    row.unitPrice = data.price || 0;
+    row.note = data.code || '';
+    if(!row.img && data.img) row.img = data.img;
+    addedCount++;
+    curIdx++; // 다음 항목은 그 다음 행으로
+  };
+
+  // 첫 항목은 현재 행이 비어있으면 그 자리에, 아니면 새 행
+  if(!startIsEmpty){
+    // 현재 행이 채워져 있으면 — 처음부터 새 행에 추가
+    curIdx = ordRowsBuf.length;
+  }
+
+  // 제품DB 항목들 먼저 추가
+  pdIds.forEach(id => {
+    const p = productDB.find(x => x.id == id);
+    if(!p) return;
+    const img = (p.imgs && p.imgs.length)
+      ? (typeof p.imgs[0]==='string' ? p.imgs[0] : (p.imgs[0].url||''))
+      : '';
+    applyOne({
+      name: p.name||'',
+      code: p.code||'',
+      plating: p.plating||'',
+      mat: p.mat||'',
+      size: p.size||'',
+      price: +p.price||0,
+      img
+    });
+  });
+  // 샘플 항목들 추가
+  smpIds.forEach(id => {
+    const s = samples.find(x => x.id == id);
+    if(!s) return;
+    const img = (s.imgs && s.imgs.length)
+      ? (typeof s.imgs[0]==='string' ? s.imgs[0] : (s.imgs[0].url||''))
+      : '';
+    applyOne({
+      name: s.name||'',
+      code: s.itemCode||'',
+      plating: s.plating||'',
+      mat: s.mat||'',
+      size: s.sz1||'',
+      price: +s.unitPrice||0,
+      img
+    });
+  });
+
+  closeM('mItemSearch');
+  renderOrdRows();
+  showToast(`✓ ${addedCount}건 일괄 추가됨`, 'var(--gold-lt)', 2500);
 }
 
 function renderItemSearchResults(){
@@ -18952,7 +19559,25 @@ function renderItemSearchResults(){
     const dateLine = (regDate || modDate)
       ? `<div style="font-size:9.5px;color:var(--t3);margin-top:2px">${regDate?`📅 등록 ${regDate}`:''}${regDate&&modDate?' · ':''}${modDate?`✎ 수정 ${modDate}`:''}</div>`
       : '';
-    return`<div onclick="applyProductToRow(${p.id})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:5px;margin-bottom:3px"><span style="font-size:9.5px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);font-weight:700">📦 제품DB</span>${p.code?`<span style="font-size:10px;font-family:monospace;color:var(--t3)">${p.code}</span>`:''}</div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div><div style="font-size:10.5px;color:var(--t2)">${p.type||''} · ${p.mat||''} / ${p.plating||''}${p.size?' · '+p.size:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${p.price?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${p.price.toLocaleString()}원</div>`:''}</div></div>`;
+    // 📦 재고 표시
+    const stock = +p.stock || 0;
+    const safety = +p.safetyStock || 0;
+    const stockColor = stock <= 0 ? 'var(--red)' : (safety > 0 && stock < safety ? 'var(--org)' : 'var(--grn)');
+    const stockIcon = stock <= 0 ? '⚠' : (safety > 0 && stock < safety ? '⚠' : '✓');
+    const stockText = stock <= 0
+      ? `<span style="color:var(--red);font-weight:700">재고 0</span>`
+      : `<span style="color:${stockColor};font-weight:600">재고 ${stock.toLocaleString()}${safety > 0 ? ` <span style="color:var(--t3);font-weight:400">/안전 ${safety}</span>` : ''}</span>`;
+    // 다중 모드: 체크박스 + 선택 상태 강조
+    const isSelected = _itemSearchSelectedPd.has(p.id);
+    const checkbox = _itemSearchMulti
+      ? `<input type="checkbox" ${isSelected?'checked':''} onclick="_toggleItemSearchPick('pd',${p.id},event)" style="margin-right:8px;cursor:pointer;flex-shrink:0;transform:scale(1.2)">`
+      : '';
+    const bgColor = isSelected ? 'var(--gold-bg)' : 'var(--s1)';
+    const borderColor = isSelected ? 'var(--gold)' : 'var(--bdr)';
+    const onClickAction = _itemSearchMulti
+      ? `_toggleItemSearchPick('pd',${p.id})`
+      : `applyProductToRow(${p.id})`;
+    return`<div onclick="${onClickAction}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid ${borderColor};border-radius:7px;cursor:pointer;background:${bgColor};transition:all .15s" onmouseover="if(!${isSelected})this.style.background='var(--gold-bg)'" onmouseout="this.style.background='${bgColor}'">${checkbox}${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:5px;margin-bottom:3px"><span style="font-size:9.5px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);font-weight:700">📦 제품DB</span>${p.code?`<span style="font-size:10px;font-family:monospace;color:var(--t3)">${p.code}</span>`:''}</div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div><div style="font-size:10.5px;color:var(--t2)">${p.type||''} · ${p.mat||''} / ${p.plating||''}${p.size?' · '+p.size:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${p.price?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${p.price.toLocaleString()}원</div>`:''}<div style="font-size:10px;margin-top:2px">${stockIcon} ${stockText}</div></div></div>`;
   };
   const mkSmp=s=>{
     const hasCode=!!s.itemCode;
@@ -18964,7 +19589,17 @@ function renderItemSearchResults(){
     const dateLine = (reqDate || dueDate)
       ? `<div style="font-size:9.5px;color:var(--t3);margin-top:2px">${reqDate?`📅 의뢰 ${reqDate}`:''}${reqDate&&dueDate?' → ':''}${dueDate?`납기 <b style="color:var(--t2)">${dueDate}</b>`:''}</div>`
       : '';
-    return`<div onclick="applyItemToRow(${s.id})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:6px;margin-bottom:3px">${hasCode?`<span style="font-size:10px;font-weight:700;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 6px;border-radius:4px">📌 ${s.itemCode}</span>`:'<span style="font-size:10px;color:var(--t3);background:var(--s2);padding:1px 6px;border-radius:4px">품번없음</span>'}<span class="chip ${stCls}" style="font-size:9.5px">${s.status}</span></div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div><div style="font-size:10.5px;color:var(--t2)">${s.type||''} · ${s.mat||''} / ${s.plating||''}${s.sz1?' · '+s.sz1:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${s.unitPrice?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${s.unitPrice.toLocaleString()}원</div>`:''}</div></div>`;
+    // 다중 모드: 체크박스 + 선택 상태 강조
+    const isSelected = _itemSearchSelectedSmp.has(s.id);
+    const checkbox = _itemSearchMulti
+      ? `<input type="checkbox" ${isSelected?'checked':''} onclick="_toggleItemSearchPick('smp',${s.id},event)" style="margin-right:8px;cursor:pointer;flex-shrink:0;transform:scale(1.2)">`
+      : '';
+    const bgColor = isSelected ? 'var(--gold-bg)' : 'var(--s1)';
+    const borderColor = isSelected ? 'var(--gold)' : 'var(--bdr)';
+    const onClickAction = _itemSearchMulti
+      ? `_toggleItemSearchPick('smp',${s.id})`
+      : `applyItemToRow(${s.id})`;
+    return`<div onclick="${onClickAction}" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid ${borderColor};border-radius:7px;cursor:pointer;background:${bgColor};transition:all .15s" onmouseover="if(!${isSelected})this.style.background='var(--gold-bg)'" onmouseout="this.style.background='${bgColor}'">${checkbox}${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:6px;margin-bottom:3px">${hasCode?`<span style="font-size:10px;font-weight:700;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 6px;border-radius:4px">📌 ${s.itemCode}</span>`:'<span style="font-size:10px;color:var(--t3);background:var(--s2);padding:1px 6px;border-radius:4px">품번없음</span>'}<span class="chip ${stCls}" style="font-size:9.5px">${s.status}</span></div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div><div style="font-size:10.5px;color:var(--t2)">${s.type||''} · ${s.mat||''} / ${s.plating||''}${s.sz1?' · '+s.sz1:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${s.unitPrice?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${s.unitPrice.toLocaleString()}원</div>`:''}</div></div>`;
   };
 
   let html='';
@@ -18995,9 +19630,14 @@ function applyProductToRow(pdId){
   ordRowsBuf[i].size=p.size||ordRowsBuf[i].size;
   ordRowsBuf[i].unitPrice=p.price||0;
   ordRowsBuf[i].note=p.code||'';
+  // 🖼 이미지: 행에 이미지가 없을 때만 제품DB의 첫 번째 이미지 자동 가져옴
+  if(!ordRowsBuf[i].img && p.imgs && p.imgs.length){
+    const first = p.imgs[0];
+    ordRowsBuf[i].img = typeof first === 'string' ? first : (first.url || '');
+  }
   closeM('mItemSearch');
   renderOrdRows();
-  showToast(`✓ "${p.name}" 적용됨`,'var(--gold-lt)');
+  showToast(`✓ "${p.name}" 적용됨`, 'var(--gold-lt)');
 }
 
 function applyItemToRow(smpId){
@@ -19850,7 +20490,7 @@ async function saveOrd(forceOverwrite){
   if(!ordNoVal || isLegacyOrdNo){
     ordNoVal = genOrderNo(vendor, gv('o_date')||todayStr);
   }
-  const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),factShip:gv('o_factShip'),manager:gv('o_manager'),no:ordNoVal,memo:memoText,memoList,rows:cleanRows,files:filesToSave,factoryNotice:gv('o_factoryNotice')||''};
+  const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),factShip:gv('o_factShip'),manager:gv('o_manager'),no:ordNoVal,memo:memoText,memoList,rows:cleanRows,files:filesToSave,factoryNotice:gv('o_factoryNotice')||'',status:gv('o_status')||'진행중'};
   let ordId;
   let stockReceiveResult={matched:0,unmatched:0}; // 신규 입고로 인한 재고 증가 결과
   if(id){
@@ -27224,6 +27864,144 @@ function renderIoVendorDropdown(query){
 function hideIoVendorDropdown(){
   const el = document.getElementById('ioVendorDropdown');
   if(el) el.style.display = 'none';
+}
+
+// ── IO 품목 자동완성 (쉼표 인지) ──
+// 마지막 쉼표 이후 부분만 검색해서 — 여러 품목 입력 시 자연스럽게 작동
+function _ioItemCurrentQuery(inp){
+  const val = inp.value || '';
+  const lastComma = val.lastIndexOf(',');
+  return {
+    prefix: lastComma >= 0 ? val.slice(0, lastComma+1) : '',
+    query:  lastComma >= 0 ? val.slice(lastComma+1).trim() : val.trim()
+  };
+}
+
+function ioItemSearch(inp){
+  const drop = document.getElementById('ioItemDrop');
+  if(!drop) return;
+  const {query} = _ioItemCurrentQuery(inp);
+  const q = query.toLowerCase();
+
+  // 후보: 제품DB + 기존 IO 이력 + 발주 행 이름
+  const seen = new Set();
+  const candidates = [];
+
+  // 1) 제품DB
+  (productDB||[]).forEach(p=>{
+    const name=(p.name||'').trim();
+    const code=(p.code||'').trim();
+    const key = code || name;
+    if(!key || seen.has(key)) return;
+    seen.add(key);
+    candidates.push({
+      name, code,
+      img: (p.imgs && p.imgs[0]) ? (typeof p.imgs[0]==='string' ? p.imgs[0] : p.imgs[0].url) : '',
+      stock: +p.stock||0,
+      source:'db'
+    });
+  });
+  // 2) 기존 IO 이력의 품목 텍스트 (조각조각 분리)
+  (ioItems||[]).forEach(io=>{
+    const items=(io.items||'').split(/[,;\n]+/);
+    items.forEach(it=>{
+      // "이름 30개" → 이름만 추출
+      const m = it.trim().match(/^(.+?)\s*\d+\s*(?:개|EA|ea|pcs)?$/);
+      const name = (m ? m[1] : it).trim();
+      if(!name || seen.has(name)) return;
+      seen.add(name);
+      candidates.push({name, code:'', source:'history'});
+    });
+  });
+
+  // 필터
+  let matches = candidates;
+  if(q){
+    matches = candidates.filter(c=>{
+      const nm=(c.name||'').toLowerCase();
+      const cd=(c.code||'').toLowerCase();
+      return nm.includes(q) || (cd && cd.includes(q));
+    });
+  }
+  matches = matches.slice(0, 8);
+  if(!matches.length){
+    drop.style.display = 'none';
+    return;
+  }
+
+  drop.innerHTML = matches.map((c, i)=>{
+    const sourceIcon = c.source==='db'
+      ? '<span style="font-size:9px;color:var(--blu);background:rgba(26,109,181,.1);padding:1px 5px;border-radius:3px">📦DB</span>'
+      : '<span style="font-size:9px;color:var(--t3);background:var(--s2);padding:1px 5px;border-radius:3px">기록</span>';
+    const thumb = c.img
+      ? `<img src="${c.img}" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0">`
+      : '<div style="width:28px;height:28px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:11px;color:var(--t3)">📷</div>';
+    const codeHtml = c.code ? `<span style="font-family:monospace;font-size:10px;color:var(--gold-lt);background:var(--gold-bg);padding:1px 5px;border-radius:3px;margin-right:4px">${c.code}</span>` : '';
+    const stockHtml = c.source==='db' ? `<div style="font-size:10px;color:${c.stock<=0?'var(--red)':'var(--t3)'};margin-top:1px">재고 ${c.stock}</div>` : '';
+    const escName = (c.name||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    return `<div data-idx="${i}" onmousedown="ioItemPick('${escName}')"
+      style="display:flex;align-items:center;gap:8px;padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--bdr);font-size:12px"
+      onmouseover="this.style.background='var(--s2)';_ioItemHoverIdx=${i}"
+      onmouseout="this.style.background='transparent'">
+      ${thumb}
+      <div style="flex:1;min-width:0;overflow:hidden">
+        <div style="font-weight:500;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${codeHtml}${c.name||'<span style="color:var(--t3)">이름 없음</span>'}</div>
+        ${stockHtml}
+      </div>
+      ${sourceIcon}
+    </div>`;
+  }).join('');
+  drop.style.display = 'block';
+  _ioItemHoverIdx = -1;
+}
+
+let _ioItemHoverIdx = -1;
+
+// 품목 클릭 → 마지막 쉼표 이후 부분만 교체
+function ioItemPick(name){
+  const inp = document.getElementById('io_items');
+  if(!inp) return;
+  const {prefix} = _ioItemCurrentQuery(inp);
+  // prefix 끝에 공백 정리
+  const cleanPrefix = prefix ? prefix.replace(/,\s*$/, ', ') : '';
+  inp.value = cleanPrefix + name + ' ';
+  inp.focus();
+  // 끝으로 커서 이동
+  setTimeout(()=>{
+    inp.setSelectionRange(inp.value.length, inp.value.length);
+  }, 0);
+  const drop = document.getElementById('ioItemDrop');
+  if(drop) drop.style.display = 'none';
+}
+
+// 키보드 네비게이션 (화살표/엔터)
+function _ioItemKeydown(ev){
+  const drop = document.getElementById('ioItemDrop');
+  if(!drop || drop.style.display === 'none') return;
+  const items = drop.querySelectorAll('[data-idx]');
+  if(!items.length) return;
+  if(ev.key === 'ArrowDown'){
+    ev.preventDefault();
+    _ioItemHoverIdx = Math.min(_ioItemHoverIdx + 1, items.length - 1);
+    _ioItemUpdateHover(items);
+  } else if(ev.key === 'ArrowUp'){
+    ev.preventDefault();
+    _ioItemHoverIdx = Math.max(_ioItemHoverIdx - 1, 0);
+    _ioItemUpdateHover(items);
+  } else if(ev.key === 'Enter' && _ioItemHoverIdx >= 0){
+    ev.preventDefault();
+    items[_ioItemHoverIdx].dispatchEvent(new MouseEvent('mousedown'));
+  } else if(ev.key === 'Escape'){
+    drop.style.display = 'none';
+  }
+}
+function _ioItemUpdateHover(items){
+  items.forEach((el, i)=>{
+    el.style.background = i === _ioItemHoverIdx ? 'var(--s2)' : 'transparent';
+  });
+  if(_ioItemHoverIdx >= 0){
+    items[_ioItemHoverIdx].scrollIntoView({block:'nearest'});
+  }
 }
 
 // ────────────────────────────────────────
