@@ -46,6 +46,27 @@ a{color:inherit;text-decoration:none}
 .sync-btn.syncing .sync-dot{background:var(--org);animation:pulse 1s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
+/* 알림 버튼 + 패널 */
+.notif-btn{position:relative;width:36px;height:32px;border:1px solid var(--bdr);background:var(--s1);border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-family:inherit;padding:0}
+.notif-btn:active{transform:scale(.96)}
+.notif-btn.has-unread{background:var(--gold-bg);border-color:var(--gold-line)}
+.notif-ico{font-size:15px;line-height:1}
+.notif-cnt{position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;border-radius:8px;background:var(--red);color:#fff;font-size:9.5px;font-weight:700;padding:0 4px;display:flex;align-items:center;justify-content:center;line-height:1;border:1.5px solid var(--bg)}
+.notif-panel{position:fixed;top:54px;right:8px;width:min(360px,calc(100vw - 16px));max-height:calc(100vh - 70px);background:var(--s1);border:1px solid var(--bdr);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.18);z-index:250;display:flex;flex-direction:column;overflow:hidden}
+.notif-panel-h{padding:10px 14px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;background:var(--s2);flex-shrink:0}
+.notif-panel-h .t{font-size:13.5px;font-weight:700;color:var(--t1)}
+.notif-panel-b{flex:1;overflow-y:auto;padding:4px 0;min-height:80px}
+.notif-item{display:flex;gap:9px;padding:10px 14px;border-bottom:1px solid var(--bdr-lt);cursor:pointer;transition:background .12s}
+.notif-item:active{background:var(--s2)}
+.notif-item.unread{background:var(--gold-bg)}
+.notif-item.unread::before{content:'';position:absolute;left:6px;top:50%;transform:translateY(-50%);width:6px;height:6px;border-radius:50%;background:var(--gold-lt)}
+.notif-item{position:relative;padding-left:18px}
+.notif-item .ico{font-size:18px;flex-shrink:0;line-height:1;margin-top:2px}
+.notif-item .body{flex:1;min-width:0}
+.notif-item .msg{font-size:12.5px;color:var(--t1);line-height:1.4;font-weight:500;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.notif-item .time{font-size:10px;color:var(--t3);margin-top:3px}
+.notif-empty{padding:30px 16px;text-align:center;color:var(--t3);font-size:12px}
+
 .botnav{position:fixed;bottom:0;left:0;right:0;height:calc(64px + var(--safe-bot));padding-bottom:var(--safe-bot);background:var(--s1);border-top:1px solid var(--bdr);display:grid;grid-template-columns:repeat(5,1fr);z-index:100}
 .nav-item{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--t3);font-size:10px;font-weight:600;transition:color .15s;position:relative}
 .nav-item.active{color:var(--gold-lt)}
@@ -283,8 +304,24 @@ a{color:inherit;text-decoration:none}
 <div class="topbar">
   <div class="brand" onclick="openNotionSettings()" style="cursor:pointer">EK <small>OEM Mobile <span style="opacity:.5;font-size:9px;margin-left:2px" id="appVer"></span></small></div>
   <div class="tb-right">
+    <button class="notif-btn" id="notifBtn" onclick="toggleNotifPanel()" title="알림">
+      <span class="notif-ico">🔔</span>
+      <span class="notif-cnt" id="notifCnt" style="display:none">0</span>
+    </button>
     <button class="sync-btn" id="syncBtn" onclick="manualSync()"><span class="sync-dot"></span><span id="syncLabel">동기화</span></button>
   </div>
+</div>
+
+<!-- 알림 패널 -->
+<div class="notif-panel" id="notifPanel" style="display:none">
+  <div class="notif-panel-h">
+    <div class="t">🔔 알림 <span id="notifPanelCnt" style="font-size:11px;color:var(--t3);font-weight:500;margin-left:4px"></span></div>
+    <div style="display:flex;gap:6px;align-items:center">
+      <button id="notifMarkAll" onclick="markAllNotifRead()" style="padding:4px 10px;font-size:10.5px;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;color:var(--t2);font-family:inherit;cursor:pointer">모두 읽음</button>
+      <button onclick="toggleNotifPanel()" style="padding:4px 10px;font-size:10.5px;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;color:var(--t2);font-family:inherit;cursor:pointer">닫기</button>
+    </div>
+  </div>
+  <div class="notif-panel-b" id="notifPanelBody"></div>
 </div>
 
 <!-- 페이지: 대시보드 -->
@@ -424,8 +461,8 @@ a{color:inherit;text-decoration:none}
 
 <nav class="botnav">
   <button class="nav-item active" data-pg="pgDash" onclick="goPage('pgDash')"><span class="ico">📅</span><span>대시보드</span></button>
-  <button class="nav-item" data-pg="pgOrd" onclick="goPage('pgOrd')"><span class="ico">📋</span><span>발주</span><span class="nav-badge" id="bdgOrd" style="display:none">0</span></button>
-  <button class="nav-item" data-pg="pgSmp" onclick="goPage('pgSmp')"><span class="ico">💎</span><span>샘플</span><span class="nav-badge" id="bdgSmp" style="display:none">0</span></button>
+  <button class="nav-item" data-pg="pgOrd" onclick="goPage('pgOrd')"><span class="ico">📋</span><span>발주</span></button>
+  <button class="nav-item" data-pg="pgSmp" onclick="goPage('pgSmp')"><span class="ico">💎</span><span>샘플</span></button>
   <button class="nav-item" data-pg="pgIO" onclick="goPage('pgIO')"><span class="ico">🚚</span><span>입출고</span></button>
   <button class="nav-item" data-pg="pgMore" onclick="goPage('pgMore')"><span class="ico">⋯</span><span>더보기</span></button>
 </nav>
@@ -900,6 +937,226 @@ function mapNotionClient(row){
   };
 }
 
+// ════════════════════════════════════════════
+// 🔔 알림 시스템
+// ════════════════════════════════════════════
+// 동기화 직전 데이터와 동기화 후 데이터 차이를 비교해서 알림 생성
+// 알림은 localStorage('ek3_notifs')에 저장 (최대 50개)
+// 각 알림: {id, ts, ico, msg, kind, targetId, read}
+//   - kind: 'order'|'sample'|'as'|'io'|'invoice'|'orderStatus'
+//   - targetId: 클릭 시 이동할 항목 id
+const LS_NOTIF = 'ek3_notifs';
+const NOTIF_MAX = 50;
+let _notifs = [];
+let _notifPanelOpen = false;
+
+function _loadNotifs(){
+  try {
+    const raw = localStorage.getItem(LS_NOTIF);
+    _notifs = raw ? JSON.parse(raw) : [];
+  } catch(e){ _notifs = []; }
+}
+function _saveNotifs(){
+  try {
+    // 오래된 것부터 잘라서 최대 50개 유지
+    if(_notifs.length > NOTIF_MAX) _notifs = _notifs.slice(-NOTIF_MAX);
+    localStorage.setItem(LS_NOTIF, JSON.stringify(_notifs));
+  } catch(e){ console.warn('알림 저장 실패:', e); }
+}
+function _addNotif(notif){
+  notif.id = Date.now() + Math.random();
+  notif.ts = Date.now();
+  notif.read = false;
+  _notifs.push(notif);
+}
+
+// 동기화 전후의 데이터 비교 → 알림 생성
+// prev/curr는 노션 ID(_notionId)를 키로 사용 (안정적 식별자)
+function _detectChanges(prev, curr){
+  if(!prev || !prev.length) return; // 첫 동기화는 알림 생성 안 함
+  const newItems = [];
+  // 발주서 신규
+  const prevOrdIds = new Set((prev.orders||[]).map(o=>o._notionId).filter(Boolean));
+  (curr.orders||[]).forEach(o=>{
+    if(o._notionId && !prevOrdIds.has(o._notionId)){
+      _addNotif({
+        ico:'📋', kind:'order', targetId:o.id,
+        msg:`새 발주: ${o.vendor||'(이름없음)'} · ${o.no||'-'}`
+      });
+    }
+  });
+  // 발주 상태 변경 (출고완료/취소 등)
+  const prevOrdMap = new Map((prev.orders||[]).filter(o=>o._notionId).map(o=>[o._notionId, o]));
+  (curr.orders||[]).forEach(o=>{
+    if(!o._notionId) return;
+    const old = prevOrdMap.get(o._notionId);
+    if(!old) return;
+    if(old.status !== o.status && o.status){
+      // 의미 있는 변화만 알림 (진행중 → 다른 상태)
+      if(o.status === '출고완료' || o.status === '취소' || o.status === '보류'){
+        _addNotif({
+          ico: o.status === '출고완료' ? '✅' : (o.status === '취소' ? '✕' : '⏸'),
+          kind:'orderStatus', targetId:o.id,
+          msg:`${o.vendor||''} 발주가 ${o.status}로 변경됨`
+        });
+      }
+    }
+  });
+  // 샘플 신규
+  const prevSmpIds = new Set((prev.samples||[]).map(s=>s._notionId).filter(Boolean));
+  (curr.samples||[]).forEach(s=>{
+    if(s._notionId && !prevSmpIds.has(s._notionId)){
+      _addNotif({
+        ico:'💎', kind:'sample', targetId:s.id,
+        msg:`새 샘플: ${s.name||'(이름없음)'}${s.manager?` · ${s.manager}`:''}`
+      });
+    }
+  });
+  // AS 신규
+  const prevAsIds = new Set((prev.asItems||[]).map(a=>a._notionId).filter(Boolean));
+  (curr.asItems||[]).forEach(a=>{
+    if(a._notionId && !prevAsIds.has(a._notionId)){
+      _addNotif({
+        ico:'🔧', kind:'as', targetId:a.id,
+        msg:`새 AS: ${a.item||'(품목없음)'}${a.client?` · ${a.client}`:''}`
+      });
+    }
+  });
+  // 입출고 신규
+  const prevIoIds = new Set((prev.ioItems||[]).map(x=>x._notionId).filter(Boolean));
+  (curr.ioItems||[]).forEach(io=>{
+    if(io._notionId && !prevIoIds.has(io._notionId)){
+      const icon = io.kind === '출고' ? '📤' : '📥';
+      _addNotif({
+        ico:icon, kind:'io', targetId:io.id,
+        msg:`새 ${io.kind||'입출고'}: ${io.title||io.vendor||'-'}`
+      });
+    }
+  });
+  // 거래명세서 신규
+  const prevInvIds = new Set((prev.invoiceHistory||[]).map(v=>v._notionId).filter(Boolean));
+  (curr.invoiceHistory||[]).forEach(v=>{
+    if(v._notionId && !prevInvIds.has(v._notionId)){
+      _addNotif({
+        ico:'🧾', kind:'invoice', targetId:v.id,
+        msg:`새 거래명세서: ${v.vendor||'-'} · ${(+v.total||0).toLocaleString()}원`
+      });
+    }
+  });
+  if(_notifs.length){
+    _saveNotifs();
+    _renderNotifBadge();
+    if(_notifPanelOpen) _renderNotifPanel();
+  }
+}
+
+function _renderNotifBadge(){
+  const btn = document.getElementById('notifBtn');
+  const cnt = document.getElementById('notifCnt');
+  if(!btn || !cnt) return;
+  const unread = _notifs.filter(n => !n.read).length;
+  if(unread > 0){
+    cnt.textContent = unread > 99 ? '99+' : unread;
+    cnt.style.display = 'flex';
+    btn.classList.add('has-unread');
+  } else {
+    cnt.style.display = 'none';
+    btn.classList.remove('has-unread');
+  }
+}
+
+function toggleNotifPanel(){
+  _notifPanelOpen = !_notifPanelOpen;
+  const panel = document.getElementById('notifPanel');
+  if(!panel) return;
+  panel.style.display = _notifPanelOpen ? 'flex' : 'none';
+  if(_notifPanelOpen) _renderNotifPanel();
+}
+
+function _renderNotifPanel(){
+  const body = document.getElementById('notifPanelBody');
+  const cntEl = document.getElementById('notifPanelCnt');
+  if(!body) return;
+  // 최신순 정렬
+  const list = [..._notifs].sort((a,b)=>b.ts - a.ts);
+  const unread = list.filter(n => !n.read).length;
+  if(cntEl) cntEl.textContent = unread > 0 ? `(읽지 않음 ${unread})` : '';
+  if(!list.length){
+    body.innerHTML = `<div class="notif-empty"><div style="font-size:32px;margin-bottom:8px">🔕</div>알림이 없습니다</div>`;
+    return;
+  }
+  body.innerHTML = list.map(n=>`
+    <div class="notif-item ${n.read?'':'unread'}" onclick="_openNotif(${JSON.stringify(n.id).replace(/"/g,'&quot;')})">
+      <span class="ico">${n.ico||'🔔'}</span>
+      <div class="body">
+        <div class="msg">${escapeHtml(n.msg||'')}</div>
+        <div class="time">${_relTime(n.ts)}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function _relTime(ts){
+  const elapsed = Math.floor((Date.now() - ts) / 1000);
+  if(elapsed < 60) return '방금';
+  if(elapsed < 3600) return Math.floor(elapsed/60) + '분 전';
+  if(elapsed < 86400) return Math.floor(elapsed/3600) + '시간 전';
+  if(elapsed < 7*86400) return Math.floor(elapsed/86400) + '일 전';
+  // 일주일 이상: 날짜 표시
+  const d = new Date(ts);
+  return `${(d.getMonth()+1)}/${d.getDate()}`;
+}
+
+function _openNotif(id){
+  const n = _notifs.find(x=>x.id===id);
+  if(!n) return;
+  n.read = true;
+  _saveNotifs();
+  _renderNotifBadge();
+  // 패널 닫기
+  toggleNotifPanel();
+  // 해당 항목으로 이동
+  setTimeout(()=>{
+    if(n.kind === 'order' || n.kind === 'orderStatus'){
+      showOrdDetail(n.targetId);
+    } else if(n.kind === 'sample'){
+      showSmpDetail(n.targetId);
+    } else if(n.kind === 'as'){
+      // AS 상세는 더보기 → AS 탭에서
+      goPage('pgMore');
+      setTimeout(()=>{
+        setMoreTab('as');
+        setTimeout(()=>showAsDetail(n.targetId), 100);
+      }, 100);
+    } else if(n.kind === 'io'){
+      showIoDetail(n.targetId);
+    } else if(n.kind === 'invoice'){
+      goPage('pgMore');
+      setTimeout(()=>{
+        setMoreTab('inv');
+        setTimeout(()=>showInvDetail(n.targetId), 100);
+      }, 100);
+    }
+  }, 100);
+}
+
+function markAllNotifRead(){
+  _notifs.forEach(n => n.read = true);
+  _saveNotifs();
+  _renderNotifBadge();
+  _renderNotifPanel();
+}
+
+// 알림 패널 외부 탭 시 닫기
+document.addEventListener('click', (e)=>{
+  if(!_notifPanelOpen) return;
+  const panel = document.getElementById('notifPanel');
+  const btn = document.getElementById('notifBtn');
+  if(!panel || !btn) return;
+  if(panel.contains(e.target) || btn.contains(e.target)) return;
+  toggleNotifPanel();
+}, true);
+
 // ──── 동기화 (풀) ────
 // 마지막 동기화 시각 추적 (자동 동기화 간격 제어 + UI 표시용)
 let _lastSyncAt = 0;
@@ -921,6 +1178,16 @@ async function manualSync(silent){
   const lbl = document.getElementById('syncLabel');
   if(btn) btn.classList.add('syncing');
   if(lbl && !silent) lbl.textContent = '동기화 중...';
+
+  // 동기화 전 데이터 스냅샷 (변경 감지용)
+  const prev = {
+    orders: [...orders],
+    samples: [...samples],
+    asItems: [...asItems],
+    ioItems: [...ioItems],
+    invoiceHistory: [...invoiceHistory]
+  };
+
   try{
     const [smpRows, ordRows, asRows, ioRows, pdRows, invRows, taskRows, cliRows] = await Promise.all([
       notionCfg.smpDb     ? nQueryAll(notionCfg.smpDb)     : Promise.resolve([]),
@@ -943,6 +1210,16 @@ async function manualSync(silent){
     saveAll();
     _lastSyncAt = Date.now();
     _updateSyncLabel();
+
+    // 🔔 변경 감지 → 알림 생성 (첫 동기화는 prev가 비어있어서 자동 스킵)
+    _detectChanges({
+      orders: prev.orders,
+      samples: prev.samples,
+      asItems: prev.asItems,
+      ioItems: prev.ioItems,
+      invoiceHistory: prev.invoiceHistory
+    }, {orders, samples, asItems, ioItems, invoiceHistory});
+
     if(!silent){
       showToast(`✓ 동기화 완료 — 발주 ${orders.length} · 샘플 ${samples.length} · 입출고 ${ioItems.length}`, 'success');
     }
@@ -1135,11 +1412,6 @@ function renderDash(){
       lowBanner.innerHTML = '';
     }
   }
-  // 진행 배지
-  document.getElementById('bdgOrd').style.display = ordIp>0?'flex':'none';
-  document.getElementById('bdgOrd').textContent = ordIp;
-  document.getElementById('bdgSmp').style.display = smpIp>0?'flex':'none';
-  document.getElementById('bdgSmp').textContent = smpIp;
   renderCal();
   renderTaskDay();  // 📝 업무일지
 }
@@ -4601,7 +4873,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-05-16-01';
+const APP_VERSION = '2026-05-16-02';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
@@ -4651,6 +4923,9 @@ window.onload = async ()=>{
   if(isReloading) return;  // 새로고침 진행 중이면 init 중단
 
   loadAll();
+  // 알림 로드 + 배지 표시
+  _loadNotifs();
+  _renderNotifBadge();
   // 버전 표시
   const verEl = document.getElementById('appVer');
   if(verEl) verEl.textContent = 'v' + APP_VERSION.slice(-2);
