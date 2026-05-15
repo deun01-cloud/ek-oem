@@ -690,7 +690,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       </datalist>
     </div>
     <div class="fg"><label>진행 상태</label>
-      <select class="fs" id="s_status">
+      <select class="fs" id="s_status" onchange="_refreshSmpPdRegArea()">
         <option value="의뢰">의뢰</option>
         <option value="제작중">제작중</option>
         <option value="수정중">수정중</option>
@@ -734,7 +734,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>도금 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(직접입력 가능)</span></label>
       <input class="fi" id="s_plating" list="smpPlatingList" placeholder="선택 또는 직접입력">
       <datalist id="smpPlatingList">
-        <option value="실버"><option value="골드"><option value="로즈골드">
+        <option value="실버"><option value="골드"><option value="로즈골드"><option value="로듐">
         <option value="무도금"><option value="변색방지 코팅"><option value="블랙"><option value="기타">
       </datalist>
     </div>
@@ -786,6 +786,18 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       </div>
     </div>
     <div style="font-size:10px;color:var(--t3);margin-top:4px">💡 개발 관련 사항 · 주의사항을 체크리스트로 관리합니다. 체크박스로 완료 표시 가능.</div>
+  </div>
+
+  <!-- 📦 제품DB 등록 영역 -->
+  <div id="s_pdRegArea" style="margin-top:14px;padding:10px 14px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+      <span style="font-size:18px">📦</span>
+      <div style="min-width:0">
+        <div style="font-size:12.5px;font-weight:600;color:var(--gold-lt)">제품DB 등록</div>
+        <div id="s_pdRegHint" style="font-size:10.5px;color:var(--t3);margin-top:1px">이 샘플을 정식 제품으로 등록합니다 — 정보가 자동 채워져요</div>
+      </div>
+    </div>
+    <button type="button" id="s_pdRegBtn" onclick="openProductFromSample()" class="btn bp" style="font-size:11.5px;padding:6px 14px;flex-shrink:0">+ 제품DB 등록</button>
   </div>
 
   <div class="form-sec">비용 정보 (거래명세서용)</div>
@@ -1440,7 +1452,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>도금</label>
       <select class="fs" id="pd_plating">
         <option>골드</option><option>실버</option><option>로즈골드</option>
-        <option>건메탈</option><option>무도금</option><option>기타</option>
+        <option>로듐</option><option>건메탈</option><option>무도금</option><option>기타</option>
       </select>
     </div>
     <div class="fg"><label>규격 / 사이즈</label><input class="fi" id="pd_size" placeholder="체인두께 2.7mm, 길이 180mm"></div>
@@ -1882,7 +1894,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       <div class="fr2">
         <div class="fg"><label>도금</label>
           <input class="fi" id="sr_plating" list="srPlatingList" placeholder="예: 실버 버니쉬 도금" oninput="renderSmpReqPreview()">
-          <datalist id="srPlatingList"><option value="골드"><option value="실버"><option value="실버 버니쉬"><option value="로즈골드"><option value="건메탈"><option value="무도금"><option value="기타"></datalist>
+          <datalist id="srPlatingList"><option value="골드"><option value="실버"><option value="실버 버니쉬"><option value="로즈골드"><option value="로듐"><option value="건메탈"><option value="무도금"><option value="기타"></datalist>
         </div>
         <div class="fg"><label>중량</label><input class="fi" id="sr_weight" placeholder="g 또는 비워둠" oninput="renderSmpReqPreview()"></div>
       </div>
@@ -5668,6 +5680,18 @@ async function saveProduct(){
       _linkPendingOrdRow(savedProduct);
     }
     closeM('mProduct');renderTab();
+    // 📦 샘플에서 온 등록이면 — 그 샘플의 _productId 필드에 연결
+    if(savedProduct && window._pendingProductFromSampleId){
+      const smpId = window._pendingProductFromSampleId;
+      const si = samples.findIndex(x=>x.id===smpId);
+      if(si >= 0){
+        samples[si]._productId = savedProduct.id;
+        save();
+        debouncedSync('sample', samples[si], true);
+        console.log(`[Sample→PD] 샘플 ${smpId} → 제품 ${savedProduct.id} 연결 완료`);
+      }
+      window._pendingProductFromSampleId = null;
+    }
     // 동기화 결과 토스트: 거래명세서·발주서·샘플 합쳐서 표시
     const totalSynced = priceSyncedCount + orderPriceSyncedCount + samplePriceSyncedCount;
     if(totalSynced > 0){
@@ -6138,12 +6162,28 @@ function confirmOrdDoc(){
       ${o.memo?'<div style="background:#f9f7f2;border:1px solid #ddd;border-radius:6px;padding:10px 14px;font-size:10pt;color:#555"><b>메모:</b> '+o.memo+'</div>':''}
     </div>`, (o.no||('출하지시서_'+(o.vendor||''))));
   } else {
+    // 품번 → 제품DB 이미지 매칭 헬퍼
+    const _lookupPdImg = (code)=>{
+      if(!code) return '';
+      const p = (typeof productDB !== 'undefined' && productDB)
+        ? productDB.find(x => (x.code||'').toLowerCase() === String(code).toLowerCase())
+        : null;
+      if(!p || !p.imgs || !p.imgs.length) return '';
+      const first = p.imgs[0];
+      return typeof first === 'string' ? first : (first.url || '');
+    };
     let totalAmt=0;
     const rowsHtml=activeRows.map((r,i)=>{
       const unit=+r.unitPrice||0,amt=+r._docQty*unit;
       totalAmt+=amt;
+      // 🖼 이미지 — 품번 우선, 없으면 행에 있는 r.img, 없으면 빈 칸
+      const imgUrl = _lookupPdImg(r.itemCode) || r.img || '';
+      const imgCell = imgUrl
+        ? `<img src="${imgUrl}" style="width:48px;height:48px;object-fit:cover;border-radius:4px;border:1px solid #ddd">`
+        : '<div style="width:48px;height:48px;background:#f4f0e8;border-radius:4px;border:1px solid #e0d8c4;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:18px">📷</div>';
       return`<tr>
         <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${i+1}</td>
+        <td style="text-align:center;padding:5px;border:1px solid #ddd">${imgCell}</td>
         <td style="padding:7px 8px;border:1px solid #ddd;font-family:monospace;font-size:9pt">${r.itemCode||''}</td>
         <td style="padding:7px 8px;border:1px solid #ddd">${r.name||''}</td>
         <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.mat||''}</td>
@@ -6198,7 +6238,7 @@ function confirmOrdDoc(){
         <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">발행일자</td><td style="padding:7px 10px;border:1px solid #ddd">${today}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600;color:#c03030">합계금액</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:12pt;color:#c03030">${total?'₩'+total.toLocaleString():'-'}</td></tr>
       </table>
       <table style="width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:16px">
-        <thead><tr style="background:#8B6914;color:#fff"><th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">품목코드</th><th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:70px">소재</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:65px">규격</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:65px;text-align:right">수량</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:80px;text-align:right">단가</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:90px;text-align:right">금액</th></tr></thead>
+        <thead><tr style="background:#8B6914;color:#fff"><th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th><th style="padding:8px 4px;border:1px solid #6B4E0A;width:58px">이미지</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">품목코드</th><th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:70px">소재</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:65px">규격</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:65px;text-align:right">수량</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:80px;text-align:right">단가</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:90px;text-align:right">금액</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
       <table style="width:300px;margin-left:auto;border-collapse:collapse;font-size:10pt;margin-bottom:20px">
@@ -6717,6 +6757,17 @@ function renderInvoiceCopyHtml(v){
     });
   }
   // 품목 행 HTML — 공통 헬퍼로 items 안전하게 추출
+  // 품번 → 제품DB 이미지 매칭 헬퍼
+  var lookupPdImg = function(code){
+    if(!code) return '';
+    var p = (typeof productDB !== 'undefined' && productDB)
+      ? productDB.find(function(x){ return (x.code||'').toLowerCase() === String(code).toLowerCase(); })
+      : null;
+    if(!p || !p.imgs || !p.imgs.length) return '';
+    var first = p.imgs[0];
+    var url = typeof first === 'string' ? first : (first.url || '');
+    return url || '';
+  };
   // (정상 케이스는 v.items 그대로 / 비어있으면 itemSummary 파싱 + 발주서 매칭으로 복원)
   var items = _resolveInvItems(v);
   var rowsHtml = items.map(function(r,i){
@@ -6726,8 +6777,14 @@ function renderInvoiceCopyHtml(v){
     var size = (ordRow && ordRow.size) || r.size || '';
     var unit = +r.unit || 0;
     var amt = +r.amt || (+r.qty||0)*unit;
+    // 🖼 이미지 — 품번 우선, 없으면 발주 행에서, 없으면 빈 칸
+    var imgUrl = lookupPdImg(r.code) || (ordRow && ordRow.img) || '';
+    var imgCell = imgUrl
+      ? '<img src="'+imgUrl+'" style="width:48px;height:48px;object-fit:cover;border-radius:4px;border:1px solid #ddd">'
+      : '<div style="width:48px;height:48px;background:#f4f0e8;border-radius:4px;border:1px solid #e0d8c4;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:18px">📷</div>';
     return '<tr>' +
       '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd">'+(i+1)+'</td>' +
+      '<td style="text-align:center;padding:5px;border:1px solid #ddd">'+imgCell+'</td>' +
       '<td style="padding:7px 8px;border:1px solid #ddd;font-family:monospace;font-size:9pt">'+(r.code||'')+'</td>' +
       '<td style="padding:7px 8px;border:1px solid #ddd">'+(r.name||'')+'</td>' +
       '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd">'+mat+'</td>' +
@@ -6744,6 +6801,7 @@ function renderInvoiceCopyHtml(v){
   for(var bi=0; bi<blankCount; bi++){
     rowsHtml += '<tr>' +
       '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd;color:#ccc">&nbsp;</td>' +
+      '<td style="padding:5px;border:1px solid #ddd;height:52px">&nbsp;</td>' +
       '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
       '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
       '<td style="padding:7px 6px;border:1px solid #ddd">&nbsp;</td>' +
@@ -6792,6 +6850,7 @@ function renderInvoiceCopyHtml(v){
     '<table style="width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:16px">' +
       '<thead><tr style="background:#8B6914;color:#fff">' +
         '<th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th>' +
+        '<th style="padding:8px 4px;border:1px solid #6B4E0A;width:58px">이미지</th>' +
         '<th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">품목코드</th>' +
         '<th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th>' +
         '<th style="padding:8px 6px;border:1px solid #6B4E0A;width:70px">소재</th>' +
@@ -8157,6 +8216,11 @@ function mapNotionSample(row){
     costPrice:np.number(p['입고원가']),
     unitPrice:np.number(p['샘플단가']),
     devCost:  np.number(p['개발비']),
+    _productId: (function(){
+      const v = np.text(p['제품DB연결']);
+      const n = parseInt(v, 10);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    })(),
     dueHistory,
     createdAt:row.created_time||new Date().toISOString(),
     imgs, sourceDoc, cadFiles,
@@ -9391,6 +9455,7 @@ async function syncSampleToNotion(s, update){
     "메모":{"rich_text":[{"text":{"content":(s.desc||'').slice(0,2000)}}]},
     "개발사항":{"rich_text":[{"text":{"content":notesJson.slice(0,2000)}}]},
     "주의사항":{"rich_text":[{"text":{"content":(s.factoryNotice||'').slice(0,2000)}}]},
+    "제품DB연결":{"rich_text":[{"text":{"content": s._productId ? String(s._productId) : ''}}]},
   };
   if(s.type)    p["유형"]={"select":{"name":s.type}};
   if(s.plating) p["도금"]={"select":{"name":s.plating}};
@@ -17198,9 +17263,10 @@ function renderDayView(sc){
         <button class="add-t" onclick="openTaskFull('${ds}','${ap}','${cat}')" style="font-size:11px;padding:0 5px;height:18px;line-height:18px">＋</button>
       </div>
       ${autoItems.map(it=>`
-        <div class="task-it" style="margin-bottom:2px;cursor:${it.click?'pointer':'default'}" ${it.click?`onclick="${it.click}"`:''} title="${it.cont.replace(/"/g,'&quot;')}">
+        <div class="task-it" style="margin-bottom:2px;cursor:${it.click?'pointer':'default'}" title="${it.cont.replace(/"/g,'&quot;')}">
+          <input type="checkbox" ${it.done?'checked':''} disabled style="cursor:not-allowed;opacity:.7" title="${it.doneReason||''}">
           ${it.badge||''}
-          <span class="tt ${it.done?'done':''}" style="font-size:11px;flex:1;margin-left:${it.badge?'2px':'0'}">${it.cont}</span>
+          <span class="tt ${it.done?'done':''}" ${it.click?`onclick="${it.click}"`:''} style="font-size:11px;flex:1;margin-left:${it.badge?'2px':'0'};cursor:${it.click?'pointer':'default'}">${it.cont}</span>
         </div>`).join('')}
       ${manualTasks.map(t=>`
         <div class="task-it" draggable="true" ondragstart="taskDragStart(event,${t.id})" ondragend="taskDragEnd(event)" style="margin-bottom:2px" title="드래그로 이동 가능">
@@ -17270,57 +17336,71 @@ function getAutoItems(ds, cat){
         cont:p.name+(p.shipped?' ✓':''),
         badge: initBadge(cl, p.vendor),
         done:p.shipped,
+        doneReason: p.shipped ? '발주 출고완료 (공정 shipped)' : '',
         id:'proc_'+p.id,
         click: p.orderId ? `calGoOrder(${p.orderId})` : `calGoProc(${p.id})`
       });
     });
-    // orderId가 없는 발주 — 공정 연결 안 된 발주 (완료/취소 제외)
-    orders.filter(o=>o.ship===ds&&o.status!=='출고완료'&&o.status!=='취소').forEach(o=>{
+    // orderId가 없는 발주 행 — 공정과 무관한 발주
+    orders.filter(o=>o.ship===ds).forEach(o=>{
       if(!procItems.find(p=>p.orderId===o.id)){
         const cl=matchClient(o.vendor);
+        const st=o.status||'진행중';
+        const isDone = st==='출고완료' || st==='취소';
         items.push({
           auto:true,
-          cont:o.vendor+' 납기',
+          cont:o.vendor+' 납기'+(st==='출고완료'?' ✓':st==='취소'?' (취소)':''),
           badge: initBadge(cl, o.vendor),
-          done:false,
+          done:isDone,
+          doneReason: st==='출고완료' ? '발주 출고완료' : st==='취소' ? '발주 취소' : '',
           id:'ord_'+o.id,
           click: `calGoOrder(${o.id})`
         });
       }
     });
   } else if(cat==='샘플출고'){
-    samples.filter(s=>s.due===ds&&s.status!=='취소').forEach(s=>{
+    samples.filter(s=>s.due===ds).forEach(s=>{
       const cl=matchClient(s.manager);
+      const st=s.status||'의뢰';
+      // 완료(확정)/취소된 샘플 = done
+      const isDone = st==='확정' || st==='완료' || st==='취소';
       items.push({
         auto:true,
-        cont:s.name+(s.status==='확정'?' ✓':''),
+        cont:s.name+(st==='확정'||st==='완료'?' ✓':st==='취소'?' (취소)':''),
         badge: initBadge(cl, s.manager),
-        done:s.status==='확정',
+        done:isDone,
+        doneReason: (st==='확정'||st==='완료') ? '샘플 완료' : st==='취소' ? '샘플 취소' : '',
         id:'smp_'+s.id,
         click: `calGoSample(${s.id})`
       });
     });
   } else if(cat==='중국출고'){
     // 샘플의 공장 출고일
-    samples.filter(s=>s.factShip===ds&&s.status!=='취소').forEach(s=>{
+    samples.filter(s=>s.factShip===ds).forEach(s=>{
       const cl=matchClient(s.manager);
+      const st=s.status||'의뢰';
+      const isDone = st==='확정' || st==='완료' || st==='취소';
       items.push({
         auto:true,
-        cont:'[샘플] '+s.name+(s.status==='확정'?' ✓':''),
+        cont:'[샘플] '+s.name+(st==='확정'||st==='완료'?' ✓':st==='취소'?' (취소)':''),
         badge: initBadge(cl, s.manager),
-        done:s.status==='확정',
+        done:isDone,
+        doneReason: (st==='확정'||st==='완료') ? '샘플 완료' : st==='취소' ? '샘플 취소' : '',
         id:'smpfs_'+s.id,
         click: `calGoSample(${s.id})`
       });
     });
     // 발주의 공장 출고일
-    orders.filter(o=>o.factShip===ds&&o.status!=='취소').forEach(o=>{
+    orders.filter(o=>o.factShip===ds).forEach(o=>{
       const cl=matchClient(o.vendor);
+      const st=o.status||'진행중';
+      const isDone = st==='출고완료' || st==='취소';
       items.push({
         auto:true,
-        cont:'[발주] '+o.vendor+' ('+(o.rows||[]).length+'개)'+(o.status==='출고완료'?' ✓':''),
+        cont:'[발주] '+o.vendor+' ('+(o.rows||[]).length+'개)'+(st==='출고완료'?' ✓':st==='취소'?' (취소)':''),
         badge: initBadge(cl, o.vendor),
-        done:o.status==='출고완료',
+        done:isDone,
+        doneReason: st==='출고완료' ? '발주 출고완료' : st==='취소' ? '발주 취소' : '',
         id:'ordfs_'+o.id,
         click: `calGoOrder(${o.id})`
       });
@@ -17556,6 +17636,8 @@ function openSmpModal(idOrNull){
   renderSmpCadPrev();
   hideSmpMgrDropdown();
   openM('mSmp');
+  // 📦 제품DB 등록 영역 상태 갱신
+  setTimeout(()=>_refreshSmpPdRegArea(), 0);
   // 이전에 등록된 핸들러가 있다면 반드시 제거 (이중 등록 방지)
   if(_smpPasteHandler){
     document.removeEventListener('paste', _smpPasteHandler);
@@ -18504,6 +18586,243 @@ async function saveSmpMulti(){
   }
 }
 
+// ────────────────────────────────────────
+// 샘플 → 제품DB 자동 동기화
+// ────────────────────────────────────────
+// 샘플이 "완료" 상태가 되고 단가/개발비가 있으면 제품DB에 자동 등록/업데이트
+// 호출 조건: 샘플 저장 후, 상태가 '완료' (또는 '확정')이고 unitPrice > 0
+// 반환: {created, updated, productId, skipped, skipReason}
+async function syncSampleToProductDB(s){
+  // 가드 1: 완료 상태가 아니면 스킵
+  const st = s.status || '';
+  if(st !== '완료' && st !== '확정'){
+    return {skipped:true, skipReason:'상태가 완료/확정 아님'};
+  }
+  // 가드 2: 단가가 0이면 스킵 (의미 없음)
+  if(!(+s.unitPrice > 0)){
+    return {skipped:true, skipReason:'단가 미입력'};
+  }
+  // 가드 3: 품번(itemCode) 필요 — invNo / itemCode 중 하나
+  const code = (s.itemCode || s.invNo || '').trim();
+  if(!code){
+    return {skipped:true, skipReason:'품번 없음 (명세서 발행 시 자동 생성됨)'};
+  }
+  // 동일 품번 제품DB 항목 찾기
+  const existing = productDB.find(p =>
+    (p.code || '').toLowerCase() === code.toLowerCase()
+  );
+  // 샘플 → 제품DB 필드 매핑
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const pdData = {
+    code,
+    name: s.name || '',
+    type: s.type || '',
+    mat: s.mat || '',
+    plating: s.plating || '',
+    size: s.sz1 || '',
+    weight: +s.wt || 0,
+    price: +s.unitPrice || 0,
+    devCost: +s.devCost || 0,  // 개발비 (참고용)
+    vendor: s.manager || '',
+    imgs: (s.imgs || []).slice(0, 5),  // 최대 5장
+    memo: s.engr ? `각인 위치: ${s.engr}` : '',
+    lastModified: todayStr,
+  };
+  if(existing){
+    // 업데이트: 단가/개발비/이미지/메모만 갱신 (다른 필드는 제품DB 우선)
+    const i = productDB.findIndex(p => p.id === existing.id);
+    if(i < 0) return {skipped:true, skipReason:'제품DB 인덱스 오류'};
+    const upd = {
+      ...existing,
+      price: pdData.price,
+      devCost: pdData.devCost,
+      lastModified: todayStr,
+    };
+    // 이미지가 없는 경우만 가져옴
+    if((!existing.imgs || !existing.imgs.length) && pdData.imgs.length){
+      upd.imgs = pdData.imgs;
+    }
+    productDB[i] = upd;
+    // 노션 동기화
+    if(existing._notionId && typeof syncProductToNotion === 'function'){
+      debouncedSync('product', upd, true);
+    }
+    return {updated:true, productId:existing.id};
+  } else {
+    // 신규 생성
+    const newPd = {
+      id: Date.now(),
+      ...pdData,
+      stock: 0,
+      safetyStock: 0,
+      createdDate: todayStr,
+      createdAt: new Date().toISOString(),
+      importSource: 'sample_auto',
+    };
+    // 노션 push 후 로컬 추가
+    if(notionCfg.workerUrl && notionCfg.productDb && typeof syncProductToNotion === 'function'){
+      try{
+        await syncProductToNotion(newPd, false);
+        productDB.unshift(newPd);
+        return {created:true, productId:newPd.id};
+      } catch(e){
+        console.error('[Sample→PD] 노션 push 실패:', e);
+        return {skipped:true, skipReason:'노션 push 실패'};
+      }
+    } else {
+      productDB.unshift(newPd);
+      return {created:true, productId:newPd.id};
+    }
+  }
+}
+
+// 📦 샘플 정보로 제품DB 등록 모달 열기 (정보 자동 채움)
+function openProductFromSample(){
+  const sId = +gv('s_id');
+  const s = sId ? samples.find(x=>x.id==sId) : null;
+  if(!s){
+    showToast('샘플을 먼저 저장해주세요','var(--org)',2500);
+    return;
+  }
+  // 현재 모달의 최신 값들을 가져옴 (사용자가 단가 등 수정 중일 수 있음)
+  const code = gv('s_invNo') || s.itemCode || s.invNo || '';
+  const price = +gv('s_unitPrice') || +s.unitPrice || 0;
+  const costPrice = +gv('s_costPrice') || +s.costPrice || 0;
+  const devCost = +gv('s_devCost') || +s.devCost || 0;
+  // 이미 등록된 제품이면 → 그 제품 모달로
+  if(s._productId){
+    const existing = productDB.find(p => p.id === s._productId);
+    if(existing){
+      closeM('mSmp');
+      setTimeout(()=>openProductModal(existing.id), 100);
+      showToast(`📦 이미 등록된 제품을 엽니다`, 'var(--blu)', 2000);
+      return;
+    }
+  }
+  // 같은 품번 제품 검색
+  if(code){
+    const dupByCode = productDB.find(p =>
+      (p.code||'').toLowerCase() === code.toLowerCase()
+    );
+    if(dupByCode){
+      closeM('mSmp');
+      setTimeout(()=>{
+        showConfirm(
+          `이미 같은 품번 "${code}"의 제품이 있습니다. 그 제품을 여시겠습니까?`,
+          ()=>{
+            // 샘플에 productId 연결만 해줌
+            const i = samples.findIndex(x=>x.id==sId);
+            if(i>=0){
+              samples[i]._productId = dupByCode.id;
+              save();
+              debouncedSync('sample', samples[i], true);
+            }
+            openProductModal(dupByCode.id);
+          },
+          '중복 품번',
+          '📦',
+          '기존 제품 열기',
+          'blu'
+        );
+      }, 100);
+      return;
+    }
+  }
+  // 신규 등록 — 빈 제품DB 모달 열고 샘플 정보로 prefill
+  closeM('mSmp');
+  setTimeout(()=>{
+    openProductModal(null);
+    // 모달이 열린 후 값 채움
+    setTimeout(()=>{
+      sv('pd_code', code);
+      sv('pd_name', s.name || '');
+      sv('pd_type', s.type || 'EARRING');
+      sv('pd_mat', s.mat || '브라스 (BRASS)');
+      // 도금: 샘플의 도금 텍스트가 제품DB select 옵션에 있으면 그대로, 없으면 매칭 시도
+      const pl = (s.plating || '').trim();
+      const plSelect = document.getElementById('pd_plating');
+      if(plSelect && pl){
+        const opts = [...plSelect.options].map(o=>o.value);
+        if(opts.includes(pl)) plSelect.value = pl;
+        else {
+          // 부분 매칭 ('로듐 도금' → '로듐')
+          const match = opts.find(o => pl.includes(o) || o.includes(pl));
+          if(match) plSelect.value = match;
+        }
+      }
+      sv('pd_size', s.sz1 || '');
+      sv('pd_weight', s.wt || '');
+      sv('pd_price', price);
+      sv('pd_costPrice', costPrice);
+      sv('pd_memo', [
+        s.engr ? `각인 위치: ${s.engr}` : '',
+        devCost > 0 ? `샘플 개발비: ₩${devCost.toLocaleString()}` : '',
+        `샘플(${s.name}) 의뢰: ${s.reqDate || '미상'}`
+      ].filter(Boolean).join('\n'));
+      sv('pd_createdDate', new Date().toISOString().slice(0,10));
+      // 이미지 — 샘플의 이미지를 제품DB 이미지 버퍼로 (최대 5장)
+      const smpImgs = (s.imgs || []).slice(0, 5);
+      if(smpImgs.length){
+        pdImgBuf = smpImgs.map(im => ({...im}));
+        if(typeof renderPdImgPrev === 'function') renderPdImgPrev();
+      }
+      // 안내 토스트
+      showToast(`📦 샘플 정보 자동 채움 — 검토 후 저장하세요`, 'var(--gold-lt)', 3500);
+      // 원가 분석 갱신
+      if(typeof updatePdCostAnalysis === 'function') updatePdCostAnalysis();
+      // 등록 후 → 샘플의 _productId 연결을 위해 임시 마커
+      window._pendingProductFromSampleId = sId;
+    }, 50);
+  }, 100);
+}
+
+// 샘플 모달 열 때 — 제품DB 등록 영역의 상태/문구 갱신
+function _refreshSmpPdRegArea(){
+  const area = document.getElementById('s_pdRegArea');
+  const btn = document.getElementById('s_pdRegBtn');
+  const hint = document.getElementById('s_pdRegHint');
+  if(!area || !btn || !hint) return;
+  const sId = +gv('s_id');
+  const s = sId ? samples.find(x=>x.id==sId) : null;
+  // 신규 샘플(아직 저장 전)이면 영역 숨김
+  if(!s){
+    area.style.display = 'none';
+    return;
+  }
+  area.style.display = 'flex';
+  // 이미 등록됨
+  if(s._productId){
+    const pd = productDB.find(p => p.id === s._productId);
+    if(pd){
+      btn.textContent = '📦 제품DB 보기';
+      btn.className = 'btn bgo';
+      btn.style.background = '';
+      hint.innerHTML = `<b style="color:var(--grn)">✓ 등록됨</b> — ${pd.code || pd.name} <span style="color:var(--t3)">· 클릭하여 보기/수정</span>`;
+      return;
+    }
+  }
+  // 미등록 — 가이드
+  btn.textContent = '+ 제품DB 등록';
+  btn.className = 'btn bp';
+  const st = gv('s_status');
+  const code = gv('s_invNo') || s.itemCode || '';
+  if(st === '완료' || st === '확정'){
+    if(code){
+      hint.textContent = `이 샘플을 정식 제품으로 등록합니다 — 정보가 자동 채워져요`;
+      btn.disabled = false;
+      btn.style.opacity = '';
+    } else {
+      hint.innerHTML = `<span style="color:var(--org)">⚠ 품번이 필요해요</span> — 거래명세서 발행 시 자동 부여됨`;
+      btn.disabled = false;
+      btn.style.opacity = '0.7';
+    }
+  } else {
+    hint.innerHTML = `<span style="color:var(--t3)">샘플이 "완료" 상태일 때 활성화됩니다</span>`;
+    btn.disabled = false;
+    btn.style.opacity = '0.7';
+  }
+}
+
 function saveSmp(){
   const name=gv('s_name');if(!name)return showToast('⚠ 샘플명을 입력해 주세요','var(--red)');
   const id=gv('s_id');
@@ -19105,6 +19424,38 @@ function parseOrdQty(v){
   return first?parseInt(first[1].replace(/,/g,''),10)||0:0;
 }
 
+// 입고 수량 input 변경 시 — 잔량 진행바 부분 업데이트 (전체 재렌더 없이)
+// 커서가 input에 머무르게 하기 위함
+function _updateOrdRcvBar(i){
+  const r = ordRowsBuf[i];
+  if(!r) return;
+  const ordQty = parseOrdQty(r.qty);
+  const hist = r.rcvHistory || [];
+  const rcvTotal = hist.reduce((s,h)=>s+(+h.qty||0), 0);
+  const remain = Math.max(0, ordQty - rcvTotal);
+  const pct = ordQty > 0 ? Math.min(100, Math.round(rcvTotal/ordQty*100)) : 0;
+  const isDone = ordQty > 0 && rcvTotal >= ordQty;
+  const barColor = isDone ? 'var(--grn)' : (pct >= 50 ? 'var(--gold-lt)' : 'var(--org)');
+
+  // progress bar
+  const fill = document.querySelector(`[data-rcvfill="${i}"]`);
+  if(fill){
+    fill.style.width = pct + '%';
+    fill.style.background = barColor;
+  }
+  // 잔량/완료 텍스트
+  const remainEl = document.querySelector(`[data-rcvremain="${i}"]`);
+  if(remainEl){
+    remainEl.textContent = isDone ? '✓ 완료' : ('잔량 ' + remain.toLocaleString() + '개');
+    remainEl.style.color = isDone ? 'var(--grn)' : (remain > 0 ? 'var(--org)' : 'var(--t1)');
+  }
+  // 카운트 (받은/전체 (퍼센트))
+  const cntEl = document.querySelector(`[data-rcvcount="${i}"]`);
+  if(cntEl){
+    cntEl.textContent = rcvTotal.toLocaleString() + '/' + ordQty.toLocaleString() + ' (' + pct + '%)';
+  }
+}
+
 function renderOrdRows(){
   const w=document.getElementById('ordRowsWrap');if(!w)return;
 
@@ -19112,7 +19463,7 @@ function renderOrdRows(){
   // datalist는 자동완성 힌트일 뿐 — 사용자는 자유롭게 직접 입력 가능
   // "기타"는 의미가 모호해서 옵션에서 제거 (직접 입력 가능함을 명확히 하기 위해)
   const header=`
-  <datalist id="ordPlatingList"><option value="실버"><option value="골드"><option value="로즈골드"><option value="옐로우골드"><option value="화이트골드"><option value="블랙로듐"><option value="건메탈"><option value="무도금"><option value="변색방지 코팅"></datalist>
+  <datalist id="ordPlatingList"><option value="실버"><option value="골드"><option value="로즈골드"><option value="로듐"><option value="옐로우골드"><option value="화이트골드"><option value="블랙로듐"><option value="건메탈"><option value="무도금"><option value="변색방지 코팅"></datalist>
   <datalist id="ordMatList"><option value="브라스 (BRASS)"><option value="925 실버"><option value="14K 골드"><option value="18K 골드"><option value="스테인리스"><option value="써지컬스틸"><option value="아연합금"><option value="신주"><option value="티타늄"></datalist>
   <div style="display:grid;grid-template-columns:22px 28px 64px 1fr 60px 80px 100px 65px 90px 28px;gap:4px;align-items:center;padding:6px 0 4px 0;border-bottom:1px solid var(--bdr);margin-bottom:2px;font-size:10px;color:var(--t3);font-weight:600;letter-spacing:.3px">
     <div style="text-align:center">#</div>
@@ -19199,16 +19550,17 @@ function renderOrdRows(){
       <!-- 진행 요약 (클릭하면 토글) -->
       <div onclick="ordRowsBuf[${i}]._expanded=!(ordRowsBuf[${i}]._expanded===true);renderOrdRows()"
         style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none${expanded?';margin-bottom:6px':''}"
-        title="${expanded?'접기':'펼치기'}">
+        title="${expanded?'접기':'펼치기'}"
+        data-rcvbar="${i}">
         <span style="font-size:10px;color:var(--t3);flex-shrink:0;transition:transform .2s;transform:rotate(${expanded?'90':'0'}deg);display:inline-block;width:10px">▶</span>
         <span style="font-size:10px;color:var(--t3);font-weight:700;flex-shrink:0">📦 입고현황</span>
         <div style="flex:1;height:5px;background:var(--s3);border-radius:3px;overflow:hidden">
-          <div style="width:${pct}%;height:100%;background:${barColor};border-radius:3px;transition:.3s"></div>
+          <div data-rcvfill="${i}" style="width:${pct}%;height:100%;background:${barColor};border-radius:3px;transition:.3s"></div>
         </div>
-        <span style="font-size:11px;font-weight:700;flex-shrink:0;color:${isDone?'var(--grn)':remain>0?'var(--org)':'var(--t1)'}">
+        <span data-rcvremain="${i}" style="font-size:11px;font-weight:700;flex-shrink:0;color:${isDone?'var(--grn)':remain>0?'var(--org)':'var(--t1)'}">
           ${isDone?'✓ 완료':'잔량 '+remain.toLocaleString()+'개'}
         </span>
-        <span style="font-size:10px;color:var(--t3);flex-shrink:0">${rcvTotal.toLocaleString()}/${ordQty.toLocaleString()} (${pct}%)</span>
+        <span data-rcvcount="${i}" style="font-size:10px;color:var(--t3);flex-shrink:0">${rcvTotal.toLocaleString()}/${ordQty.toLocaleString()} (${pct}%)</span>
         ${hist.length?`<span style="font-size:9.5px;color:var(--gold-lt);flex-shrink:0;background:var(--gold-bg);padding:1px 6px;border-radius:8px;border:1px solid var(--gold-line)" title="입고 이력">📅 ${hist.length}회</span>`:''}
       </div>
 
@@ -19220,11 +19572,11 @@ function renderOrdRows(){
         <div style="display:flex;align-items:center;gap:6px;padding:3px 6px;background:var(--s1);border-radius:4px;border:1px solid var(--bdr);font-size:11px">
           <span style="color:var(--t3);flex-shrink:0">📅</span>
           <input type="date" value="${h.date||''}"
-            onchange="ordRowsBuf[${i}].rcvHistory[${j}].date=this.value;renderOrdRows()"
+            onchange="ordRowsBuf[${i}].rcvHistory[${j}].date=this.value"
             style="border:none;background:none;font-size:11px;color:var(--t1);font-family:inherit;cursor:pointer;padding:0;width:110px">
           <input type="number" value="${h.qty||''}" min="1" max="9999"
             class="search-box-tracked" id="ordRcvQty_${i}_${j}"
-            oninput="ordRowsBuf[${i}].rcvHistory[${j}].qty=+this.value;renderOrdRows()"
+            oninput="ordRowsBuf[${i}].rcvHistory[${j}].qty=+this.value;_updateOrdRcvBar(${i})"
             placeholder="수량" style="width:80px;padding:2px 6px;border:1px solid var(--bdr);border-radius:3px;font-size:12px;text-align:center;font-family:inherit;background:var(--s1)">
           <span style="font-size:10px;color:var(--t3)">개</span>
           <input value="${h.note||''}" oninput="ordRowsBuf[${i}].rcvHistory[${j}].note=this.value"
