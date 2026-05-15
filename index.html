@@ -383,7 +383,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <button class="tab-btn" onclick="switchTab('sample',this)" data-tab="sample">◉ 샘플의뢰 <span class="tb-badge" id="bdgS" style="display:none">0</span></button>
     <button class="tab-btn" onclick="switchTab('order',this)" data-tab="order">▦ 생산관리 <span class="tb-badge" id="bdgO" style="display:none">0</span><span class="tb-badge" id="bdgP" style="display:none">0</span></button>
     <button class="tab-btn" onclick="switchTab('as',this)" data-tab="as">🔧 AS관리 <span class="tb-badge" id="bdgAS" style="display:none">0</span></button>
-    <button class="tab-btn" onclick="switchTab('io',this)" data-tab="io">📦 입출고 <span class="tb-badge" id="bdgIO" style="display:none">0</span></button>
+    <button class="tab-btn" onclick="switchTab('io',this)" data-tab="io">🚚 입출고 <span class="tb-badge" id="bdgIO" style="display:none">0</span></button>
     <button class="tab-btn" onclick="switchTab('products',this)" data-tab="products">📦 제품DB</button>
     <button class="tab-btn" onclick="switchTab('sales',this)" data-tab="sales">📊 영업관리</button>
     <button class="tab-btn" onclick="switchTab('invoices',this)" data-tab="invoices">🧾 거래명세서</button>
@@ -1543,9 +1543,9 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
 </div></div>
 
-<!-- 📦 입출고 등록 모달 -->
+<!-- 🚚 입출고 등록 모달 -->
 <div class="ov" id="mIO"><div class="modal" style="max-width:720px">
-  <div class="mt" id="mIO_t">📦 입출고 등록</div>
+  <div class="mt" id="mIO_t">🚚 입출고 등록</div>
   <input type="hidden" id="io_id">
   <div class="fr3">
     <div class="fg"><label>일자 *</label><input class="fi" type="date" id="io_date"></div>
@@ -8937,7 +8937,9 @@ async function pullFromNotion(opts){
 
     // ── 증분 모드용 upsert 머지 ──
     // remote는 "변경된 row만"이므로, 받지 못한 로컬은 그대로 두고 받은 것만 추가/갱신
-    function upsertMerge(remote, local, idFields){
+    function upsertMerge(remote, local, idFields, opts){
+      opts = opts || {};
+      const preserveTruthy = opts.preserveTruthy || []; // 로컬에 truthy 값 있으면 보존, 노션이 0/빈값이어도
       if(!remote.length) return local; // 변경 없음
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map((x,i)=>[x._notionId,{x,i}]));
       const out=local.slice();
@@ -8957,6 +8959,16 @@ async function pullFromNotion(opts){
               merged[f]=prev[f];
             }
           });
+          // 🛡 truthy-preserve: 로컬에 양수/유효한 값이 있는데 노션이 0/빈값이면 로컬 유지
+          preserveTruthy.forEach(f=>{
+            const localVal = prev[f];
+            const remoteVal = merged[f];
+            const localIsTruthy = (typeof localVal === 'number' ? localVal > 0 : !!localVal);
+            const remoteIsFalsy = (typeof remoteVal === 'number' ? !remoteVal : !remoteVal);
+            if(localIsTruthy && remoteIsFalsy){
+              merged[f] = localVal;
+            }
+          });
           out[hit.i]=merged;
         } else {
           // 신규 항목 추가 — safe ID 생성기 사용
@@ -8967,7 +8979,7 @@ async function pullFromNotion(opts){
     }
 
     // ── 디스패치 헬퍼: 증분 모드면 upsertMerge, 풀 모드면 기존 mergeLocalAttachments ──
-    function mergeRows(remoteRows, localArr, mapper, idFields, label, dbId){
+    function mergeRows(remoteRows, localArr, mapper, idFields, label, dbId, opts){
       // 증분 모드: remote가 비어있으면 변경 없음 → 그대로 두고 sync time만 그대로 유지
       if(useIncremental){
         if(!remoteRows.length){
@@ -8975,7 +8987,7 @@ async function pullFromNotion(opts){
           return localArr;
         }
         const mapped=remoteRows.map(mapper);
-        const next=upsertMerge(mapped, localArr, idFields);
+        const next=upsertMerge(mapped, localArr, idFields, opts);
         // 받은 row 중 가장 최신 last_edited_time을 sync time으로 저장
         const maxT=maxEditedTime(remoteRows);
         if(maxT && dbId) setDbSyncTime(dbId, maxT);
@@ -8985,7 +8997,7 @@ async function pullFromNotion(opts){
       // 풀 모드: 기존 안전장치 + 전체 머지
       if(isSafePull(remoteRows, localArr, label) && (remoteRows.length || localArr.some(x=>x._notionId))){
         const mapped=remoteRows.map(mapper);
-        const next=mergeLocalAttachments(mapped, localArr, idFields);
+        const next=mergeLocalAttachments(mapped, localArr, idFields, opts);
         // 풀 동기화에서도 sync time 기록 (이후 증분 시작점)
         const maxT=maxEditedTime(remoteRows);
         if(maxT && dbId) setDbSyncTime(dbId, maxT);
@@ -9006,7 +9018,9 @@ async function pullFromNotion(opts){
     clients       = mergeRows(cliRows,  clients,        mapNotionClient,    [], '고객사',   notionCfg.clientDb);
     tasks         = mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
     asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        [], 'AS',       notionCfg.asDb);
-    productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['importSource','createdAt'], '제품DB',   notionCfg.productDb);
+    productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['importSource','createdAt'], '제품DB',   notionCfg.productDb, {
+      preserveTruthy: ['price','costPrice','cnyPrice','matRate','prodCost','marginPct','stock','safetyStock','weight']
+    });
     invoiceHistory= mergeRows(invRows,  invoiceHistory, mapNotionInvoice,   ['items','ordId'], '청구이력', notionCfg.invDb);
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
@@ -27519,7 +27533,7 @@ function renderIO(){
   <!-- 필터 -->
   <div class="card">
     <div class="ch" style="flex-wrap:wrap;gap:8px">
-      <div class="ch-t">📦 입출고 기록 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${list.length}건)</span></div>
+      <div class="ch-t">🚚 입출고 기록 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${list.length}건)</span></div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <input class="search-box" placeholder="검색..." value="${ioFilter.search.replace(/"/g,'&quot;')}" oninput="ioFilter.search=this.value;renderIO()" style="width:180px">
         <input class="search-box" placeholder="고객사" value="${ioFilter.vendor.replace(/"/g,'&quot;')}" oninput="ioFilter.vendor=this.value;renderIO()" style="width:100px">
@@ -27615,7 +27629,7 @@ function openIOModal(idOrNull){
   ioFileBuf = (io && Array.isArray(io.files)) ? io.files.map(f=>({...f})) : [];
   _renderIoFilePrev();
   document.getElementById('io_delBtn').style.display = io ? '' : 'none';
-  document.getElementById('mIO_t').textContent = io ? '📦 입출고 수정' : '📦 입출고 등록';
+  document.getElementById('mIO_t').textContent = io ? '🚚 입출고 수정' : '🚚 입출고 등록';
   openM('mIO');
   _ensureIoPasteListener();
 }
