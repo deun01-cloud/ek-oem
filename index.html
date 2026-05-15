@@ -8865,7 +8865,7 @@ async function pullFromNotion(opts){
 
     // "Notion 마스터" 정책 — 로컬의 이미지/파일 필드는 id로 매칭해서 보존
     // (이미지/첨부파일은 Notion에 저장되지 않기 때문)
-    function mergeLocalAttachments(remote, local, idFields){
+    function mergeLocalAttachments(remote, local, idFields, opts, label){
       // 중복 판정 키 (발주번호, 샘플명+의뢰일, 고객사 이니셜 등)
       const dupKey=(item)=>{
         if(!item) return null;
@@ -9061,7 +9061,7 @@ async function pullFromNotion(opts){
       // 풀 모드: 기존 안전장치 + 전체 머지
       if(isSafePull(remoteRows, localArr, label) && (remoteRows.length || localArr.some(x=>x._notionId))){
         const mapped=remoteRows.map(mapper);
-        const next=mergeLocalAttachments(mapped, localArr, idFields, opts);
+        const next=mergeLocalAttachments(mapped, localArr, idFields, opts, label);
         // 풀 동기화에서도 sync time 기록 (이후 증분 시작점)
         const maxT=maxEditedTime(remoteRows);
         if(maxT && dbId) setDbSyncTime(dbId, maxT);
