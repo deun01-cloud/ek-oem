@@ -383,6 +383,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <button class="tab-btn" onclick="switchTab('sample',this)" data-tab="sample">◉ 샘플의뢰 <span class="tb-badge" id="bdgS" style="display:none">0</span></button>
     <button class="tab-btn" onclick="switchTab('order',this)" data-tab="order">▦ 생산관리 <span class="tb-badge" id="bdgO" style="display:none">0</span><span class="tb-badge" id="bdgP" style="display:none">0</span></button>
     <button class="tab-btn" onclick="switchTab('as',this)" data-tab="as">🔧 AS관리 <span class="tb-badge" id="bdgAS" style="display:none">0</span></button>
+    <button class="tab-btn" onclick="switchTab('io',this)" data-tab="io">🚚 입출고</button>
     <button class="tab-btn" onclick="switchTab('products',this)" data-tab="products">📦 제품DB</button>
     <button class="tab-btn" onclick="switchTab('sales',this)" data-tab="sales">📊 영업관리</button>
     <button class="tab-btn" onclick="switchTab('invoices',this)" data-tab="invoices">🧾 거래명세서</button>
@@ -1859,7 +1860,7 @@ function toggleOrdVendorFilter(v){
 }
 
 // data
-let samples=[], orders=[], procItems=[], tasks=[], asItems=[], productDB=[], invoiceHistory=[];
+let samples=[], orders=[], procItems=[], tasks=[], asItems=[], productDB=[], invoiceHistory=[], ioItems=[];
 let inquiries=[]; // 고객사 문의 관리
 let newDesigns=[]; // 신규 디자인 제안 관리
 let stockHistory=[]; // 재고 변동 이력
@@ -6107,6 +6108,7 @@ let notionCfg = {
   ndDb:    '201b2b17b3924161b636134229f532ee', // 신규 디자인 제안
   inqDb:   '28ad79cef0bc4895a4815827f3cb7da2', // 고객사 문의
   quoteDb: 'eeda4d95607c411da6b3a69bb6a732cc', // 📋 견적 DB
+  ioDb:    'a6024595f92f4f039493e907492b8eef', // 📦 입출고 현황
   checklistDb: '', // 📋 주간/월간 업무 목표 — 사용자가 노션 설정에서 DB ID 입력
   strictMode: true, // 🔒 노션 진실의 원천 모드 — 항상 ON (모든 데이터 적용)
 };
@@ -6127,6 +6129,7 @@ function saveNotionSettings(){
     procDb:  notionCfg.procDb,
     taskDb:  notionCfg.taskDb,
     asDb:    notionCfg.asDb,
+    ioDb:    notionCfg.ioDb,
     invDb:   document.getElementById('notion_inv_db')?.value.trim()||notionCfg.invDb,
     productDb:document.getElementById('notion_product_db')?.value.trim()||notionCfg.productDb,
     inqDb:   document.getElementById('notion_inq_db')?.value.trim()||notionCfg.inqDb,
@@ -6887,7 +6890,8 @@ async function pullFromNotion(opts){
     orders: [...(orders||[])],
     samples: [...(samples||[])],
     asItems: [...(asItems||[])],
-    invoiceHistory: [...(invoiceHistory||[])]
+    invoiceHistory: [...(invoiceHistory||[])],
+    ioItems: [...(ioItems||[])]
   };
 
   try{
@@ -6903,8 +6907,8 @@ async function pullFromNotion(opts){
       console.log(`[pull] 모드: ${useIncremental?'증분 (since 기준)':'풀 (전체)'}`);
     }
 
-    // 9개 DB를 병렬 쿼리 (증분 모드면 since 이후만 받음) + 견적 DB
-    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows,qtRows]=await Promise.all([
+    // 10개 DB를 병렬 쿼리 (증분 모드면 since 이후만 받음) + 견적 DB + 입출고
+    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows,qtRows,ioRows]=await Promise.all([
       notionCfg.smpDb   ? nQueryAll(notionCfg.smpDb,    sinceFor(notionCfg.smpDb),   callOpts) : Promise.resolve([]),
       notionCfg.ordDb   ? nQueryAll(notionCfg.ordDb,    sinceFor(notionCfg.ordDb),   callOpts) : Promise.resolve([]),
       notionCfg.procDb  ? nQueryAll(notionCfg.procDb,   sinceFor(notionCfg.procDb),  callOpts) : Promise.resolve([]),
@@ -6916,6 +6920,7 @@ async function pullFromNotion(opts){
       notionCfg.invDb   ? nQueryAll(notionCfg.invDb,    sinceFor(notionCfg.invDb),   callOpts) : Promise.resolve([]),
       notionCfg.inqDb   ? nQueryAll(notionCfg.inqDb,    sinceFor(notionCfg.inqDb),   callOpts) : Promise.resolve([]),
       notionCfg.quoteDb ? nQueryAll(notionCfg.quoteDb,  sinceFor(notionCfg.quoteDb), callOpts) : Promise.resolve([]),
+      notionCfg.ioDb    ? nQueryAll(notionCfg.ioDb,     sinceFor(notionCfg.ioDb),    callOpts) : Promise.resolve([]),
     ]);
 
     // pull 도중 회로차단기가 열린 경우 → Worker가 응답 실패 상태
@@ -7146,6 +7151,7 @@ async function pullFromNotion(opts){
     invoiceHistory= mergeRows(invRows,  invoiceHistory, mapNotionInvoice,   ['items','ordId'], '청구이력', notionCfg.invDb);
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
+    ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        [], '입출고',   notionCfg.ioDb);
 
     // 풀 모드를 성공적으로 마쳤다면 마지막 풀 동기화 시각 기록
     if(!useIncremental){
@@ -7158,7 +7164,7 @@ async function pullFromNotion(opts){
     // 🔔 변경 감지 → 알림 생성
     try {
       if(typeof _detectChanges === 'function'){
-        _detectChanges(_notifPrev, {orders, samples, asItems, invoiceHistory});
+        _detectChanges(_notifPrev, {orders, samples, asItems, invoiceHistory, ioItems});
       }
     } catch(e){ console.warn('알림 감지 실패:', e); }
 
@@ -7190,6 +7196,500 @@ async function pullFromNotion(opts){
     _isSyncing=false;
   }
 }
+
+// ════════════════════════════════════════════
+// 🚚 입출고 관리 (PC) — 모바일과 동일한 데이터 구조, 노션 DB 공유
+// ════════════════════════════════════════════
+// 데이터: ioItems = [{id, _notionId, title, date, kind, flow, vendor, items, qty, invoice, memo, user, files}]
+// 노션 DB: notionCfg.ioDb (a6024595f92f4f039493e907492b8eef)
+//   - 제목 (title), 일자 (date), 구분 (select: 입고/출고/검수/반품), 흐름 (select)
+//   - 고객사/공장, 품목, 수량, 송장번호, 메모, 등록자, 사진 (file)
+
+const IO_KIND_OPTIONS = ['입고','출고','검수','반품'];
+const IO_FLOW_OPTIONS = ['중국→한국','한국→고객','고객→AS','AS→고객','공장→공장','기타'];
+
+// 노션 → 로컬 매핑 (모바일과 호환되는 필드명 사용 + 노션 정확 필드명 모두 시도)
+function mapNotionIO(row){
+  const p = row.properties||{};
+  // 사진 (노션 file 타입)
+  let files = [];
+  const photoProp = p['사진'];
+  if(photoProp && photoProp.files){
+    files = photoProp.files.map(f=>({
+      name: f.name || '',
+      url:  f.file?.url || f.external?.url || '',
+      type: (f.name||'').toLowerCase().match(/\.(jpg|jpeg|png|gif|webp|heic)$/) ? 'image/'+RegExp.$1 : ''
+    })).filter(f=>f.url);
+  }
+  // 고객사/공장 필드 — 노션은 "고객사/공장" 인데 모바일 옛 코드는 "고객사" 도 시도
+  const vendor = np.text(p['고객사/공장']) || np.text(p['고객사']) || '';
+  return {
+    _notionId: row.id,
+    title:   np.title(p['제목']),
+    date:    np.date(p['일자']),
+    kind:    np.select(p['구분']),
+    flow:    np.select(p['흐름']),
+    vendor,
+    items:   np.text(p['품목']),
+    qty:     np.number(p['수량']),
+    invoice: np.text(p['송장번호']),
+    memo:    np.text(p['메모']),
+    user:    np.text(p['등록자']),
+    files
+  };
+}
+
+// 노션에 입출고 row 생성/수정
+async function syncIOToNotion(io){
+  if(!notionCfg.workerUrl || !notionCfg.ioDb) return false;
+  // 자동 제목 생성: 비어있으면 "이니셜_구분" (예: VT_출고)
+  let title = (io.title||'').trim();
+  if(!title){
+    const vInit = (io.vendor||'').replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim().slice(0,2) || '?';
+    title = `${vInit}_${io.kind||'입고'}`;
+  }
+  const props = {
+    "제목": {title:[{text:{content: title}}]},
+    "구분": io.kind ? {select:{name: io.kind}} : {select: null},
+    "흐름": io.flow ? {select:{name: io.flow}} : {select: null},
+    "고객사/공장": {rich_text:[{text:{content: (io.vendor||'').slice(0,2000)}}]},
+    "품목": {rich_text:[{text:{content: (io.items||'').slice(0,2000)}}]},
+    "수량": {number: +io.qty || null},
+    "송장번호": {rich_text:[{text:{content: (io.invoice||'').slice(0,200)}}]},
+    "메모": {rich_text:[{text:{content: (io.memo||'').slice(0,2000)}}]},
+    "등록자": {rich_text:[{text:{content: (io.user||'').slice(0,100)}}]},
+  };
+  if(io.date) props["일자"] = {date:{start: io.date}};
+  // 사진은 외부 URL만 노션에 보낼 수 있어요 (file_id는 불가)
+  if(Array.isArray(io.files) && io.files.length){
+    const externalFiles = io.files.filter(f=>f.url && f.url.startsWith('http'))
+      .slice(0,10) // 노션 file 필드 한계
+      .map(f=>({name: f.name||'photo', type:'external', external:{url: f.url}}));
+    if(externalFiles.length) props["사진"] = {files: externalFiles};
+  }
+  try {
+    if(io._notionId){
+      await nUpdate(io._notionId, props);
+      return true;
+    } else {
+      const res = await nCreate(notionCfg.ioDb, props);
+      if(res?.id){ io._notionId = res.id; return true; }
+    }
+  } catch(e){ console.warn('IO 노션 동기화 실패:', e); }
+  return false;
+}
+
+// 이니셜 추출 (PC의 영업관리 매핑과 동일)
+function _ioInitial(name){
+  const nm=(name||'').trim();
+  if(!nm) return '';
+  // 1) 고객사 DB
+  if(typeof findClientByVendor === 'function'){
+    const cl = findClientByVendor(nm);
+    if(cl && cl.initials) return cl.initials.trim().toUpperCase().slice(0,2);
+  }
+  // 2) 영문/숫자 2자
+  const eng = nm.replace(/[^A-Za-z0-9]/g,'');
+  if(eng.length>=2) return eng.slice(0,2).toUpperCase();
+  // 3) 첫 두 글자
+  const clean = nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜|\(주\)/g,'').trim();
+  return clean.slice(0,2);
+}
+
+// IO 리스트 렌더링 (PC 테이블 스타일)
+let _ioFilter = 'all'; // 'all' | '입고' | '출고' | '검수' | '반품'
+let _ioVendorFilter = 'all';
+
+function renderIo(){
+  const c = document.getElementById('content');
+  // 필터 카운트
+  const kindCount = {입고:0,출고:0,검수:0,반품:0};
+  ioItems.forEach(io=>{
+    if(kindCount.hasOwnProperty(io.kind)) kindCount[io.kind]++;
+  });
+  // 적용된 필터 후 리스트
+  let list = ioItems.slice();
+  if(_ioFilter !== 'all') list = list.filter(io => io.kind === _ioFilter);
+  if(_ioVendorFilter !== 'all') list = list.filter(io => _ioInitial(io.vendor) === _ioVendorFilter);
+  // 검색
+  const q = (document.getElementById('ioSearch')?.value||'').toLowerCase();
+  if(q){
+    list = list.filter(io =>
+      (io.title||'').toLowerCase().includes(q) ||
+      (io.vendor||'').toLowerCase().includes(q) ||
+      (io.items||'').toLowerCase().includes(q) ||
+      (io.invoice||'').toLowerCase().includes(q) ||
+      (io.memo||'').toLowerCase().includes(q)
+    );
+  }
+  // 정렬: 최신 날짜 우선
+  list.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+
+  // 고객사 이니셜 그룹화 (필터 칩용)
+  const vendorGroups = {};
+  ioItems.forEach(io=>{
+    const init = _ioInitial(io.vendor);
+    if(!init) return;
+    if(!vendorGroups[init]) vendorGroups[init] = {count:0, names:new Set()};
+    vendorGroups[init].count++;
+    vendorGroups[init].names.add(io.vendor);
+  });
+  const sortedVendors = Object.entries(vendorGroups).sort((a,b)=>b[1].count-a[1].count).slice(0,20);
+
+  c.innerHTML = `
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <input type="text" id="ioSearch" placeholder="제목·고객사·품목·송장·메모 검색" oninput="renderIo()" value="${escHtml(q)}" style="flex:1;min-width:240px;padding:7px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12.5px;font-family:inherit;background:var(--s1)">
+      <div style="font-size:12px;color:var(--t3)">총 <b style="color:var(--t1)">${list.length}</b>건</div>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+      <button onclick="_setIoFilter('all')" class="ek-chip ${_ioFilter==='all'?'active':''}">전체 <span class="cnt">${ioItems.length}</span></button>
+      <button onclick="_setIoFilter('입고')" class="ek-chip ${_ioFilter==='입고'?'active':''}" style="${_ioFilter==='입고'?'background:rgba(46,139,44,.15);border-color:var(--grn);color:var(--grn)':''}">📥 입고 <span class="cnt">${kindCount.입고}</span></button>
+      <button onclick="_setIoFilter('출고')" class="ek-chip ${_ioFilter==='출고'?'active':''}" style="${_ioFilter==='출고'?'background:rgba(176,48,48,.12);border-color:var(--red);color:var(--red)':''}">📤 출고 <span class="cnt">${kindCount.출고}</span></button>
+      <button onclick="_setIoFilter('검수')" class="ek-chip ${_ioFilter==='검수'?'active':''}">🔍 검수 <span class="cnt">${kindCount.검수}</span></button>
+      <button onclick="_setIoFilter('반품')" class="ek-chip ${_ioFilter==='반품'?'active':''}">↩ 반품 <span class="cnt">${kindCount.반품}</span></button>
+    </div>
+    ${sortedVendors.length ? `<div style="display:flex;gap:5px;margin-bottom:14px;flex-wrap:wrap">
+      <button onclick="_setIoVendor('all')" class="ek-chip ${_ioVendorFilter==='all'?'active':''}" style="font-size:11px;padding:4px 9px">고객사 전체</button>
+      ${sortedVendors.map(([init, g])=>{
+        const isAct = _ioVendorFilter === init;
+        const tooltip = [...g.names].join(', ');
+        return `<button onclick="_setIoVendor('${init.replace(/'/g,"\\'")}')" class="ek-chip ${isAct?'active':''}" title="${escHtml(tooltip)}" style="font-size:11px;padding:4px 9px"><b>${init}</b> <span class="cnt">${g.count}</span></button>`;
+      }).join('')}
+    </div>` : ''}
+    ${list.length ? `
+    <div style="background:var(--s1);border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+        <thead>
+          <tr style="background:var(--s2);border-bottom:1px solid var(--bdr)">
+            <th style="padding:9px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:90px">일자</th>
+            <th style="padding:9px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:60px">구분</th>
+            <th style="padding:9px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">제목</th>
+            <th style="padding:9px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:140px">고객사/공장</th>
+            <th style="padding:9px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">품목</th>
+            <th style="padding:9px 10px;text-align:right;font-weight:600;color:var(--t2);font-size:11px;width:70px">수량</th>
+            <th style="padding:9px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:50px">사진</th>
+            <th style="padding:9px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:90px">송장</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(io=>{
+            const kindCls = io.kind==='입고'?'background:rgba(46,139,44,.12);color:var(--grn)':
+                            io.kind==='출고'?'background:rgba(176,48,48,.10);color:var(--red)':
+                            io.kind==='검수'?'background:rgba(26,109,181,.10);color:var(--blu)':
+                            io.kind==='반품'?'background:rgba(168,90,16,.10);color:var(--org)':'background:var(--s2);color:var(--t3)';
+            const init = _ioInitial(io.vendor);
+            const hasPhotos = (io.files||[]).filter(f=>f&&f.url).length;
+            return `<tr style="border-bottom:1px solid var(--bdr-lt);cursor:pointer" onclick="openIoDetail(${io.id})" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
+              <td style="padding:8px 10px;text-align:center;color:var(--t2);font-size:11.5px;font-family:monospace">${escHtml(io.date||'-')}</td>
+              <td style="padding:8px 10px;text-align:center"><span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:700;${kindCls}">${escHtml(io.kind||'-')}</span></td>
+              <td style="padding:8px 10px;font-weight:600">${escHtml(io.title||'-')}${io.flow?`<span style="font-size:10px;color:var(--t3);font-weight:400;margin-left:6px">${escHtml(io.flow)}</span>`:''}</td>
+              <td style="padding:8px 10px">${init?`<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:18px;padding:0 5px;border-radius:3px;background:${strToColor(io.vendor||'')};color:#fff;font-size:10px;font-weight:700;margin-right:5px">${init}</span>`:''}<span style="font-size:11.5px;color:var(--t2)">${escHtml(io.vendor||'-')}</span></td>
+              <td style="padding:8px 10px;color:var(--t2);font-size:11.5px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(io.items||'-')}</td>
+              <td style="padding:8px 10px;text-align:right;font-weight:600;font-family:'Cormorant Garamond',serif;font-size:13.5px;color:var(--gold-lt)">${io.qty?(+io.qty).toLocaleString():'-'}</td>
+              <td style="padding:8px 10px;text-align:center">${hasPhotos?`<span style="font-size:11px;color:var(--blu)">📷 ${hasPhotos}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
+              <td style="padding:8px 10px;text-align:center;font-family:monospace;font-size:10.5px;color:var(--t3)">${escHtml(io.invoice||'-')}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : `<div style="padding:60px 20px;text-align:center;color:var(--t3);background:var(--s1);border:1px solid var(--bdr);border-radius:var(--r)">
+      <div style="font-size:42px;margin-bottom:10px">🚚</div>
+      <div style="font-size:13px">입출고 기록이 없습니다</div>
+      <div style="font-size:11px;color:var(--t3);margin-top:6px">상단의 '+ 입출고 등록' 버튼을 눌러주세요</div>
+    </div>`}
+  `;
+}
+
+function _setIoFilter(k){ _ioFilter = k; renderIo(); }
+function _setIoVendor(v){ _ioVendorFilter = v; renderIo(); }
+
+// 입출고 등록/수정 모달
+let _ioPhotoBuf = [];
+function openIoModal(idOrNull){
+  const io = idOrNull ? ioItems.find(x=>x.id==idOrNull) : null;
+  const isEdit = !!io;
+  _ioPhotoBuf = io ? (io.files||[]).slice() : [];
+  const v = (k, fallback)=>io && io[k] !== undefined ? io[k] : (fallback||'');
+  const html = `
+    <div class="mt">🚚 ${isEdit?'입출고 수정':'입출고 등록'}</div>
+    <div style="padding:0 16px 14px;max-height:75vh;overflow-y:auto">
+      <div class="fr3" style="grid-template-columns:120px 110px 1fr;gap:10px">
+        <div class="fg"><label>일자 *</label><input class="fi" type="date" id="io_date" value="${v('date', new Date().toISOString().slice(0,10))}"></div>
+        <div class="fg"><label>구분 *</label><select class="fi" id="io_kind">
+          ${IO_KIND_OPTIONS.map(k=>`<option value="${k}" ${v('kind')===k?'selected':''}>${k}</option>`).join('')}
+        </select></div>
+        <div class="fg"><label>흐름</label><select class="fi" id="io_flow">
+          <option value="">선택</option>
+          ${IO_FLOW_OPTIONS.map(f=>`<option value="${f}" ${v('flow')===f?'selected':''}>${f}</option>`).join('')}
+        </select></div>
+      </div>
+      <div class="fr3" style="grid-template-columns:2fr 1fr;gap:10px;margin-top:8px">
+        <div class="fg"><label>고객사/공장 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(이니셜 또는 이름)</span></label><input class="fi" id="io_vendor" placeholder="예: VT, 중국공장A" value="${escHtml(v('vendor'))}" autocomplete="off"></div>
+        <div class="fg"><label>수량</label><input class="fi" type="number" id="io_qty" placeholder="0" value="${v('qty')||''}"></div>
+      </div>
+      <div class="fg" style="margin-top:8px">
+        <label>품목 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(여러 개면 쉼표로 구분)</span>
+          <button type="button" onclick="_openIoItemPicker()" style="float:right;padding:3px 9px;font-size:10.5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;color:var(--gold-lt);cursor:pointer;font-family:inherit;font-weight:600;margin-top:-2px">📦 DB에서 선택</button>
+        </label>
+        <input class="fi" id="io_items" placeholder="품명·품번" value="${escHtml(v('items'))}" autocomplete="off">
+      </div>
+      <div class="fr3" style="grid-template-columns:2fr 1fr;gap:10px;margin-top:8px">
+        <div class="fg"><label>제목 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(비우면 자동: VT_출고 등)</span></label><input class="fi" id="io_title" placeholder="자동 생성" value="${escHtml(v('title'))}"></div>
+        <div class="fg"><label>송장번호</label><input class="fi" id="io_invoice" placeholder="-" value="${escHtml(v('invoice'))}"></div>
+      </div>
+      <div class="fg" style="margin-top:8px"><label>메모</label><textarea class="fi" id="io_memo" rows="3" placeholder="자유 입력">${escHtml(v('memo'))}</textarea></div>
+      <div class="fg" style="margin-top:8px"><label>등록자</label><input class="fi" id="io_user" placeholder="이름 (선택)" value="${escHtml(v('user'))}"></div>
+      <div class="fg" style="margin-top:8px">
+        <label>사진 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(증빙·송장·박스)</span></label>
+        <div id="io_photo_grid" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;min-height:30px"></div>
+        <input type="file" id="io_photo_input" accept="image/*" multiple style="display:none" onchange="_addIoPhoto(event)">
+        <button type="button" onclick="document.getElementById('io_photo_input').click()" style="margin-top:6px;padding:6px 12px;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;font-size:11.5px;color:var(--t2);cursor:pointer;font-family:inherit">📷 사진 추가</button>
+      </div>
+    </div>
+    <div class="mb" style="display:flex;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px;align-items:center">
+      ${isEdit?`<button class="btn br bs" onclick="deleteIo(${io.id})">🗑 삭제</button>`:'<span></span>'}
+      <div style="display:flex;gap:8px">
+        <button class="btn bg bs" onclick="closeM('mIo')">취소</button>
+        <button class="btn bp bs" onclick="saveIo(${isEdit?io.id:'null'})">${isEdit?'저장':'등록'}</button>
+      </div>
+    </div>
+  `;
+  let mIo = document.getElementById('mIo');
+  if(!mIo){
+    mIo = document.createElement('div');
+    mIo.id = 'mIo';
+    mIo.className = 'ov';
+    document.body.appendChild(mIo);
+  }
+  mIo.innerHTML = `<div class="modal wide" style="max-width:680px">${html}</div>`;
+  openM('mIo');
+  _renderIoPhotoGrid();
+}
+
+function _renderIoPhotoGrid(){
+  const grid = document.getElementById('io_photo_grid');
+  if(!grid) return;
+  if(!_ioPhotoBuf.length){
+    grid.innerHTML = '<div style="font-size:11px;color:var(--t3)">첨부된 사진 없음</div>';
+    return;
+  }
+  grid.innerHTML = _ioPhotoBuf.map((f,i)=>`
+    <div style="position:relative;width:70px;height:70px;border-radius:5px;overflow:hidden;border:1px solid var(--bdr-lt);background:var(--s2)">
+      <img src="${f.url}" style="width:100%;height:100%;object-fit:cover;cursor:pointer" onclick="_openIoPhotoLightbox(${i})">
+      <button onclick="_removeIoPhoto(${i})" style="position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;border:none;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>
+    </div>
+  `).join('');
+}
+
+function _openIoPhotoLightbox(idx){
+  const f = _ioPhotoBuf[idx];
+  if(!f) return;
+  // 간단 라이트박스 (이미 PC에 lightbox 있으면 그걸로)
+  window.open(f.url, '_blank');
+}
+
+async function _addIoPhoto(event){
+  const files = Array.from(event.target.files||[]);
+  for(const file of files){
+    if(!file.type.startsWith('image/')) continue;
+    // R2 업로드 가능하면 시도, 아니면 base64로 저장 (제한적)
+    try {
+      let url;
+      if(typeof uploadImageToR2 === 'function'){
+        url = await uploadImageToR2(file);
+      } else {
+        url = await new Promise((res,rej)=>{
+          const r = new FileReader();
+          r.onload = ()=>res(r.result);
+          r.onerror = rej;
+          r.readAsDataURL(file);
+        });
+      }
+      if(url) _ioPhotoBuf.push({name:file.name, url, type:file.type});
+    } catch(e){ console.warn('사진 추가 실패:', e); }
+  }
+  event.target.value = '';
+  _renderIoPhotoGrid();
+}
+
+function _removeIoPhoto(idx){
+  _ioPhotoBuf.splice(idx, 1);
+  _renderIoPhotoGrid();
+}
+
+async function saveIo(idOrNull){
+  const isEdit = idOrNull !== null && idOrNull !== undefined;
+  const old = isEdit ? ioItems.find(x=>x.id==idOrNull) : null;
+  const date = document.getElementById('io_date').value;
+  const kind = document.getElementById('io_kind').value;
+  const flow = document.getElementById('io_flow').value;
+  const vendor = document.getElementById('io_vendor').value.trim();
+  const qty = +document.getElementById('io_qty').value || 0;
+  const items = document.getElementById('io_items').value.trim();
+  let title = document.getElementById('io_title').value.trim();
+  const invoice = document.getElementById('io_invoice').value.trim();
+  const memo = document.getElementById('io_memo').value.trim();
+  const user = document.getElementById('io_user').value.trim();
+  if(!date || !kind){
+    showToast('⚠ 일자와 구분은 필수입니다','var(--red)',3000);
+    return;
+  }
+  // 자동 제목 생성
+  if(!title){
+    const vInit = _ioInitial(vendor) || '?';
+    title = `${vInit}_${kind}`;
+  }
+  const updated = {
+    ...(old||{}),
+    id: old?.id || Date.now(),
+    title, date, kind, flow, vendor, items, qty, invoice, memo, user,
+    files: _ioPhotoBuf.slice()
+  };
+  if(isEdit){
+    const i = ioItems.findIndex(x=>x.id==idOrNull);
+    if(i>=0) ioItems[i] = updated;
+  } else {
+    ioItems.unshift(updated);
+  }
+  save();
+  closeM('mIo');
+  showToast(`✓ ${isEdit?'수정':'등록'} 완료`,'var(--grn)',2000);
+  renderIo();
+  // 노션 동기화 (백그라운드)
+  if(notionCfg.workerUrl && notionCfg.ioDb){
+    syncIOToNotion(updated).then(ok=>{
+      if(ok) save();
+    });
+  }
+}
+
+async function deleteIo(idOrNull){
+  if(!confirm('이 입출고 기록을 삭제하시겠습니까?')) return;
+  const io = ioItems.find(x=>x.id==idOrNull);
+  if(!io) return;
+  ioItems = ioItems.filter(x=>x.id!=idOrNull);
+  save();
+  closeM('mIo');
+  showToast('✓ 삭제 완료','var(--grn)',2000);
+  renderIo();
+  if(io._notionId && notionCfg.workerUrl){
+    try {
+      // 노션 페이지 삭제는 archived: true
+      await fetch(`${notionCfg.workerUrl}/notion/v1/pages/${io._notionId}`, {
+        method:'PATCH',
+        headers:{'Content-Type':'application/json','Notion-Token':notionCfg.token},
+        body: JSON.stringify({archived:true})
+      });
+    } catch(e){ console.warn('노션 삭제 실패:', e); }
+  }
+}
+
+// 상세보기 (수정 모달과 동일하게 — 편집 가능)
+function openIoDetail(idOrNull){
+  openIoModal(idOrNull);
+}
+
+// 품목 선택 모달 (모바일과 동일)
+let _ioPickerSel = new Set();
+function _openIoItemPicker(){
+  if(!productDB || !productDB.length){
+    showToast('⚠ 제품DB가 비어있습니다','var(--org)',2500);
+    return;
+  }
+  const cur = (document.getElementById('io_items')?.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  _ioPickerSel = new Set(cur);
+  // 별도 모달 위에 띄우기
+  let mP = document.getElementById('mIoPicker');
+  if(!mP){
+    mP = document.createElement('div');
+    mP.id = 'mIoPicker';
+    mP.className = 'ov';
+    document.body.appendChild(mP);
+  }
+  _renderIoPicker();
+  mP.classList.add('open');
+  mP.style.zIndex = '10000';
+}
+
+function _renderIoPicker(){
+  const q = (document.getElementById('iop_q')?.value||'').trim().toLowerCase();
+  let list = productDB.slice();
+  if(q){
+    list = list.filter(p =>
+      (p.name||'').toLowerCase().includes(q) ||
+      (p.code||'').toLowerCase().includes(q)
+    );
+  }
+  list.sort((a,b)=>{
+    const aSel = _ioPickerSel.has(a.name||'') ? 0 : 1;
+    const bSel = _ioPickerSel.has(b.name||'') ? 0 : 1;
+    if(aSel !== bSel) return aSel - bSel;
+    return (a.name||'').localeCompare(b.name||'', 'ko');
+  });
+  const mP = document.getElementById('mIoPicker');
+  if(!mP) return;
+  mP.innerHTML = `<div class="modal" style="max-width:600px">
+    <div class="mt">📦 품목 선택 <span style="font-size:11px;color:var(--t3);font-weight:400;margin-left:8px">(${list.length}개 · ${_ioPickerSel.size}개 선택)</span></div>
+    <div style="padding:0 16px 14px">
+      <input type="text" id="iop_q" placeholder="품명·품번 검색" oninput="_renderIoPicker()" value="${escHtml(q)}" autocomplete="off" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12.5px;font-family:inherit;background:var(--s1);margin-bottom:10px;box-sizing:border-box">
+      <div style="max-height:50vh;overflow-y:auto;border:1px solid var(--bdr-lt);border-radius:6px">
+        ${list.slice(0,200).map(p=>{
+          const img = p.imgs && p.imgs.length ? (typeof p.imgs[0]==='string'?p.imgs[0]:(p.imgs[0].url||'')) : '';
+          const stock = +p.stock||0;
+          const checked = _ioPickerSel.has(p.name||'');
+          const safeName = (p.name||'').replace(/'/g,"\\'");
+          return `<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--bdr-lt);${checked?'background:var(--gold-bg)':''}">
+            <input type="checkbox" ${checked?'checked':''} onchange="_toggleIoPick('${safeName}',this.checked)" style="width:16px;height:16px">
+            <div style="width:32px;height:32px;border-radius:4px;background:var(--s2);border:1px solid var(--bdr-lt);overflow:hidden;display:flex;align-items:center;justify-content:center;flex-shrink:0">${img?`<img src="${img}" style="width:100%;height:100%;object-fit:cover">`:'📦'}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(p.name||'')}</div>
+              ${p.code?`<div style="font-size:10px;color:var(--gold-lt);font-family:monospace">${escHtml(p.code)}</div>`:''}
+            </div>
+            <span style="font-size:11px;color:var(--t3);font-family:monospace;flex-shrink:0">재고 ${stock}</span>
+          </label>`;
+        }).join('')}
+      </div>
+      ${list.length > 200 ? `<div style="font-size:10.5px;color:var(--t3);text-align:center;margin-top:6px">↑ 200개까지 표시 · 검색으로 좁혀주세요</div>` : ''}
+    </div>
+    <div class="mb" style="display:flex;justify-content:flex-end;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px">
+      <button class="btn bg bs" onclick="_closeIoPicker()">취소</button>
+      <button class="btn bp bs" onclick="_applyIoPicker()">선택 적용 (${_ioPickerSel.size})</button>
+    </div>
+  </div>`;
+}
+
+function _toggleIoPick(name, checked){
+  if(checked) _ioPickerSel.add(name);
+  else _ioPickerSel.delete(name);
+  _renderIoPicker();
+}
+
+function _applyIoPicker(){
+  const inp = document.getElementById('io_items');
+  if(inp) inp.value = [..._ioPickerSel].join(', ');
+  _closeIoPicker();
+}
+
+function _closeIoPicker(){
+  const mP = document.getElementById('mIoPicker');
+  if(mP) mP.classList.remove('open');
+}
+
+// ek-chip 스타일 (다른 곳에서 정의 안 됐을 경우)
+(function ensureEkChipStyle(){
+  if(document.getElementById('ek-chip-style')) return;
+  const s = document.createElement('style');
+  s.id = 'ek-chip-style';
+  s.textContent = `
+    .ek-chip{padding:6px 12px;font-size:12px;border:1px solid var(--bdr);background:var(--s1);color:var(--t2);border-radius:6px;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px;font-weight:500;transition:.12s}
+    .ek-chip:hover{background:var(--s2)}
+    .ek-chip.active{background:var(--gold-bg);border-color:var(--gold-line);color:var(--gold-lt);font-weight:600}
+    .ek-chip .cnt{font-size:10.5px;color:var(--t3);font-weight:500}
+    .ek-chip.active .cnt{color:var(--gold-lt)}
+  `;
+  document.head.appendChild(s);
+})();
 
 // ════════════════════════════════════════════
 // 🔔 알림 시스템 (PC) — 모바일 m.html과 동일한 로직
@@ -7280,6 +7780,17 @@ function _detectChanges(prev, curr){
       _addNotif({
         ico:'🧾', kind:'invoice', targetId:v.id,
         msg:`새 거래명세서: ${v.vendor||'-'} · ${(+v.total||0).toLocaleString()}원`
+      });
+    }
+  });
+  // 입출고 신규
+  const prevIoIds = new Set((prev.ioItems||[]).map(x=>x._notionId).filter(Boolean));
+  (curr.ioItems||[]).forEach(io=>{
+    if(io._notionId && !prevIoIds.has(io._notionId)){
+      const icon = io.kind === '출고' ? '📤' : io.kind === '입고' ? '📥' : '🚚';
+      _addNotif({
+        ico:icon, kind:'io', targetId:io.id,
+        msg:`새 ${io.kind||'입출고'}: ${io.title||io.vendor||'-'}`
       });
     }
   });
@@ -7380,6 +7891,12 @@ function _openNotif(id){
       switchTab('invoices');
       setTimeout(()=>{
         if(typeof openInvDetail === 'function') openInvDetail(n.targetId);
+      }, 100);
+    } else if(n.kind === 'io'){
+      const tabBtn = document.querySelector('.tab-btn[data-tab="io"]');
+      switchTab('io', tabBtn);
+      setTimeout(()=>{
+        if(typeof openIoDetail === 'function') openIoDetail(n.targetId);
       }, 100);
     }
   }, 100);
@@ -8445,7 +8962,7 @@ let prevImages=[], prevIdx=0;
 // ════════════════════════════════
 // STORAGE
 // ════════════════════════════════
-const SK={s:'ek3_smp',o:'ek3_ord',p:'ek3_proc',t:'ek3_task',a:'ek3_as',pd:'ek3_products',iv:'ek3_invoices',sh:'ek3_stock_hist'};
+const SK={s:'ek3_smp',o:'ek3_ord',p:'ek3_proc',t:'ek3_task',a:'ek3_as',pd:'ek3_products',iv:'ek3_invoices',sh:'ek3_stock_hist',io:'ek3_io'};
 function save(){
   const saveKey=(key, data, label)=>{
     try{
@@ -8467,6 +8984,7 @@ function save(){
     products: saveKey(SK.pd, productDB, '제품DB'),
     invoices: saveKey(SK.iv, invoiceHistory, '청구이력'),
     stockHist: saveKey(SK.sh, stockHistory, '재고이력'),
+    io: saveKey(SK.io, ioItems, '입출고'),
   };
   // 디버깅: 실패가 있으면 전체 용량 진단
   if(Object.values(results).some(v=>!v)){
@@ -8476,7 +8994,7 @@ function save(){
     }catch(e){}
   }
 }
-function load(){try{const s=localStorage.getItem(SK.s);if(s)samples=JSON.parse(s);const o=localStorage.getItem(SK.o);if(o)orders=JSON.parse(o);const p=localStorage.getItem(SK.p);if(p)procItems=JSON.parse(p);const t=localStorage.getItem(SK.t);if(t)tasks=JSON.parse(t);const a=localStorage.getItem(SK.a);if(a)asItems=JSON.parse(a);const pd=localStorage.getItem(SK.pd);if(pd)productDB=JSON.parse(pd);const iv=localStorage.getItem(SK.iv);if(iv)invoiceHistory=JSON.parse(iv);const sh=localStorage.getItem(SK.sh);if(sh)stockHistory=JSON.parse(sh);}catch(e){}}
+function load(){try{const s=localStorage.getItem(SK.s);if(s)samples=JSON.parse(s);const o=localStorage.getItem(SK.o);if(o)orders=JSON.parse(o);const p=localStorage.getItem(SK.p);if(p)procItems=JSON.parse(p);const t=localStorage.getItem(SK.t);if(t)tasks=JSON.parse(t);const a=localStorage.getItem(SK.a);if(a)asItems=JSON.parse(a);const pd=localStorage.getItem(SK.pd);if(pd)productDB=JSON.parse(pd);const iv=localStorage.getItem(SK.iv);if(iv)invoiceHistory=JSON.parse(iv);const sh=localStorage.getItem(SK.sh);if(sh)stockHistory=JSON.parse(sh);const io=localStorage.getItem(SK.io);if(io)ioItems=JSON.parse(io);}catch(e){}}
 
 // ════════════════════════════════
 // 데모/테스트 데이터 — 콘솔에서 호출
@@ -12243,7 +12761,7 @@ body{background:#fff;padding:14px}
 // ════════════════════════════════
 // TAB NAVIGATION
 // ════════════════════════════════
-const TAB_TITLES={dash:'대시보드',sample:'샘플 의뢰 관리',order:'생산관리',schedule:'업무 일지',sales:'영업 관리',as:'AS 관리',products:'제품 DB',invoices:'거래명세서'};
+const TAB_TITLES={dash:'대시보드',sample:'샘플 의뢰 관리',order:'생산관리',schedule:'업무 일지',sales:'영업 관리',as:'AS 관리',io:'입출고 관리',products:'제품 DB',invoices:'거래명세서'};
 // 탭 이름(data-tab)으로 버튼 엘리먼트 찾기 — 탭 순서 변경에 견고
 function getTabBtn(tabName){
   return document.querySelector('.tab-btn[data-tab="'+tabName+'"]');
@@ -12261,6 +12779,7 @@ function switchTab(tab,el){
   const acts=document.getElementById('subActs');
   acts.innerHTML='';
   if(tab==='as') acts.innerHTML='<button class="btn bp bs" onclick="openASModal(null)">+ AS 접수</button>';
+  else if(tab==='io') acts.innerHTML='<button class="btn bp bs" onclick="openIoModal(null)">+ 입출고 등록</button>';
   else if(tab==='products'){
     const pdConnected = !!(notionCfg.workerUrl && notionCfg.productDb);
     const disabledStyle = pdConnected ? '' : 'opacity:.4;cursor:not-allowed';
@@ -12283,6 +12802,7 @@ function renderTab(){
   const c=document.getElementById('content');c.innerHTML='';
   if(currentTab==='sales'){renderSalesTab();return;}
   if(currentTab==='as'){renderAS();return;}
+  if(currentTab==='io'){renderIo();return;}
   if(currentTab==='products'){renderProducts();return;}
   if(currentTab==='invoices'){renderInvoiceHistory();return;}
   ({dash:renderDash,sample:renderSample,order:renderOrder,schedule:renderSchedule}[currentTab]||renderDash)();

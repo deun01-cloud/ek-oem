@@ -525,6 +525,10 @@ function loadAll(){
   productDB     = safeLoad(LS.prod, []);
   stockHistory  = safeLoad(LS.sh, []);
   notionCfg     = safeLoad(LS.notion, null);
+  // notionCfg가 있지만 ioDb가 비어 있으면 기본값 보충 (실제 노션 DB ID)
+  if(notionCfg && !notionCfg.ioDb){
+    notionCfg.ioDb = 'a6024595f92f4f039493e907492b8eef';
+  }
 }
 function saveAll(){
   safeSave(LS.smp, samples);
@@ -565,20 +569,85 @@ function strColor(s){
   const colors=['#8B6914','#1A6DB5','#A85A10','#5040A0','#2E8B2C','#C03030','#6B4E0A','#7C5500'];
   return colors[Math.abs(strHash(s||''))%colors.length];
 }
+// 고객사 이름 → 영문 2자 이니셜
+// 우선순위:
+// 1. clients DB에 등록된 영문 이니셜 (가장 정확)
+// 2. 영문 이름이면 첫 글자 + 두번째 단어 첫 글자 (또는 첫 2자)
+// 3. 한글이면 로마자 음역 (한글 자음 첫 자 매핑)
 function getInitial(name){
   const nm=(name||'').trim();
   if(!nm) return '';
-  const cl=clients.find(c=>(c.name||'').trim()===nm||(c.initials||'').trim().toUpperCase()===nm.toUpperCase());
-  if(cl&&cl.initials) return cl.initials.trim().toUpperCase();
-  const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
-  const w=clean.split(/\s+/);
-  if(w.length>=2) return (w[0][0]+(w[1][0]||'')).toUpperCase();
-  return clean.slice(0,2).toUpperCase();
+  // 1) 고객사 DB에서 매칭 (이름 또는 이니셜 자체로)
+  const cl=clients.find(c=>{
+    const cn=(c.name||'').trim();
+    const ci=(c.initials||'').trim();
+    return cn===nm || (cn && nm.includes(cn)) || ci.toUpperCase()===nm.toUpperCase();
+  });
+  if(cl&&cl.initials){
+    const ini = cl.initials.trim().toUpperCase();
+    // 영문/숫자만 추출 (한글 이니셜 방어)
+    const eng = ini.replace(/[^A-Z0-9]/g,'');
+    if(eng) return eng.slice(0,2);
+  }
+  // 2) 법인 표기 제거 후 시도
+  const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜|\(주\)|유한회사|\(유\)/g,'').trim();
+  // 3) 영문이 들어 있으면 영문만 추출
+  const engChars=clean.match(/[A-Za-z]/g);
+  if(engChars && engChars.length>=2){
+    return (engChars[0]+engChars[1]).toUpperCase();
+  }
+  // 4) 한글 이름 → 로마자 첫 자음 매핑 (간단)
+  return _hangulToInitial(clean);
+}
+
+// 한글 → 영문 2글자 이니셜 (자음 기준 음역, 매핑이 없으면 ASCII fallback)
+function _hangulToInitial(s){
+  if(!s) return '';
+  // 초성(한글 자음) → 로마자
+  const CHO_MAP = ['G','GG','N','D','DD','R','M','B','BB','S','SS','','J','JJ','C','K','T','P','H'];
+  // 한글이 아니면 첫 2자 그대로
+  const ch = [...s].filter(c=>c.trim());
+  if(!ch.length) return '';
+  const getInitialOf = (c)=>{
+    const code = c.charCodeAt(0);
+    // 한글 음절 (가-힣)
+    if(code>=0xAC00 && code<=0xD7A3){
+      const cho = Math.floor((code-0xAC00)/588);
+      return CHO_MAP[cho] || c;
+    }
+    // 영문/숫자
+    if(/[A-Za-z0-9]/.test(c)) return c.toUpperCase();
+    return '';
+  };
+  // 첫 음절 + 두번째 단어 첫 음절 (단어 = 공백 구분)
+  const words = s.split(/\s+/).filter(Boolean);
+  if(words.length>=2){
+    const a = getInitialOf(words[0][0]);
+    const b = getInitialOf(words[1][0]);
+    if(a && b) return (a[0]+b[0]).toUpperCase();
+  }
+  // 단일 단어 → 첫 2 음절의 초성 (각 첫 자)
+  const i1 = getInitialOf(ch[0]||'');
+  const i2 = getInitialOf(ch[1]||'');
+  const result = (i1[0]||'') + (i2[0]||'');
+  return result ? result.toUpperCase() : ch.slice(0,2).join('').toUpperCase();
 }
 function initBadge(name){
   const nm=(name||'').trim();
   if(!nm) return '';
   return `<span class="li-init" style="background:${strColor(nm)}">${getInitial(nm)}</span>`;
+}
+
+// 고객사명을 영문 이니셜로 표시 — 모바일 좁은 화면 최적화
+// 옵션:
+//   {fallback:'-'}: 이니셜을 못 만든 경우 표시할 텍스트
+//   {showFullIfNoInit:true}: 이니셜 못 만들면 원래 이름 표시
+function vendorDisplay(name, opts){
+  opts = opts || {};
+  const init = getInitial(name);
+  if(init) return init;
+  if(opts.showFullIfNoInit) return (name||'').trim() || (opts.fallback || '-');
+  return opts.fallback || '-';
 }
 function escapeHtml(s){
   return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -868,18 +937,31 @@ function mapNotionProduct(row){
 
 function mapNotionIO(row){
   const p=row.properties||{};
+  // 사진: 노션 file 타입 우선 시도, 사진JSON(text)도 fallback으로 시도
   let files=[];
-  const fText = np.text(p['사진JSON']);
-  if(fText){
-    try{ const parsed=JSON.parse(fText); if(Array.isArray(parsed)) files=parsed; }catch(e){}
+  const photoProp = p['사진'];
+  if(photoProp && photoProp.files && photoProp.files.length){
+    files = photoProp.files.map(f=>({
+      name: f.name || '',
+      url:  f.file?.url || f.external?.url || '',
+      type: (f.name||'').toLowerCase().match(/\.(jpg|jpeg|png|gif|webp|heic)$/) ? 'image/'+RegExp.$1 : ''
+    })).filter(f=>f.url);
+  } else {
+    // fallback: 옛 사진JSON 필드도 지원 (모바일이 초기에 사용)
+    const fText = np.text(p['사진JSON']);
+    if(fText){
+      try{ const parsed=JSON.parse(fText); if(Array.isArray(parsed)) files=parsed; }catch(e){}
+    }
   }
+  // 고객사/공장 — 노션 실제 필드명. 옛 코드 호환으로 '고객사'도 시도
+  const vendor = np.text(p['고객사/공장']) || np.text(p['고객사']) || '';
   return {
     _notionId:row.id,
     title:  np.title(p['제목']),
     date:   np.date(p['일자']),
     kind:   np.select(p['구분']),
     flow:   np.select(p['흐름']),
-    vendor: np.text(p['고객사']),
+    vendor,
     items:  np.text(p['품목']),
     qty:    np.number(p['수량']),
     invoice:np.text(p['송장번호']),
@@ -2059,7 +2141,7 @@ function openDayPop(ds){
     ords.forEach(o=>{
       const st=o.status||'진행중';
       const stCls = st==='출고완료'?'s-done':st==='취소'?'s-cancel':st==='보류'?'s-hold':'s-prog';
-      html += `<div onclick="closeDayPop();showOrdDetail(${o.id})" style="padding:9px;border:1px solid var(--bdr-lt);border-radius:6px;margin-bottom:6px;font-size:13px;cursor:pointer"><div style="display:flex;gap:6px;align-items:center"><span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(o.vendor||'')}</span><span class="li-status ${stCls}">${_ordStLabel(st)}</span></div><div style="font-size:11px;color:var(--t3);margin-top:2px">${(o.rows||[]).length}개 품목 · ${escapeHtml(o.no||'')}</div></div>`;
+      html += `<div onclick="closeDayPop();showOrdDetail(${o.id})" style="padding:9px;border:1px solid var(--bdr-lt);border-radius:6px;margin-bottom:6px;font-size:13px;cursor:pointer"><div style="display:flex;gap:6px;align-items:center">${initBadge(o.vendor)}<span style="font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(getInitial(o.vendor)||'-')}</span><span class="li-status ${stCls}">${_ordStLabel(st)}</span></div><div style="font-size:11px;color:var(--t3);margin-top:2px">${(o.rows||[]).length}개 품목 · ${escapeHtml(o.no||'')}</div></div>`;
     });
   }
   const smps = samples.filter(s=>s.due===ds);
@@ -2128,14 +2210,18 @@ function renderOrdCliFilter(){
   if(!wrap) return;
   // 현재 상태 필터 적용 후 고객사별 카운트
   const list = _getOrdAfterStatusFilter();
-  const vendorCount = {};
+  // 이니셜 기준 그룹화 (같은 이니셜의 다른 표기명 통합)
+  const initGroups = {}; // { 이니셜: {count, names:[], rep} }
   list.forEach(o => {
     const v = (o.vendor||'').trim();
     if(!v) return;
-    vendorCount[v] = (vendorCount[v]||0) + 1;
+    const init = getInitial(v) || '??';
+    if(!initGroups[init]) initGroups[init] = {count:0, names:new Set(), rep:v};
+    initGroups[init].count++;
+    initGroups[init].names.add(v);
   });
-  // 정렬: 카운트 많은 순 → 가나다순
-  const sorted = Object.entries(vendorCount).sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0],'ko'));
+  // 정렬: 카운트 많은 순 → 이니셜순
+  const sorted = Object.entries(initGroups).sort((a,b) => b[1].count-a[1].count || a[0].localeCompare(b[0]));
   if(!sorted.length){
     wrap.innerHTML = '';
     wrap.style.display = 'none';
@@ -2145,11 +2231,12 @@ function renderOrdCliFilter(){
   // 전체 칩 + 각 고객사 칩
   const totalCount = list.length;
   const allChip = `<button class="${_ordCliFilter==='all'?'active':''}" data-cli="all" onclick="setOrdCliFilter('all')">전체 <span class="cli-cnt">${totalCount}</span></button>`;
-  const chips = sorted.map(([name, count]) => {
-    const initial = getInitial(name);
-    const color = strColor(name);
-    const isAct = _ordCliFilter === name;
-    return `<button class="${isAct?'active':''}" data-cli="${escapeHtml(name)}" onclick="setOrdCliFilter('${name.replace(/'/g,"\\'")}')"><span class="cli-bdg" style="background:${color}">${initial}</span>${escapeHtml(name)} <span class="cli-cnt">${count}</span></button>`;
+  const chips = sorted.map(([init, g]) => {
+    const color = strColor(g.rep);
+    const isAct = _ordCliFilter === init;
+    // 툴팁(title)에 풀네임 표시 (이니셜이 무엇인지 확인 가능)
+    const tooltip = [...g.names].join(', ');
+    return `<button class="${isAct?'active':''}" data-cli="${escapeHtml(init)}" onclick="setOrdCliFilter('${init.replace(/'/g,"\\'")}')" title="${escapeHtml(tooltip)}"><span class="cli-bdg" style="background:${color}">${init}</span><span class="cli-cnt">${g.count}</span></button>`;
   }).join('');
   wrap.innerHTML = allChip + chips;
 }
@@ -2157,9 +2244,9 @@ function renderOrdCliFilter(){
 function renderOrdList(){
   const q = (document.getElementById('ordSearch')?.value||'').toLowerCase();
   let list = _getOrdAfterStatusFilter();
-  // 고객사 필터
+  // 고객사 필터 (이니셜 기준 매칭 — 같은 이니셜의 다른 표기명도 포함)
   if(_ordCliFilter !== 'all'){
-    list = list.filter(o => (o.vendor||'').trim() === _ordCliFilter);
+    list = list.filter(o => getInitial(o.vendor||'') === _ordCliFilter);
   }
   if(q) list = list.filter(o=>{
     return (o.vendor||'').toLowerCase().includes(q) || (o.no||'').toLowerCase().includes(q) || (o.rows||[]).some(r=>(r.name||'').toLowerCase().includes(q));
@@ -2182,7 +2269,7 @@ function renderOrdList(){
     return `<div class="list-item" onclick="showOrdDetail(${o.id})">
       <div class="li-h">
         ${initBadge(o.vendor)}
-        <span class="li-vendor">${escapeHtml(o.vendor||'(이름없음)')}</span>
+        <span class="li-vendor">${escapeHtml(getInitial(o.vendor)||'-')}</span>
         ${ddHtml}
         <span class="li-status ${stCls}">${_ordStLabel(st)}</span>
       </div>
@@ -2222,13 +2309,17 @@ function renderSmpCliFilter(){
   const wrap = document.getElementById('smpCliFbar');
   if(!wrap) return;
   const list = _getSmpAfterStatusFilter();
-  const mgrCount = {};
+  // 이니셜 기준 그룹화
+  const initGroups = {};
   list.forEach(s => {
     const m = (s.manager||'').trim();
     if(!m) return;
-    mgrCount[m] = (mgrCount[m]||0) + 1;
+    const init = getInitial(m) || '??';
+    if(!initGroups[init]) initGroups[init] = {count:0, names:new Set(), rep:m};
+    initGroups[init].count++;
+    initGroups[init].names.add(m);
   });
-  const sorted = Object.entries(mgrCount).sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0],'ko'));
+  const sorted = Object.entries(initGroups).sort((a,b) => b[1].count-a[1].count || a[0].localeCompare(b[0]));
   if(!sorted.length){
     wrap.innerHTML = '';
     wrap.style.display = 'none';
@@ -2237,11 +2328,11 @@ function renderSmpCliFilter(){
   wrap.style.display = 'flex';
   const totalCount = list.length;
   const allChip = `<button class="${_smpCliFilter==='all'?'active':''}" data-cli="all" onclick="setSmpCliFilter('all')">전체 <span class="cli-cnt">${totalCount}</span></button>`;
-  const chips = sorted.map(([name, count]) => {
-    const initial = getInitial(name);
-    const color = strColor(name);
-    const isAct = _smpCliFilter === name;
-    return `<button class="${isAct?'active':''}" data-cli="${escapeHtml(name)}" onclick="setSmpCliFilter('${name.replace(/'/g,"\\'")}')"><span class="cli-bdg" style="background:${color}">${initial}</span>${escapeHtml(name)} <span class="cli-cnt">${count}</span></button>`;
+  const chips = sorted.map(([init, g]) => {
+    const color = strColor(g.rep);
+    const isAct = _smpCliFilter === init;
+    const tooltip = [...g.names].join(', ');
+    return `<button class="${isAct?'active':''}" data-cli="${escapeHtml(init)}" onclick="setSmpCliFilter('${init.replace(/'/g,"\\'")}')" title="${escapeHtml(tooltip)}"><span class="cli-bdg" style="background:${color}">${init}</span><span class="cli-cnt">${g.count}</span></button>`;
   }).join('');
   wrap.innerHTML = allChip + chips;
 }
@@ -2249,9 +2340,9 @@ function renderSmpCliFilter(){
 function renderSmpList(){
   const q = (document.getElementById('smpSearch')?.value||'').toLowerCase();
   let list = _getSmpAfterStatusFilter();
-  // 고객사(담당자) 필터
+  // 고객사(담당자) 필터 (이니셜 기준)
   if(_smpCliFilter !== 'all'){
-    list = list.filter(s => (s.manager||'').trim() === _smpCliFilter);
+    list = list.filter(s => getInitial(s.manager||'') === _smpCliFilter);
   }
   if(q) list = list.filter(s=>(s.name||'').toLowerCase().includes(q) || (s.itemCode||'').toLowerCase().includes(q));
   list.sort((a,b)=>(b.due||b.reqDate||'').localeCompare(a.due||a.reqDate||''));
@@ -2275,6 +2366,7 @@ function renderSmpList(){
         <span class="li-status ${stCls}">${st}</span>
       </div>
       <div class="li-meta">
+        ${s.manager?`<span><span class="lbl">고객</span> ${escapeHtml(getInitial(s.manager)||'-')}</span>`:''}
         <span><span class="lbl">유형</span> ${escapeHtml(s.type||'-')}</span>
         <span><span class="lbl">소재</span> ${escapeHtml(s.mat||'-')}</span>
         ${s.itemCode?`<span style="font-family:monospace;color:var(--gold-lt);font-weight:600">${escapeHtml(s.itemCode)}</span>`:''}
@@ -2592,7 +2684,7 @@ function renderAsList(){
         <span class="li-status ${stCls}">${st}</span>
       </div>
       <div class="li-meta">
-        <span><span class="lbl">고객</span> ${escapeHtml(a.client||'-')}</span>
+        <span><span class="lbl">고객</span> ${escapeHtml(getInitial(a.client)||'-')}</span>
         <span><span class="lbl">접수</span> ${escapeHtml(a.date||'-')}</span>
         <span><span class="lbl">수량</span> ${totalQty}</span>
       </div>
@@ -2662,7 +2754,7 @@ function renderInvList(){
     return `<div class="list-item" onclick="showInvDetail(${v.id})">
       <div class="li-h">
         ${initBadge(v.vendor)}
-        <span class="li-vendor">${escapeHtml(v.vendor||'-')}</span>
+        <span class="li-vendor">${escapeHtml(getInitial(v.vendor)||'-')}</span>
         <span style="font-size:13.5px;font-weight:700;color:var(--gold-lt);font-family:'Cormorant Garamond',serif">₩${(+v.total||0).toLocaleString()}</span>
       </div>
       <div class="li-meta">
@@ -3354,7 +3446,7 @@ function showOrdDetail(id){
   const docBtn = `<button class="act-btn" onclick="openOrdPdfView(${o.id})" style="margin-top:6px">📄 발주서 보기·공유</button>`;
 
   const body = `
-    <div class="dt-row"><span class="l">업체</span><span class="v bold">${escapeHtml(o.vendor||'-')}</span></div>
+    <div class="dt-row"><span class="l">업체</span><span class="v bold">${getInitial(o.vendor)?`<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:20px;padding:0 6px;border-radius:4px;background:${strColor(o.vendor)};color:#fff;font-size:11px;font-weight:700;margin-right:6px;vertical-align:middle">${getInitial(o.vendor)}</span>`:''}${escapeHtml(o.vendor||'-')}</span></div>
     <div class="dt-row"><span class="l">발주번호</span><span class="v" style="font-family:monospace">${escapeHtml(o.no||'-')}</span></div>
     <div class="dt-row"><span class="l">상태</span><span class="v"><span class="li-status ${stCls}">${_ordStLabel(st)}</span>${ddHtml}</span></div>
     <div class="dt-row"><span class="l">주문일</span><span class="v">${escapeHtml(o.date||'-')}</span></div>
@@ -3367,7 +3459,7 @@ function showOrdDetail(id){
     ${filesHtml}
     ${(o.rows||[]).length ? `<div style="margin-top:18px;font-size:11.5px;font-weight:700;color:var(--t3);margin-bottom:8px">품목 (${(o.rows||[]).length}개)</div>${rowsHtml}` : ''}
   `;
-  openModal('📋 발주 상세 — '+escapeHtml(o.vendor||''), body, null, `<button class="edit" onclick="openOrdEdit(${o.id})">✎ 편집</button>`);
+  openModal('📋 발주 상세 — '+escapeHtml(getInitial(o.vendor)||o.vendor||''), body, null, `<button class="edit" onclick="openOrdEdit(${o.id})">✎ 편집</button>`);
 }
 
 // ──── 발주 편집 ────
@@ -3423,7 +3515,7 @@ function openOrdEdit(ordId){
     <div class="spacer"></div>
     <button class="btn-primary" onclick="saveOrdEdit(${ordId})">✓ 저장</button>
   `;
-  openModal('📋 발주 수정 — '+escapeHtml(o.vendor||''), body);
+  openModal('📋 발주 수정 — '+escapeHtml(getInitial(o.vendor)||o.vendor||''), body);
 }
 
 function _renderOrdEditRows(){
@@ -4566,14 +4658,18 @@ async function saveIo(ioId){
         "제목":{title:[{text:{content:title}}]},
         "구분":{select:{name:kind}},
         "일자":{date:{start:date}},
-        "고객사":{rich_text:[{text:{content:updated.vendor||''}}]},
+        "고객사/공장":{rich_text:[{text:{content:updated.vendor||''}}]},
         "품목":{rich_text:[{text:{content:updated.items||''}}]},
-        "송장번호":{rich_text:[{text:{content:updated.invoiceNo||''}}]},
+        "송장번호":{rich_text:[{text:{content:updated.invoice||updated.invoiceNo||''}}]},
         "메모":{rich_text:[{text:{content:updated.memo||''}}]},
         "등록자":{rich_text:[{text:{content:updated.user||''}}]},
-        "수량":{number:updated.qty||0},
-        "사진JSON":{rich_text:[{text:{content:JSON.stringify(updated.files||[]).slice(0,2000)}}]}
+        "수량":{number:+updated.qty||null}
       };
+      // 사진 — 외부 URL만 노션에 보낼 수 있음 (R2 업로드된 것만)
+      const externalFiles = (updated.files||[]).filter(f=>f.url && f.url.startsWith('http'))
+        .slice(0,10)
+        .map(f=>({name: f.name||'photo', type:'external', external:{url: f.url}}));
+      if(externalFiles.length) props["사진"] = {files: externalFiles};
       if(updated.flow) props["흐름"] = {select:{name:updated.flow}};
 
       if(isEdit && updated._notionId){
@@ -4873,7 +4969,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-05-16-02';
+const APP_VERSION = '2026-05-16-03';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
