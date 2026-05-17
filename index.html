@@ -7205,7 +7205,7 @@ async function pullFromNotion(opts){
 //   - 제목 (title), 일자 (date), 구분 (select: 입고/출고/검수/반품), 흐름 (select)
 //   - 고객사/공장, 품목, 수량, 송장번호, 메모, 등록자, 사진 (file)
 
-const IO_KIND_OPTIONS = ['입고','출고','검수','반품'];
+const IO_KIND_OPTIONS = ['입고','출고','수리','교환','검수','반품'];
 const IO_FLOW_OPTIONS = ['중국→한국','한국→고객','고객→AS','AS→고객','공장→공장','기타'];
 
 // 노션 → 로컬 매핑 (모바일과 호환되는 필드명 사용 + 노션 정확 필드명 모두 시도)
@@ -7223,6 +7223,15 @@ function mapNotionIO(row){
   }
   // 고객사/공장 필드 — 노션은 "고객사/공장" 인데 모바일 옛 코드는 "고객사" 도 시도
   const vendor = np.text(p['고객사/공장']) || np.text(p['고객사']) || '';
+  // 연락처: phone_number 타입
+  let phone = '';
+  if(p['연락처']){
+    if(p['연락처'].phone_number !== undefined) phone = p['연락처'].phone_number || '';
+    else if(typeof p['연락처'] === 'string') phone = p['연락처'];
+  }
+  // 반품 상태에서 타입 유추 (교환요청/교환완료 → '교환', 환불요청/환불완료 → '환불')
+  const returnStatus = np.select(p['반품상태']) || '';
+  const returnType = returnStatus.includes('교환') ? '교환' : returnStatus.includes('환불') ? '환불' : '';
   return {
     _notionId: row.id,
     title:   np.title(p['제목']),
@@ -7235,7 +7244,21 @@ function mapNotionIO(row){
     invoice: np.text(p['송장번호']),
     memo:    np.text(p['메모']),
     user:    np.text(p['등록자']),
-    files
+    files,
+    // 커머스(B2C 자체 브랜드 출고) 전용 필드
+    brand:        np.select(p['자체브랜드']) || '',
+    recipient:    np.text(p['수령인']) || '',
+    phone:        phone,
+    address:      np.text(p['주소']) || '',
+    deliveryMemo: np.text(p['배송메모']) || '',
+    shipStatus:   np.select(p['송장상태']) || '',
+    matchStatus:  np.select(p['매칭상태']) || '',
+    // 교환/환불 필드
+    returnStatus:      returnStatus,
+    returnType:        returnType,
+    returnReason:      np.text(p['반품사유']) || '',
+    returnRequestedAt: np.date(p['반품요청일']) || '',
+    returnCompletedAt: np.date(p['반품입고일']) || '',
   };
 }
 
@@ -7267,6 +7290,21 @@ async function syncIOToNotion(io){
       .map(f=>({name: f.name||'photo', type:'external', external:{url: f.url}}));
     if(externalFiles.length) props["사진"] = {files: externalFiles};
   }
+  // 커머스 필드 (값 있을 때만 PATCH — null로 덮어쓰지 않음)
+  if(io.brand)        props["자체브랜드"] = {select:{name: io.brand}};
+  if(io.recipient)    props["수령인"]    = {rich_text:[{text:{content: (io.recipient||'').slice(0,200)}}]};
+  if(io.phone)        props["연락처"]    = {phone_number: (io.phone||'').slice(0,50)};
+  if(io.address)      props["주소"]      = {rich_text:[{text:{content: (io.address||'').slice(0,2000)}}]};
+  if(io.deliveryMemo) props["배송메모"]   = {rich_text:[{text:{content: (io.deliveryMemo||'').slice(0,2000)}}]};
+  if(io.shipStatus)   props["송장상태"]   = {select:{name: io.shipStatus}};
+  if(io.matchStatus)  props["매칭상태"]   = {select:{name: io.matchStatus}};
+  // 교환/환불 필드 (값 있을 때만 PATCH)
+  if(io.returnStatus){
+    props["반품상태"] = {select:{name: io.returnStatus}};
+  }
+  if(io.returnReason)      props["반품사유"]   = {rich_text:[{text:{content: (io.returnReason||'').slice(0,2000)}}]};
+  if(io.returnRequestedAt) props["반품요청일"] = {date:{start: io.returnRequestedAt}};
+  if(io.returnCompletedAt) props["반품입고일"] = {date:{start: io.returnCompletedAt}};
   try {
     if(io._notionId){
       await nUpdate(io._notionId, props);
@@ -7296,22 +7334,59 @@ function _ioInitial(name){
   return clean.slice(0,2);
 }
 
-// IO 리스트 렌더링 (PC 테이블 스타일)
+// IO 리스트 렌더링 (PC 테이블 스타일) — 일반 / 커머스 서브탭
 let _ioFilter = 'all'; // 'all' | '입고' | '출고' | '검수' | '반품'
 let _ioVendorFilter = 'all';
+let _ioSubTab = 'general'; // 'general' | 'commerce'
+let _ioCommerceBrand = 'all'; // 'all' | '비비케이트' | ...
+let _ioCommerceShipStatus = 'all'; // (deprecated, 호환용)
+let _ioCommerceReturnFilter = 'all'; // 'all' | '정상' | '교환요청' | '환불요청' | '교환완료' | '환불완료'
+let _ioCommerceMode = 'ship'; // 'ship' (출고) | 'return' (교환/환불)
+let _ioCommerceReturnType = 'all'; // 'all' | '교환' | '환불' (교환/환불 모드에서)
+let _ioCommerceReturnStage = 'pending'; // 'pending' (입고대기) | 'done' (완료) | 'all'
 
 function renderIo(){
   const c = document.getElementById('content');
+  c.innerHTML = `
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--bdr);margin-bottom:14px">
+      <button onclick="_setIoSubTab('general')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;background:none;cursor:pointer;font-family:inherit;color:${_ioSubTab==='general'?'var(--gold-lt)':'var(--t3)'};border-bottom:2px solid ${_ioSubTab==='general'?'var(--gold-lt)':'transparent'};margin-bottom:-1px">📋 일반</button>
+      <button onclick="_setIoSubTab('commerce')" style="padding:8px 16px;font-size:12.5px;font-weight:600;border:none;background:none;cursor:pointer;font-family:inherit;color:${_ioSubTab==='commerce'?'var(--gold-lt)':'var(--t3)'};border-bottom:2px solid ${_ioSubTab==='commerce'?'var(--gold-lt)':'transparent'};margin-bottom:-1px">🛍 커머스 (자체 브랜드)</button>
+    </div>
+    <div id="ioSubContent"></div>
+  `;
+  // 서브탭별 액션바도 변경
+  _updateIoActs();
+  if(_ioSubTab === 'commerce') _renderIoCommerce();
+  else _renderIoGeneral();
+}
+
+function _setIoSubTab(t){
+  _ioSubTab = t;
+  renderIo();
+}
+
+function _updateIoActs(){
+  const acts = document.getElementById('subActs');
+  if(!acts) return;
+  if(_ioSubTab === 'commerce'){
+    acts.innerHTML = '<button class="btn bgo bs" onclick="openIoModal(null,{commerce:true})">+ 커머스 직접 입력</button>';
+  } else {
+    acts.innerHTML = '<button class="btn bp bs" onclick="openIoModal(null)">+ 입출고 등록</button>';
+  }
+}
+
+function _renderIoGeneral(){
+  const sub = document.getElementById('ioSubContent');
+  // 일반 출고만 (커머스 아닌 것)
+  const allItems = ioItems.filter(io => !io.brand);
   // 필터 카운트
-  const kindCount = {입고:0,출고:0,검수:0,반품:0};
-  ioItems.forEach(io=>{
+  const kindCount = {입고:0,출고:0,수리:0,교환:0,검수:0,반품:0};
+  allItems.forEach(io=>{
     if(kindCount.hasOwnProperty(io.kind)) kindCount[io.kind]++;
   });
-  // 적용된 필터 후 리스트
-  let list = ioItems.slice();
+  let list = allItems.slice();
   if(_ioFilter !== 'all') list = list.filter(io => io.kind === _ioFilter);
   if(_ioVendorFilter !== 'all') list = list.filter(io => _ioInitial(io.vendor) === _ioVendorFilter);
-  // 검색
   const q = (document.getElementById('ioSearch')?.value||'').toLowerCase();
   if(q){
     list = list.filter(io =>
@@ -7322,12 +7397,11 @@ function renderIo(){
       (io.memo||'').toLowerCase().includes(q)
     );
   }
-  // 정렬: 최신 날짜 우선
   list.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 
-  // 고객사 이니셜 그룹화 (필터 칩용)
+  // 고객사 이니셜 그룹화
   const vendorGroups = {};
-  ioItems.forEach(io=>{
+  allItems.forEach(io=>{
     const init = _ioInitial(io.vendor);
     if(!init) return;
     if(!vendorGroups[init]) vendorGroups[init] = {count:0, names:new Set()};
@@ -7336,17 +7410,16 @@ function renderIo(){
   });
   const sortedVendors = Object.entries(vendorGroups).sort((a,b)=>b[1].count-a[1].count).slice(0,20);
 
-  c.innerHTML = `
+  sub.innerHTML = `
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
-      <input type="text" id="ioSearch" placeholder="제목·고객사·품목·송장·메모 검색" oninput="renderIo()" value="${escHtml(q)}" style="flex:1;min-width:240px;padding:7px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12.5px;font-family:inherit;background:var(--s1)">
+      <input type="text" id="ioSearch" placeholder="제목·고객사·품목·송장·메모 검색" oninput="_renderIoGeneral()" value="${escHtml(q)}" style="flex:1;min-width:240px;padding:7px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12.5px;font-family:inherit;background:var(--s1)">
       <div style="font-size:12px;color:var(--t3)">총 <b style="color:var(--t1)">${list.length}</b>건</div>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
-      <button onclick="_setIoFilter('all')" class="ek-chip ${_ioFilter==='all'?'active':''}">전체 <span class="cnt">${ioItems.length}</span></button>
+      <button onclick="_setIoFilter('all')" class="ek-chip ${_ioFilter==='all'?'active':''}">전체 <span class="cnt">${allItems.length}</span></button>
       <button onclick="_setIoFilter('입고')" class="ek-chip ${_ioFilter==='입고'?'active':''}" style="${_ioFilter==='입고'?'background:rgba(46,139,44,.15);border-color:var(--grn);color:var(--grn)':''}">📥 입고 <span class="cnt">${kindCount.입고}</span></button>
       <button onclick="_setIoFilter('출고')" class="ek-chip ${_ioFilter==='출고'?'active':''}" style="${_ioFilter==='출고'?'background:rgba(176,48,48,.12);border-color:var(--red);color:var(--red)':''}">📤 출고 <span class="cnt">${kindCount.출고}</span></button>
-      <button onclick="_setIoFilter('검수')" class="ek-chip ${_ioFilter==='검수'?'active':''}">🔍 검수 <span class="cnt">${kindCount.검수}</span></button>
-      <button onclick="_setIoFilter('반품')" class="ek-chip ${_ioFilter==='반품'?'active':''}">↩ 반품 <span class="cnt">${kindCount.반품}</span></button>
+      <button onclick="_setIoFilter('수리')" class="ek-chip ${_ioFilter==='수리'?'active':''}" style="${_ioFilter==='수리'?'background:rgba(128,80,176,.12);border-color:#8050B0;color:#8050B0':''}">🔧 수리 <span class="cnt">${kindCount.수리}</span></button>
     </div>
     ${sortedVendors.length ? `<div style="display:flex;gap:5px;margin-bottom:14px;flex-wrap:wrap">
       <button onclick="_setIoVendor('all')" class="ek-chip ${_ioVendorFilter==='all'?'active':''}" style="font-size:11px;padding:4px 9px">고객사 전체</button>
@@ -7375,6 +7448,8 @@ function renderIo(){
           ${list.map(io=>{
             const kindCls = io.kind==='입고'?'background:rgba(46,139,44,.12);color:var(--grn)':
                             io.kind==='출고'?'background:rgba(176,48,48,.10);color:var(--red)':
+                            io.kind==='수리'?'background:rgba(128,80,176,.12);color:#8050B0':
+                            io.kind==='교환'?'background:rgba(80,64,160,.12);color:#5040A0':
                             io.kind==='검수'?'background:rgba(26,109,181,.10);color:var(--blu)':
                             io.kind==='반품'?'background:rgba(168,90,16,.10);color:var(--org)':'background:var(--s2);color:var(--t3)';
             const init = _ioInitial(io.vendor);
@@ -7401,8 +7476,276 @@ function renderIo(){
   `;
 }
 
-function _setIoFilter(k){ _ioFilter = k; renderIo(); }
-function _setIoVendor(v){ _ioVendorFilter = v; renderIo(); }
+// 커머스 (자체 브랜드 B2C) — 출고 모드 / 교환환불 모드 두 가지
+function _renderIoCommerce(){
+  const sub = document.getElementById('ioSubContent');
+  // 커머스만 (brand 있는 것)
+  const allItems = ioItems.filter(io => !!io.brand);
+
+  // 브랜드별 카운트 (모드 무관 — 항상 동일하게 표시)
+  const brandCount = {};
+  allItems.forEach(io => {
+    const b = io.brand || '미지정';
+    brandCount[b] = (brandCount[b]||0) + 1;
+  });
+  // 교환/환불 상태별 카운트 (탭 배지용)
+  const returnCount = {정상:0, 교환요청:0, 환불요청:0, 교환완료:0, 환불완료:0};
+  allItems.forEach(io => {
+    const s = io.returnStatus || '정상';
+    if(returnCount.hasOwnProperty(s)) returnCount[s]++;
+  });
+  const requestPending = returnCount.교환요청 + returnCount.환불요청;
+  const returnDone = returnCount.교환완료 + returnCount.환불완료;
+  const returnTotalAll = requestPending + returnDone;
+  const shipTotal = returnCount.정상; // 출고는 "정상"인 것들만
+
+  // ── 모드별 필터링 ──
+  let list = allItems.slice();
+  // 브랜드 필터 (공통)
+  if(_ioCommerceBrand !== 'all') list = list.filter(io => (io.brand||'미지정') === _ioCommerceBrand);
+
+  if(_ioCommerceMode === 'ship'){
+    // 출고 모드: 교환/환불 없는 정상 출고만
+    list = list.filter(io => !io.returnStatus || io.returnStatus === '정상');
+  } else {
+    // 교환/환불 모드: returnStatus 있는 것만
+    list = list.filter(io => io.returnStatus && io.returnStatus !== '정상');
+    // 종류 필터 (교환/환불)
+    if(_ioCommerceReturnType === '교환'){
+      list = list.filter(io => io.returnStatus.includes('교환'));
+    } else if(_ioCommerceReturnType === '환불'){
+      list = list.filter(io => io.returnStatus.includes('환불'));
+    }
+    // 단계 필터 (입고대기/완료)
+    if(_ioCommerceReturnStage === 'pending'){
+      list = list.filter(io => io.returnStatus === '교환요청' || io.returnStatus === '환불요청');
+    } else if(_ioCommerceReturnStage === 'done'){
+      list = list.filter(io => io.returnStatus === '교환완료' || io.returnStatus === '환불완료');
+    }
+  }
+
+  // 검색
+  const q = (document.getElementById('ioCommerceSearch')?.value||'').toLowerCase();
+  if(q){
+    list = list.filter(io =>
+      (io.recipient||'').toLowerCase().includes(q) ||
+      (io.phone||'').includes(q) ||
+      (io.items||'').toLowerCase().includes(q) ||
+      (io.address||'').toLowerCase().includes(q) ||
+      (io.invoice||'').toLowerCase().includes(q) ||
+      (io.returnReason||'').toLowerCase().includes(q)
+    );
+  }
+  list.sort((a,b)=>(b.date||'').localeCompare(a.date||'') || (b.id||0)-(a.id||0));
+
+  // 일자별 그룹화 (출고는 출고일자, 교환환불은 요청일자 기준)
+  const byDate = {};
+  list.forEach(io => {
+    const d = _ioCommerceMode === 'return'
+      ? (io.returnRequestedAt || io.date || '날짜미상')
+      : (io.date || '날짜미상');
+    if(!byDate[d]) byDate[d] = [];
+    byDate[d].push(io);
+  });
+  const sortedDates = Object.keys(byDate).sort().reverse();
+
+  // ── HTML 렌더 ──
+  // 모드 토글 탭 (출고 / 교환환불)
+  const modeTab = `
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--bdr);margin-bottom:14px">
+      <button onclick="_setIoCommerceMode('ship')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;background:none;cursor:pointer;font-family:inherit;color:${_ioCommerceMode==='ship'?'var(--gold-lt)':'var(--t3)'};border-bottom:2px solid ${_ioCommerceMode==='ship'?'var(--gold-lt)':'transparent'};margin-bottom:-1px;display:inline-flex;align-items:center;gap:5px">📤 출고 <span style="font-size:10.5px;color:var(--t3);font-weight:500">${shipTotal}</span></button>
+      <button onclick="_setIoCommerceMode('return')" style="padding:8px 14px;font-size:12.5px;font-weight:600;border:none;background:none;cursor:pointer;font-family:inherit;color:${_ioCommerceMode==='return'?'var(--gold-lt)':'var(--t3)'};border-bottom:2px solid ${_ioCommerceMode==='return'?'var(--gold-lt)':'transparent'};margin-bottom:-1px;display:inline-flex;align-items:center;gap:5px">🔄 교환/환불 ${requestPending>0?`<span style="font-size:10px;background:var(--org);color:#fff;padding:1px 6px;border-radius:8px;font-weight:700">${requestPending}</span>`:`<span style="font-size:10.5px;color:var(--t3);font-weight:500">${returnTotalAll}</span>`}</button>
+    </div>
+  `;
+
+  // AI 영역 (출고 모드일 때만)
+  const aiArea = _ioCommerceMode === 'ship' ? `
+    <div id="commerceAiArea" style="margin-bottom:14px">
+      <div id="commerceAiDz" style="padding:14px 16px;border:2px dashed var(--gold-line);background:var(--gold-bg);border-radius:8px;cursor:pointer;transition:.15s" tabindex="0"
+        onclick="document.getElementById('commerceAiInput').click()"
+        ondragover="event.preventDefault();this.style.background='rgba(168,118,49,.18)'"
+        ondragleave="this.style.background='var(--gold-bg)'"
+        ondrop="handleCommerceAIDrop(event)">
+        <input type="file" id="commerceAiInput" accept="*/*" multiple style="display:none" onchange="handleCommerceAIFiles(event)">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:24px">🤖</span>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:700;color:var(--gold-lt)">AI 주문건 자동인식</div>
+            <div style="font-size:11px;color:var(--t3);margin-top:2px">주문 엑셀·스크린샷·PDF 드래그 · 클릭 · <b>Ctrl+V</b> 붙여넣기 → 자동으로 수령인·주소·품목 추출</div>
+          </div>
+          <button onclick="event.stopPropagation();openCommerceUpload()" style="padding:6px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;color:var(--t2);cursor:pointer;font-family:inherit">📥 엑셀 직접 업로드</button>
+        </div>
+      </div>
+      <div id="commerceAiResult" style="margin-top:8px"></div>
+    </div>
+  ` : '';
+
+  // 검색바 + 카운트
+  const searchBar = `
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <input type="text" id="ioCommerceSearch" placeholder="${_ioCommerceMode==='return'?'수령인·연락처·품목·사유 검색':'수령인·연락처·품목·주소·송장 검색'}" oninput="_renderIoCommerce()" value="${escHtml(q)}" style="flex:1;min-width:240px;padding:7px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12.5px;font-family:inherit;background:var(--s1)">
+      <div style="font-size:12px;color:var(--t3)">총 <b style="color:var(--t1)">${list.length}</b>건</div>
+    </div>
+  `;
+
+  // 브랜드 필터 (공통)
+  const brandFilter = `
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+      <button onclick="_setIoCommerceBrand('all')" class="ek-chip ${_ioCommerceBrand==='all'?'active':''}">전체 브랜드 <span class="cnt">${allItems.length}</span></button>
+      ${Object.entries(brandCount).sort((a,b)=>b[1]-a[1]).map(([b,c])=>`
+        <button onclick="_setIoCommerceBrand('${b.replace(/'/g,"\\'")}')" class="ek-chip ${_ioCommerceBrand===b?'active':''}">🛍 ${escHtml(b)} <span class="cnt">${c}</span></button>
+      `).join('')}
+    </div>
+  `;
+
+  // 교환/환불 모드 전용 필터 (종류 + 단계)
+  const returnFilters = _ioCommerceMode === 'return' ? `
+    <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11px;color:var(--t3);font-weight:600;margin-right:2px">종류</span>
+      <button onclick="_setIoCommerceReturnType('all')" class="ek-chip ${_ioCommerceReturnType==='all'?'active':''}" style="font-size:11px;padding:4px 9px">전체</button>
+      <button onclick="_setIoCommerceReturnType('교환')" class="ek-chip ${_ioCommerceReturnType==='교환'?'active':''}" style="font-size:11px;padding:4px 9px">🔄 교환 <span class="cnt">${returnCount.교환요청 + returnCount.교환완료}</span></button>
+      <button onclick="_setIoCommerceReturnType('환불')" class="ek-chip ${_ioCommerceReturnType==='환불'?'active':''}" style="font-size:11px;padding:4px 9px">↩ 환불 <span class="cnt">${returnCount.환불요청 + returnCount.환불완료}</span></button>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:11px;color:var(--t3);font-weight:600;margin-right:2px">단계</span>
+      <button onclick="_setIoCommerceReturnStage('all')" class="ek-chip ${_ioCommerceReturnStage==='all'?'active':''}" style="font-size:11px;padding:4px 9px">전체</button>
+      <button onclick="_setIoCommerceReturnStage('pending')" class="ek-chip ${_ioCommerceReturnStage==='pending'?'active':''}" style="font-size:11px;padding:4px 9px;${requestPending>0&&_ioCommerceReturnStage!=='pending'?'background:rgba(168,90,16,.10);border-color:rgba(168,90,16,.3);color:var(--org)':''}">⏳ 입고대기 <span class="cnt">${requestPending}</span></button>
+      <button onclick="_setIoCommerceReturnStage('done')" class="ek-chip ${_ioCommerceReturnStage==='done'?'active':''}" style="font-size:11px;padding:4px 9px">✓ 완료 <span class="cnt">${returnDone}</span></button>
+    </div>
+  ` : '';
+
+  // ── 테이블 헤더 (모드별로 다름) ──
+  const tableHeader = _ioCommerceMode === 'ship' ? `
+    <tr style="background:var(--s2);border-bottom:1px solid var(--bdr)">
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:80px">브랜드</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:90px">수령인</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:120px">연락처</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">품목</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">주소</th>
+      <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:70px">매칭</th>
+      <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:130px">교환/환불</th>
+    </tr>
+  ` : `
+    <tr style="background:var(--s2);border-bottom:1px solid var(--bdr)">
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:75px">종류</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:80px">브랜드</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:90px">수령인</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:120px">연락처</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">품목</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">사유</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:85px">출고일</th>
+      <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:135px">단계 / 액션</th>
+    </tr>
+  `;
+
+  // 행 렌더 함수
+  const renderRow = (io) => {
+    const matchCls = io.matchStatus === '자동매칭' ? 'background:rgba(46,139,44,.12);color:var(--grn)' :
+                     io.matchStatus === '미매칭' ? 'background:rgba(168,90,16,.15);color:var(--org)' :
+                     io.matchStatus === '수동확인' ? 'background:rgba(26,109,181,.10);color:var(--blu)' : '';
+    const rs = io.returnStatus || '';
+    const isReturnDone = rs === '교환완료' || rs === '환불완료';
+    const isReturnPending = rs === '교환요청' || rs === '환불요청';
+
+    if(_ioCommerceMode === 'ship'){
+      // ── 출고 모드 행 ──
+      const actionCell = `<button onclick="event.stopPropagation();openReturnModal(${io.id})" style="padding:3px 8px;font-size:10.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">🔄/↩ 등록</button>`;
+      return `<tr style="border-bottom:1px solid var(--bdr-lt);cursor:pointer" onclick="openIoDetail(${io.id})" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
+        <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1)">${escHtml(io.brand||'-')}</td>
+        <td style="padding:7px 10px;font-size:12px;font-weight:600">${escHtml(io.recipient||'-')}</td>
+        <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);font-family:monospace">${escHtml(io.phone||'-')}</td>
+        <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(io.items||'-')}</td>
+        <td style="padding:7px 10px;font-size:11px;color:var(--t3);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.address||'')}">${escHtml(io.address||'-')}</td>
+        <td style="padding:7px 10px;text-align:center">${io.matchStatus?`<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;${matchCls}">${escHtml(io.matchStatus)}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
+        <td style="padding:7px 10px;text-align:center">${actionCell}</td>
+      </tr>`;
+    } else {
+      // ── 교환/환불 모드 행 ──
+      const isExchange = rs.includes('교환');
+      const typeIcon = isExchange ? '🔄' : '↩';
+      const typeLabel = isExchange ? '교환' : '환불';
+      const typeCls = isExchange ? 'background:rgba(26,109,181,.12);color:var(--blu)' : 'background:rgba(192,48,48,.10);color:var(--red)';
+      const rowStyle = isReturnDone
+        ? 'border-bottom:1px solid var(--bdr-lt);cursor:pointer;text-decoration:line-through;color:var(--t3);opacity:.65'
+        : isReturnPending
+        ? 'border-bottom:1px solid var(--bdr-lt);cursor:pointer;background:rgba(168,90,16,.05)'
+        : 'border-bottom:1px solid var(--bdr-lt);cursor:pointer';
+      // 단계/액션 셀
+      let stageActionCell;
+      if(isReturnPending){
+        stageActionCell = `<div style="display:flex;flex-direction:column;gap:3px;align-items:stretch">
+          <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(168,90,16,.15);color:var(--org)">⏳ 입고대기</span>
+          <div style="display:flex;gap:3px;justify-content:center">
+            <button onclick="event.stopPropagation();confirmReturnComplete(${io.id})" style="flex:1;padding:3px 6px;font-size:10px;background:var(--grn);border:1px solid var(--grn);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:600">✓ 입고확인</button>
+            <button onclick="event.stopPropagation();cancelReturn(${io.id})" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="요청 취소">✕</button>
+          </div>
+        </div>`;
+      } else {
+        // 완료
+        stageActionCell = `<div style="display:flex;flex-direction:column;gap:3px;align-items:stretch">
+          <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(46,139,44,.12);color:var(--grn)">✓ 완료${io.returnCompletedAt?` ${escHtml(io.returnCompletedAt.slice(5))}`:''}</span>
+          <button onclick="event.stopPropagation();undoReturnComplete(${io.id})" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="입고 확인을 취소하고 요청 상태로 되돌립니다">↶ 되돌리기</button>
+        </div>`;
+      }
+      return `<tr style="${rowStyle}" onclick="openIoDetail(${io.id})" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${isReturnPending&&!isReturnDone?'rgba(168,90,16,.05)':''}'">
+        <td style="padding:7px 10px"><span style="display:inline-block;padding:2px 7px;border-radius:3px;font-size:10.5px;font-weight:700;${typeCls}">${typeIcon} ${typeLabel}</span></td>
+        <td style="padding:7px 10px;font-size:11px;font-weight:600;color:${isReturnDone?'var(--t3)':'var(--t1)'}">${escHtml(io.brand||'-')}</td>
+        <td style="padding:7px 10px;font-size:12px;font-weight:600">${escHtml(io.recipient||'-')}</td>
+        <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);font-family:monospace">${escHtml(io.phone||'-')}</td>
+        <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(io.items||'-')}</td>
+        <td style="padding:7px 10px;font-size:11px;color:var(--t3);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.returnReason||'')}">${escHtml(io.returnReason||'-')}</td>
+        <td style="padding:7px 10px;font-size:10.5px;color:var(--t3);font-family:monospace">${escHtml(io.date||'-')}</td>
+        <td style="padding:7px 10px;text-align:center">${stageActionCell}</td>
+      </tr>`;
+    }
+  };
+
+  // 빈 상태 메시지 (모드별)
+  const emptyState = _ioCommerceMode === 'ship' ? `
+    <div style="padding:60px 20px;text-align:center;color:var(--t3);background:var(--s1);border:1px solid var(--bdr);border-radius:var(--r)">
+      <div style="font-size:42px;margin-bottom:10px">🛍</div>
+      <div style="font-size:13px">커머스 출고 기록이 없습니다</div>
+      <div style="font-size:11px;color:var(--t3);margin-top:6px">위의 <b>🤖 AI 자동인식</b> 영역에 주문 엑셀을 드래그하거나 붙여넣어 주세요</div>
+    </div>
+  ` : `
+    <div style="padding:60px 20px;text-align:center;color:var(--t3);background:var(--s1);border:1px solid var(--bdr);border-radius:var(--r)">
+      <div style="font-size:42px;margin-bottom:10px">🔄</div>
+      <div style="font-size:13px">${_ioCommerceReturnStage==='pending'?'입고 대기 중인 교환·환불이 없습니다':_ioCommerceReturnStage==='done'?'완료된 교환·환불이 없습니다':'교환·환불 건이 없습니다'}</div>
+      <div style="font-size:11px;color:var(--t3);margin-top:6px">출고 탭에서 <b>🔄/↩ 등록</b> 버튼으로 교환·환불을 등록할 수 있습니다</div>
+    </div>
+  `;
+
+  // 일자별 테이블
+  const tablesHtml = sortedDates.length ? sortedDates.map(d => {
+    const dateLabel = _ioCommerceMode === 'return' ? `📅 요청일 ${d}` : `📅 ${d}`;
+    return `
+      <div style="margin-bottom:18px">
+        <div style="font-size:12px;font-weight:700;color:var(--gold-lt);margin-bottom:6px;padding:6px 10px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:5px">
+          ${dateLabel} <span style="color:var(--t3);font-weight:500;margin-left:4px">${byDate[d].length}건</span>
+        </div>
+        <div style="background:var(--s1);border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden">
+          <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+            <thead>${tableHeader}</thead>
+            <tbody>${byDate[d].map(renderRow).join('')}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }).join('') : emptyState;
+
+  sub.innerHTML = modeTab + aiArea + searchBar + brandFilter + returnFilters + tablesHtml;
+}
+
+function _setIoCommerceMode(m){ _ioCommerceMode = m; _renderIoCommerce(); }
+function _setIoCommerceReturnType(t){ _ioCommerceReturnType = t; _renderIoCommerce(); }
+function _setIoCommerceReturnStage(s){ _ioCommerceReturnStage = s; _renderIoCommerce(); }
+
+function _setIoCommerceBrand(b){ _ioCommerceBrand = b; _renderIoCommerce(); }
+function _setIoCommerceShipStatus(s){ _ioCommerceShipStatus = s; _renderIoCommerce(); } // 호환용 (deprecated)
+function _setIoCommerceReturnFilter(r){ _ioCommerceReturnFilter = r; _renderIoCommerce(); } // 호환용 (deprecated)
+
+function _setIoFilter(k){ _ioFilter = k; _renderIoGeneral(); }
+function _setIoVendor(v){ _ioVendorFilter = v; _renderIoGeneral(); }
 
 // 입출고 등록/수정 모달
 let _ioPhotoBuf = [];
@@ -7676,7 +8019,1030 @@ function _closeIoPicker(){
   if(mP) mP.classList.remove('open');
 }
 
-// ek-chip 스타일 (다른 곳에서 정의 안 됐을 경우)
+// ════════════════════════════════════════════
+// 🛍 커머스 (자체 브랜드 B2C) 엑셀 업로드
+// ════════════════════════════════════════════
+// 엑셀 형식: [수령인, 연락처, 주소, 배송메모, 품목(줄바꿈 구분)]
+// 한 명이 여러 품목이면 줄바꿈으로 구분된 셀
+// 업로드 흐름:
+//   1. 파일 드롭/선택
+//   2. 파싱 + 자동 매칭 + 미리보기 (한 품목 = 한 행)
+//   3. 사용자가 브랜드·날짜 확인, 미매칭 수동 매칭 or 그대로 두기
+//   4. "일괄 등록" → ioItems에 모두 추가 + 노션 동기화
+
+let _commerceUploadRows = []; // 미리보기용 행들
+
+// 알려진 자체 브랜드 (사용자가 +로 추가 가능, localStorage에 저장)
+const COMMERCE_BRANDS_KEY = 'ek3_commerce_brands';
+function loadCommerceBrands(){
+  try{
+    const s = localStorage.getItem(COMMERCE_BRANDS_KEY);
+    if(s) return JSON.parse(s);
+  }catch(e){}
+  return ['비비케이트']; // 기본
+}
+function saveCommerceBrands(brands){
+  try{ localStorage.setItem(COMMERCE_BRANDS_KEY, JSON.stringify(brands)); }catch(e){}
+}
+
+function openCommerceUpload(){
+  _commerceUploadRows = [];
+  const brands = loadCommerceBrands();
+  // 오늘 날짜 default
+  const today = new Date().toISOString().slice(0,10);
+  let mU = document.getElementById('mCommerceUpload');
+  if(!mU){
+    mU = document.createElement('div');
+    mU.id = 'mCommerceUpload';
+    mU.className = 'ov';
+    document.body.appendChild(mU);
+  }
+  mU.innerHTML = `<div class="modal wide" style="max-width:1100px">
+    <div class="mt">🛍 커머스 엑셀 업로드 — 자체 브랜드 출고건 일괄 등록</div>
+    <div style="padding:0 16px 14px;max-height:78vh;overflow-y:auto">
+      <div class="fr3" style="grid-template-columns:1.2fr 1fr;gap:10px;margin-bottom:14px">
+        <div class="fg">
+          <label>자체 브랜드 *</label>
+          <div style="display:flex;gap:6px">
+            <select class="fi" id="cu_brand" style="flex:1">
+              ${brands.map(b=>`<option value="${escHtml(b)}">${escHtml(b)}</option>`).join('')}
+            </select>
+            <button type="button" onclick="_addCommerceBrand()" style="padding:6px 10px;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;cursor:pointer;font-family:inherit;font-size:11.5px">+ 브랜드</button>
+          </div>
+        </div>
+        <div class="fg">
+          <label>출고 일자 *</label>
+          <input class="fi" type="date" id="cu_date" value="${today}">
+        </div>
+      </div>
+      <div id="cu_dropzone" style="border:2px dashed var(--gold-line);border-radius:8px;padding:30px 20px;text-align:center;background:var(--gold-bg);cursor:pointer;transition:.15s"
+        ondragover="event.preventDefault();this.style.background='rgba(168,118,49,.18)'"
+        ondragleave="this.style.background='var(--gold-bg)'"
+        ondrop="event.preventDefault();this.style.background='var(--gold-bg)';_handleCommerceFile(event.dataTransfer.files[0])"
+        onclick="document.getElementById('cu_fileInput').click()">
+        <div style="font-size:32px;margin-bottom:8px">📂</div>
+        <div style="font-size:13px;font-weight:700;color:var(--gold-lt);margin-bottom:4px">엑셀 파일 드래그 또는 클릭해서 선택</div>
+        <div style="font-size:11px;color:var(--t3)">파일명에서 날짜 자동 추출 (예: 비비케이트주문_0511 → 5월 11일)</div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:6px">컬럼: 수령인 / 연락처 / 주소 / 배송메모 / 품목(여러 개는 줄바꿈)</div>
+      </div>
+      <input type="file" id="cu_fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="_handleCommerceFile(this.files[0])">
+      <div id="cu_preview" style="margin-top:14px"></div>
+    </div>
+    <div class="mb" style="display:flex;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px;align-items:center">
+      <div id="cu_stats" style="font-size:11.5px;color:var(--t3)"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn bg bs" onclick="closeM('mCommerceUpload')">취소</button>
+        <button class="btn bp bs" id="cu_registerBtn" onclick="_registerCommerce()" disabled style="opacity:.5">📤 일괄 등록</button>
+      </div>
+    </div>
+  </div>`;
+  openM('mCommerceUpload');
+}
+
+function _addCommerceBrand(){
+  const name = prompt('새 자체 브랜드 이름:');
+  if(!name || !name.trim()) return;
+  const brands = loadCommerceBrands();
+  if(brands.includes(name.trim())){
+    showToast('⚠ 이미 있는 브랜드입니다','var(--org)',2000);
+    return;
+  }
+  brands.push(name.trim());
+  saveCommerceBrands(brands);
+  // 드롭다운 갱신
+  const sel = document.getElementById('cu_brand');
+  if(sel){
+    sel.innerHTML = brands.map(b=>`<option value="${escHtml(b)}" ${b===name.trim()?'selected':''}>${escHtml(b)}</option>`).join('');
+  }
+  showToast(`✓ "${name.trim()}" 추가됨`,'var(--grn)',2000);
+}
+
+async function _handleCommerceFile(file){
+  if(!file) return;
+  // 파일명에서 날짜 추출 시도 (예: 비비케이트주문_0511 → 05-11)
+  const dateMatch = file.name.match(/(\d{2,4})[-_]?(\d{1,2})[-_]?(\d{1,2})|(\d{2})(\d{2})/);
+  if(dateMatch){
+    const dateInput = document.getElementById('cu_date');
+    if(dateInput){
+      const today = new Date();
+      let mm, dd;
+      if(dateMatch[5]){
+        // _0511 형식
+        mm = dateMatch[4].padStart(2,'0');
+        dd = dateMatch[5].padStart(2,'0');
+      } else if(dateMatch[1] && dateMatch[1].length === 4){
+        // 2026-05-11
+        dateInput.value = `${dateMatch[1]}-${dateMatch[2].padStart(2,'0')}-${dateMatch[3].padStart(2,'0')}`;
+      } else if(dateMatch[2]){
+        // YYMMDD 추정
+        mm = dateMatch[2].padStart(2,'0');
+        dd = (dateMatch[3]||'').padStart(2,'0');
+      }
+      if(mm && dd){
+        // 현재 연도 기준
+        dateInput.value = `${today.getFullYear()}-${mm}-${dd}`;
+      }
+    }
+  }
+
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    _parseCommerceRows(rows);
+  } catch(e){
+    console.error(e);
+    showToast('⚠ 엑셀 파싱 실패: '+e.message,'var(--red)',4000);
+  }
+}
+
+// 엑셀 행들을 파싱 → 한 사람당 여러 품목이면 행을 분리 + 자동 매칭
+function _parseCommerceRows(rawRows){
+  _commerceUploadRows = [];
+  // 헤더 행 감지: 첫 행에 "수령인","이름","연락처" 같은 단어 있으면 스킵
+  let startRow = 0;
+  if(rawRows[0]){
+    const firstCellsStr = rawRows[0].map(c=>String(c||'')).join(' ').toLowerCase();
+    if(/수령|이름|연락처|주소|품목/.test(firstCellsStr)){
+      startRow = 1;
+    }
+  }
+  for(let i = startRow; i < rawRows.length; i++){
+    const row = rawRows[i];
+    if(!row || row.length === 0) continue;
+    const recipient = String(row[0]||'').trim();
+    const phone = String(row[1]||'').trim();
+    const address = String(row[2]||'').trim();
+    const deliveryMemo = String(row[3]||'').trim();
+    const itemsRaw = String(row[4]||'').trim();
+    // 빈 행 스킵
+    if(!recipient && !phone && !address && !itemsRaw) continue;
+    // 품목을 줄바꿈으로 분리 (한 명이 여러 개 주문)
+    const itemLines = itemsRaw.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    if(!itemLines.length){
+      // 품목 없으면 한 행만 생성
+      _commerceUploadRows.push({
+        recipient, phone, address, deliveryMemo,
+        itemText: '',
+        matched: null, matchedName: '', matchStatus: '미매칭'
+      });
+    } else {
+      itemLines.forEach(line => {
+        const match = _matchProductByText(line);
+        _commerceUploadRows.push({
+          recipient, phone, address, deliveryMemo,
+          itemText: line,
+          matched: match.product,
+          matchedName: match.product ? (match.product.name||'') : '',
+          matchStatus: match.product ? '자동매칭' : '미매칭',
+          score: match.score
+        });
+      });
+    }
+  }
+  _renderCommercePreview();
+}
+
+// 품목 텍스트로 제품 DB에서 매칭 시도
+// 점수: 토큰 매칭 + 옵션 일치(SILVER/SIZE 등)
+function _matchProductByText(text){
+  if(!text || !productDB || !productDB.length) return {product:null, score:0};
+  // 토큰화: 알파벳·숫자·한글 시퀀스 추출, 소문자화
+  const tokenize = (s) => {
+    return String(s||'').toLowerCase()
+      .match(/[a-z0-9]+|[가-힣]+/g) || [];
+  };
+  const inputTokens = new Set(tokenize(text));
+  if(!inputTokens.size) return {product:null, score:0};
+
+  let bestScore = 0;
+  let bestProduct = null;
+  for(const p of productDB){
+    if(!p.name) continue;
+    const productTokens = new Set(tokenize(p.name));
+    if(!productTokens.size) continue;
+    // 매칭 점수: 교집합 토큰 수 / 제품 토큰 수 (포함률)
+    let matched = 0;
+    productTokens.forEach(t => { if(inputTokens.has(t)) matched++; });
+    // 추가: 입력 토큰의 50% 이상이 제품과 매칭되어야 함 (역방향 체크)
+    const inputMatched = [...inputTokens].filter(t => productTokens.has(t)).length;
+    if(inputMatched / inputTokens.size < 0.4) continue;
+    const score = (matched / productTokens.size) * 100;
+    if(score > bestScore){
+      bestScore = score;
+      bestProduct = p;
+    }
+  }
+  // 60점 이상만 자동 매칭으로 인정
+  return bestScore >= 60 ? {product: bestProduct, score: bestScore} : {product:null, score: bestScore};
+}
+
+function _renderCommercePreview(){
+  const el = document.getElementById('cu_preview');
+  if(!el) return;
+  const rows = _commerceUploadRows;
+  if(!rows.length){
+    el.innerHTML = '';
+    document.getElementById('cu_registerBtn').disabled = true;
+    document.getElementById('cu_registerBtn').style.opacity = '.5';
+    document.getElementById('cu_stats').textContent = '';
+    return;
+  }
+
+  // ── 재고 시뮬레이션: 같은 제품을 여러 행이 차감하면 누적 ──
+  // productId별로 총 출고 수량 계산
+  const stockDemand = {}; // {productId: totalQty}
+  rows.forEach(r => {
+    if(r.matched && r.matched.id != null){
+      stockDemand[r.matched.id] = (stockDemand[r.matched.id]||0) + 1; // 한 행 = 1개 기본
+    }
+  });
+  // 각 행에 "차감 후 재고" 계산 (등장 순서대로 누적)
+  const running = {}; // 현재까지 차감 누적
+  rows.forEach(r => {
+    if(r.matched && r.matched.id != null){
+      const pid = r.matched.id;
+      running[pid] = (running[pid]||0) + 1;
+      const currentStock = +r.matched.stock || 0;
+      r._stockAfter = currentStock - running[pid];
+      r._stockBefore = currentStock;
+      r._stockOk = r._stockAfter >= 0;
+    } else {
+      r._stockAfter = null;
+      r._stockBefore = null;
+      r._stockOk = null;
+    }
+  });
+
+  const matched = rows.filter(r => r.matchStatus === '자동매칭').length;
+  const unmatched = rows.filter(r => r.matchStatus === '미매칭').length;
+  const recipients = new Set(rows.map(r => r.recipient)).size;
+  const stockShortageCount = rows.filter(r => r._stockOk === false).length;
+  const totalDemandLines = Object.keys(stockDemand).length;
+
+  let statsHtml = `<b style="color:var(--t1)">${rows.length}건</b> · ${recipients}명 · <span style="color:var(--grn);font-weight:600">✓ 매칭 ${matched}</span> · <span style="color:var(--org);font-weight:600">⚠ 미매칭 ${unmatched}</span>`;
+  if(stockShortageCount > 0){
+    statsHtml += ` · <span style="color:var(--red);font-weight:700">⛔ 재고부족 ${stockShortageCount}건</span>`;
+  } else if(totalDemandLines > 0){
+    statsHtml += ` · <span style="color:var(--grn);font-weight:600">✓ 재고 충분</span>`;
+  }
+  document.getElementById('cu_stats').innerHTML = statsHtml;
+  document.getElementById('cu_registerBtn').disabled = false;
+  document.getElementById('cu_registerBtn').style.opacity = '1';
+
+  el.innerHTML = `
+    <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--t1)">미리보기 <span style="color:var(--t3);font-weight:500">(${rows.length}건)</span></div>
+    <div style="background:var(--s1);border:1px solid var(--bdr);border-radius:6px;overflow:hidden;max-height:50vh;overflow-y:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+        <thead style="position:sticky;top:0;background:var(--s2);z-index:1">
+          <tr>
+            <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:35px">#</th>
+            <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:80px">수령인</th>
+            <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:115px">연락처</th>
+            <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr)">엑셀 품목</th>
+            <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:220px">매칭된 제품DB</th>
+            <th style="padding:7px 8px;text-align:center;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:90px">재고</th>
+            <th style="padding:7px 8px;text-align:center;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:75px">상태</th>
+            <th style="padding:7px 8px;text-align:center;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:60px">동작</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((r,i)=>{
+            const cls = r._stockOk === false ? 'background:rgba(192,48,48,.08)' :
+                        r.matchStatus === '자동매칭' ? 'background:rgba(46,139,44,.06)' :
+                        r.matchStatus === '수동확인' ? 'background:rgba(26,109,181,.06)' :
+                        'background:rgba(168,90,16,.06)';
+            const badge = r.matchStatus === '자동매칭' ? '<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(46,139,44,.18);color:var(--grn)">✓ 매칭</span>' :
+                         r.matchStatus === '수동확인' ? '<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(26,109,181,.15);color:var(--blu)">수동</span>' :
+                         '<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(168,90,16,.18);color:var(--org)">⚠ 미매칭</span>';
+            // 재고 셀 (현재 → 차감 후)
+            let stockCell = '<span style="color:var(--t3)">-</span>';
+            if(r.matched){
+              const okColor = r._stockOk ? 'var(--grn)' : 'var(--red)';
+              const arrow = r._stockOk ? '→' : '⚠';
+              stockCell = `<span style="font-family:'Cormorant Garamond',serif;font-size:13px;font-weight:600;color:var(--t2)">${r._stockBefore}</span><span style="margin:0 4px;color:var(--t3)">${arrow}</span><span style="font-family:'Cormorant Garamond',serif;font-size:13px;font-weight:700;color:${okColor}">${r._stockAfter}</span>`;
+            }
+            return `<tr style="${cls};border-bottom:1px solid var(--bdr-lt)">
+              <td style="padding:6px 8px;color:var(--t3);font-family:monospace">${i+1}</td>
+              <td style="padding:6px 8px;font-weight:600">${escHtml(r.recipient||'-')}</td>
+              <td style="padding:6px 8px;font-family:monospace;color:var(--t2)">${escHtml(r.phone||'-')}</td>
+              <td style="padding:6px 8px;color:var(--t2)" title="${escHtml(r.itemText||'')}">${escHtml(r.itemText||'-')}</td>
+              <td style="padding:6px 8px;color:${r.matched?'var(--grn)':'var(--t3)'};font-weight:${r.matched?'600':'400'}">${r.matched ? escHtml(r.matchedName) + (r.matched.code?`<span style="font-family:monospace;color:var(--gold-lt);font-size:10px;margin-left:5px">${escHtml(r.matched.code)}</span>`:'') + (r.score?`<span style="font-size:10px;color:var(--t3);margin-left:4px">(${Math.round(r.score)}점)</span>`:'') : '<span style="color:var(--org)">매칭 안 됨</span>'}</td>
+              <td style="padding:6px 8px;text-align:center">${stockCell}</td>
+              <td style="padding:6px 8px;text-align:center">${badge}</td>
+              <td style="padding:6px 8px;text-align:center">
+                <button onclick="_pickCommerceMatch(${i})" style="padding:3px 8px;font-size:10px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit">검색</button>
+                <button onclick="_removeCommerceRow(${i})" style="padding:3px 6px;font-size:10px;background:none;border:none;color:var(--red);cursor:pointer;font-family:inherit">✕</button>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div style="font-size:10.5px;color:var(--t3);margin-top:6px;line-height:1.5">
+      💡 <b>매칭된 품목</b>은 제품DB에서 자동으로 1개씩 재고가 차감됩니다. <b>미매칭</b>은 매칭 안 되어 재고에 반영되지 않습니다.
+      ${stockShortageCount > 0 ? `<br>⚠ <b style="color:var(--red)">${stockShortageCount}건의 재고 부족</b> — 그대로 등록하면 음수 재고가 됩니다.` : ''}
+    </div>
+  `;
+}
+
+function _removeCommerceRow(idx){
+  _commerceUploadRows.splice(idx, 1);
+  _renderCommercePreview();
+}
+
+// 미매칭 행에 수동으로 제품 매칭
+function _pickCommerceMatch(idx){
+  const row = _commerceUploadRows[idx];
+  if(!row) return;
+  if(!productDB.length){
+    showToast('⚠ 제품DB가 비어있습니다','var(--org)',2000);
+    return;
+  }
+  // 별도 모달 위에 띄움
+  let mP = document.getElementById('mCommercePick');
+  if(!mP){
+    mP = document.createElement('div');
+    mP.id = 'mCommercePick';
+    mP.className = 'ov';
+    mP.style.zIndex = '10001';
+    document.body.appendChild(mP);
+  }
+  // 검색어 초기값: 엑셀의 품목 텍스트
+  const initQ = row.itemText || '';
+  mP.innerHTML = `<div class="modal" style="max-width:600px">
+    <div class="mt">🔍 품목 매칭 — "${escHtml(row.itemText||'')}"</div>
+    <div style="padding:0 16px 14px">
+      <input type="text" id="cpick_q" placeholder="품명·품번 검색" oninput="_renderCommercePick(${idx})" value="${escHtml(initQ)}" autocomplete="off" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12.5px;font-family:inherit;background:var(--s1);margin-bottom:10px;box-sizing:border-box">
+      <div id="cpick_list" style="max-height:50vh;overflow-y:auto;border:1px solid var(--bdr-lt);border-radius:6px"></div>
+    </div>
+    <div class="mb" style="display:flex;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px">
+      <button class="btn br bs" onclick="_clearCommerceMatch(${idx})">매칭 해제</button>
+      <button class="btn bg bs" onclick="_closeCommercePick()">닫기</button>
+    </div>
+  </div>`;
+  mP.classList.add('open');
+  _renderCommercePick(idx);
+}
+
+function _renderCommercePick(idx){
+  const q = (document.getElementById('cpick_q')?.value||'').trim().toLowerCase();
+  let list = productDB.slice();
+  if(q){
+    list = list.filter(p =>
+      (p.name||'').toLowerCase().includes(q) ||
+      (p.code||'').toLowerCase().includes(q)
+    );
+  }
+  list.sort((a,b)=>(a.name||'').localeCompare(b.name||'','ko'));
+  const el = document.getElementById('cpick_list');
+  if(!el) return;
+  el.innerHTML = list.slice(0,200).map(p=>{
+    const img = p.imgs && p.imgs.length ? (typeof p.imgs[0]==='string'?p.imgs[0]:(p.imgs[0].url||'')) : '';
+    return `<div onclick="_setCommerceMatch(${idx}, ${p.id})" style="display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--bdr-lt)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
+      <div style="width:32px;height:32px;border-radius:4px;background:var(--s2);border:1px solid var(--bdr-lt);overflow:hidden;display:flex;align-items:center;justify-content:center;flex-shrink:0">${img?`<img src="${img}" style="width:100%;height:100%;object-fit:cover">`:'📦'}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12px;font-weight:600">${escHtml(p.name||'')}</div>
+        ${p.code?`<div style="font-size:10px;color:var(--gold-lt);font-family:monospace">${escHtml(p.code)}</div>`:''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _setCommerceMatch(rowIdx, productId){
+  const row = _commerceUploadRows[rowIdx];
+  if(!row) return;
+  const p = productDB.find(x => x.id == productId);
+  if(!p) return;
+  row.matched = p;
+  row.matchedName = p.name || '';
+  row.matchStatus = '수동확인';
+  _closeCommercePick();
+  _renderCommercePreview();
+}
+
+function _clearCommerceMatch(rowIdx){
+  const row = _commerceUploadRows[rowIdx];
+  if(!row) return;
+  row.matched = null;
+  row.matchedName = '';
+  row.matchStatus = '미매칭';
+  _closeCommercePick();
+  _renderCommercePreview();
+}
+
+function _closeCommercePick(){
+  const mP = document.getElementById('mCommercePick');
+  if(mP) mP.classList.remove('open');
+}
+
+// ════════════════════════════════════════════
+// 🔄/↩ 교환/환불 관리 시스템
+// ════════════════════════════════════════════
+// 워크플로우:
+//   1. 출고 행에서 "🔄/↩ 등록" 클릭 → 교환 또는 환불 선택, 사유 입력
+//   2. 등록되면 행이 주황색으로 표시 (입고 대기 중)
+//   3. 실제 입고가 도착하면 "✓ 입고확인" 클릭
+//      → 교환/환불 완료 처리
+//      → 행에 취소선 표시
+//      → 매칭된 제품 재고 +1 자동 복원 (stockHistory 기록)
+//   4. 실수로 입고 확인했으면 "↶ 되돌리기"로 요청 상태로 복귀 (재고 다시 -1)
+
+function openReturnModal(ioId){
+  const io = ioItems.find(x => x.id == ioId);
+  if(!io){ showToast('⚠ 항목을 찾을 수 없습니다','var(--red)',2000); return; }
+  if(io.returnStatus && io.returnStatus !== '정상'){
+    showToast('⚠ 이미 교환/환불이 등록된 항목입니다','var(--org)',2500);
+    return;
+  }
+  const today = new Date().toISOString().slice(0,10);
+  let mR = document.getElementById('mReturn');
+  if(!mR){
+    mR = document.createElement('div');
+    mR.id = 'mReturn';
+    mR.className = 'ov';
+    document.body.appendChild(mR);
+  }
+  mR.innerHTML = `<div class="modal" style="max-width:520px">
+    <div class="mt">🔄/↩ 교환·환불 등록</div>
+    <div style="padding:0 16px 14px">
+      <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:12px">
+        <div style="color:var(--t3);font-size:10.5px;margin-bottom:3px">대상 출고</div>
+        <div style="font-weight:600">${escHtml(io.brand||'-')} · ${escHtml(io.recipient||'-')} · <span style="font-family:monospace;color:var(--t2)">${escHtml(io.phone||'-')}</span></div>
+        <div style="color:var(--t2);font-size:11.5px;margin-top:3px">${escHtml(io.items||'-')}</div>
+        ${io._matchedProductId ? `<div style="color:var(--gold-lt);font-size:11px;margin-top:3px;font-weight:600">✓ 매칭된 제품: ${escHtml(io.memo?.replace('매칭: ','')||io.items)}</div>` : '<div style="color:var(--org);font-size:11px;margin-top:3px">⚠ 미매칭 — 재고 복원 안 됨</div>'}
+      </div>
+      <div class="fg" style="margin-bottom:10px">
+        <label>구분 *</label>
+        <div style="display:flex;gap:8px;margin-top:4px">
+          <label style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border:2px solid var(--bdr);border-radius:6px;cursor:pointer;font-size:12.5px;font-weight:600" id="rt_exchange_lbl" onclick="document.getElementById('rt_exchange').checked=true;_updateReturnTypeUI()">
+            <input type="radio" name="rt_type" value="교환" id="rt_exchange" checked onchange="_updateReturnTypeUI()" style="margin:0">
+            🔄 교환
+          </label>
+          <label style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;border:2px solid var(--bdr);border-radius:6px;cursor:pointer;font-size:12.5px;font-weight:600" id="rt_refund_lbl" onclick="document.getElementById('rt_refund').checked=true;_updateReturnTypeUI()">
+            <input type="radio" name="rt_type" value="환불" id="rt_refund" onchange="_updateReturnTypeUI()" style="margin:0">
+            ↩ 환불
+          </label>
+        </div>
+      </div>
+      <div class="fg" style="margin-bottom:10px">
+        <label>요청일</label>
+        <input class="fi" type="date" id="rt_date" value="${today}">
+      </div>
+      <div class="fg">
+        <label>사유</label>
+        <textarea class="fi" id="rt_reason" rows="3" placeholder="예: 사이즈 교환 요청 / 변심 환불"></textarea>
+      </div>
+      <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;padding:8px 10px;margin-top:10px;font-size:11px;color:var(--t2)">
+        💡 <b>등록</b>하면 입고 대기 상태가 됩니다.<br>
+        실제 제품이 입고되면 <b>"✓ 입고확인"</b>을 눌러주세요. 그때 <b>재고가 자동 복원</b>됩니다.
+      </div>
+    </div>
+    <div class="mb" style="display:flex;justify-content:flex-end;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px">
+      <button class="btn bg bs" onclick="closeM('mReturn')">취소</button>
+      <button class="btn bp bs" onclick="saveReturn(${io.id})">등록</button>
+    </div>
+  </div>`;
+  openM('mReturn');
+  _updateReturnTypeUI();
+}
+
+function _updateReturnTypeUI(){
+  const ex = document.getElementById('rt_exchange');
+  const exLbl = document.getElementById('rt_exchange_lbl');
+  const rfLbl = document.getElementById('rt_refund_lbl');
+  if(!ex || !exLbl || !rfLbl) return;
+  if(ex.checked){
+    exLbl.style.borderColor = 'var(--gold-line)';
+    exLbl.style.background = 'var(--gold-bg)';
+    exLbl.style.color = 'var(--gold-lt)';
+    rfLbl.style.borderColor = 'var(--bdr)';
+    rfLbl.style.background = 'transparent';
+    rfLbl.style.color = 'var(--t2)';
+  } else {
+    rfLbl.style.borderColor = 'var(--gold-line)';
+    rfLbl.style.background = 'var(--gold-bg)';
+    rfLbl.style.color = 'var(--gold-lt)';
+    exLbl.style.borderColor = 'var(--bdr)';
+    exLbl.style.background = 'transparent';
+    exLbl.style.color = 'var(--t2)';
+  }
+}
+
+async function saveReturn(ioId){
+  const io = ioItems.find(x => x.id == ioId);
+  if(!io) return;
+  const type = document.querySelector('input[name="rt_type"]:checked')?.value || '교환';
+  const date = document.getElementById('rt_date')?.value || new Date().toISOString().slice(0,10);
+  const reason = (document.getElementById('rt_reason')?.value || '').trim();
+  // 상태 설정
+  io.returnStatus = type === '교환' ? '교환요청' : '환불요청';
+  io.returnType = type;
+  io.returnReason = reason;
+  io.returnRequestedAt = date;
+  io.returnCompletedAt = ''; // 아직 완료 안 됨
+  save();
+  closeM('mReturn');
+  showToast(`✓ ${type} 등록됨 — 입고 대기 중`, 'var(--gold-lt)', 2500);
+  renderIo();
+  // 노션 동기화
+  if(notionCfg.workerUrl && notionCfg.ioDb && io._notionId){
+    syncIOToNotion(io).then(ok => { if(ok) save(); });
+  }
+}
+
+// 입고 확인 → 교환/환불 완료 처리 + 재고 복원
+async function confirmReturnComplete(ioId){
+  const io = ioItems.find(x => x.id == ioId);
+  if(!io) return;
+  if(!io.returnStatus || (io.returnStatus !== '교환요청' && io.returnStatus !== '환불요청')){
+    showToast('⚠ 입고 대기 상태가 아닙니다','var(--org)',2500);
+    return;
+  }
+  const type = io.returnType || (io.returnStatus === '교환요청' ? '교환' : '환불');
+  const willRestockMsg = io._matchedProductId
+    ? `\n\n📦 제품 재고가 +1 자동 복원됩니다.`
+    : `\n\n⚠ 매칭된 제품이 없어 재고 복원은 안 됩니다.`;
+  if(!confirm(`${type} 입고가 도착했습니까?\n수령인: ${io.recipient||'-'}\n품목: ${io.items||'-'}${willRestockMsg}`)) return;
+
+  const today = new Date().toISOString().slice(0,10);
+  io.returnStatus = type === '교환' ? '교환완료' : '환불완료';
+  io.returnCompletedAt = today;
+
+  // 재고 복원
+  let stockMsg = '';
+  if(io._matchedProductId != null){
+    const ok = applyStockChange({
+      productId: io._matchedProductId,
+      delta: +1,
+      type: 'commerce_return',
+      refId: io.id,
+      refLabel: `${type === '교환' ? '🔄 교환' : '↩ 환불'} 입고 / ${io.brand||''} / ${io.recipient||''}`,
+      note: `${io.title || ''} · 사유: ${io.returnReason || '-'}`
+    });
+    if(ok){
+      stockMsg = ' · 재고 +1 복원';
+      // 노션 제품DB 재고도 동기화
+      if(notionCfg.workerUrl && notionCfg.productDb){
+        const p = productDB.find(x => x.id == io._matchedProductId);
+        if(p){
+          syncProductToNotion(p, true).catch(e => console.warn('제품 재고 sync 실패:', e));
+        }
+      }
+    }
+  }
+  save();
+  showToast(`✓ ${type} 완료${stockMsg}`, 'var(--grn)', 3000);
+  renderIo();
+  // 노션 입출고 동기화
+  if(notionCfg.workerUrl && notionCfg.ioDb && io._notionId){
+    syncIOToNotion(io).then(ok => { if(ok) save(); });
+  }
+}
+
+// 입고 확인을 되돌리기 (재고 다시 -1, 요청 상태로 복귀)
+async function undoReturnComplete(ioId){
+  const io = ioItems.find(x => x.id == ioId);
+  if(!io) return;
+  if(io.returnStatus !== '교환완료' && io.returnStatus !== '환불완료') return;
+  const type = io.returnType || (io.returnStatus === '교환완료' ? '교환' : '환불');
+  if(!confirm(`입고 확인을 취소하고 "${type}요청" 상태로 되돌립니다.\n복원했던 재고도 다시 -1로 차감됩니다.\n\n계속하시겠습니까?`)) return;
+
+  io.returnStatus = type === '교환' ? '교환요청' : '환불요청';
+  io.returnCompletedAt = '';
+  // 재고 다시 차감
+  if(io._matchedProductId != null){
+    applyStockChange({
+      productId: io._matchedProductId,
+      delta: -1,
+      type: 'commerce_return_undo',
+      refId: io.id,
+      refLabel: `${type} 입고확인 취소 / ${io.brand||''} / ${io.recipient||''}`,
+      note: `되돌리기 — 다시 입고 대기`
+    });
+    if(notionCfg.workerUrl && notionCfg.productDb){
+      const p = productDB.find(x => x.id == io._matchedProductId);
+      if(p) syncProductToNotion(p, true).catch(e => console.warn('제품 재고 sync 실패:', e));
+    }
+  }
+  save();
+  showToast(`↶ 되돌림 — ${type} 요청 상태`, 'var(--org)', 2500);
+  renderIo();
+  if(notionCfg.workerUrl && notionCfg.ioDb && io._notionId){
+    syncIOToNotion(io).then(ok => { if(ok) save(); });
+  }
+}
+
+// 교환/환불 요청 자체 취소 (실수로 등록한 경우)
+async function cancelReturn(ioId){
+  const io = ioItems.find(x => x.id == ioId);
+  if(!io) return;
+  if(io.returnStatus !== '교환요청' && io.returnStatus !== '환불요청') return;
+  if(!confirm(`이 교환/환불 요청을 취소하시겠습니까?\n(아직 입고 전이므로 재고에는 영향 없음)`)) return;
+  io.returnStatus = '';
+  io.returnType = '';
+  io.returnReason = '';
+  io.returnRequestedAt = '';
+  io.returnCompletedAt = '';
+  save();
+  showToast('✓ 요청 취소됨', 'var(--t3)', 2000);
+  renderIo();
+  if(notionCfg.workerUrl && notionCfg.ioDb && io._notionId){
+    syncIOToNotion(io).then(ok => { if(ok) save(); });
+  }
+}
+
+// 미리보기 행들을 ioItems에 일괄 등록 + 노션 동기화 + 재고 차감
+async function _registerCommerce(){
+  const brand = (document.getElementById('cu_brand')?.value||'').trim();
+  const date = (document.getElementById('cu_date')?.value||'').trim();
+  if(!brand){ showToast('⚠ 브랜드를 선택하세요','var(--red)',2000); return; }
+  if(!date){ showToast('⚠ 일자를 입력하세요','var(--red)',2000); return; }
+  if(!_commerceUploadRows.length){ showToast('⚠ 등록할 행이 없습니다','var(--red)',2000); return; }
+
+  // 재고 차감 시뮬레이션 (확인 메시지에 표시)
+  const stockChanges = {}; // {productId: {product, qty}}
+  _commerceUploadRows.forEach(row => {
+    if(row.matched && row.matched.id != null){
+      const pid = row.matched.id;
+      if(!stockChanges[pid]){
+        stockChanges[pid] = {product: row.matched, qty: 0};
+      }
+      stockChanges[pid].qty += 1;
+    }
+  });
+  const stockChangeCount = Object.keys(stockChanges).length;
+  const stockShortageCount = _commerceUploadRows.filter(r => r._stockOk === false).length;
+
+  let confirmMsg = `${_commerceUploadRows.length}건을 등록합니다.\n브랜드: ${brand} / 일자: ${date}`;
+  if(stockChangeCount > 0){
+    confirmMsg += `\n\n📦 재고 자동 차감: ${stockChangeCount}개 제품`;
+    if(stockShortageCount > 0){
+      confirmMsg += `\n⚠ 재고 부족: ${stockShortageCount}건 (음수 재고로 등록됨)`;
+    }
+  }
+  confirmMsg += `\n\n계속하시겠습니까?`;
+  if(!confirm(confirmMsg)) return;
+
+  const baseTs = Date.now();
+  const toRegister = _commerceUploadRows.map((row, i) => {
+    const title = `${brand}_${row.recipient||'주문'}_${date.slice(5).replace('-','')}`;
+    return {
+      id: baseTs + i,
+      kind: '출고',
+      flow: '한국→고객',
+      date,
+      vendor: brand,
+      title,
+      items: row.itemText || '',
+      qty: 1,
+      memo: row.matched ? `매칭: ${row.matched.name}${row.matched.code?` (${row.matched.code})`:''}` : '',
+      user: '',
+      files: [],
+      brand,
+      recipient: row.recipient || '',
+      phone: row.phone || '',
+      address: row.address || '',
+      deliveryMemo: row.deliveryMemo || '',
+      shipStatus: '미발급',
+      matchStatus: row.matchStatus || '미매칭',
+      _matchedProductId: row.matched ? row.matched.id : null,
+      _matchedProductCode: row.matched ? row.matched.code : null,
+      createdAt: new Date().toISOString()
+    };
+  });
+
+  // ── 재고 자동 차감 (applyStockChange로 stockHistory 기록까지) ──
+  const stockDeductResults = {synced:0, total:0, productsChanged:[]};
+  _commerceUploadRows.forEach((row, i) => {
+    if(row.matched && row.matched.id != null){
+      const io = toRegister[i];
+      const ok = applyStockChange({
+        productId: row.matched.id,
+        delta: -1, // 커머스는 한 행당 1개
+        type: 'commerce_ship',
+        refId: io.id,
+        refLabel: `🛍 ${brand} / ${row.recipient||'주문'} / ${date}`,
+        note: `${io.title}`
+      });
+      if(ok){
+        stockDeductResults.total++;
+        if(!stockDeductResults.productsChanged.find(p => p.id == row.matched.id)){
+          stockDeductResults.productsChanged.push(row.matched);
+        }
+      }
+    }
+  });
+
+  // 로컬 저장
+  ioItems.unshift(...toRegister);
+  save();
+  closeM('mCommerceUpload');
+  let toastMsg = `✓ ${toRegister.length}건 등록 완료`;
+  if(stockDeductResults.total > 0){
+    toastMsg += ` · 재고 ${stockDeductResults.total}건 차감 (${stockDeductResults.productsChanged.length}개 제품)`;
+  }
+  showToast(toastMsg, 'var(--grn)', 3500);
+  renderIo();
+
+  // 노션 동기화 (백그라운드)
+  if(notionCfg.workerUrl){
+    // 입출고 동기화
+    if(notionCfg.ioDb){
+      let synced = 0, failed = 0;
+      for(const io of toRegister){
+        try {
+          const ok = await syncIOToNotion(io);
+          if(ok) synced++;
+          else failed++;
+        } catch(e){ failed++; }
+      }
+      save();
+      if(failed > 0){
+        showToast(`노션 입출고 ${synced}/${toRegister.length}건 동기화 (${failed}건 실패)`,'var(--org)',4000);
+      }
+    }
+    // 제품DB 재고 동기화 (변경된 제품들)
+    if(notionCfg.productDb && stockDeductResults.productsChanged.length > 0){
+      let prodSynced = 0, prodFailed = 0;
+      for(const p of stockDeductResults.productsChanged){
+        try {
+          await syncProductToNotion(p, true);
+          prodSynced++;
+        } catch(e){
+          console.warn('제품 재고 동기화 실패:', p.name, e);
+          prodFailed++;
+        }
+      }
+      if(prodSynced > 0 || prodFailed > 0){
+        const msg = prodFailed > 0
+          ? `제품DB 재고 ${prodSynced}/${stockDeductResults.productsChanged.length}건 동기화 (${prodFailed}건 실패)`
+          : `✓ 제품DB 재고 ${prodSynced}건 노션 동기화 완료`;
+        showToast(msg, prodFailed > 0 ? 'var(--org)' : 'var(--grn)', 3000);
+      }
+    }
+  }
+}
+
+// ════════════════════════════════════════════
+// 🤖 커머스 AI 자동인식 — 엑셀/이미지/PDF/텍스트 → 자동 파싱
+// ════════════════════════════════════════════
+// 동작 흐름:
+//   1. 사용자가 드롭/페이스트/클릭 → 파일 또는 이미지 데이터 획득
+//   2. 파일 종류별 payload 변환 (image/pdf는 base64, 엑셀은 CSV 텍스트로)
+//   3. Claude API에 보내서 JSON 파싱 (수령인·연락처·주소·배송메모·품목)
+//   4. 결과를 _commerceUploadRows에 채우고 → 매칭 시도 → 미리보기 모달 자동 표시
+//   5. 사용자는 브랜드/날짜만 확인하고 등록
+
+function handleCommerceAIFiles(e){
+  const files = Array.from(e.target.files||[]);
+  e.target.value = '';
+  processCommerceAIFiles(files);
+}
+
+function handleCommerceAIDrop(e){
+  e.preventDefault();
+  const dz = document.getElementById('commerceAiDz');
+  if(dz) dz.style.background = 'var(--gold-bg)';
+  processCommerceAIFiles(Array.from(e.dataTransfer.files||[]));
+}
+
+async function processCommerceAIFiles(files){
+  if(!files.length) return;
+  const resultEl = document.getElementById('commerceAiResult');
+  if(!resultEl) return;
+  resultEl.innerHTML = '<div style="padding:10px;color:var(--t3);font-size:12px;background:var(--s1);border:1px solid var(--bdr);border-radius:6px"><span class="loading-dot"></span> 🔄 AI가 파일을 분석 중...</div>';
+
+  // 파일 → payload 변환
+  const payloads = [];
+  for(const f of files){
+    const name = f.name||'file';
+    const mime = f.type||'';
+    if(mime.startsWith('image/')){
+      const data = await fileToBase64(f);
+      payloads.push({kind:'image', name, type:mime, data});
+    } else if(mime === 'application/pdf' || name.toLowerCase().endsWith('.pdf')){
+      const data = await fileToBase64(f);
+      payloads.push({kind:'pdf', name, data});
+    } else if(/xlsx?|xls|csv/i.test(name) || mime.includes('spreadsheet') || mime.includes('excel')){
+      // 엑셀: CSV 텍스트로 추출
+      try {
+        const arrayBuffer = await f.arrayBuffer();
+        const wb = XLSX.read(arrayBuffer, {type:'array'});
+        let csvText = '';
+        wb.SheetNames.forEach(sn => {
+          const ws = wb.Sheets[sn];
+          csvText += '=== ' + sn + ' ===\n';
+          csvText += XLSX.utils.sheet_to_csv(ws, {FS:'\t'}) + '\n\n';
+        });
+        payloads.push({kind:'text', name, csvText});
+      } catch(e){
+        console.warn('엑셀 파싱 실패:', e);
+      }
+    } else {
+      // 기타: 텍스트로
+      try {
+        const text = await f.text();
+        payloads.push({kind:'text', name, csvText: text});
+      } catch(e){}
+    }
+  }
+
+  if(!payloads.length){
+    resultEl.innerHTML = '<div style="padding:10px;background:rgba(192,48,48,.08);border:1px solid rgba(192,48,48,.3);border-radius:6px;color:var(--red);font-size:12px">⚠ 지원되지 않는 파일 형식입니다</div>';
+    return;
+  }
+
+  await callAIParseForCommerce(payloads, resultEl);
+}
+
+async function callAIParseForCommerce(payloads, resultEl){
+  if(!anthropicKey){
+    resultEl.innerHTML = `<div style="padding:14px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px;font-size:12.5px">
+      <div style="font-weight:700;color:var(--gold-lt);margin-bottom:6px">🔑 Anthropic API 키 설정 필요</div>
+      <div style="color:var(--t2);margin-bottom:10px">AI 자동인식을 사용하려면 API 키를 먼저 입력해 주세요.</div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <input id="apiKeyInput" type="password" placeholder="sk-ant-..." class="fi" style="flex:1;min-width:200px;font-size:12px">
+        <button onclick="saveAnthropicKey()" class="btn bp" style="font-size:12px;white-space:nowrap">저장</button>
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" style="font-size:11px;color:var(--blu)">키 발급 →</a>
+      </div>
+    </div>`;
+    return;
+  }
+
+  const prompt = `이 문서는 주얼리 자체 브랜드(B2C)의 **온라인 주문 출고 리스트**입니다. 표나 목록에서 주문 건들을 추출해주세요.
+
+일반적인 데이터 구조 (한 행에 한 명의 주문):
+- 수령인 이름
+- 연락처 (010-XXXX-XXXX 형식)
+- 배송 주소
+- 배송메모 (부재 시 처리 방법, 경비실 위탁 등 — 없을 수도 있음)
+- 주문 품목 (한 명이 여러 개면 줄바꿈으로 구분된 경우가 많음)
+
+**중요한 규칙**:
+1. 한 명이 여러 품목을 주문하면 → "items" 배열에 각각 별도 객체로 분리해서 넣어주세요. 같은 사람의 이름·전화·주소는 그대로 복사합니다.
+2. 품목명은 엑셀에 적힌 그대로 보존 (예: "TOCA ONE TOUCH EARRINGS (SILVER)", "BOLD PAVE RING 13호" 등).
+3. 헤더 행이나 빈 행은 무시.
+4. 파일명이 "비비케이트주문_0511" 같이 브랜드/날짜를 포함하면 추출해주세요.
+
+JSON 형식으로만 응답 (다른 텍스트나 마크다운 없이):
+{
+  "docType": "커머스주문",
+  "confidence": 0~1,
+  "brand": "추정 브랜드명 (파일명 또는 내용에서, 없으면 빈 문자열)",
+  "date": "YYYY-MM-DD (파일명이나 내용에서 추출, 없으면 빈 문자열)",
+  "items": [
+    {
+      "recipient": "수령인 이름",
+      "phone": "010-XXXX-XXXX",
+      "address": "전체 주소",
+      "deliveryMemo": "배송메모 (없으면 빈 문자열)",
+      "itemText": "주문 품목명 1건"
+    }
+  ],
+  "notes": "특이사항이나 추정 근거"
+}
+
+날짜는 파일명에 "_0511" 같이 있으면 ${new Date().getFullYear()}-05-11 형식으로, "0511" 같으면 ${new Date().getFullYear()}-05-11로 변환.`;
+
+  const content = [{type:'text', text: prompt}];
+  // 파일명도 정보로 포함
+  const fileNames = payloads.map(p => p.name).join(', ');
+  if(fileNames) content.push({type:'text', text:`업로드된 파일명: ${fileNames}`});
+
+  payloads.slice(0,5).forEach(p => {
+    if(p.kind === 'image') content.push({type:'image', source:{type:'base64', media_type: p.type||'image/jpeg', data: p.data}});
+    else if(p.kind === 'pdf') content.push({type:'document', source:{type:'base64', media_type:'application/pdf', data: p.data}});
+    else if(p.kind === 'text') content.push({type:'text', text:`[파일: ${p.name}]\n${(p.csvText||'').slice(0,15000)}`});
+  });
+
+  try {
+    const data = await callClaudeAPI({model:'claude-sonnet-4-5', max_tokens:4000, messages:[{role:'user', content}]});
+    if(data.error){
+      const errMsg = data.error.message || 'API 오류';
+      resultEl.innerHTML = `<div style="padding:12px;background:rgba(192,48,48,.08);border:1px solid rgba(192,48,48,.3);border-radius:6px;font-size:12px;color:var(--red)"><b>API 오류:</b> ${escHtml(errMsg)}</div>`;
+      return;
+    }
+    const text = data.content?.find(b => b.type === 'text')?.text || '{}';
+    let parsed;
+    try {
+      parsed = JSON.parse(text.replace(/```json|```/g,'').trim());
+    } catch {
+      parsed = {docType:'커머스주문', confidence:0, items:[], notes: text.slice(0,200)};
+    }
+    showCommerceParseResult(parsed, resultEl);
+  } catch(err){
+    resultEl.innerHTML = `<div style="padding:12px;background:rgba(192,48,48,.08);border:1px solid rgba(192,48,48,.3);border-radius:6px;font-size:12px;color:var(--red)"><b>연결 오류:</b> ${escHtml(err.message)}</div>`;
+  }
+}
+
+function showCommerceParseResult(parsed, resultEl){
+  const items = Array.isArray(parsed.items) ? parsed.items : [];
+  const conf = Math.round((parsed.confidence || 0) * 100);
+  if(!items.length){
+    resultEl.innerHTML = `<div style="padding:12px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:var(--t2)">
+      <b>⚠ 주문 데이터를 추출하지 못했습니다.</b>
+      ${parsed.notes ? `<div style="margin-top:4px;color:var(--t3);font-size:11px">${escHtml(parsed.notes)}</div>` : ''}
+    </div>`;
+    return;
+  }
+
+  // 결과 요약 표시 (짧게)
+  resultEl.innerHTML = `<div style="padding:12px;background:rgba(46,139,44,.08);border:1px solid rgba(46,139,44,.3);border-radius:6px;font-size:12.5px">
+    <div style="font-weight:700;color:var(--grn);margin-bottom:4px">✓ AI 인식 완료 — ${items.length}건 추출됨 (신뢰도 ${conf}%)</div>
+    <div style="font-size:11.5px;color:var(--t2)">${parsed.brand ? `브랜드: <b>${escHtml(parsed.brand)}</b> · ` : ''}${parsed.date ? `날짜: <b>${escHtml(parsed.date)}</b> · ` : ''}수령인 ${new Set(items.map(i=>i.recipient)).size}명, 품목 ${items.length}건</div>
+    <div style="font-size:10.5px;color:var(--t3);margin-top:4px">▼ 미리보기 모달에서 매칭 결과를 확인하고 등록해주세요</div>
+  </div>`;
+
+  // AI가 추출한 데이터 → _commerceUploadRows 형식으로 변환 + 제품 매칭
+  _commerceUploadRows = items.map(it => {
+    const itemText = String(it.itemText || it.item || '').trim();
+    const match = itemText ? _matchProductByText(itemText) : {product:null, score:0};
+    return {
+      recipient: String(it.recipient || '').trim(),
+      phone: String(it.phone || '').trim(),
+      address: String(it.address || '').trim(),
+      deliveryMemo: String(it.deliveryMemo || it.memo || '').trim(),
+      itemText,
+      matched: match.product,
+      matchedName: match.product ? (match.product.name || '') : '',
+      matchStatus: match.product ? '자동매칭' : '미매칭',
+      score: match.score
+    };
+  });
+
+  // 미리보기 모달 자동 표시 (브랜드/날짜는 AI가 추출한 값으로 기본 채움)
+  openCommerceUpload();
+  // 모달 열린 후 브랜드/날짜 채우기 (약간의 딜레이로 DOM 준비 후)
+  setTimeout(() => {
+    const brands = loadCommerceBrands();
+    if(parsed.brand){
+      const matched = brands.find(b => b === parsed.brand || parsed.brand.includes(b) || b.includes(parsed.brand));
+      const brandSel = document.getElementById('cu_brand');
+      if(brandSel){
+        if(matched){
+          brandSel.value = matched;
+        } else if(parsed.brand.trim()){
+          // 새 브랜드면 옵션 추가
+          const opt = document.createElement('option');
+          opt.value = parsed.brand;
+          opt.textContent = parsed.brand + ' (AI 추정)';
+          opt.selected = true;
+          brandSel.appendChild(opt);
+        }
+      }
+    }
+    if(parsed.date){
+      const dateInp = document.getElementById('cu_date');
+      if(dateInp && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date)){
+        dateInp.value = parsed.date;
+      }
+    }
+    _renderCommercePreview();
+  }, 100);
+}
+
+// Ctrl+V 붙여넣기 지원 — 커머스 서브탭에서만 동작
+document.addEventListener('paste', (e) => {
+  // 커머스 서브탭이 활성화돼있고, 입력 필드가 아닌 경우만
+  if(currentTab !== 'io' || _ioSubTab !== 'commerce') return;
+  // 입력 필드에 포커스가 있으면 무시 (텍스트 붙여넣기 우선)
+  const ae = document.activeElement;
+  if(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)) return;
+
+  const items = e.clipboardData?.items || [];
+  const files = [];
+  let pastedText = '';
+  for(const item of items){
+    if(item.kind === 'file'){
+      const f = item.getAsFile();
+      if(f) files.push(f);
+    } else if(item.kind === 'string' && item.type === 'text/plain'){
+      // 텍스트는 별도 처리
+      item.getAsString(s => { pastedText = s; });
+    }
+  }
+  if(files.length){
+    e.preventDefault();
+    processCommerceAIFiles(files);
+    return;
+  }
+  // 텍스트만 붙여넣은 경우 (약간의 딜레이 후 처리, getAsString이 async)
+  if(items.length && !files.length){
+    setTimeout(() => {
+      if(pastedText && pastedText.trim().length > 30){
+        e.preventDefault?.();
+        // 텍스트를 가짜 file payload로 만들어서 처리
+        const blob = new Blob([pastedText], {type:'text/plain'});
+        const fakeFile = new File([blob], '클립보드텍스트.txt', {type:'text/plain'});
+        processCommerceAIFiles([fakeFile]);
+      }
+    }, 50);
+  }
+});
+
+
 (function ensureEkChipStyle(){
   if(document.getElementById('ek-chip-style')) return;
   const s = document.createElement('style');
@@ -7690,6 +9056,154 @@ function _closeIoPicker(){
   `;
   document.head.appendChild(s);
 })();
+
+// ════════════════════════════════════════════
+// 🧪 시뮬레이션용 임시 데이터 — 콘솔에서 호출
+// ════════════════════════════════════════════
+// 사용법:
+//   loadCommerceDemo()  → 비비케이트 22건 + 일부 교환/환불 상태 추가
+//   clearCommerceDemo() → _demo:true 마커 붙은 데모만 제거
+window.loadCommerceDemo = function(){
+  const today = new Date();
+  const ymd = (offsetDays) => {
+    const d = new Date(today);
+    d.setDate(d.getDate() + offsetDays);
+    return d.toISOString().slice(0,10);
+  };
+  // 비비케이트 주문 시뮬레이션 (실제 엑셀에서 추출한 22명)
+  const demoData = [
+    {recipient:'박여진', phone:'010-8886-1695', address:'경기도 군포시 수리산로 40(산본동, 한양수리아파트)', deliveryMemo:'부재 시 경비실에 맡겨주세요', items:'TOCA ONE TOUCH EARRINGS (SILVER)'},
+    {recipient:'정지형', phone:'010-6778-6691', address:'대전광역시 동구 동서대로1678번길 25-26 (성남동)', deliveryMemo:'부재 시 경비실에 맡겨주세요', items:'9호 PAVE RING'},
+    {recipient:'정지형', phone:'010-6778-6691', address:'대전광역시 동구 동서대로1678번길 25-26 (성남동)', deliveryMemo:'부재 시 경비실에 맡겨주세요', items:'BOLD PAVE RING'},
+    {recipient:'김미선', phone:'010-8342-1102', address:'경기 용인시 처인구 명지로40번길 35-16 (역북동)', deliveryMemo:'', items:'TOCA ONE TOUCH EARRINGS (SILVER)'},
+    {recipient:'엄선주', phone:'010-3847-9053', address:'울산 남구 굴화4길 20 (무거동, 굴화주공1차아파트)', deliveryMemo:'', items:'TOCA ONE TOUCH EARRINGS (SILVER)'},
+    {recipient:'박경숙', phone:'010-8995-8653', address:'서울 성북구 북악산로 813 (정릉동, 정릉우성아파트)', deliveryMemo:'', items:'TOCA ONE TOUCH EARRINGS (SILVER)'},
+    {recipient:'박경숙', phone:'010-8995-8653', address:'서울 성북구 북악산로 813 (정릉동, 정릉우성아파트)', deliveryMemo:'', items:'ROUND PAVE RING (ROSE GOLD) 15호'},
+    {recipient:'송도', phone:'010-4152-8821', address:'인천 연수구 아카데미로312번길 31 (송도동, 힐스테이트)', deliveryMemo:'', items:'TOCA ONE TOUCH EARRINGS (SILVER)'},
+    {recipient:'김은아', phone:'010-6340-9667', address:'경기 성남시 분당구 하오개로399번길 5 (운중동) 단지', deliveryMemo:'', items:'BOLD PAVE RING 13호'},
+    {recipient:'김은아', phone:'010-6340-9667', address:'경기 성남시 분당구 하오개로399번길 5 (운중동) 단지', deliveryMemo:'', items:'ROUND PAVE RING (SILVER) 13호'},
+    {recipient:'김은아', phone:'010-6340-9667', address:'경기 성남시 분당구 하오개로399번길 5 (운중동) 단지', deliveryMemo:'', items:'TOCA ONE TOUCH EARRINGS (SILVER)'},
+    {recipient:'김은아', phone:'010-6340-9667', address:'경기 성남시 분당구 하오개로399번길 5 (운중동) 단지', deliveryMemo:'', items:'CLASSIC TENNIS NECKLACE [SILVER]'},
+    {recipient:'김주연', phone:'010-5719-4058', address:'서울 송파구 양재대로 1218 (방이동, 올림픽선수기자촌)', deliveryMemo:'', items:'ROUND PAVE RING (SILVER) 13호'},
+    {recipient:'김주연', phone:'010-5719-4058', address:'서울 송파구 양재대로 1218 (방이동, 올림픽선수기자촌)', deliveryMemo:'', items:'ROUND PAVE RING (ROSE GOLD) 13호'},
+    {recipient:'김민정', phone:'010-4035-9998', address:'대전 중구 당디로 45 (산성동, 우성아파트) 107동', deliveryMemo:'', items:'CLASSIC TENNIS NECKLACE [SILVER]'},
+    {recipient:'최미선', phone:'010-2706-5246', address:'울산 남구 대암로 81 신정현대홈타운1단지아파트', deliveryMemo:'', items:'MERCURY EARRINGS'},
+    {recipient:'최미선', phone:'010-2706-5246', address:'울산 남구 대암로 81 신정현대홈타운1단지아파트', deliveryMemo:'', items:'PAVE RING(SIZE=11)'},
+    {recipient:'문다정', phone:'010-2914-5878', address:'서울 동작구 여의대방로10길 38 보라매롯데낙천대', deliveryMemo:'', items:'ROUND PAVE RING (ROSE GOLD)(SIZE=11)'},
+    {recipient:'문다정', phone:'010-2914-5878', address:'서울 동작구 여의대방로10길 38 보라매롯데낙천대', deliveryMemo:'', items:'ROUND PAVE RING [SILVER](SIZE=11)'},
+    {recipient:'최정미', phone:'010-6350-7056', address:'서울 동작구 동작대로39길 22 이수힐스테이트', deliveryMemo:'', items:'ROUND PAVE RING (ROSE GOLD)(SIZE=15)'},
+    {recipient:'최정미', phone:'010-6350-7056', address:'서울 동작구 동작대로39길 22 이수힐스테이트', deliveryMemo:'', items:'ROUND PAVE RING [SILVER](SIZE=15)'},
+    {recipient:'남주희', phone:'010-3325-4657', address:'서울 강동구 양재대로 1300 (둔촌동, 올림픽파크포레)', deliveryMemo:'', items:'LUNELLE TENNIS BRACELET [SILVER]'},
+    {recipient:'김권희', phone:'010-7531-1990', address:'광주 북구 문산로 61 라인아파트 107-702', deliveryMemo:'부재 시 문 앞에 놓아주세요.', items:'ROUND PAVE RING (ROSE GOLD)(SIZE=15)'},
+    {recipient:'김권희', phone:'010-7531-1990', address:'광주 북구 문산로 61 라인아파트 107-702', deliveryMemo:'부재 시 문 앞에 놓아주세요.', items:'BOLD PAVE RING(SIZE=15)'},
+    {recipient:'형효선', phone:'010-2374-1086', address:'서울 용산구 한강대로43길 8 (한강로2가)', deliveryMemo:'', items:'PAVE RING(SIZE=11)'},
+    {recipient:'형효선', phone:'010-2374-1086', address:'서울 용산구 한강대로43길 8 (한강로2가)', deliveryMemo:'', items:'ROUND PAVE RING (ROSE GOLD)(SIZE=13)'},
+    {recipient:'이정민', phone:'010-6779-9240', address:'서울 송파구 충민로 152 (장지동, 송파파인타운3단지)', deliveryMemo:'', items:'ROUND PAVE RING [SILVER](SIZE=13)'},
+    {recipient:'이정민', phone:'010-6779-9240', address:'서울 송파구 충민로 152 (장지동, 송파파인타운3단지)', deliveryMemo:'', items:'DUNE RING [SILVER](SIZE=15)'},
+    {recipient:'정현주', phone:'010-6560-3370', address:'서울 강서구 양천로28길 29 (방화동, 마곡우림필유)', deliveryMemo:'', items:'TOCA ONE TOUCH EARRINGS (BEIGE GOLD)(SIZE=S)'},
+    {recipient:'정현주', phone:'010-6560-3370', address:'서울 강서구 양천로28길 29 (방화동, 마곡우림필유)', deliveryMemo:'', items:'BOLD PAVE RING(SIZE=13)'},
+  ];
+
+  const baseTs = Date.now();
+  const newItems = demoData.map((row, i) => {
+    // 매칭 시뮬레이션 (실제 productDB가 있으면 매칭 시도)
+    let matched = null;
+    if(typeof _matchProductByText === 'function'){
+      const r = _matchProductByText(row.items);
+      matched = r.product;
+    }
+    const date5 = ymd(-1); // 어제 출고
+    const title = `비비케이트_${row.recipient}_${date5.slice(5).replace('-','')}`;
+    return {
+      id: baseTs + i,
+      _demo: true,
+      kind: '출고',
+      flow: '한국→고객',
+      date: date5,
+      vendor: '비비케이트',
+      title,
+      items: row.items,
+      qty: 1,
+      memo: matched ? `매칭: ${matched.name}` : '',
+      user: '',
+      files: [],
+      brand: '비비케이트',
+      recipient: row.recipient,
+      phone: row.phone,
+      address: row.address,
+      deliveryMemo: row.deliveryMemo,
+      shipStatus: '미발급',
+      matchStatus: matched ? '자동매칭' : '미매칭',
+      _matchedProductId: matched ? matched.id : null,
+      _matchedProductCode: matched ? matched.code : null,
+      // 교환/환불 시뮬레이션 — 일부만 처리
+      returnStatus: '',
+      returnType: '',
+      returnReason: '',
+      returnRequestedAt: '',
+      returnCompletedAt: '',
+      createdAt: new Date().toISOString()
+    };
+  });
+
+  // 교환/환불 상태를 4건에 시뮬레이션:
+  // - 박여진 (idx 0): 사이즈 교환 요청 → 입고 대기 ⏳
+  // - 김미선 (idx 3): 변심 환불 요청 → 입고 대기 ⏳
+  // - 박경숙 (idx 6, 두번째 품목): 교환 완료 ✓ (재고 복원됨)
+  // - 김은아 (idx 9): 환불 완료 ✓
+  if(newItems[0]){
+    newItems[0].returnStatus = '교환요청';
+    newItems[0].returnType = '교환';
+    newItems[0].returnReason = '사이즈 변경 요청 (M → L)';
+    newItems[0].returnRequestedAt = ymd(0);
+  }
+  if(newItems[3]){
+    newItems[3].returnStatus = '환불요청';
+    newItems[3].returnType = '환불';
+    newItems[3].returnReason = '단순 변심';
+    newItems[3].returnRequestedAt = ymd(0);
+  }
+  if(newItems[6]){
+    newItems[6].returnStatus = '교환완료';
+    newItems[6].returnType = '교환';
+    newItems[6].returnReason = '컬러 변경 (ROSE GOLD → SILVER)';
+    newItems[6].returnRequestedAt = ymd(-3);
+    newItems[6].returnCompletedAt = ymd(-1);
+  }
+  if(newItems[9]){
+    newItems[9].returnStatus = '환불완료';
+    newItems[9].returnType = '환불';
+    newItems[9].returnReason = '상품 하자';
+    newItems[9].returnRequestedAt = ymd(-2);
+    newItems[9].returnCompletedAt = ymd(0);
+  }
+
+  ioItems.unshift(...newItems);
+  save();
+  console.log(`[데모] ${newItems.length}건 추가됨`);
+  console.log(`[데모] 교환/환불 시뮬레이션:`);
+  console.log(`  ⏳ 교환 요청 (입고대기): 박여진 (사이즈 변경)`);
+  console.log(`  ⏳ 환불 요청 (입고대기): 김미선 (단순 변심)`);
+  console.log(`  ✓ 교환 완료: 박경숙 (컬러 변경)`);
+  console.log(`  ✓ 환불 완료: 김은아 (상품 하자)`);
+  // 커머스 탭으로 이동
+  const tabBtn = document.querySelector('.tab-btn[data-tab="io"]');
+  if(tabBtn) switchTab('io', tabBtn);
+  _ioSubTab = 'commerce';
+  _ioCommerceMode = 'ship';
+  renderIo();
+  showToast(`✓ 데모 데이터 ${newItems.length}건 추가됨 (교환·환불 4건 포함)`, 'var(--grn)', 4000);
+};
+
+window.clearCommerceDemo = function(){
+  const before = ioItems.length;
+  ioItems = ioItems.filter(io => !io._demo);
+  const removed = before - ioItems.length;
+  save();
+  console.log(`[데모] ${removed}건 제거됨`);
+  renderIo();
+  showToast(`✓ 데모 데이터 ${removed}건 제거됨`, 'var(--t2)', 2500);
+};
 
 // ════════════════════════════════════════════
 // 🔔 알림 시스템 (PC) — 모바일 m.html과 동일한 로직
@@ -12779,7 +14293,14 @@ function switchTab(tab,el){
   const acts=document.getElementById('subActs');
   acts.innerHTML='';
   if(tab==='as') acts.innerHTML='<button class="btn bp bs" onclick="openASModal(null)">+ AS 접수</button>';
-  else if(tab==='io') acts.innerHTML='<button class="btn bp bs" onclick="openIoModal(null)">+ 입출고 등록</button>';
+  else if(tab==='io'){
+    // 서브탭에 따라 액션바 변경 (renderIo 안에서도 _updateIoActs 호출됨)
+    if(_ioSubTab === 'commerce'){
+      acts.innerHTML = '<button class="btn bgo bs" onclick="openIoModal(null,{commerce:true})">+ 커머스 직접 입력</button>';
+    } else {
+      acts.innerHTML = '<button class="btn bp bs" onclick="openIoModal(null)">+ 입출고 등록</button>';
+    }
+  }
   else if(tab==='products'){
     const pdConnected = !!(notionCfg.workerUrl && notionCfg.productDb);
     const disabledStyle = pdConnected ? '' : 'opacity:.4;cursor:not-allowed';

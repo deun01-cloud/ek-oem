@@ -396,14 +396,31 @@ a{color:inherit;text-decoration:none}
 
 <!-- 페이지: 입출고 -->
 <div id="pgIO" class="page">
-  <div class="search-wrap"><input type="text" id="ioSearch" placeholder="제목·고객사·품목 검색" oninput="renderIoList()"></div>
-  <div class="fbar">
+  <!-- 모드 토글: 전체 / 커머스 -->
+  <div class="seg" style="margin-bottom:8px">
+    <button class="active" data-iomode="all" onclick="setIoMode('all')">📋 전체</button>
+    <button data-iomode="commerce" onclick="setIoMode('commerce')">🛍 커머스 <span class="cnt" id="ioModeCommerceBdg" style="display:none"></span></button>
+  </div>
+  <div class="search-wrap"><input type="text" id="ioSearch" placeholder="제목·고객사·품목·수령인·사유 검색" oninput="renderIoList()"></div>
+  <div class="fbar" id="ioFbarAll">
     <button class="active" data-st="all" onclick="setIoFilter('all')">전체</button>
-    <button data-st="입고" onclick="setIoFilter('입고')">입고</button>
-    <button data-st="출고" onclick="setIoFilter('출고')">출고</button>
+    <button data-st="입고" onclick="setIoFilter('입고')">📥 입고</button>
+    <button data-st="출고" onclick="setIoFilter('출고')">📤 출고</button>
+    <button data-st="수리" onclick="setIoFilter('수리')">🔧 수리</button>
+  </div>
+  <!-- 커머스 모드 전용 필터 (출고/교환환불) -->
+  <div class="fbar" id="ioFbarCommerce" style="display:none">
+    <button class="active" data-cm="ship" onclick="setIoCommerceMode('ship')">📤 출고</button>
+    <button data-cm="return" onclick="setIoCommerceMode('return')">🔄 교환/환불 <span class="cnt" id="ioReturnBdg" style="display:none"></span></button>
+  </div>
+  <!-- 커머스 교환/환불 모드의 단계 필터 -->
+  <div class="fbar" id="ioFbarReturnStage" style="display:none">
+    <button class="active" data-rs="pending" onclick="setIoReturnStage('pending')">⏳ 입고대기</button>
+    <button data-rs="done" onclick="setIoReturnStage('done')">✓ 완료</button>
+    <button data-rs="all" onclick="setIoReturnStage('all')">전체</button>
   </div>
   <div class="card">
-    <div class="card-h"><div class="card-h-t">입출고 기록 <span class="cnt" id="ioCnt">0</span></div></div>
+    <div class="card-h"><div class="card-h-t" id="ioListTitle">입출고 기록 <span class="cnt" id="ioCnt">0</span></div></div>
     <div id="ioList"></div>
   </div>
   <button class="fab" onclick="openIoAdd()" title="입출고 등록">+</button>
@@ -947,7 +964,6 @@ function mapNotionIO(row){
       type: (f.name||'').toLowerCase().match(/\.(jpg|jpeg|png|gif|webp|heic)$/) ? 'image/'+RegExp.$1 : ''
     })).filter(f=>f.url);
   } else {
-    // fallback: 옛 사진JSON 필드도 지원 (모바일이 초기에 사용)
     const fText = np.text(p['사진JSON']);
     if(fText){
       try{ const parsed=JSON.parse(fText); if(Array.isArray(parsed)) files=parsed; }catch(e){}
@@ -955,6 +971,15 @@ function mapNotionIO(row){
   }
   // 고객사/공장 — 노션 실제 필드명. 옛 코드 호환으로 '고객사'도 시도
   const vendor = np.text(p['고객사/공장']) || np.text(p['고객사']) || '';
+  // 연락처: phone_number 타입
+  let phone = '';
+  if(p['연락처']){
+    if(p['연락처'].phone_number !== undefined) phone = p['연락처'].phone_number || '';
+    else if(typeof p['연락처'] === 'string') phone = p['연락처'];
+  }
+  // 반품 상태에서 타입 유추
+  const returnStatus = np.select(p['반품상태']) || '';
+  const returnType = returnStatus.includes('교환') ? '교환' : returnStatus.includes('환불') ? '환불' : '';
   return {
     _notionId:row.id,
     title:  np.title(p['제목']),
@@ -967,7 +992,21 @@ function mapNotionIO(row){
     invoice:np.text(p['송장번호']),
     memo:   np.text(p['메모']),
     user:   np.text(p['등록자']),
-    files
+    files,
+    // 커머스 전용
+    brand:        np.select(p['자체브랜드']) || '',
+    recipient:    np.text(p['수령인']) || '',
+    phone,
+    address:      np.text(p['주소']) || '',
+    deliveryMemo: np.text(p['배송메모']) || '',
+    shipStatus:   np.select(p['송장상태']) || '',
+    matchStatus:  np.select(p['매칭상태']) || '',
+    // 교환/환불
+    returnStatus,
+    returnType,
+    returnReason:      np.text(p['반품사유']) || '',
+    returnRequestedAt: np.date(p['반품요청일']) || '',
+    returnCompletedAt: np.date(p['반품입고일']) || '',
   };
 }
 
@@ -2377,41 +2416,380 @@ function renderSmpList(){
 
 // ──── 입출고 리스트 ────
 let _ioFilter = 'all';
+let _ioMode = 'all'; // 'all' (전체) | 'commerce' (커머스)
+let _ioCommerceMode = 'ship'; // 'ship' | 'return'
+let _ioReturnStage = 'pending'; // 'pending' | 'done' | 'all'
+
 function setIoFilter(f){
   _ioFilter = f;
-  document.querySelectorAll('#pgIO .fbar button').forEach(b=>b.classList.toggle('active', b.dataset.st===f));
+  document.querySelectorAll('#ioFbarAll button').forEach(b=>b.classList.toggle('active', b.dataset.st===f));
   renderIoList();
 }
+function setIoMode(m){
+  _ioMode = m;
+  document.querySelectorAll('#pgIO .seg button').forEach(b=>b.classList.toggle('active', b.dataset.iomode===m));
+  // 보일/숨길 필터 영역
+  document.getElementById('ioFbarAll').style.display = m==='all' ? 'flex' : 'none';
+  document.getElementById('ioFbarCommerce').style.display = m==='commerce' ? 'flex' : 'none';
+  document.getElementById('ioFbarReturnStage').style.display = (m==='commerce' && _ioCommerceMode==='return') ? 'flex' : 'none';
+  renderIoList();
+}
+function setIoCommerceMode(cm){
+  _ioCommerceMode = cm;
+  document.querySelectorAll('#ioFbarCommerce button').forEach(b=>b.classList.toggle('active', b.dataset.cm===cm));
+  document.getElementById('ioFbarReturnStage').style.display = cm==='return' ? 'flex' : 'none';
+  renderIoList();
+}
+function setIoReturnStage(rs){
+  _ioReturnStage = rs;
+  document.querySelectorAll('#ioFbarReturnStage button').forEach(b=>b.classList.toggle('active', b.dataset.rs===rs));
+  renderIoList();
+}
+
 function renderIoList(){
   const q = (document.getElementById('ioSearch')?.value||'').toLowerCase();
   let list = ioItems.slice();
-  if(_ioFilter!=='all') list = list.filter(io=>io.kind===_ioFilter);
-  if(q) list = list.filter(io=>(io.title||'').toLowerCase().includes(q) || (io.vendor||'').toLowerCase().includes(q) || (io.items||'').toLowerCase().includes(q));
+
+  // 모드별 필터링
+  if(_ioMode === 'commerce'){
+    // 커머스: brand 있는 것만
+    list = list.filter(io => !!io.brand);
+    if(_ioCommerceMode === 'ship'){
+      // 출고 모드: 교환/환불 없는 것
+      list = list.filter(io => !io.returnStatus || io.returnStatus === '정상');
+    } else {
+      // 교환/환불 모드: returnStatus 있는 것
+      list = list.filter(io => io.returnStatus && io.returnStatus !== '정상');
+      if(_ioReturnStage === 'pending'){
+        list = list.filter(io => io.returnStatus === '교환요청' || io.returnStatus === '환불요청');
+      } else if(_ioReturnStage === 'done'){
+        list = list.filter(io => io.returnStatus === '교환완료' || io.returnStatus === '환불완료');
+      }
+    }
+  } else {
+    // 전체 모드: 커머스 제외 (B2B만)
+    list = list.filter(io => !io.brand);
+    if(_ioFilter !== 'all') list = list.filter(io => io.kind === _ioFilter);
+  }
+
+  // 검색
+  if(q){
+    list = list.filter(io =>
+      (io.title||'').toLowerCase().includes(q) ||
+      (io.vendor||'').toLowerCase().includes(q) ||
+      (io.items||'').toLowerCase().includes(q) ||
+      (io.recipient||'').toLowerCase().includes(q) ||
+      (io.returnReason||'').toLowerCase().includes(q)
+    );
+  }
   list.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+
+  // 커머스 모드 뱃지 업데이트
+  const cmAll = ioItems.filter(io => !!io.brand);
+  const cmReturnPending = cmAll.filter(io => io.returnStatus === '교환요청' || io.returnStatus === '환불요청').length;
+  const cmBdg = document.getElementById('ioModeCommerceBdg');
+  if(cmBdg){
+    if(cmReturnPending > 0){
+      cmBdg.textContent = cmReturnPending;
+      cmBdg.style.display = '';
+      cmBdg.style.background = 'var(--red)';
+      cmBdg.style.color = '#fff';
+      cmBdg.style.padding = '0 6px';
+      cmBdg.style.borderRadius = '8px';
+      cmBdg.style.fontSize = '10px';
+      cmBdg.style.fontWeight = '700';
+      cmBdg.style.marginLeft = '3px';
+    } else if(cmAll.length > 0){
+      cmBdg.textContent = cmAll.length;
+      cmBdg.style.display = '';
+      cmBdg.style.background = 'var(--s2)';
+      cmBdg.style.color = 'var(--t3)';
+      cmBdg.style.padding = '0 6px';
+      cmBdg.style.borderRadius = '8px';
+      cmBdg.style.fontSize = '10px';
+      cmBdg.style.fontWeight = '600';
+      cmBdg.style.marginLeft = '3px';
+    } else {
+      cmBdg.style.display = 'none';
+    }
+  }
+  const rtBdg = document.getElementById('ioReturnBdg');
+  if(rtBdg){
+    if(cmReturnPending > 0){
+      rtBdg.textContent = cmReturnPending;
+      rtBdg.style.display = '';
+      rtBdg.style.background = 'var(--red)';
+      rtBdg.style.color = '#fff';
+      rtBdg.style.padding = '0 6px';
+      rtBdg.style.borderRadius = '8px';
+      rtBdg.style.fontSize = '10px';
+      rtBdg.style.fontWeight = '700';
+      rtBdg.style.marginLeft = '3px';
+    } else {
+      rtBdg.style.display = 'none';
+    }
+  }
+
+  // 리스트 제목
+  const titleEl = document.getElementById('ioListTitle');
+  if(titleEl){
+    if(_ioMode === 'commerce' && _ioCommerceMode === 'return'){
+      titleEl.innerHTML = `🔄 교환/환불 <span class="cnt" id="ioCnt">${list.length}</span>`;
+    } else if(_ioMode === 'commerce'){
+      titleEl.innerHTML = `🛍 커머스 출고 <span class="cnt" id="ioCnt">${list.length}</span>`;
+    } else {
+      titleEl.innerHTML = `입출고 기록 <span class="cnt" id="ioCnt">${list.length}</span>`;
+    }
+  }
   document.getElementById('ioCnt').textContent = list.length;
   const el = document.getElementById('ioList');
   if(!list.length){
-    el.innerHTML = `<div class="empty"><div class="icn">🚚</div>기록이 없습니다<br><span style="font-size:11px;margin-top:6px;display:block">+ 버튼으로 등록</span></div>`;
+    const emptyMsg = _ioMode === 'commerce' && _ioCommerceMode === 'return'
+      ? (_ioReturnStage==='pending' ? '입고 대기 중인 교환·환불이 없습니다' : _ioReturnStage==='done' ? '완료된 교환·환불이 없습니다' : '교환·환불 건이 없습니다')
+      : _ioMode === 'commerce' ? '커머스 출고 기록이 없습니다' : '기록이 없습니다';
+    const emptyIcon = _ioMode === 'commerce' && _ioCommerceMode === 'return' ? '🔄' : _ioMode === 'commerce' ? '🛍' : '🚚';
+    el.innerHTML = `<div class="empty"><div class="icn">${emptyIcon}</div>${emptyMsg}<br><span style="font-size:11px;margin-top:6px;display:block;color:var(--t3)">${_ioMode==='commerce'&&_ioCommerceMode==='return'?'출고에서 🔄/↩ 등록으로 추가':'+ 버튼으로 등록'}</span></div>`;
     return;
   }
-  el.innerHTML = list.map(io=>{
-    const isShip = io.kind==='출고';
-    const iconCls = isShip?'ship':'recv';
-    const icon = isShip?'📤':'📥';
-    return `<div class="io-item" onclick="showIoDetail(${io.id})">
-      <div class="io-icn ${iconCls}">${icon}</div>
-      <div class="io-info">
-        <div class="io-title">${escapeHtml(io.title||io.vendor||'기록')}</div>
-        <div class="io-meta">
-          <span>${escapeHtml(io.date||'-')}</span>
-          ${io.vendor?`<span>· ${escapeHtml(io.vendor)}</span>`:''}
-          ${io.flow?`<span>· ${escapeHtml(io.flow)}</span>`:''}
-          ${io.qty?`<span>· ${io.qty}개</span>`:''}
+
+  // 모드별 렌더링
+  if(_ioMode === 'commerce' && _ioCommerceMode === 'return'){
+    // 교환/환불 카드
+    el.innerHTML = list.map(io=>{
+      const rs = io.returnStatus || '';
+      const isExchange = rs.includes('교환');
+      const isReturnDone = rs === '교환완료' || rs === '환불완료';
+      const isReturnPending = rs === '교환요청' || rs === '환불요청';
+      const typeIcon = isExchange ? '🔄' : '↩';
+      const typeLabel = isExchange ? '교환' : '환불';
+      const stageCls = isReturnPending ? 's-fix' : 's-done';
+      const stageLabel = isReturnPending ? '⏳ 입고대기' : '✓ 완료';
+      const cardStyle = isReturnDone
+        ? 'text-decoration:line-through;color:var(--t3);opacity:.6'
+        : isReturnPending
+        ? 'background:rgba(168,90,16,.05);border-left:3px solid var(--org)'
+        : '';
+      const actionBtn = isReturnPending
+        ? `<button onclick="event.stopPropagation();mConfirmReturnComplete(${io.id})" style="padding:5px 10px;font-size:11px;background:var(--grn);border:1px solid var(--grn);border-radius:5px;color:#fff;font-weight:700;font-family:inherit">✓ 입고확인</button>`
+        : `<button onclick="event.stopPropagation();mUndoReturnComplete(${io.id})" style="padding:5px 10px;font-size:11px;background:transparent;border:1px solid var(--bdr);border-radius:5px;color:var(--t3);font-family:inherit">↶ 되돌리기</button>`;
+      return `<div class="list-item" style="${cardStyle}" onclick="showIoDetail(${io.id})">
+        <div class="li-h">
+          <span class="li-status ${isExchange?'s-make':'s-cancel'}">${typeIcon} ${typeLabel}</span>
+          <span class="li-vendor" style="flex:1">${escapeHtml(io.recipient||io.vendor||'-')}</span>
+          <span class="li-status ${stageCls}">${stageLabel}</span>
         </div>
-        ${io.items?`<div style="font-size:11.5px;color:var(--t2);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(io.items)}</div>`:''}
+        <div class="li-meta">
+          ${io.brand?`<span><span class="lbl">브랜드</span> ${escapeHtml(io.brand)}</span>`:''}
+          ${io.phone?`<span style="font-family:monospace">${escapeHtml(io.phone)}</span>`:''}
+          ${io.returnRequestedAt?`<span><span class="lbl">요청</span> ${escapeHtml(io.returnRequestedAt)}</span>`:''}
+        </div>
+        ${io.items?`<div style="font-size:11.5px;color:var(--t2);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📦 ${escapeHtml(io.items)}</div>`:''}
+        ${io.returnReason?`<div style="font-size:11px;color:var(--t3);margin-top:3px">💭 ${escapeHtml(io.returnReason)}</div>`:''}
+        <div style="margin-top:8px;display:flex;justify-content:flex-end;gap:6px" onclick="event.stopPropagation()">${actionBtn}</div>
+      </div>`;
+    }).join('');
+  } else if(_ioMode === 'commerce'){
+    // 커머스 출고 카드
+    el.innerHTML = list.map(io=>{
+      return `<div class="list-item" onclick="showIoDetail(${io.id})">
+        <div class="li-h">
+          <span class="li-status s-make">🛍 ${escapeHtml(io.brand||'')}</span>
+          <span class="li-vendor" style="flex:1">${escapeHtml(io.recipient||'-')}</span>
+          ${io.matchStatus==='자동매칭'?'<span class="li-status s-done">✓ 매칭</span>':io.matchStatus==='미매칭'?'<span class="li-status s-cancel">미매칭</span>':''}
+        </div>
+        <div class="li-meta">
+          ${io.phone?`<span style="font-family:monospace">${escapeHtml(io.phone)}</span>`:''}
+          <span>${escapeHtml(io.date||'-')}</span>
+        </div>
+        ${io.items?`<div style="font-size:11.5px;color:var(--t2);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📦 ${escapeHtml(io.items)}</div>`:''}
+        ${io.address?`<div style="font-size:11px;color:var(--t3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📍 ${escapeHtml(io.address)}</div>`:''}
+        <div style="margin-top:8px;display:flex;justify-content:flex-end" onclick="event.stopPropagation()">
+          <button onclick="mOpenReturnModal(${io.id})" style="padding:4px 9px;font-size:10.5px;background:transparent;border:1px solid var(--bdr);border-radius:5px;color:var(--t2);font-family:inherit">🔄/↩ 교환·환불 등록</button>
+        </div>
+      </div>`;
+    }).join('');
+  } else {
+    // 전체 (B2B) 카드 - 기존 스타일
+    el.innerHTML = list.map(io=>{
+      const isShip = io.kind==='출고';
+      const isExchange = io.kind==='교환';
+      const isRepair = io.kind==='수리';
+      const iconCls = isShip?'ship':(isExchange||isRepair)?'ship':'recv';
+      const icon = isShip?'📤':isRepair?'🔧':isExchange?'🔄':'📥';
+      return `<div class="io-item" onclick="showIoDetail(${io.id})">
+        <div class="io-icn ${iconCls}">${icon}</div>
+        <div class="io-info">
+          <div class="io-title">${escapeHtml(io.title||io.vendor||'기록')}</div>
+          <div class="io-meta">
+            <span>${escapeHtml(io.date||'-')}</span>
+            ${io.vendor?`<span>· ${escapeHtml(io.vendor)}</span>`:''}
+            ${io.flow?`<span>· ${escapeHtml(io.flow)}</span>`:''}
+            ${io.qty?`<span>· ${io.qty}개</span>`:''}
+          </div>
+          ${io.items?`<div style="font-size:11.5px;color:var(--t2);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(io.items)}</div>`:''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+}
+
+// ──── 모바일 교환/환불 모달 ────
+function mOpenReturnModal(ioId){
+  const io = ioItems.find(x=>x.id==ioId);
+  if(!io){ showToast('항목을 찾을 수 없음', 'warn'); return; }
+  if(io.returnStatus && io.returnStatus !== '정상'){
+    showToast('⚠ 이미 교환/환불이 등록된 항목', 'warn');
+    return;
+  }
+  const today = todayStr();
+  const body = `
+    <div style="background:var(--s2);border-radius:8px;padding:10px;margin-bottom:12px;font-size:12.5px">
+      <div style="font-weight:700;margin-bottom:3px">${escapeHtml(io.brand||'-')} · ${escapeHtml(io.recipient||'-')}</div>
+      <div style="font-size:11px;color:var(--t3)">${escapeHtml(io.phone||'')}</div>
+      <div style="color:var(--t2);font-size:11.5px;margin-top:4px">${escapeHtml(io.items||'')}</div>
+      ${io._matchedProductId?'<div style="color:var(--grn);font-size:11px;margin-top:3px;font-weight:600">✓ 매칭됨 — 입고확인 시 재고 +1 복원</div>':'<div style="color:var(--org);font-size:11px;margin-top:3px">⚠ 미매칭 — 재고 복원 안 됨</div>'}
+    </div>
+    <div class="form-r"><label>구분<span class="req">*</span></label>
+      <div style="display:flex;gap:8px">
+        <label style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:10px;border:2px solid var(--gold-line);background:var(--gold-bg);color:var(--gold-lt);border-radius:6px;cursor:pointer;font-weight:600" id="rt_ex_lbl" onclick="document.getElementById('rt_ex').checked=true;mUpdateRtUI()">
+          <input type="radio" name="rt_type" value="교환" id="rt_ex" checked style="margin:0">🔄 교환
+        </label>
+        <label style="flex:1;display:flex;align-items:center;justify-content:center;gap:5px;padding:10px;border:2px solid var(--bdr);border-radius:6px;cursor:pointer;font-weight:600;color:var(--t2)" id="rt_rf_lbl" onclick="document.getElementById('rt_rf').checked=true;mUpdateRtUI()">
+          <input type="radio" name="rt_type" value="환불" id="rt_rf" style="margin:0">↩ 환불
+        </label>
       </div>
-    </div>`;
-  }).join('');
+    </div>
+    <div class="form-r"><label>요청일</label><input type="date" id="rt_date" value="${today}"></div>
+    <div class="form-r"><label>사유</label><textarea id="rt_reason" rows="3" placeholder="예: 사이즈 변경 / 단순 변심"></textarea></div>
+    <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;padding:9px 11px;margin-top:8px;font-size:11px;color:var(--t2)">
+      💡 등록 후 실제 입고가 도착하면 <b>입고확인</b>을 눌러주세요. 재고가 자동 복원됩니다.
+    </div>
+  `;
+  openModal('🔄/↩ 교환·환불 등록', body, ()=>mSaveReturn(io.id));
+}
+function mUpdateRtUI(){
+  const ex = document.getElementById('rt_ex');
+  const exLbl = document.getElementById('rt_ex_lbl');
+  const rfLbl = document.getElementById('rt_rf_lbl');
+  if(!ex||!exLbl||!rfLbl) return;
+  if(ex.checked){
+    exLbl.style.borderColor='var(--gold-line)'; exLbl.style.background='var(--gold-bg)'; exLbl.style.color='var(--gold-lt)';
+    rfLbl.style.borderColor='var(--bdr)'; rfLbl.style.background='transparent'; rfLbl.style.color='var(--t2)';
+  } else {
+    rfLbl.style.borderColor='var(--gold-line)'; rfLbl.style.background='var(--gold-bg)'; rfLbl.style.color='var(--gold-lt)';
+    exLbl.style.borderColor='var(--bdr)'; exLbl.style.background='transparent'; exLbl.style.color='var(--t2)';
+  }
+}
+async function mSaveReturn(ioId){
+  const io = ioItems.find(x=>x.id==ioId);
+  if(!io) return;
+  const type = document.querySelector('input[name="rt_type"]:checked')?.value || '교환';
+  const date = document.getElementById('rt_date')?.value || todayStr();
+  const reason = (document.getElementById('rt_reason')?.value||'').trim();
+  io.returnStatus = type === '교환' ? '교환요청' : '환불요청';
+  io.returnType = type;
+  io.returnReason = reason;
+  io.returnRequestedAt = date;
+  io.returnCompletedAt = '';
+  saveAll();
+  closeModal();
+  showToast(`✓ ${type} 등록됨 — 입고 대기`, 'success');
+  renderIoList();
+  // 노션 동기화
+  if(notionCfg && notionCfg.workerUrl && notionCfg.ioDb && io._notionId){
+    try{
+      await nUpdate(io._notionId, {
+        "반품상태":{select:{name:io.returnStatus}},
+        "반품사유":{rich_text:[{text:{content:reason.slice(0,2000)}}]},
+        "반품요청일":{date:{start:date}}
+      });
+    }catch(e){console.warn('교환환불 sync 실패',e);}
+  }
+}
+
+async function mConfirmReturnComplete(ioId){
+  const io = ioItems.find(x=>x.id==ioId);
+  if(!io) return;
+  if(io.returnStatus !== '교환요청' && io.returnStatus !== '환불요청') return;
+  const type = io.returnType || (io.returnStatus === '교환요청' ? '교환' : '환불');
+  const willRestock = io._matchedProductId != null;
+  if(!confirm(`${type} 입고가 도착했습니까?\n수령인: ${io.recipient||'-'}\n품목: ${io.items||'-'}${willRestock?'\n\n📦 재고 +1 복원됩니다.':''}`)) return;
+  const today = todayStr();
+  io.returnStatus = type === '교환' ? '교환완료' : '환불완료';
+  io.returnCompletedAt = today;
+  // 재고 복원 (모바일 stockHistory 기록 단순)
+  if(io._matchedProductId != null){
+    const p = productDB.find(x=>x.id==io._matchedProductId);
+    if(p){
+      p.stock = (+p.stock||0) + 1;
+      stockHistory.push({
+        id: Date.now()+Math.random(),
+        productId: p.id,
+        productName: p.name||'',
+        productCode: p.code||'',
+        delta: +1,
+        prevStock: (+p.stock||0)-1,
+        newStock: +p.stock||0,
+        type: 'commerce_return',
+        refId: io.id,
+        refLabel: `${type==='교환'?'🔄 교환':'↩ 환불'} 입고 / ${io.brand||''} / ${io.recipient||''}`,
+        note: io.title||'',
+        when: new Date().toISOString()
+      });
+    }
+  }
+  saveAll();
+  showToast(`✓ ${type} 완료${io._matchedProductId?' · 재고 +1 복원':''}`, 'success');
+  renderIoList();
+  if(notionCfg && notionCfg.workerUrl && notionCfg.ioDb && io._notionId){
+    try{
+      await nUpdate(io._notionId, {
+        "반품상태":{select:{name:io.returnStatus}},
+        "반품입고일":{date:{start:today}}
+      });
+    }catch(e){console.warn('교환환불 sync 실패',e);}
+  }
+}
+
+async function mUndoReturnComplete(ioId){
+  const io = ioItems.find(x=>x.id==ioId);
+  if(!io) return;
+  if(io.returnStatus !== '교환완료' && io.returnStatus !== '환불완료') return;
+  const type = io.returnType || (io.returnStatus === '교환완료' ? '교환' : '환불');
+  if(!confirm(`입고 확인을 취소하고 "${type}요청" 상태로 되돌립니다.\n복원했던 재고도 다시 -1로 차감됩니다.\n\n계속?`)) return;
+  io.returnStatus = type === '교환' ? '교환요청' : '환불요청';
+  io.returnCompletedAt = '';
+  if(io._matchedProductId != null){
+    const p = productDB.find(x=>x.id==io._matchedProductId);
+    if(p){
+      p.stock = (+p.stock||0) - 1;
+      stockHistory.push({
+        id: Date.now()+Math.random(),
+        productId: p.id,
+        productName: p.name||'',
+        productCode: p.code||'',
+        delta: -1,
+        prevStock: (+p.stock||0)+1,
+        newStock: +p.stock||0,
+        type: 'commerce_return_undo',
+        refId: io.id,
+        refLabel: `${type} 입고확인 취소`,
+        note: '되돌리기',
+        when: new Date().toISOString()
+      });
+    }
+  }
+  saveAll();
+  showToast(`↶ 되돌림 — ${type} 요청 상태`, 'warn');
+  renderIoList();
+  if(notionCfg && notionCfg.workerUrl && notionCfg.ioDb && io._notionId){
+    try{
+      await nUpdate(io._notionId, {
+        "반품상태":{select:{name:io.returnStatus}},
+        "반품입고일":{date:null}
+      });
+    }catch(e){console.warn('교환환불 sync 실패',e);}
+  }
 }
 
 // ──── 더보기 페이지 (제품DB / AS / 명세서) ────
@@ -4262,6 +4640,8 @@ function openIoForm(ioId){
   const kinds = [
     {v:'입고', lbl:'📥 입고'},
     {v:'출고', lbl:'📤 출고'},
+    {v:'수리', lbl:'🔧 수리'},
+    {v:'교환', lbl:'🔄 교환'},
     {v:'검수', lbl:'🔍 검수'},
     {v:'반품', lbl:'↩ 반품'}
   ];
@@ -4671,6 +5051,18 @@ async function saveIo(ioId){
         .map(f=>({name: f.name||'photo', type:'external', external:{url: f.url}}));
       if(externalFiles.length) props["사진"] = {files: externalFiles};
       if(updated.flow) props["흐름"] = {select:{name:updated.flow}};
+      // 커머스 필드
+      if(updated.brand)        props["자체브랜드"] = {select:{name: updated.brand}};
+      if(updated.recipient)    props["수령인"]    = {rich_text:[{text:{content:(updated.recipient||'').slice(0,200)}}]};
+      if(updated.phone)        props["연락처"]    = {phone_number:(updated.phone||'').slice(0,50)};
+      if(updated.address)      props["주소"]      = {rich_text:[{text:{content:(updated.address||'').slice(0,2000)}}]};
+      if(updated.deliveryMemo) props["배송메모"]   = {rich_text:[{text:{content:(updated.deliveryMemo||'').slice(0,2000)}}]};
+      if(updated.matchStatus)  props["매칭상태"]   = {select:{name: updated.matchStatus}};
+      // 교환/환불 필드
+      if(updated.returnStatus)      props["반품상태"]   = {select:{name: updated.returnStatus}};
+      if(updated.returnReason)      props["반품사유"]   = {rich_text:[{text:{content:(updated.returnReason||'').slice(0,2000)}}]};
+      if(updated.returnRequestedAt) props["반품요청일"] = {date:{start: updated.returnRequestedAt}};
+      if(updated.returnCompletedAt) props["반품입고일"] = {date:{start: updated.returnCompletedAt}};
 
       if(isEdit && updated._notionId){
         await nUpdate(updated._notionId, props);
@@ -4969,7 +5361,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-05-16-03';
+const APP_VERSION = '2026-05-16-05';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
