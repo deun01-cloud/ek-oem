@@ -735,8 +735,8 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 
   <div class="form-sec">스펙</div>
   <div class="fr4">
-    <div class="fg"><label>외경 / 길이</label><input class="fi" id="s_sz1" placeholder="11mm"></div>
-    <div class="fg"><label>호수</label><input class="fi" id="s_sz2" placeholder="13호"></div>
+    <div class="fg"><label>외경 / 길이</label><input class="fi" id="s_sz1" placeholder=""></div>
+    <div class="fg"><label>호수</label><input class="fi" id="s_sz2" placeholder=""></div>
     <div class="fg"><label>보조줄</label><input class="fi" id="s_sz3"></div>
     <div class="fg"><label>장식</label><input class="fi" id="s_sz4"></div>
   </div>
@@ -756,10 +756,10 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <option value="무도금"><option value="변색방지 코팅"><option value="블랙"><option value="기타">
       </datalist>
     </div>
-    <div class="fg"><label>중량</label><input class="fi" id="s_wt" placeholder="g"></div>
+    <div class="fg"><label>중량</label><input class="fi" id="s_wt" placeholder=""></div>
   </div>
   <div class="fr2">
-    <div class="fg"><label>각인 위치</label><input class="fi" id="s_engr" placeholder="이미지 참고"></div>
+    <div class="fg"><label>각인 위치</label><input class="fi" id="s_engr" placeholder=""></div>
     <div class="fg"><label>카드파일 / 원본</label><input class="fi" id="s_card"></div>
   </div>
 
@@ -828,12 +828,46 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 
   <div id="s_dueHistArea"></div>
 
+  <!-- 📋 공장 전송용 샘플의뢰서 미리보기 -->
+  <div onclick="openSmpFactoryPreview()" style="margin-top:14px;padding:13px 16px;background:linear-gradient(135deg,var(--gold-bg),var(--s1));border:1.5px solid var(--gold-line);border-radius:9px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:12px"
+    onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(139,105,20,.18)';this.style.borderColor='var(--gold)'"
+    onmouseout="this.style.transform='';this.style.boxShadow='';this.style.borderColor='var(--gold-line)'">
+    <div style="font-size:24px;flex-shrink:0">📋</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:13px;font-weight:700;color:var(--gold-lt);margin-bottom:2px">공장 전송용 샘플의뢰서 미리보기</div>
+      <div style="font-size:10.5px;color:var(--t3)">사진 포함 · 전체화면 · PNG 저장 · 인쇄</div>
+    </div>
+    <div style="font-size:18px;color:var(--gold);flex-shrink:0">→</div>
+  </div>
+
   <div class="ma">
     <button class="btn bgo" onclick="closeM('mSmp')">취소</button>
     <button class="btn bp-red" id="s_delBtn" onclick="deleteSmp()" style="display:none">삭제</button>
     <button class="btn bgo" id="s_invBtn" onclick="saveAndInvoice()" style="display:none;border-color:var(--gold);color:var(--gold-lt)">🧾 명세서 발행</button>
     <button class="btn bp-grn" id="s_cfmBtn" onclick="confirmSmp()" style="display:none">✓ 확정 → 발주 생성</button>
     <button class="btn bp" id="s_saveBtn" onclick="saveSmp()" style="font-size:13px;padding:7px 20px">✓ 샘플 등록</button>
+  </div>
+</div></div>
+
+<!-- 📋 공장 전송용 샘플의뢰서 미리보기 모달 -->
+<div class="ov" id="mSmpFactPrev" style="z-index:9500"><div class="modal" style="max-width:900px;width:96%;max-height:94vh;display:flex;flex-direction:column;padding:0">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--bdr);background:var(--s2);flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:10px;min-width:0">
+      <div style="font-size:18px">📋</div>
+      <div style="min-width:0">
+        <div style="font-size:13px;font-weight:700;color:var(--t1)">공장 전송용 샘플의뢰서</div>
+        <div style="font-size:10.5px;color:var(--t3)">사진 포함 · 사진/인쇄용 깔끔 양식</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0">
+      <button class="btn" onclick="toggleSmpFactPrevFull()" title="전체화면" style="padding:6px 11px;font-size:11.5px">⛶ 전체화면</button>
+      <button class="btn" onclick="downloadSmpFactPrevPng()" title="PNG로 저장" style="padding:6px 11px;font-size:11.5px">🖼 PNG</button>
+      <button class="btn bp" onclick="printSmpFactPrev()" title="인쇄" style="padding:6px 11px;font-size:11.5px">🖨 인쇄</button>
+      <button class="btn bgo" onclick="closeM('mSmpFactPrev')" style="padding:6px 11px;font-size:11.5px">닫기</button>
+    </div>
+  </div>
+  <div id="mSmpFactPrev_body" style="flex:1;overflow:auto;padding:24px;background:#f5f5f5">
+    <!-- 미리보기 내용 동적 삽입 -->
   </div>
 </div></div>
 
@@ -18360,19 +18394,19 @@ function renderSmMultiRows(){
       </div>
 
       <div class="fr4" style="margin-bottom:8px">
-        <div class="fg"><label style="font-size:10.5px">외경 / 길이</label><input class="fi" placeholder="11mm" value="${safeEsc(r.sz1)}"
+        <div class="fg"><label style="font-size:10.5px">외경 / 길이</label><input class="fi" placeholder="" value="${safeEsc(r.sz1)}"
           oncompositionstart="this._composing=true"
           oncompositionend="this._composing=false;smMultiSetField(${i},'sz1',this.value)"
           oninput="if(!this._composing)smMultiSetField(${i},'sz1',this.value)"></div>
-        <div class="fg"><label style="font-size:10.5px">호수</label><input class="fi" placeholder="13호" value="${safeEsc(r.sz2)}"
+        <div class="fg"><label style="font-size:10.5px">호수</label><input class="fi" placeholder="" value="${safeEsc(r.sz2)}"
           oncompositionstart="this._composing=true"
           oncompositionend="this._composing=false;smMultiSetField(${i},'sz2',this.value)"
           oninput="if(!this._composing)smMultiSetField(${i},'sz2',this.value)"></div>
-        <div class="fg"><label style="font-size:10.5px">중량(g)</label><input class="fi" placeholder="g" value="${safeEsc(r.wt)}"
+        <div class="fg"><label style="font-size:10.5px">중량(g)</label><input class="fi" placeholder="" value="${safeEsc(r.wt)}"
           oncompositionstart="this._composing=true"
           oncompositionend="this._composing=false;smMultiSetField(${i},'wt',this.value)"
           oninput="if(!this._composing)smMultiSetField(${i},'wt',this.value)"></div>
-        <div class="fg"><label style="font-size:10.5px">각인</label><input class="fi" placeholder="이미지 참고" value="${safeEsc(r.engr)}"
+        <div class="fg"><label style="font-size:10.5px">각인</label><input class="fi" placeholder="" value="${safeEsc(r.engr)}"
           oncompositionstart="this._composing=true"
           oncompositionend="this._composing=false;smMultiSetField(${i},'engr',this.value)"
           oninput="if(!this._composing)smMultiSetField(${i},'engr',this.value)"></div>
@@ -19947,6 +19981,266 @@ function printOrdFactPrev(){
   if(!w){ showToast('팝업이 차단되었습니다','var(--red)'); return; }
   w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>발주서</title>'
     +'<style>body{margin:0;padding:20px;background:#fff;font-family:"Apple SD Gothic Neo","Malgun Gothic",sans-serif}textarea{display:none!important}.ord-fp-notes-display,.ord-fp-row-note-display{display:block!important}.ord-fp-edit-hint{display:none!important}@media print{body{padding:0}}</style>'
+    +'</head><body>'+html
+    +'<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script>'
+    +'</body></html>');
+  w.document.close();
+}
+
+// ════════════════════════════════════════════════════════
+//   📋 공장 전송용 샘플의뢰서 미리보기 (mSmp 모달용)
+// ════════════════════════════════════════════════════════
+function _smpFactPrevBuildHtml(){
+  const gv = (id)=>{ const el=document.getElementById(id); return el?el.value:''; };
+  const name    = gv('s_name')||'(샘플명)';
+  const type    = gv('s_type')||'';
+  const reqDate = gv('s_reqDate')||'';
+  const due     = gv('s_due')||'';
+  const qty     = gv('s_qty')||'';
+  const sz1     = gv('s_sz1')||''; // 외경/길이
+  const sz2     = gv('s_sz2')||''; // 호수
+  const size    = [sz1, sz2].filter(Boolean).join(' · ');
+  const mat     = gv('s_mat')||'';
+  const plating = gv('s_plating')||'';
+  // 소재/도금을 하나의 셀로 합치기
+  const matPlating = [mat, plating].filter(Boolean).join(' / ');
+  const wt      = gv('s_wt')||'';
+  const engr    = gv('s_engr')||'';
+  const card    = gv('s_card')||'';
+
+  // 기본 주의사항
+  let defaultNotes = '';
+  try{
+    const items = (typeof smpNotesList !== 'undefined' && Array.isArray(smpNotesList)) ? smpNotesList : [];
+    if(items.length){
+      defaultNotes = items.map(m => '• ' + (m.text||'')).filter(t=>t!=='• ').join('\n');
+    }
+  }catch(_){}
+  if(typeof window._smpFactPrevNotes !== 'string') window._smpFactPrevNotes = defaultNotes;
+  const notes = window._smpFactPrevNotes;
+
+  // 사진: 미리보기 전용 배치 버퍼 (window._smpFactPrevImgs) — 한 번 열면 순서/크기 보존
+  // 처음 열 때: 등록된 모든 사진 버퍼(smpImgBuf + smpSrcBuf + smpCadBuf) 합쳐서 초기화
+  if(!Array.isArray(window._smpFactPrevImgs) || !window._smpFactPrevImgs._inited){
+    const all = [];
+    const collect = (buf) => {
+      if(Array.isArray(buf)){
+        buf.forEach(im => { if(im && im.url) all.push({url:im.url, name:im.name||'', size:'M'}); });
+      }
+    };
+    if(typeof smpImgBuf !== 'undefined') collect(smpImgBuf);
+    if(typeof smpSrcBuf !== 'undefined') collect(smpSrcBuf);
+    if(typeof smpCadBuf !== 'undefined') collect(smpCadBuf);
+    all._inited = true;
+    window._smpFactPrevImgs = all;
+  }
+  const imgs = window._smpFactPrevImgs;
+
+  // 사진 카드 HTML — 크기(S/M/L)와 순서(드래그) 조절 가능
+  // 그리드 컬럼 수는 사진 크기에 따라 자동 (S=4열, M=3열, L=2열)
+  // 각 사진 카드는 data-idx로 식별, drag handle 포함
+  const sizeCfg = {
+    S: { col:'1 / span 1', h:130 },
+    M: { col:'1 / span 1', h:200 },
+    L: { col:'1 / span 2', h:300 }
+  };
+  const imgsHtml = imgs.length
+    ? `<div class="smp-fp-img-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px"
+        ondragover="event.preventDefault()"
+        ondrop="event.preventDefault()">
+        ${imgs.map((im,i)=>{
+          const sz = im.size || 'M';
+          const cfg = sizeCfg[sz] || sizeCfg.M;
+          return `<div class="smp-fp-img-card" data-idx="${i}" draggable="true"
+            ondragstart="event.dataTransfer.setData('text/plain', '${i}');event.dataTransfer.effectAllowed='move';this.style.opacity='0.4'"
+            ondragend="this.style.opacity=''"
+            ondragover="event.preventDefault();this.style.outline='2px dashed #8b6914'"
+            ondragleave="this.style.outline=''"
+            ondrop="event.preventDefault();this.style.outline='';smpFactPrevReorderImg(+event.dataTransfer.getData('text/plain'), ${i})"
+            style="grid-column:span ${sz==='L'?2:sz==='S'?1:1};grid-row:span ${sz==='L'?2:1};position:relative;border:1px solid #ddd;border-radius:5px;overflow:hidden;background:#fff;cursor:move">
+            <img src="${im.url}" style="width:100%;height:${cfg.h}px;object-fit:contain;background:#fff;display:block;pointer-events:none">
+            <div class="smp-fp-img-tools" style="position:absolute;top:3px;right:3px;display:flex;gap:3px;background:rgba(255,255,255,.92);border-radius:4px;padding:2px;box-shadow:0 1px 3px rgba(0,0,0,.15)">
+              <button onclick="smpFactPrevImgSize(${i},'S')" title="작게" style="border:none;background:${sz==='S'?'#8b6914':'#f5f5f5'};color:${sz==='S'?'#fff':'#444'};border-radius:3px;width:20px;height:18px;font-size:9px;cursor:pointer;line-height:1;padding:0;font-family:inherit;font-weight:700">S</button>
+              <button onclick="smpFactPrevImgSize(${i},'M')" title="중간" style="border:none;background:${sz==='M'?'#8b6914':'#f5f5f5'};color:${sz==='M'?'#fff':'#444'};border-radius:3px;width:20px;height:18px;font-size:9px;cursor:pointer;line-height:1;padding:0;font-family:inherit;font-weight:700">M</button>
+              <button onclick="smpFactPrevImgSize(${i},'L')" title="크게" style="border:none;background:${sz==='L'?'#8b6914':'#f5f5f5'};color:${sz==='L'?'#fff':'#444'};border-radius:3px;width:20px;height:18px;font-size:9px;cursor:pointer;line-height:1;padding:0;font-family:inherit;font-weight:700">L</button>
+              <button onclick="smpFactPrevImgRemove(${i})" title="제거" style="border:none;background:#f5f5f5;color:#c14a4a;border-radius:3px;width:20px;height:18px;font-size:11px;cursor:pointer;line-height:1;padding:0;font-family:inherit">×</button>
+            </div>
+            <div class="smp-fp-img-handle" style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.5);color:#fff;font-size:9px;text-align:center;padding:2px;opacity:0;transition:opacity .15s">⇕ 드래그로 순서 변경</div>
+          </div>`;
+        }).join('')}
+      </div>`
+    : '<div style="padding:36px;text-align:center;border:1px dashed #ccc;border-radius:6px;background:#fafafa;color:#bbb;font-size:12px">사진 없음</div>';
+
+  const infoRow = (label, value, emphasize) =>
+    `<div style="display:flex;padding:6px 0;border-bottom:1px solid #eee"><div style="width:80px;color:#888;font-weight:600;font-size:11px">${label}</div><div style="flex:1;font-size:11.5px;color:#222;${emphasize?'font-weight:600;color:#c14a4a':''}">${value ? String(value).replace(/</g,'&lt;') : '—'}</div></div>`;
+
+  const notesHtml = `
+    <div class="smp-fp-notes" style="margin-top:14px;padding:12px 14px;background:#fffbeb;border:1px solid #f5e6a8;border-radius:5px">
+      <div style="font-size:11px;font-weight:700;color:#8b6914;margin-bottom:6px;display:flex;align-items:center;gap:5px">
+        <span>📌</span><span>주의사항 / 개발 메모</span>
+        <span class="smp-fp-edit-hint" style="font-size:10px;color:#a89263;font-weight:400;margin-left:6px">(클릭해서 편집)</span>
+      </div>
+      <textarea class="smp-fp-notes-input" oninput="window._smpFactPrevNotes=this.value" placeholder="예) 정확한 사이즈 측정 / 표면 광택 / 각인 위치 확인 등..." style="width:100%;min-height:72px;border:1px dashed #d9c378;background:rgba(255,255,255,.7);border-radius:4px;padding:8px 10px;font-size:11.5px;color:#333;font-family:inherit;resize:vertical;line-height:1.5;box-sizing:border-box">${(notes||'').replace(/</g,'&lt;')}</textarea>
+      <div class="smp-fp-notes-display" style="display:none;font-size:11.5px;color:#333;white-space:pre-wrap;line-height:1.5;padding:2px 0">${(notes||'').replace(/</g,'&lt;')||'<span style="color:#bbb">(주의사항 없음)</span>'}</div>
+    </div>`;
+
+  // A4 비율: 210 x 297mm. 폭 780px → 높이 약 1103px
+  // 좌측 5행: 샘플명, 유형, 의뢰일, 납기일, 발주량
+  // 우측 5행: 사이즈, 소재/도금, 중량, 각인 위치, 카드파일/원본
+  return `
+  <div id="smpFactPrevContent" style="background:#fff;width:780px;min-height:1103px;margin:0 auto;padding:30px 36px;font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:#222;box-shadow:0 2px 8px rgba(0,0,0,.08);border-radius:6px;box-sizing:border-box;display:flex;flex-direction:column">
+    <div style="text-align:center;padding-bottom:12px;border-bottom:2px solid #222;margin-bottom:14px">
+      <div style="font-size:22px;font-weight:800;letter-spacing:6px">샘 플 의 뢰 서</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;font-size:11.5px">
+      <div>
+        ${infoRow('샘플명', name)}
+        ${infoRow('유형', type)}
+        ${infoRow('의뢰일', reqDate)}
+        ${infoRow('납기일', due, true)}
+        ${infoRow('발주량', qty)}
+      </div>
+      <div>
+        ${infoRow('사이즈', size)}
+        ${infoRow('소재/도금', matPlating)}
+        ${infoRow('중량', wt)}
+        ${infoRow('각인 위치', engr)}
+        ${infoRow('카드파일/원본', card)}
+      </div>
+    </div>
+
+    <div style="font-size:12px;font-weight:700;color:#666;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #eee;display:flex;align-items:center;gap:6px">
+      <span>📸 예시 사진</span>
+      <span class="smp-fp-img-hint" style="font-size:10px;color:#a89263;font-weight:400">(사진 카드 드래그로 순서 변경 · S/M/L로 크기 조절)</span>
+    </div>
+    <div style="flex:1">${imgsHtml}</div>
+
+    ${notesHtml}
+
+    <div style="margin-top:14px;padding-top:10px;border-top:1px dashed #ccc;font-size:10px;color:#aaa;text-align:center">
+      EK OEM · Generated ${new Date().toLocaleString('ko-KR')}
+    </div>
+  </div>`;
+}
+
+// 사진 순서 변경 (드래그&드롭)
+function smpFactPrevReorderImg(from, to){
+  if(!Array.isArray(window._smpFactPrevImgs)) return;
+  if(from===to || from<0 || to<0) return;
+  const arr = window._smpFactPrevImgs;
+  const [moved] = arr.splice(from, 1);
+  arr.splice(to, 0, moved);
+  arr._inited = true;
+  const body = document.getElementById('mSmpFactPrev_body');
+  if(body) body.innerHTML = _smpFactPrevBuildHtml();
+}
+
+// 사진 크기 변경
+function smpFactPrevImgSize(idx, sz){
+  if(!Array.isArray(window._smpFactPrevImgs) || !window._smpFactPrevImgs[idx]) return;
+  window._smpFactPrevImgs[idx].size = sz;
+  const body = document.getElementById('mSmpFactPrev_body');
+  if(body) body.innerHTML = _smpFactPrevBuildHtml();
+}
+
+// 사진 제거 (미리보기에서만 — 원본 버퍼는 안 건드림)
+function smpFactPrevImgRemove(idx){
+  if(!Array.isArray(window._smpFactPrevImgs)) return;
+  window._smpFactPrevImgs.splice(idx, 1);
+  window._smpFactPrevImgs._inited = true;
+  const body = document.getElementById('mSmpFactPrev_body');
+  if(body) body.innerHTML = _smpFactPrevBuildHtml();
+}
+
+function openSmpFactoryPreview(){
+  const body = document.getElementById('mSmpFactPrev_body');
+  const ov = document.getElementById('mSmpFactPrev');
+  if(!body || !ov){ showToast('미리보기 모달을 찾을 수 없습니다','var(--red)'); return; }
+  window._smpFactPrevNotes = undefined; // 매번 새로 초기화
+  window._smpFactPrevImgs = undefined;  // 사진 배치/크기도 초기화 (등록된 사진 새로 가져옴)
+  body.innerHTML = _smpFactPrevBuildHtml();
+  ov.classList.add('open');
+}
+
+function toggleSmpFactPrevFull(){
+  const ov = document.getElementById('mSmpFactPrev');
+  const modal = ov && ov.querySelector('.modal');
+  if(!modal) return;
+  const isFull = modal.dataset.full === '1';
+  if(isFull){
+    modal.style.maxWidth='900px'; modal.style.width='96%'; modal.style.maxHeight='94vh';
+    modal.dataset.full='0';
+  } else {
+    modal.style.maxWidth='100vw'; modal.style.width='100vw'; modal.style.maxHeight='100vh';
+    modal.style.borderRadius='0';
+    modal.dataset.full='1';
+  }
+}
+
+function _smpFactPrevToDisplayMode(){
+  const root = document.getElementById('smpFactPrevContent'); if(!root) return ()=>{};
+  const ta = root.querySelector('.smp-fp-notes-input');
+  const dp = root.querySelector('.smp-fp-notes-display');
+  const hint = root.querySelector('.smp-fp-edit-hint');
+  const imgHint = root.querySelector('.smp-fp-img-hint');
+  const tools = root.querySelectorAll('.smp-fp-img-tools');
+  if(ta && dp){
+    dp.innerHTML = (ta.value||'').replace(/</g,'&lt;').replace(/\n/g,'<br>') || '<span style="color:#bbb">(주의사항 없음)</span>';
+    ta.style.display = 'none';
+    dp.style.display = 'block';
+  }
+  if(hint) hint.style.display = 'none';
+  if(imgHint) imgHint.style.display = 'none';
+  tools.forEach(t => t.style.display = 'none');
+  return function(){
+    if(ta && dp){ ta.style.display=''; dp.style.display='none'; }
+    if(hint) hint.style.display='';
+    if(imgHint) imgHint.style.display='';
+    tools.forEach(t => t.style.display = '');
+  };
+}
+
+async function downloadSmpFactPrevPng(){
+  const target = document.getElementById('smpFactPrevContent');
+  if(!target){ showToast('미리보기를 먼저 열어주세요','var(--red)'); return; }
+  showToast('🖼 이미지 변환 중...','var(--blu)',1500);
+  const restore = _smpFactPrevToDisplayMode();
+  try{
+    if(typeof html2canvas==='undefined'){
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+        s.onload=res; s.onerror=rej;
+        document.head.appendChild(s);
+      });
+    }
+    const canvas = await html2canvas(target, {scale:2, backgroundColor:'#fff', useCORS:true});
+    const url = canvas.toDataURL('image/png');
+    const a=document.createElement('a');
+    const gv = (id)=>{ const el=document.getElementById(id); return el?el.value:''; };
+    const fname = ('샘플의뢰서_'+(gv('s_name')||new Date().toISOString().slice(0,10))).replace(/[\\\/:*?"<>|]/g,'_');
+    a.download = fname+'.png';
+    a.href = url; a.click();
+    showToast('✓ PNG 저장됨','var(--grn)');
+  }catch(e){
+    console.warn('PNG 저장 실패:', e);
+    showToast('PNG 저장 실패: '+(e.message||e),'var(--red)');
+  }finally{
+    restore();
+  }
+}
+
+function printSmpFactPrev(){
+  const target = document.getElementById('smpFactPrevContent');
+  if(!target){ showToast('미리보기를 먼저 열어주세요','var(--red)'); return; }
+  const restore = _smpFactPrevToDisplayMode();
+  const html = target.outerHTML;
+  restore();
+  const w = window.open('', '_blank', 'width=900,height=1200');
+  if(!w){ showToast('팝업이 차단되었습니다','var(--red)'); return; }
+  w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>샘플의뢰서</title>'
+    +'<style>body{margin:0;padding:20px;background:#fff;font-family:"Apple SD Gothic Neo","Malgun Gothic",sans-serif}textarea{display:none!important}.smp-fp-notes-display{display:block!important}.smp-fp-edit-hint,.smp-fp-img-hint,.smp-fp-img-tools,.smp-fp-img-handle{display:none!important}@media print{body{padding:0}}</style>'
     +'</head><body>'+html
     +'<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script>'
     +'</body></html>');
