@@ -6779,6 +6779,15 @@ function mapNotionInquiry(row){
 }
 function mapNotionProduct(row){
   const p=row.properties||{};
+  // 이미지JSON 파싱 (text 필드에 저장된 JSON 문자열)
+  let imgs = [];
+  try{
+    const j = np.text(p['이미지JSON']);
+    if(j){
+      const parsed = JSON.parse(j);
+      if(Array.isArray(parsed)) imgs = parsed.filter(im => im && im.url);
+    }
+  } catch(e){ /* 파싱 실패 시 빈 배열 */ }
   return{
     _notionId:row.id,
     code:       np.title(p['품목코드']),
@@ -6799,6 +6808,7 @@ function mapNotionProduct(row){
     priceManual:!!np.check(p['출고단가수동']),
     stock:      np.number(p['재고수량']),
     weight:     np.number(p['중량']),
+    imgs,
     createdDate:  np.date(p['최초등록일']),
     lastModified: np.date(p['최종수정일']),
   };
@@ -10284,6 +10294,18 @@ async function syncProductToNotion(pd, update){
   if(!notionCfg.workerUrl||!notionCfg.productDb){
     throw new Error('Notion 미연결: Worker URL 또는 제품DB ID가 설정되지 않음');
   }
+  // 이미지 JSON 직렬화 — R2에 업로드된 외부 URL만 노션에 보냄
+  // 노션은 text 필드에 JSON 문자열로 저장 (다른 모듈과 동일한 패턴)
+  const _safeImgJson = (arr) => {
+    try{
+      const externalOnly = (arr||[])
+        .filter(im => im && im.url && /^https?:\/\//.test(im.url))  // R2 외부 URL만
+        .map(im => ({ name: im.name||'', url: im.url, type: im.type||'' }))
+        .slice(0, 20); // 노션 text 필드 길이 제한 대비 최대 20장
+      return JSON.stringify(externalOnly);
+    } catch(e){ return '[]'; }
+  };
+  const imgsJson = _safeImgJson(pd.imgs);
   const p={
     "품목코드":{"title":[{"text":{"content":pd.code||''}}]},
     "품목명":{"rich_text":[{"text":{"content":pd.name||''}}]},
@@ -10291,6 +10313,7 @@ async function syncProductToNotion(pd, update){
     "금속종류":{"rich_text":[{"text":{"content":pd.metal||''}}]},
     "도금스펙":{"rich_text":[{"text":{"content":pd.platingSpec||''}}]},
     "메모":{"rich_text":[{"text":{"content":(pd.memo||'').slice(0,2000)}}]},
+    "이미지JSON":{"rich_text":[{"text":{"content":imgsJson.slice(0,2000)}}]},
     "출고단가":{"number":+pd.price||0},
     "입고단가":{"number":+pd.costPrice||0},
     "위안화입고단가":{"number":+pd.cnyPrice||0},
