@@ -20037,12 +20037,12 @@ function _smpFactPrevBuildHtml(){
   const imgs = window._smpFactPrevImgs;
 
   // 사진 카드 HTML — 크기(S/M/L)와 순서(드래그) 조절 가능
-  // 그리드 컬럼 수는 사진 크기에 따라 자동 (S=4열, M=3열, L=2열)
-  // 각 사진 카드는 data-idx로 식별, drag handle 포함
+  // + 우하단 모서리 핸들로 자유 드래그 리사이즈 (resize:both)
+  // + 사진 더블클릭으로 풀스크린 미리보기
   const sizeCfg = {
-    S: { col:'1 / span 1', h:130 },
-    M: { col:'1 / span 1', h:200 },
-    L: { col:'1 / span 2', h:300 }
+    S: { h:130 },
+    M: { h:200 },
+    L: { h:300 }
   };
   const imgsHtml = imgs.length
     ? `<div class="smp-fp-img-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px"
@@ -20051,21 +20051,30 @@ function _smpFactPrevBuildHtml(){
         ${imgs.map((im,i)=>{
           const sz = im.size || 'M';
           const cfg = sizeCfg[sz] || sizeCfg.M;
+          // 사용자가 자유 리사이즈로 늘려놓은 너비/높이 보존 (im.w, im.h)
+          const widthStyle  = im.w ? `width:${im.w}px;` : '';
+          const heightStyle = im.h ? `height:${im.h}px;` : `height:${cfg.h}px;`;
+          const colSpan = sz==='L' ? 2 : 1;
+          const rowSpan = sz==='L' ? 2 : 1;
           return `<div class="smp-fp-img-card" data-idx="${i}" draggable="true"
-            ondragstart="event.dataTransfer.setData('text/plain', '${i}');event.dataTransfer.effectAllowed='move';this.style.opacity='0.4'"
+            ondragstart="if(event.target.tagName==='IMG'||event.target===this){event.dataTransfer.setData('text/plain', '${i}');event.dataTransfer.effectAllowed='move';this.style.opacity='0.4'}"
             ondragend="this.style.opacity=''"
             ondragover="event.preventDefault();this.style.outline='2px dashed #8b6914'"
             ondragleave="this.style.outline=''"
             ondrop="event.preventDefault();this.style.outline='';smpFactPrevReorderImg(+event.dataTransfer.getData('text/plain'), ${i})"
-            style="grid-column:span ${sz==='L'?2:sz==='S'?1:1};grid-row:span ${sz==='L'?2:1};position:relative;border:1px solid #ddd;border-radius:5px;overflow:hidden;background:#fff;cursor:move">
-            <img src="${im.url}" style="width:100%;height:${cfg.h}px;object-fit:contain;background:#fff;display:block;pointer-events:none">
+            style="grid-column:span ${colSpan};grid-row:span ${rowSpan};position:relative;border:1px solid #ddd;border-radius:5px;overflow:hidden;background:#fff;cursor:move;resize:both;min-width:120px;min-height:100px;max-width:100%;${widthStyle}${heightStyle}"
+            onmouseup="smpFactPrevRememberSize(${i}, this.offsetWidth, this.offsetHeight)">
+            <img src="${im.url}"
+              ondblclick="event.stopPropagation();smpFactPrevImgFullscreen('${(im.url||'').replace(/'/g,"\\'")}')"
+              style="width:100%;height:100%;object-fit:contain;background:#fff;display:block;pointer-events:auto;cursor:zoom-in"
+              title="더블클릭하면 크게 보기 · 우하단 모서리 드래그로 크기 조절">
             <div class="smp-fp-img-tools" style="position:absolute;top:3px;right:3px;display:flex;gap:3px;background:rgba(255,255,255,.92);border-radius:4px;padding:2px;box-shadow:0 1px 3px rgba(0,0,0,.15)">
               <button onclick="smpFactPrevImgSize(${i},'S')" title="작게" style="border:none;background:${sz==='S'?'#8b6914':'#f5f5f5'};color:${sz==='S'?'#fff':'#444'};border-radius:3px;width:20px;height:18px;font-size:9px;cursor:pointer;line-height:1;padding:0;font-family:inherit;font-weight:700">S</button>
               <button onclick="smpFactPrevImgSize(${i},'M')" title="중간" style="border:none;background:${sz==='M'?'#8b6914':'#f5f5f5'};color:${sz==='M'?'#fff':'#444'};border-radius:3px;width:20px;height:18px;font-size:9px;cursor:pointer;line-height:1;padding:0;font-family:inherit;font-weight:700">M</button>
               <button onclick="smpFactPrevImgSize(${i},'L')" title="크게" style="border:none;background:${sz==='L'?'#8b6914':'#f5f5f5'};color:${sz==='L'?'#fff':'#444'};border-radius:3px;width:20px;height:18px;font-size:9px;cursor:pointer;line-height:1;padding:0;font-family:inherit;font-weight:700">L</button>
+              <button onclick="smpFactPrevImgReset(${i})" title="크기 초기화" style="border:none;background:#f5f5f5;color:#444;border-radius:3px;width:24px;height:18px;font-size:9px;cursor:pointer;line-height:1;padding:0;font-family:inherit">↺</button>
               <button onclick="smpFactPrevImgRemove(${i})" title="제거" style="border:none;background:#f5f5f5;color:#c14a4a;border-radius:3px;width:20px;height:18px;font-size:11px;cursor:pointer;line-height:1;padding:0;font-family:inherit">×</button>
             </div>
-            <div class="smp-fp-img-handle" style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.5);color:#fff;font-size:9px;text-align:center;padding:2px;opacity:0;transition:opacity .15s">⇕ 드래그로 순서 변경</div>
           </div>`;
         }).join('')}
       </div>`
@@ -20112,7 +20121,7 @@ function _smpFactPrevBuildHtml(){
 
     <div style="font-size:12px;font-weight:700;color:#666;margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid #eee;display:flex;align-items:center;gap:6px">
       <span>📸 예시 사진</span>
-      <span class="smp-fp-img-hint" style="font-size:10px;color:#a89263;font-weight:400">(사진 카드 드래그로 순서 변경 · S/M/L로 크기 조절)</span>
+      <span class="smp-fp-img-hint" style="font-size:10px;color:#a89263;font-weight:400">(드래그=순서 · S/M/L=크기 프리셋 · 우하단 모서리 드래그=자유 리사이즈 · 더블클릭=크게 보기)</span>
     </div>
     <div style="flex:1">${imgsHtml}</div>
 
@@ -20140,8 +20149,40 @@ function smpFactPrevReorderImg(from, to){
 function smpFactPrevImgSize(idx, sz){
   if(!Array.isArray(window._smpFactPrevImgs) || !window._smpFactPrevImgs[idx]) return;
   window._smpFactPrevImgs[idx].size = sz;
+  // S/M/L 프리셋 선택 시 자유 리사이즈 값은 리셋
+  window._smpFactPrevImgs[idx].w = undefined;
+  window._smpFactPrevImgs[idx].h = undefined;
   const body = document.getElementById('mSmpFactPrev_body');
   if(body) body.innerHTML = _smpFactPrevBuildHtml();
+}
+
+// 사진 자유 리사이즈 값 기억 (마우스 떼는 순간)
+function smpFactPrevRememberSize(idx, w, h){
+  if(!Array.isArray(window._smpFactPrevImgs) || !window._smpFactPrevImgs[idx]) return;
+  const im = window._smpFactPrevImgs[idx];
+  // 변경 없으면 무시 (드래그 안 한 경우)
+  if(im.w === w && im.h === h) return;
+  im.w = w;
+  im.h = h;
+  // 리렌더 안 함 — 사용자가 잡고 있던 상태 그대로 두고, 다음 리렌더 시 반영
+}
+
+// 자유 리사이즈 초기화 (S/M/L 프리셋으로 복귀)
+function smpFactPrevImgReset(idx){
+  if(!Array.isArray(window._smpFactPrevImgs) || !window._smpFactPrevImgs[idx]) return;
+  window._smpFactPrevImgs[idx].w = undefined;
+  window._smpFactPrevImgs[idx].h = undefined;
+  const body = document.getElementById('mSmpFactPrev_body');
+  if(body) body.innerHTML = _smpFactPrevBuildHtml();
+}
+
+// 사진 풀스크린 미리보기 (더블클릭)
+function smpFactPrevImgFullscreen(url){
+  const ov = document.createElement('div');
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:99999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:30px';
+  ov.innerHTML = '<img src="'+url.replace(/"/g,'&quot;')+'" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:6px;box-shadow:0 4px 20px rgba(0,0,0,.5)">';
+  ov.onclick = () => ov.remove();
+  document.body.appendChild(ov);
 }
 
 // 사진 제거 (미리보기에서만 — 원본 버퍼는 안 건드림)
@@ -20240,7 +20281,7 @@ function printSmpFactPrev(){
   const w = window.open('', '_blank', 'width=900,height=1200');
   if(!w){ showToast('팝업이 차단되었습니다','var(--red)'); return; }
   w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>샘플의뢰서</title>'
-    +'<style>body{margin:0;padding:20px;background:#fff;font-family:"Apple SD Gothic Neo","Malgun Gothic",sans-serif}textarea{display:none!important}.smp-fp-notes-display{display:block!important}.smp-fp-edit-hint,.smp-fp-img-hint,.smp-fp-img-tools,.smp-fp-img-handle{display:none!important}@media print{body{padding:0}}</style>'
+    +'<style>body{margin:0;padding:20px;background:#fff;font-family:"Apple SD Gothic Neo","Malgun Gothic",sans-serif}textarea{display:none!important}.smp-fp-notes-display{display:block!important}.smp-fp-edit-hint,.smp-fp-img-hint,.smp-fp-img-tools,.smp-fp-img-handle{display:none!important}.smp-fp-img-card{resize:none!important}@media print{body{padding:0}}</style>'
     +'</head><body>'+html
     +'<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script>'
     +'</body></html>');
