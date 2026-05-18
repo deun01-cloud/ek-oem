@@ -7064,11 +7064,28 @@ async function pullFromNotion(opts){
       });
 
       // 2단계: 기존처럼 병합 (로컬 _notionId 일치 항목 보존)
+      const PROTECT_MS_FIELDS = 60 * 1000;
+      const nowForProtect = Date.now();
+      // 사용자 직접 입력 필드들 — 노션 eventual consistency 보호 대상
+      // 최근 60초 안에 push된 항목은 노션 값보다 로컬 값을 우선 (push가 아직 노션에 반영 안 됐을 수 있음)
+      const USER_FIELDS = ['status','memo','memoList','completedAt','due','reqDate','ship','factShip','date','vendor','manager','no','desc','devNote','caution','notes','price','costPrice','cnyPrice','stock','title','content','reply','phone','address','recipient','brand','shipStatus','matchStatus','returnStatus','returnReason','returnRequestedAt','returnCompletedAt','kind','flow','qty','items','invoice','user'];
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map(x=>[x._notionId,x]));
       const merged=remoteDedupe.map(r=>{
         const prev=byNotionId[r._notionId];
         if(!prev) return {id:Date.now()+Math.random(), ...r};
         const out={...r, id:prev.id};
+        // 🔒 최근 sync된 항목은 사용자 입력 필드를 로컬 값으로 보호
+        // (노션 PATCH가 PULL보다 늦게 반영되는 race condition 방어)
+        const recentlyPushed = prev._syncedAt && (nowForProtect - new Date(prev._syncedAt).getTime()) < PROTECT_MS_FIELDS;
+        if(recentlyPushed){
+          USER_FIELDS.forEach(f=>{
+            if(prev[f] !== undefined && prev[f] !== null && prev[f] !== ''){
+              out[f] = prev[f];
+            }
+          });
+          // _syncedAt도 보존
+          out._syncedAt = prev._syncedAt;
+        }
         idFields.forEach(f=>{
           // 배열 필드: 로컬이 더 많은 항목을 가지고 있으면 로컬 유지 (데이터 유실 방지)
           const isArr = Array.isArray(prev[f]) || Array.isArray(out[f]);
@@ -9944,6 +9961,7 @@ async function syncSampleToNotion(s, update){
     saveNotionId(samples,s.id,r.id,SK.s);
     s._notionId = r.id;
   }
+  s._syncedAt = new Date().toISOString();
 }
 async function deleteSampleFromNotion(s){
   if(s._notionId) await nDelete(s._notionId);
@@ -10016,6 +10034,8 @@ async function syncOrderToNotion(o, update){
     saveNotionId(orders,o.id,r.id,SK.o);
     o._notionId = r.id;
   }
+  // 🔒 노션 eventual consistency 보호 — 최근 sync된 항목은 풀 단계에서 보호됨
+  o._syncedAt = new Date().toISOString();
 }
 async function deleteOrderFromNotion(o){
   if(o._notionId) await nDelete(o._notionId);
@@ -10050,6 +10070,7 @@ async function syncProcToNotion(proc, update){
     saveNotionId(procItems,proc.id,r.id,SK.p);
     proc._notionId = r.id;
   }
+  proc._syncedAt = new Date().toISOString();
 }
 async function deleteProcFromNotion(proc){
   if(proc._notionId) await nDelete(proc._notionId);
@@ -10198,6 +10219,7 @@ async function syncTaskToNotion(task, update){
     saveNotionId(tasks,task.id,r.id,SK.t);
     task._notionId = r.id;
   }
+  task._syncedAt = new Date().toISOString();
 }
 async function deleteTaskFromNotion(task){
   if(task._notionId) await nDelete(task._notionId);
@@ -10233,6 +10255,7 @@ async function syncASToNotion(a, update){
     saveNotionId(asItems,a.id,r.id,SK.a);
     a._notionId = r.id;
   }
+  a._syncedAt = new Date().toISOString();
 }
 async function deleteASFromNotion(a){
   if(a._notionId) await nDelete(a._notionId);
@@ -15355,6 +15378,104 @@ function changeSmpStatus(sid, newStatus){
   renderSample();
 }
 
+// ── 발주 상태 변경 드롭다운 (생산관리 페이지) ──
+function openOrdStatusDropdown(ev, oid){
+  ev.stopPropagation();
+  const existing=document.getElementById('ordStatusDropdown');
+  if(existing){
+    const prevId=existing.dataset.oid;
+    existing.remove();
+    if(String(prevId)===String(oid)) return; // 같은 칩 다시 클릭 → 닫기만
+  }
+  const o=orders.find(x=>x.id==oid); if(!o) return;
+  const curSt = normalizeOrderStatus(o.status);
+  const target=ev.currentTarget;
+  const rect=target.getBoundingClientRect();
+  const opts=['의뢰','제작중','수정중','확정','취소보류'];
+  const colors={
+    '의뢰':'background:rgba(26,109,181,.12);color:var(--blu);border:1px solid rgba(26,109,181,.3)',
+    '제작중':'background:rgba(168,90,16,.12);color:var(--org);border:1px solid rgba(168,90,16,.3)',
+    '수정중':'background:rgba(192,144,32,.12);color:var(--gold-lt);border:1px solid rgba(192,144,32,.3)',
+    '확정':'background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3)',
+    '취소보류':'background:rgba(120,120,120,.12);color:var(--t3);border:1px solid rgba(120,120,120,.3)'
+  };
+  const dd=document.createElement('div');
+  dd.id='ordStatusDropdown';
+  dd.dataset.oid=oid;
+  dd.style.cssText=`position:fixed;top:${rect.bottom+4}px;left:${rect.left}px;background:var(--s1);border:1px solid var(--gold-line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:9999;min-width:120px;padding:4px;display:flex;flex-direction:column;gap:2px`;
+  dd.innerHTML=opts.map(st=>`
+    <div onclick="event.stopPropagation();changeOrdStatusInline(${oid},'${st}')"
+      style="padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11.5px;display:flex;align-items:center;gap:6px;${st===curSt?'background:var(--gold-bg);font-weight:700':''}"
+      onmouseover="this.style.background='var(--gold-bg)'"
+      onmouseout="this.style.background='${st===curSt?'var(--gold-bg)':''}'">
+      <span style="font-size:9.5px;padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;${colors[st]||''}">${st}</span>
+      ${st===curSt?'<span style="font-size:10px;color:var(--gold-lt);margin-left:auto">✓</span>':''}
+    </div>`).join('');
+  document.body.appendChild(dd);
+  // 바깥 클릭 시 닫기
+  setTimeout(()=>{
+    const closeHandler=(e)=>{
+      if(!dd.contains(e.target)){
+        dd.remove();
+        document.removeEventListener('click',closeHandler,true);
+        document.removeEventListener('scroll',closeHandler,true);
+      }
+    };
+    document.addEventListener('click',closeHandler,true);
+    document.addEventListener('scroll',closeHandler,true);
+  },10);
+}
+
+// 발주 행 상태 인라인 변경 (드롭다운에서 호출)
+function changeOrdStatusInline(oid, newStatus){
+  const i=orders.findIndex(x=>x.id==oid);
+  if(i<0) return;
+  const o = orders[i];
+  const prevStatus = normalizeOrderStatus(o.status);
+  const normNew = normalizeOrderStatus(newStatus);
+  if(prevStatus === normNew){
+    const dd=document.getElementById('ordStatusDropdown');if(dd)dd.remove();
+    return;
+  }
+  // 상태 변경
+  o.status = normNew;
+  // 확정 = 출고완료 → 출고완료일 자동 설정
+  if(normNew === '확정'){
+    if(!o.completedAt) o.completedAt = new Date().toISOString();
+  } else {
+    // 확정 외 상태 — 출고완료일 비움
+    o.completedAt = '';
+  }
+  // 재고 자동 처리
+  let stockMsg = '';
+  if(prevStatus !== '확정' && normNew === '확정'){
+    // 진행 → 확정: 재고 차감
+    const r = applyOrderShipToStock(o);
+    if(r.matched) stockMsg = ` · 재고 ${r.matched}건 차감`;
+  } else if(prevStatus === '확정' && normNew !== '확정'){
+    // 확정 → 진행/취소보류: 재고 복원
+    revertOrderShipFromStock(o);
+    stockMsg = ' · 재고 복원';
+  }
+  save();
+  // 노션 동기화 (발주 + 재고 변경된 제품들)
+  if(o._notionId) debouncedSync('order', o, true);
+  if(stockMsg && notionCfg.workerUrl && notionCfg.productDb){
+    const changedProdIds = new Set();
+    (o.rows||[]).forEach(r=>{
+      const p = findProductByOrderRow(r);
+      if(p && p._notionId) changedProdIds.add(p.id);
+    });
+    changedProdIds.forEach(pid => {
+      const p = productDB.find(x=>x.id===pid);
+      if(p) syncProductToNotion(p, true).catch(e => console.warn('재고 노션 sync 실패:', p.code, e));
+    });
+  }
+  const dd=document.getElementById('ordStatusDropdown');if(dd)dd.remove();
+  showToast(`✓ 상태 변경: ${normNew}${stockMsg}`,'var(--grn)',2500);
+  renderOrder();
+}
+
 // ── 체크박스 토글
 function toggleSmpChk(id,chk){
   if(!window._smpChecked)window._smpChecked=new Set();
@@ -16666,7 +16787,7 @@ function showToast(msg, bg, duration){
 // ORDER + PROCESS COMBINED TAB
 // ════════════════════════════════
 // 발주 서브탭: 'inprogress' (기본) / 'done' / 'all'
-let ordSubTab = 'inprogress';
+let ordSubTab = 'all';
 function setOrdSubTab(v){
   ordSubTab=v;
   // 서브탭(진행중/출고완료/전체)과 ordAdvFilter.status는 같은 역할이라 중복.
@@ -16876,15 +16997,8 @@ function renderOrder(){
   let list=[...orders];
   if(ordSearch)list=list.filter(o=>(o.vendor+o.no+(o.rows||[]).map(r=>r.name).join()).toLowerCase().includes(ordSearch.toLowerCase()));
 
-  // 서브탭 필터 (진행중/완료/전체) — 옛 3단계 (호환 유지)
-  if(ordSubTab==='inprogress'){
-    list=list.filter(o=>isOrderInProgress(o.status));
-  } else if(ordSubTab==='done'){
-    list=list.filter(o=>isOrderShipped(o.status));
-  }
-  // 'all'은 필터 없음
-
-  // 5단계 칩 필터 (의뢰/제작중/수정중/확정/취소보류) — 새 ordFilter
+  // 5단계 칩 필터만 사용 (옛 3단계 서브탭 ordSubTab은 호환 위해 변수는 남기되 필터링은 하지 않음)
+  // ordFilter: 전체 / 의뢰 / 제작중 / 수정중 / 확정 / 취소보류
   if(ordFilter !== '전체'){
     list = list.filter(o => normalizeOrderStatus(o.status) === ordFilter);
   }
@@ -16965,14 +17079,7 @@ function renderOrder(){
   }
 
   c.innerHTML=`
-  <!-- 서브탭: 진행중 / 출고완료 / 전체 -->
-  <div style="display:flex;gap:2px;padding:3px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px;width:fit-content">
-    <button onclick="setOrdSubTab('inprogress')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${ordSubTab==='inprogress'?'700':'500'};background:${ordSubTab==='inprogress'?'var(--s1)':'transparent'};color:${ordSubTab==='inprogress'?'var(--org)':'var(--t3)'};${ordSubTab==='inprogress'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':''}">🔄 진행중 <span style="font-size:10px;opacity:.7">${activeOrd}</span></button>
-    <button onclick="setOrdSubTab('done')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${ordSubTab==='done'?'700':'500'};background:${ordSubTab==='done'?'var(--s1)':'transparent'};color:${ordSubTab==='done'?'var(--grn)':'var(--t3)'};${ordSubTab==='done'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':''}">✓ 출고완료 <span style="font-size:10px;opacity:.7">${doneOrd}</span></button>
-    <button onclick="setOrdSubTab('all')" style="padding:6px 14px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${ordSubTab==='all'?'700':'500'};background:${ordSubTab==='all'?'var(--s1)':'transparent'};color:${ordSubTab==='all'?'var(--t1)':'var(--t3)'};${ordSubTab==='all'?'box-shadow:0 1px 3px rgba(0,0,0,.08)':''}">📋 전체 <span style="font-size:10px;opacity:.7">${orders.length}</span></button>
-  </div>
-
-  ${ordSubTab==='done' ? '' : `
+  
   <div class="card">
     <div class="ch">
       <div><div class="ch-t">📁 발주서 업로드 — AI 자동 인식</div><div class="ch-s">이미지 · PDF · 엑셀 파일을 드래그하거나 클릭</div></div>
@@ -16997,7 +17104,6 @@ function renderOrder(){
   </div>
 
   <div id="ordTabParseResult"></div>
-  `}
 
   <div class="card">
     <div class="ch" style="flex-wrap:wrap;gap:8px">
@@ -17250,11 +17356,11 @@ function renderOrder(){
             const statusBadge = (()=>{
               const ordChip = isOrdDone
                 ? (ordSubTab==='done'
-                   ? '<span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">✓ 확정</span>'
-                   : `<span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">✓ 확정</span>${completedDateStr?`<span style="font-size:9.5px;color:var(--t3);white-space:nowrap;display:block;margin-top:1px" title="완료일자">${completedDateStr}</span>`:''}`)
+                   ? `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">✓ 확정</span>`
+                   : `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">✓ 확정</span>${completedDateStr?`<span style="font-size:9.5px;color:var(--t3);white-space:nowrap;display:block;margin-top:1px" title="완료일자">${completedDateStr}</span>`:''}`)
                 : isOrdCanceled
-                ? '<span style="font-size:9.5px;background:rgba(120,120,120,.12);color:var(--t3);border:1px solid rgba(120,120,120,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">취소보류</span>'
-                : `<span style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">${ordStatus}</span>`;
+                ? `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(120,120,120,.12);color:var(--t3);border:1px solid rgba(120,120,120,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">취소보류</span>`
+                : `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">${ordStatus}</span>`;
               // 거래명세서 칩이 있으면 두 줄로
               if(invBadge){
                 return `<div style="display:flex;flex-direction:column;align-items:flex-start;gap:3px">${ordChip}${invBadge}</div>`;
