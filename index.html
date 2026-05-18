@@ -17891,32 +17891,32 @@ function getAutoItems(ds, cat){
       }
     });
   } else if(cat==='샘플출고'){
-    samples.filter(s=>s.due===ds&&s.status!=='취소').forEach(s=>{
+    samples.filter(s=>s.due===ds&&!isOrderCanceled(s.status)).forEach(s=>{
       const cl=matchClient(s.manager);
       items.push({
         auto:true,
-        cont:s.name+(s.isOrderShipped(status)?' ✓':''),
+        cont:s.name+(isOrderShipped(s.status)?' ✓':''),
         badge: initBadge(cl, s.manager),
-        done:s.isOrderShipped(status),
+        done:isOrderShipped(s.status),
         id:'smp_'+s.id,
         click: `calGoSample(${s.id})`
       });
     });
   } else if(cat==='중국출고'){
     // 샘플의 공장 출고일
-    samples.filter(s=>s.factShip===ds&&s.status!=='취소').forEach(s=>{
+    samples.filter(s=>s.factShip===ds&&!isOrderCanceled(s.status)).forEach(s=>{
       const cl=matchClient(s.manager);
       items.push({
         auto:true,
-        cont:'[샘플] '+s.name+(s.isOrderShipped(status)?' ✓':''),
+        cont:'[샘플] '+s.name+(isOrderShipped(s.status)?' ✓':''),
         badge: initBadge(cl, s.manager),
-        done:s.isOrderShipped(status),
+        done:isOrderShipped(s.status),
         id:'smpfs_'+s.id,
         click: `calGoSample(${s.id})`
       });
     });
     // 발주의 공장 출고일
-    orders.filter(o=>o.factShip===ds&&o.status!=='취소').forEach(o=>{
+    orders.filter(o=>o.factShip===ds&&!isOrderCanceled(o.status)).forEach(o=>{
       const cl=matchClient(o.vendor);
       items.push({
         auto:true,
@@ -21060,14 +21060,13 @@ function vMonthly(c){
     };
   });
   const mSmpCnt=months.map(m=>samples.filter(s=>s.reqDate&&s.reqDate.startsWith(m)).length);
-  const mSmpDone=months.map(m=>samples.filter(s=>s.reqDate&&s.reqDate.startsWith(m)&&s.isOrderShipped(status)).length);
+  const mSmpDone=months.map(m=>samples.filter(s=>s.reqDate&&s.reqDate.startsWith(m)&&isOrderShipped(s.status)).length);
 
   // ── 잔여(미완료) 집계 — 발주 상태 기반으로 통일 ──
-  //   · 진행중 발주(status가 출고완료/취소가 아닌 것) = 잔여 건수
+  //   · 진행중 발주(status가 확정/취소보류가 아닌 것) = 잔여 건수
   //   · 그 중 거래명세서 미발행 = 잔여 금액 (발행된 건 이미 청구된 것으로 간주)
   const pendingOrders=orders.filter(o=>{
-    const st=o.status||'의뢰';
-    return st!=='확정' && st!=='취소';
+    return isOrderInProgress(o.status);
   });
   // 거래명세서 미발행 발주만 골라서 "예상 금액" 합산
   // 매칭: ordId(로컬) 우선, 발주번호(ordNo)로 폴백 — 다른 컴퓨터 동기화 대응
@@ -21134,10 +21133,10 @@ function vMonthly(c){
   const clientSmpMap={};
   samples.forEach(s=>{
     if(!s.reqDate || s.reqDate<smp3mStartStr) return;
-    if(s.status==='취소') return;
+    if(isOrderCanceled(s.status)) return;
     const key=(s.manager||'기타').trim();
     if(!clientSmpMap[key])clientSmpMap[key]={name:key,doneCnt:0,pendCnt:0};
-    if(s.isOrderShipped(status)) clientSmpMap[key].doneCnt++;
+    if(isOrderShipped(s.status)) clientSmpMap[key].doneCnt++;
     else clientSmpMap[key].pendCnt++;
   });
   const clientSmpList=Object.values(clientSmpMap)
