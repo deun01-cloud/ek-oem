@@ -594,43 +594,45 @@ function strColor(s){
 function getInitial(name){
   const nm=(name||'').trim();
   if(!nm) return '';
+  // 헬퍼: 영문/숫자만 추출하고 2글자로 패딩, 안 되면 ''
+  const onlyAscii2 = (s) => {
+    if(!s) return '';
+    const ascii = String(s).toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if(!ascii) return '';
+    if(ascii.length >= 2) return ascii.slice(0,2);
+    return ascii + ascii; // 1글자면 두번 (예: J → JJ)
+  };
   // 1) 고객사 DB에서 매칭 (이름 또는 이니셜 자체로)
   const cl=clients.find(c=>{
     const cn=(c.name||'').trim();
     const ci=(c.initials||'').trim();
     return cn===nm || (cn && nm.includes(cn)) || ci.toUpperCase()===nm.toUpperCase();
   });
-  if(cl&&cl.initials){
-    const ini = cl.initials.trim().toUpperCase();
-    // 영문/숫자만 추출 (한글 이니셜 방어)
-    const eng = ini.replace(/[^A-Z0-9]/g,'');
-    if(eng) return eng.slice(0,2);
+  if(cl && cl.initials){
+    const r = onlyAscii2(cl.initials);
+    if(r) return r;
   }
-  // 2) 법인 표기 제거 후 시도
+  // 2) 법인 표기 제거 후 영문만 추출
   const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜|\(주\)|유한회사|\(유\)/g,'').trim();
-  // 3) 영문이 들어 있으면 영문만 추출
-  const engChars=clean.match(/[A-Za-z]/g);
-  if(engChars && engChars.length>=2){
-    return (engChars[0]+engChars[1]).toUpperCase();
-  }
-  // 4) 한글 이름 → 로마자 첫 자음 매핑 (간단)
+  const r2 = onlyAscii2(clean);
+  if(r2) return r2;
+  // 3) 한글 이름 → 로마자 변환 (이미 영문/숫자만 반환하도록 _hangulToInitial 자체에서 보장)
   return _hangulToInitial(clean);
 }
 
-// 한글 → 영문 2글자 이니셜 (자음 기준 음역, 매핑이 없으면 ASCII fallback)
+// 한글 → 영문 2글자 이니셜 (자음 기준 음역). 최종 결과는 항상 영문/숫자 2글자 보장.
 function _hangulToInitial(s){
   if(!s) return '';
   // 초성(한글 자음) → 로마자
   const CHO_MAP = ['G','GG','N','D','DD','R','M','B','BB','S','SS','','J','JJ','C','K','T','P','H'];
-  // 한글이 아니면 첫 2자 그대로
   const ch = [...s].filter(c=>c.trim());
   if(!ch.length) return '';
   const getInitialOf = (c)=>{
     const code = c.charCodeAt(0);
-    // 한글 음절 (가-힣)
+    // 한글 음절 (가-힣) → 초성 자음의 로마자
     if(code>=0xAC00 && code<=0xD7A3){
       const cho = Math.floor((code-0xAC00)/588);
-      return CHO_MAP[cho] || c;
+      return CHO_MAP[cho] || ''; // 매핑 없으면 빈 문자열 (한글 글자가 결과에 남지 않게)
     }
     // 영문/숫자
     if(/[A-Za-z0-9]/.test(c)) return c.toUpperCase();
@@ -638,16 +640,23 @@ function _hangulToInitial(s){
   };
   // 첫 음절 + 두번째 단어 첫 음절 (단어 = 공백 구분)
   const words = s.split(/\s+/).filter(Boolean);
+  let result = '';
   if(words.length>=2){
     const a = getInitialOf(words[0][0]);
     const b = getInitialOf(words[1][0]);
-    if(a && b) return (a[0]+b[0]).toUpperCase();
+    if(a && b) result = (a[0]||'')+(b[0]||'');
   }
-  // 단일 단어 → 첫 2 음절의 초성 (각 첫 자)
-  const i1 = getInitialOf(ch[0]||'');
-  const i2 = getInitialOf(ch[1]||'');
-  const result = (i1[0]||'') + (i2[0]||'');
-  return result ? result.toUpperCase() : ch.slice(0,2).join('').toUpperCase();
+  // 단일 단어 또는 첫 시도 실패 → 첫 2 음절의 초성 사용
+  if(!result){
+    const i1 = getInitialOf(ch[0]||'');
+    const i2 = getInitialOf(ch[1]||'');
+    result = (i1[0]||'') + (i2[0]||'');
+  }
+  // 안전망: 결과에 영문/숫자만 남기고 2글자 보장
+  const clean = result.toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(clean.length >= 2) return clean.slice(0,2);
+  if(clean.length === 1) return clean + clean;
+  return '?'; // 완전히 못 만들면 ?
 }
 function initBadge(name){
   const nm=(name||'').trim();
@@ -2068,36 +2077,37 @@ async function doCarryOver(){
 
 function dayEvents(ds){
   const r=[];
-  // 발주: "📋 VT 발주" 형식 — 같은 고객사 여러 건이면 "📋 VT 발주 ×3"
+  // 발주: 이니셜 배지 + "발주" — 같은 고객사 여러 건이면 "×3"
+  // 고객사 영문 이니셜 2글자만 (getInitial이 영문 우선 추출)
   const ordByVendor = {};
   orders.filter(o=>o.ship===ds).forEach(o=>{
     const st=o.status||'진행중';
     const isDone=st==='출고완료'||st==='취소';
     const init = getInitial(o.vendor) || '?';
     const key = init + '|' + (isDone?'1':'0');
-    if(!ordByVendor[key]) ordByVendor[key] = {init, done:isDone, count:0};
+    if(!ordByVendor[key]) ordByVendor[key] = {init, vendor:o.vendor, done:isDone, count:0};
     ordByVendor[key].count++;
   });
   Object.values(ordByVendor).forEach(g=>{
     const suffix = g.count > 1 ? ` ×${g.count}` : '';
-    r.push({cls:'ord', done:g.done, t:`📋 ${g.init} 발주${suffix}`});
+    r.push({cls:'ord', done:g.done, init:g.init, vendor:g.vendor, t:`발주${suffix}`});
   });
 
-  // 샘플: "💎 VT 샘플" 형식 — manager(담당자) 또는 client 정보 사용
+  // 샘플: 이니셜 배지 + "샘플" — manager 필드가 "업체" 정보를 담음
   const smpByVendor = {};
   samples.filter(s=>s.due===ds).forEach(s=>{
     const st=s.status||'의뢰';
     const isDone=st==='완료'||st==='확정'||st==='취소';
-    // 우선순위: client 이름 → manager
-    const vendor = (s.client && s.client.name) || s.manager || s.brand || '';
+    // s.manager 필드가 실제로는 "업체"
+    const vendor = s.manager || (s.client && s.client.name) || s.brand || '';
     const init = getInitial(vendor) || '?';
     const key = init + '|' + (isDone?'1':'0');
-    if(!smpByVendor[key]) smpByVendor[key] = {init, done:isDone, count:0};
+    if(!smpByVendor[key]) smpByVendor[key] = {init, vendor, done:isDone, count:0};
     smpByVendor[key].count++;
   });
   Object.values(smpByVendor).forEach(g=>{
     const suffix = g.count > 1 ? ` ×${g.count}` : '';
-    r.push({cls:'smp', done:g.done, t:`💎 ${g.init} 샘플${suffix}`});
+    r.push({cls:'smp', done:g.done, init:g.init, vendor:g.vendor, t:`샘플${suffix}`});
   });
 
   // 입출고: "🚚 입고 VT" / "🚚 출고 PE" 형식
@@ -2106,12 +2116,12 @@ function dayEvents(ds){
     const init = getInitial(io.vendor) || '?';
     const kind = io.kind || '입고';
     const key = init + '|' + kind;
-    if(!ioByVendor[key]) ioByVendor[key] = {init, kind, count:0};
+    if(!ioByVendor[key]) ioByVendor[key] = {init, vendor:io.vendor, kind, count:0};
     ioByVendor[key].count++;
   });
   Object.values(ioByVendor).forEach(g=>{
     const suffix = g.count > 1 ? ` ×${g.count}` : '';
-    r.push({cls:'ship', done:false, t:`🚚 ${g.init} ${g.kind}${suffix}`});
+    r.push({cls:'ship', done:false, init:g.init, vendor:g.vendor, t:`🚚 ${g.kind}${suffix}`});
   });
 
   // 업무: "📝 업무 N" — 개수만 묶어서 표시
@@ -2156,7 +2166,15 @@ function renderCal(){
     if(KR_HOLIDAYS[ds]) cls.push('holiday');
     if(ds===today) cls.push('today');
     if(evs.length) cls.push('has-ev');
-    let evHtml = evs.slice(0,3).map(e=>`<div class="cal-ev ${e.cls}${e.done?' done':''}">${escapeHtml(e.t)}</div>`).join('');
+    let evHtml = evs.slice(0,3).map(e=>{
+      // 발주/샘플인 경우 이니셜 배지를 앞에 붙임
+      let prefix = '';
+      if(e.init){
+        const bg = strColor(e.vendor||'');
+        prefix = `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:14px;padding:0 4px;border-radius:3px;background:${bg};color:#fff;font-size:9px;font-weight:700;margin-right:3px">${escapeHtml(e.init)}</span>`;
+      }
+      return `<div class="cal-ev ${e.cls}${e.done?' done':''}">${prefix}${escapeHtml(e.t)}</div>`;
+    }).join('');
     if(evs.length>3) evHtml += `<div class="cal-ev-more">+${evs.length-3}</div>`;
     html += `<div class="${cls.join(' ')}" onclick="openDayPop('${ds}')"><div class="dn">${d}</div>${evHtml}</div>`;
     weekCellCount++;
@@ -2189,7 +2207,10 @@ function openDayPop(ds){
     smps.forEach(s=>{
       const st=s.status||'의뢰';
       const stCls = st==='완료'||st==='확정'?'s-done':st==='취소'?'s-cancel':st==='수정중'?'s-fix':st==='제작중'?'s-make':'s-req';
-      html += `<div onclick="closeDayPop();showSmpDetail(${s.id})" style="padding:9px;border:1px solid var(--bdr-lt);border-radius:6px;margin-bottom:6px;font-size:13px;cursor:pointer"><div style="display:flex;gap:6px;align-items:center"><span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(s.name||'')}</span><span class="li-status ${stCls}">${st}</span></div><div style="font-size:11px;color:var(--t3);margin-top:2px">${escapeHtml(s.type||'')} · ${escapeHtml(s.mat||'')}</div></div>`;
+      // s.manager는 "업체" 정보 — 이니셜 배지로 표시
+      const smpVendor = s.manager || (s.client && s.client.name) || s.brand || '';
+      const initHtml = smpVendor ? initBadge(smpVendor) : '';
+      html += `<div onclick="closeDayPop();showSmpDetail(${s.id})" style="padding:9px;border:1px solid var(--bdr-lt);border-radius:6px;margin-bottom:6px;font-size:13px;cursor:pointer"><div style="display:flex;gap:6px;align-items:center">${initHtml}<span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(s.name||'')}</span><span class="li-status ${stCls}">${st}</span></div><div style="font-size:11px;color:var(--t3);margin-top:2px">${escapeHtml(s.type||'')} · ${escapeHtml(s.mat||'')}</div></div>`;
     });
   }
   const ios = ioItems.filter(io=>io.date===ds);
@@ -4358,12 +4379,57 @@ function showIoDetail(id){
   const imgsData = imgs.map(f => ({url:f.url, name:f.name||''}));
   const imgsJson = JSON.stringify(imgsData).replace(/'/g, '&#39;');
   const imgHtml = imgs.length ? `<div style="margin:14px 0"><div style="font-size:11.5px;font-weight:700;color:var(--t3);margin-bottom:6px">📷 사진 (${imgs.length})</div><div class="photo-grid" data-imgs='${imgsJson}'>${imgs.map((im,i)=>`<div class="photo-item"><img src="${im.url}" alt="" onclick="openLightbox(JSON.parse(this.closest('.photo-grid').dataset.imgs), ${i})"></div>`).join('')}</div></div>` : '';
+
+  // 커머스 (B2C) 행이면 별도 섹션
+  const isCommerce = !!io.brand;
+  let commerceSection = '';
+  if(isCommerce){
+    const rs = io.returnStatus || '';
+    const isReturnDone = rs === '교환완료' || rs === '환불완료';
+    const isReturnPending = rs === '교환요청' || rs === '환불요청';
+    let returnHtml = '';
+    if(rs && rs !== '정상'){
+      const icon = rs.includes('교환') ? '🔄' : '↩';
+      const bg = isReturnDone ? 'background:rgba(46,139,44,.06);border:1px solid rgba(46,139,44,.25)' : 'background:rgba(168,90,16,.06);border:1px solid rgba(168,90,16,.25)';
+      returnHtml = `
+        <div style="margin-top:12px;padding:11px 13px;border-radius:8px;${bg}">
+          <div style="font-weight:700;font-size:12.5px;margin-bottom:6px">${icon} ${escapeHtml(rs)}</div>
+          ${io.returnRequestedAt ? `<div style="font-size:11px;color:var(--t2)"><span style="color:var(--t3)">요청일:</span> ${escapeHtml(io.returnRequestedAt)}</div>` : ''}
+          ${io.returnCompletedAt ? `<div style="font-size:11px;color:var(--t2)"><span style="color:var(--t3)">입고일:</span> ${escapeHtml(io.returnCompletedAt)}</div>` : ''}
+          ${io.returnReason ? `<div style="font-size:11px;color:var(--t2);margin-top:3px"><span style="color:var(--t3)">사유:</span> ${escapeHtml(io.returnReason)}</div>` : ''}
+          <div style="margin-top:8px;display:flex;gap:5px;justify-content:flex-end">
+            ${isReturnPending ? `<button onclick="closeModal();mConfirmReturnComplete(${io.id})" style="padding:5px 10px;font-size:11px;background:var(--grn);border:1px solid var(--grn);border-radius:5px;color:#fff;font-weight:700;font-family:inherit">✓ 입고확인</button>` : ''}
+            ${isReturnDone ? `<button onclick="closeModal();mUndoReturnComplete(${io.id})" style="padding:5px 10px;font-size:11px;background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--t3);font-family:inherit">↶ 되돌리기</button>` : ''}
+          </div>
+        </div>
+      `;
+    } else {
+      // 정상
+      returnHtml = `
+        <div style="margin-top:12px;padding:9px 11px;background:var(--s2);border:1px solid var(--bdr);border-radius:7px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <span style="font-size:11px;color:var(--t3)">정상 출고 상태</span>
+          <button onclick="closeModal();mOpenReturnModal(${io.id})" style="padding:4px 10px;font-size:11px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;color:var(--t2);font-family:inherit">🔄/↩ 등록</button>
+        </div>
+      `;
+    }
+    commerceSection = `
+      <div class="dt-row"><span class="l">브랜드</span><span class="v bold" style="color:var(--gold-lt)">🛍 ${escapeHtml(io.brand||'-')}</span></div>
+      <div class="dt-row"><span class="l">수령인</span><span class="v bold">${escapeHtml(io.recipient||'-')}</span></div>
+      <div class="dt-row"><span class="l">연락처</span><span class="v" style="font-family:monospace"><a href="tel:${escapeHtml((io.phone||'').replace(/[^0-9+]/g,''))}" style="color:var(--blu);text-decoration:none">${escapeHtml(io.phone||'-')}</a></span></div>
+      <div class="dt-row"><span class="l">주소</span><span class="v">${escapeHtml(io.address||'-')}</span></div>
+      ${io.deliveryMemo ? `<div class="dt-row"><span class="l">배송메모</span><span class="v" style="color:var(--t2);font-size:11.5px">${escapeHtml(io.deliveryMemo)}</span></div>` : ''}
+      ${io.matchStatus ? `<div class="dt-row"><span class="l">매칭</span><span class="v"><span class="li-status ${io.matchStatus==='자동매칭'?'s-done':io.matchStatus==='미매칭'?'s-fix':'s-make'}">${escapeHtml(io.matchStatus)}</span>${io._matchedProductCode?` <span style="font-family:monospace;color:var(--gold-lt);font-size:11px">${escapeHtml(io._matchedProductCode)}</span>`:''}</span></div>` : ''}
+      ${returnHtml}
+    `;
+  }
+
   const body = `
     <div class="dt-row"><span class="l">제목</span><span class="v bold">${escapeHtml(io.title||io.vendor||'-')}</span></div>
     <div class="dt-row"><span class="l">일자</span><span class="v">${escapeHtml(io.date||'-')}</span></div>
     <div class="dt-row"><span class="l">구분</span><span class="v"><span class="li-status ${io.kind==='출고'?'s-fix':'s-make'}">${io.kind||'-'}</span></span></div>
     <div class="dt-row"><span class="l">흐름</span><span class="v">${escapeHtml(io.flow||'-')}</span></div>
-    <div class="dt-row"><span class="l">고객사/공장</span><span class="v">${escapeHtml(io.vendor||'-')}</span></div>
+    ${isCommerce ? '' : `<div class="dt-row"><span class="l">고객사/공장</span><span class="v">${escapeHtml(io.vendor||'-')}</span></div>`}
+    ${commerceSection}
     <div class="dt-row"><span class="l">수량</span><span class="v">${io.qty?(+io.qty).toLocaleString()+'개':'-'}</span></div>
     <div class="dt-row"><span class="l">송장번호</span><span class="v">${escapeHtml(io.invoice||'-')}</span></div>
     <div class="dt-row"><span class="l">등록자</span><span class="v">${escapeHtml(io.user||'-')}</span></div>
@@ -5361,7 +5427,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-05-16-05';
+const APP_VERSION = '2026-05-16-08';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
