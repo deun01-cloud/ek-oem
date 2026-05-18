@@ -150,8 +150,11 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 /* ── IMAGE PREVIEW OVERLAY ── */
 .prev-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.93);z-index:500;align-items:center;justify-content:center;flex-direction:column;gap:10px}
 .prev-ov.open{display:flex}
-.prev-img-wrap{position:relative;width:96vw;height:88vh;display:flex;align-items:center;justify-content:center}
-.prev-img-wrap img{max-width:96vw;max-height:88vh;object-fit:contain;border-radius:4px}
+.prev-img-wrap{position:relative;width:96vw;height:88vh;display:flex;align-items:center;justify-content:center;overflow:auto}
+/* 이미지는 화면 가득 (작은 원본도 늘려서 표시), 비율 유지 */
+.prev-img-wrap img{width:auto;height:auto;max-width:96vw;max-height:88vh;min-width:min(60vw, 600px);object-fit:contain;border-radius:4px;cursor:zoom-in;background:#222;transition:transform .15s}
+/* 1:1 원본 픽셀 모드 — 사용자가 클릭하면 토글 */
+.prev-img-wrap img.zoomed{max-width:none;max-height:none;width:auto;height:auto;min-width:0;cursor:zoom-out}
 .prev-nav{display:flex;align-items:center;gap:20px}
 .prev-nb{background:rgba(255,255,255,.18);border:none;color:#FFF;width:48px;height:48px;border-radius:50%;font-size:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s}
 .prev-nb:hover{background:rgba(255,255,255,.35)}
@@ -676,8 +679,8 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <button class="prev-close" onclick="closePrevDirect()">✕</button>
   <div id="prevSrcLabel" style="display:none;position:absolute;top:16px;left:50%;transform:translateX(-50%);background:rgba(139,105,20,.88);color:#FFF;font-size:11px;font-weight:600;padding:5px 16px;border-radius:20px;letter-spacing:.5px;pointer-events:none;white-space:nowrap;z-index:10">📋 작업지시서 원본</div>
   <button id="prevDlBtn" onclick="event.stopPropagation();downloadCurrentPrev()" title="다운로드" style="position:absolute;top:14px;right:60px;background:rgba(255,255,255,.92);color:#222;border:none;border-radius:50%;width:36px;height:36px;font-size:15px;cursor:pointer;z-index:11;box-shadow:0 2px 6px rgba(0,0,0,.2)">⬇</button>
-  <div class="prev-img-wrap">
-    <img id="prevImg" src="" alt="">
+  <div class="prev-img-wrap" id="prevImgWrap">
+    <img id="prevImg" src="" alt="" onclick="event.stopPropagation();this.classList.toggle('zoomed')">
   </div>
   <div class="prev-nav">
     <button class="prev-nb" onclick="prevStep(-1);event.stopPropagation()">&#8249;</button>
@@ -12397,7 +12400,12 @@ function openPrevList(list,idx,isSourceDoc){
 }
 function showPrev(){
   const im=prevImages[prevIdx];
-  document.getElementById('prevImg').src=im.url||im;
+  const imgEl = document.getElementById('prevImg');
+  imgEl.src = im.url||im;
+  imgEl.classList.remove('zoomed'); // 다른 사진으로 이동 시 zoom 리셋
+  // 스크롤도 리셋
+  const wrap = document.getElementById('prevImgWrap');
+  if(wrap){ wrap.scrollLeft = 0; wrap.scrollTop = 0; }
   document.getElementById('prevInfo').textContent=`${prevIdx+1} / ${prevImages.length}`;
   document.getElementById('prevFname').textContent=im.name||'';
 }
