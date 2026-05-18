@@ -3664,12 +3664,16 @@ function renderProducts(){
           const stkBg=isOut?'var(--red-bg)':isLow?'var(--org-bg)':'var(--grn-bg)';
           // 첫 번째 이미지 추출 (string or {url})
           let thumbUrl='';
+          let normImgs=[];
           if(Array.isArray(p.imgs)&&p.imgs.length){
-            const f=p.imgs[0];
-            thumbUrl=typeof f==='string'?f:(f&&f.url)||'';
+            normImgs = p.imgs.map(f => typeof f==='string' ? {url:f, name:''} : {url:(f&&f.url)||'', name:(f&&f.name)||''}).filter(x=>x.url);
+            thumbUrl = normImgs[0] ? normImgs[0].url : '';
           }
+          // 행마다 윈도우 객체에 저장 (라이트박스가 전체 사진 + 다음/이전 이동 지원)
+          const _imgsKey = '_pdRowImgs_' + p.id;
+          window[_imgsKey] = normImgs;
           const thumbCell=thumbUrl
-            ? `<img src="${thumbUrl}" loading="lazy" onclick="event.stopPropagation();openPrevList(${JSON.stringify(p.imgs).replace(/"/g,'&quot;')},0,false)" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--bdr);cursor:pointer;display:block">`
+            ? `<img src="${thumbUrl}" loading="lazy" onclick="event.stopPropagation();openPrevList(window['${_imgsKey}'],0,false)" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--bdr);cursor:zoom-in;display:block" title="클릭하면 확대 (${normImgs.length}장)">`
             : `<div onclick="openProductModal(${p.id})" style="width:38px;height:38px;background:var(--s2);border:1px dashed var(--bdr);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--t3);cursor:pointer" title="사진 없음 — 클릭해서 추가">📷</div>`;
           return `
         <tr style="border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
@@ -4018,10 +4022,18 @@ if(!window._pdPasteAttached){
 }
 function renderPdImgPrev(){
   const el=document.getElementById('pd_imgPrev');if(!el)return;
+  // 전체 사진 배열을 윈도우에 보관 (라이트박스가 전체를 받도록)
+  // → 따옴표·특수문자 안전, 좌우 화살표로 다음/이전 이동 가능
+  window._pdImgPrev = pdImgBuf.map(im => ({url:im.url, name:im.name||''}));
   el.innerHTML=pdImgBuf.map((img,i)=>`
-    <div style="position:relative;flex-shrink:0">
-      <img src="${img.url}" style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:1.5px solid var(--bdr);cursor:pointer" onclick="openPrevList([{url:'${img.url}',name:'${img.name}'}],0,false)">
-      <button onclick="pdImgBuf.splice(${i},1);renderPdImgPrev()" style="position:absolute;top:-5px;right:-5px;background:var(--red);color:#fff;border:none;border-radius:50%;width:17px;height:17px;font-size:11px;cursor:pointer;line-height:1;padding:0">×</button>
+    <div style="position:relative;flex-shrink:0;width:80px;height:80px">
+      <img src="${img.url}"
+           style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:1.5px solid var(--bdr);cursor:zoom-in;display:block"
+           title="클릭하면 확대"
+           onclick="openPrevList(window._pdImgPrev,${i},false)">
+      <button onclick="event.stopPropagation();pdImgBuf.splice(${i},1);renderPdImgPrev()"
+              title="이 사진 삭제"
+              style="position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border:1.5px solid var(--bg);border-radius:50%;width:20px;height:20px;font-size:12px;cursor:pointer;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;font-weight:700;font-family:inherit;z-index:2">×</button>
     </div>`).join('');
 }
 function saveProduct(){
@@ -6553,7 +6565,7 @@ function mapNotionSample(row){
   const devText = np.text(p['개발사항']) || '';
   const cautionText = np.text(p['주의사항']) || '';
   let notes = [];
-  let legacyDevNote = '', legacyCaution = '';
+  let legacyDevNote = '';
   if(devText.startsWith('JSON::')){
     try{
       const parsed = JSON.parse(devText.slice(6));
@@ -6563,8 +6575,9 @@ function mapNotionSample(row){
     }
   } else {
     legacyDevNote = devText;
-    legacyCaution = cautionText;
   }
+  // 주의사항은 항상 별도 필드로 읽음 (devNote 형식과 무관)
+  const cautionVal = cautionText;
   // 파일 필드 복원
   const parseFilesJson = (txt)=>{
     if(!txt) return [];
@@ -6593,7 +6606,7 @@ function mapNotionSample(row){
     qty:      np.text(p['발주량']),
     desc:     np.text(p['메모']),
     devNote:  legacyDevNote,
-    caution:  legacyCaution,
+    caution:  cautionVal,
     notes,
     type:     np.select(p['유형']),
     plating:  np.select(p['도금']),
@@ -6671,6 +6684,7 @@ function mapNotionOrder(row){
     date:    np.date(p['발주일']),
     ship:    np.date(p['요청출고일']),
     factShip:np.date(p['공장출고일']),
+    completedAt: np.date(p['출고완료일']) || '',
     status:  np.select(p['상태']) || '진행중',
     rows,
     files,
@@ -7177,7 +7191,7 @@ async function pullFromNotion(opts){
 
     // 각 테이블 매핑
     samples       = mergeRows(smpRows,  samples,        mapNotionSample,    ['imgs','sourceDoc','cadFiles','refs','aiParsed','itemNo','sz2','sz3','sz4','wt','engr','card','devNote','caution','qty','invNo','factShip'], '샘플',     notionCfg.smpDb);
-    orders        = mergeRows(ordRows,  orders,         mapNotionOrder,     ['files','rows','aiParsed','factShip'], '발주',     notionCfg.ordDb);
+    orders        = mergeRows(ordRows,  orders,         mapNotionOrder,     ['files','rows','aiParsed','factShip','completedAt'], '발주',     notionCfg.ordDb);
     procItems     = mergeRows(procRows, procItems,      mapNotionProc,      ['orderId'], '공정',     notionCfg.procDb);
     proposals     = mergeRows(propRows, proposals,      mapNotionProposal,  ['images','memo','productId'], '영업제안', notionCfg.propDb);
     clients       = mergeRows(cliRows,  clients,        mapNotionClient,    [], '고객사',   notionCfg.clientDb);
@@ -7341,6 +7355,8 @@ async function syncIOToNotion(io){
   if(io.returnReason)      props["반품사유"]   = {rich_text:[{text:{content: (io.returnReason||'').slice(0,2000)}}]};
   if(io.returnRequestedAt) props["반품요청일"] = {date:{start: io.returnRequestedAt}};
   if(io.returnCompletedAt) props["반품입고일"] = {date:{start: io.returnCompletedAt}};
+  // 재고반영 체크박스 — 매칭된 제품이 있으면 true (재고 자동 차감/복원이 일어나는 경우)
+  props["재고반영"] = {checkbox: !!io._matchedProductId || !!io.stockApplied};
   try {
     if(io._notionId){
       await nUpdate(io._notionId, props);
@@ -9882,7 +9898,7 @@ async function syncSampleToNotion(s, update){
     "발주량":{"rich_text":[{"text":{"content":s.qty||''}}]},
     "메모":{"rich_text":[{"text":{"content":(s.desc||'').slice(0,2000)}}]},
     "개발사항":{"rich_text":[{"text":{"content":notesJson.slice(0,2000)}}]},
-    "주의사항":{"rich_text":[{"text":{"content":''}}]},
+    "주의사항":{"rich_text":[{"text":{"content":(s.caution||'').slice(0,2000)}}]},
   };
   if(s.type)    p["유형"]={"select":{"name":s.type}};
   if(s.plating) p["도금"]={"select":{"name":s.plating}};
@@ -9965,6 +9981,15 @@ async function syncOrderToNotion(o, update){
   if(o.ship) p["요청출고일"]={"date":{"start":o.ship}};
   if(o.factShip) p["공장출고일"]={"date":{"start":o.factShip}};
   else           p["공장출고일"]={"date":null};
+  // 출고완료일 — completedAt (상태가 출고완료일 때만 의미)
+  if(o.completedAt){
+    // ISO datetime이면 날짜만 추출 (YYYY-MM-DD)
+    const m = String(o.completedAt).match(/^(\d{4}-\d{2}-\d{2})/);
+    if(m) p["출고완료일"] = {"date":{"start": m[1]}};
+    else  p["출고완료일"] = {"date": null};
+  } else {
+    p["출고완료일"] = {"date": null};
+  }
   // 출고일 변경 이력 (JSON 문자열)
   if(Array.isArray(o.shipHistory) && o.shipHistory.length){
     const histJson = JSON.stringify(o.shipHistory);
@@ -11242,6 +11267,10 @@ function quickStockChange(productId, delta){
     note:'빠른 조정'
   });
   save();
+  // 노션 동기화
+  if(notionCfg.workerUrl && notionCfg.productDb && p._notionId){
+    syncProductToNotion(p, true).catch(e => console.warn('재고 노션 sync 실패:', e));
+  }
   if(currentTab==='product')renderProducts();
   if(currentTab==='dash')renderDash();
   showToast(`${p.name} 재고 ${delta>0?'+':''}${delta} → ${(+p.stock).toLocaleString()}개`,delta>0?'var(--grn)':'var(--org)',1800);
@@ -11366,6 +11395,10 @@ function stockModalAdjust(delta){
     note: delta>0?'빠른 조정 입고':'빠른 조정 출고'
   });
   save();
+  // 노션 제품DB 재고 동기화
+  if(notionCfg.workerUrl && notionCfg.productDb && p._notionId){
+    syncProductToNotion(p, true).catch(e => console.warn('재고 노션 sync 실패:', e));
+  }
   // 모달 새로고침
   openStockModal(_stockModalProdId);
   if(currentTab==='product')setTimeout(()=>renderProducts(),0);
@@ -11399,6 +11432,10 @@ function stockModalCustom(){
     note: note||(STOCK_TYPES[type]?STOCK_TYPES[type].label:'')
   });
   save();
+  // 노션 제품DB 재고 동기화
+  if(notionCfg.workerUrl && notionCfg.productDb && p._notionId){
+    syncProductToNotion(p, true).catch(e => console.warn('재고 노션 sync 실패:', e));
+  }
   openStockModal(_stockModalProdId);
   if(currentTab==='product')setTimeout(()=>renderProducts(),0);
   if(currentTab==='dash')setTimeout(()=>renderDash(),0);
@@ -17304,6 +17341,18 @@ function completeOrd(ordId){
       linkedProcs.forEach(p=>{ p.shipped=true; });
       // 재고 자동 차감 (제품DB와 매칭되는 품목만)
       const stockResult=applyOrderShipToStock(o);
+      // 변경된 제품들 노션 sync (재고가 차감된 제품)
+      if(notionCfg.workerUrl && notionCfg.productDb && stockResult.matched > 0){
+        const changedProdIds = new Set();
+        (o.rows||[]).forEach(r=>{
+          const p = findProductByOrderRow(r);
+          if(p && p._notionId) changedProdIds.add(p.id);
+        });
+        changedProdIds.forEach(pid => {
+          const p = productDB.find(x=>x.id===pid);
+          if(p) syncProductToNotion(p, true).catch(e => console.warn('재고 노션 sync 실패:', p.code, e));
+        });
+      }
       // 발주 이미지 → 제품DB 자동 동기화 (품번 매칭 + 기존 사진 없는 경우만)
       const imgResult=syncOrderImagesToProducts(o);
       // 4-A: 거래명세서 단계 자동 이동 (draft → billing)
@@ -17351,6 +17400,18 @@ function revertOrdComplete(ordId){
       });
       // 재고 차감 복원
       revertOrderShipFromStock(o);
+      // 변경된 제품들 노션 sync (재고가 복원된 제품)
+      if(notionCfg.workerUrl && notionCfg.productDb){
+        const changedProdIds = new Set();
+        (o.rows||[]).forEach(r=>{
+          const p = findProductByOrderRow(r);
+          if(p && p._notionId) changedProdIds.add(p.id);
+        });
+        changedProdIds.forEach(pid => {
+          const p = productDB.find(x=>x.id===pid);
+          if(p) syncProductToNotion(p, true).catch(e => console.warn('재고 복원 노션 sync 실패:', p.code, e));
+        });
+      }
       save();
       debouncedSync('order', o, true);
       showToast(`↺ "${o.vendor||'발주서'}" 진행중으로 되돌림`,'var(--blu)',2500);
@@ -19608,11 +19669,21 @@ async function saveOrd(forceOverwrite){
   }
   let ordId;
   let stockReceiveResult={matched:0,unmatched:0}; // 신규 입고로 인한 재고 증가 결과
+  let stockStatusChange = null; // 출고완료 상태 변경에 따른 재고 처리: 'apply' | 'revert' | null
   if(id){
     const i=orders.findIndex(x=>x.id==id);
     if(i>=0){
       // 요청출고일(ship) 변경 이력 기록
       const prev=orders[i];
+      // ── 상태 변경에 따른 재고 처리 결정 ──
+      const prevStatus = prev.status || '진행중';
+      if(prevStatus !== '출고완료' && newStatus === '출고완료'){
+        // 진행중/보류/취소 → 출고완료 : 재고 차감 (출고완료 처리 버튼과 동일 효과)
+        stockStatusChange = 'apply';
+      } else if(prevStatus === '출고완료' && newStatus !== '출고완료'){
+        // 출고완료 → 진행중/취소/보류 : 재고 복원
+        stockStatusChange = 'revert';
+      }
       if(prev && prev.ship && obj.ship && prev.ship !== obj.ship){
         const shipHistory = Array.isArray(prev.shipHistory) ? [...prev.shipHistory] : [];
         shipHistory.push({from: prev.ship, to: obj.ship, changedAt: now});
@@ -19678,6 +19749,36 @@ async function saveOrd(forceOverwrite){
     }
   }
   save();
+  // ── 상태 변경에 따른 재고 처리 실행 (저장 후) ──
+  if(stockStatusChange && id){
+    const so0 = orders.find(x=>x.id==id);
+    if(so0){
+      let stockMsg = '';
+      if(stockStatusChange === 'apply'){
+        const r = applyOrderShipToStock(so0);
+        if(r.matched) stockMsg = ` · 재고 ${r.matched}건 자동 차감`;
+      } else if(stockStatusChange === 'revert'){
+        revertOrderShipFromStock(so0);
+        stockMsg = ' · 재고 복원';
+      }
+      // 변경된 제품들 노션 sync
+      if(notionCfg.workerUrl && notionCfg.productDb){
+        const changedProdIds = new Set();
+        (so0.rows||[]).forEach(r=>{
+          const p = findProductByOrderRow(r);
+          if(p && p._notionId) changedProdIds.add(p.id);
+        });
+        changedProdIds.forEach(pid => {
+          const p = productDB.find(x=>x.id===pid);
+          if(p) syncProductToNotion(p, true).catch(e => console.warn('상태변경 재고 sync 실패:', p.code, e));
+        });
+      }
+      save();
+      if(stockMsg){
+        showToast(`✓ 상태 → ${newStatus}${stockMsg}`, 'var(--grn)', 3000);
+      }
+    }
+  }
   // 저장된 최신 order를 _notionId 포함해서 정확히 찾아서 sync — 수정만 디바운싱
   // (신규는 위에서 createWithNotion이 이미 동기 처리함)
   const so=orders.find(x=>x.id===ordId);
@@ -19691,6 +19792,21 @@ async function saveOrd(forceOverwrite){
     let msg=`📦 재고 ${stockReceiveResult.matched}건 자동 입고`;
     if(stockReceiveResult.unmatched) msg+=` (제품DB 매칭 ${stockReceiveResult.unmatched}건 누락)`;
     showToast(msg,'var(--blu)',2500);
+    // 입고로 재고가 증가된 제품들 노션 sync
+    if(notionCfg.workerUrl && notionCfg.productDb && id){
+      const so2 = orders.find(x=>x.id==id);
+      if(so2){
+        const changedProdIds = new Set();
+        (so2.rows||[]).forEach(r=>{
+          const p = findProductByOrderRow(r);
+          if(p && p._notionId) changedProdIds.add(p.id);
+        });
+        changedProdIds.forEach(pid => {
+          const p = productDB.find(x=>x.id===pid);
+          if(p) syncProductToNotion(p, true).catch(e => console.warn('입고 재고 sync 실패:', p.code, e));
+        });
+      }
+    }
   }
   closeM('mOrd');renderTab();updateBadges();
 }
@@ -22292,18 +22408,19 @@ function transferQuoteToOrder(quoteId){
     return;
   }
   // 견적서 행 → 발주서 행 매핑
-  // 발주서 행 구조: {name, qty, plating, mat, size, note, itemCode, unitPrice, weight}
+  // 견적 행: {name, mat, plating, spec(카테고리), weight, qty, unitPrice, cnPrice, matRate, note}
+  // 발주 행: {name, qty, plating, mat, size, note, itemCode, unitPrice, weight, color}
   ordRowsBuf = q.rows.map(r => ({
     name: r.name || '',
     qty: r.qty || '',
     plating: r.plating || '실버',
     mat: r.mat || '브라스 (BRASS)',
-    size: r.size || '',
+    size: r.size || r.spec || '',  // 견적의 spec(목걸이/반지 등) → 발주의 size 칸
     weight: r.weight || '',
     unitPrice: +r.unitPrice || 0,  // 견적 단가 그대로 발주 단가로
     itemCode: r.itemCode || '', // 견적 후 자동 매칭된 품번
-    note: '',
-    color: '',
+    note: r.note || '',  // 견적 메모도 발주로 전달
+    color: r.color || '',
   }));
   // 견적서 정보를 발주서 모달에 미리 채울 수 있도록 임시 저장
   window._transferFromQuote = {
@@ -22354,9 +22471,24 @@ function transferQuoteToSample(quoteId){
   // 여러 행 → 다중 모달로 미리 채워서 열기
   closeM('mQuote');
   const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 220;
+  // 견적 spec(카테고리) → 샘플 type 매핑 함수
+  const specToType = (spec)=>{
+    const specMap = {
+      '귀걸이':'EARRING', '귀거리':'EARRING', 'EARRING':'EARRING',
+      '반지':'RING', 'RING':'RING',
+      '목걸이':'NECKLACE', 'NECKLACE':'NECKLACE',
+      '팔찌':'BRACELET', 'BRACELET':'BRACELET',
+      '브로치':'BROOCH', 'BROOCH':'BROOCH', '브롯치':'BROOCH'
+    };
+    const s = String(spec||'').trim();
+    for(const k of Object.keys(specMap)){
+      if(s.includes(k)) return specMap[k];
+    }
+    return '';
+  };
   const prefillRows = rows.map(r => ({
     name: r.name || '',
-    type: '',
+    type: specToType(r.spec),
     qty: r.qty ? String(r.qty) + 'EA' : '1EA',
     sz1: r.size || '',
     sz2: '',
@@ -22399,6 +22531,24 @@ function _doTransferToSample(q, row){
       setVal('s_plating', row.plating);
       setVal('s_sz1', row.size || '');
       setVal('s_wt', row.weight || '');
+      // 업체 (s.manager 필드는 실제로는 "업체" 정보)
+      setVal('s_manager', q.vendor || '');
+      // 견적의 spec(목걸이/반지/팔찌/귀걸이/브로치) → 샘플의 type (대문자 영문)
+      if(row.spec){
+        const specMap = {
+          '귀걸이':'EARRING', '귀거리':'EARRING', 'EARRING':'EARRING',
+          '반지':'RING', 'RING':'RING',
+          '목걸이':'NECKLACE', 'NECKLACE':'NECKLACE',
+          '팔찌':'BRACELET', 'BRACELET':'BRACELET',
+          '브로치':'BROOCH', 'BROOCH':'BROOCH', '브롯치':'BROOCH'
+        };
+        const specStr = String(row.spec).trim();
+        let mapped = '';
+        for(const k of Object.keys(specMap)){
+          if(specStr.includes(k)){ mapped = specMap[k]; break; }
+        }
+        if(mapped) setVal('s_type', mapped);
+      }
       // 💰 단가 매핑
       // 견적서 단가(unitPrice) → 샘플 단가(s_unitPrice)
       if(row.unitPrice) setVal('s_unitPrice', row.unitPrice);
