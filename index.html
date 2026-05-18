@@ -381,14 +381,14 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 <div class="topnav">
   <div class="logo">EK</div>
   <div class="tab-nav">
-    <button class="tab-btn on" onclick="switchTab('dash',this)" data-tab="dash">◈ 대시보드</button>
+    <button class="tab-btn on" onclick="switchTab('dash',this)" data-tab="dash">◈ 캘린더</button>
     <button class="tab-btn" onclick="switchTab('schedule',this)" data-tab="schedule">☰ 업무일지</button>
-    <button class="tab-btn" onclick="switchTab('sample',this)" data-tab="sample">◉ 샘플의뢰 <span class="tb-badge" id="bdgS" style="display:none">0</span></button>
-    <button class="tab-btn" onclick="switchTab('order',this)" data-tab="order">▦ 생산관리 <span class="tb-badge" id="bdgO" style="display:none">0</span><span class="tb-badge" id="bdgP" style="display:none">0</span></button>
-    <button class="tab-btn" onclick="switchTab('as',this)" data-tab="as">🔧 AS관리 <span class="tb-badge" id="bdgAS" style="display:none">0</span></button>
-    <button class="tab-btn" onclick="switchTab('io',this)" data-tab="io">🚚 입출고</button>
-    <button class="tab-btn" onclick="switchTab('products',this)" data-tab="products">📦 제품DB</button>
-    <button class="tab-btn" onclick="switchTab('sales',this)" data-tab="sales">📊 영업관리</button>
+    <button class="tab-btn" onclick="switchTab('sample',this)" data-tab="sample">◉ 샘플 <span class="tb-badge" id="bdgS" style="display:none">0</span></button>
+    <button class="tab-btn" onclick="switchTab('order',this)" data-tab="order">▦ 발주 <span class="tb-badge" id="bdgO" style="display:none">0</span><span class="tb-badge" id="bdgP" style="display:none">0</span></button>
+    <button class="tab-btn" onclick="switchTab('as',this)" data-tab="as">🔧 AS <span class="tb-badge" id="bdgAS" style="display:none">0</span></button>
+    <button class="tab-btn" onclick="switchTab('io',this)" data-tab="io">🚚 출입고</button>
+    <button class="tab-btn" onclick="switchTab('products',this)" data-tab="products">📦 DB</button>
+    <button class="tab-btn" onclick="switchTab('sales',this)" data-tab="sales">📊 세일즈</button>
     <button class="tab-btn" onclick="switchTab('invoices',this)" data-tab="invoices">🧾 거래명세서</button>
   </div>
   <div class="nav-r">
@@ -956,10 +956,44 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 
   <div id="o_shipHistArea"></div>
 
+  <!-- 📋 공장 전송용 발주서 미리보기 -->
+  <div onclick="openOrdFactoryPreview()" style="margin-top:14px;padding:13px 16px;background:linear-gradient(135deg,var(--gold-bg),var(--s1));border:1.5px solid var(--gold-line);border-radius:9px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:12px"
+    onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(139,105,20,.18)';this.style.borderColor='var(--gold)'"
+    onmouseout="this.style.transform='';this.style.boxShadow='';this.style.borderColor='var(--gold-line)'">
+    <div style="font-size:24px;flex-shrink:0">📋</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:13px;font-weight:700;color:var(--gold-lt);margin-bottom:2px">공장 전송용 발주서 미리보기</div>
+      <div style="font-size:10.5px;color:var(--t3)">품목 사진 포함 · 전체화면 보기 · PNG 저장 · 인쇄</div>
+    </div>
+    <div style="font-size:18px;color:var(--gold);flex-shrink:0">→</div>
+  </div>
+
   <div class="ma">
     <button class="btn bgo" onclick="closeM('mOrd')">취소</button>
     <button class="btn bp-red" id="o_delBtn" onclick="deleteOrd()" style="display:none">삭제</button>
     <button class="btn bp" onclick="saveOrd()">저장</button>
+  </div>
+</div></div>
+
+<!-- 📋 공장 전송용 발주서 미리보기 모달 -->
+<div class="ov" id="mOrdFactPrev" style="z-index:9500"><div class="modal" style="max-width:900px;width:96%;max-height:94vh;display:flex;flex-direction:column;padding:0">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--bdr);background:var(--s2);flex-shrink:0">
+    <div style="display:flex;align-items:center;gap:10px;min-width:0">
+      <div style="font-size:18px">📋</div>
+      <div style="min-width:0">
+        <div style="font-size:13px;font-weight:700;color:var(--t1)">공장 전송용 발주서</div>
+        <div style="font-size:10.5px;color:var(--t3)">품목 사진 포함 · 사진/인쇄용 깔끔 양식</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0">
+      <button class="btn" onclick="toggleOrdFactPrevFull()" title="전체화면" style="padding:6px 11px;font-size:11.5px">⛶ 전체화면</button>
+      <button class="btn" onclick="downloadOrdFactPrevPng()" title="PNG로 저장" style="padding:6px 11px;font-size:11.5px">🖼 PNG</button>
+      <button class="btn bp" onclick="printOrdFactPrev()" title="인쇄" style="padding:6px 11px;font-size:11.5px">🖨 인쇄</button>
+      <button class="btn bgo" onclick="closeM('mOrdFactPrev')" style="padding:6px 11px;font-size:11.5px">닫기</button>
+    </div>
+  </div>
+  <div id="mOrdFactPrev_body" style="flex:1;overflow:auto;padding:24px;background:#f5f5f5">
+    <!-- 미리보기 내용 동적 삽입 -->
   </div>
 </div></div>
 
@@ -1898,7 +1932,7 @@ let newDesigns=[]; // 신규 디자인 제안 관리
 let stockHistory=[]; // 재고 변동 이력
 
 // ── 고객사 이니셜 색상 팔레트 (전역, 상단에 정의해서 TDZ 방지) ──
-const INIT_COLORS=['#1A6DB5','#8B6914','#2E8B2C','#A04010','#5040A0','#B03030','#20808A','#805080','#807020','#308080'];
+const INIT_COLORS=['#C0392B','#E67E22','#B8860B','#27AE60','#16A085','#0E86C8','#2C5FB5','#34495E','#6C5CE7','#9B2D8E','#D6336C','#5A6776'];
 
 // ── 납기일/출고일 변경 이력 렌더 (범용) ──
 // history: [{from, to, changedAt}, ...], label: '납기일' 또는 '요청 출고일'
@@ -19468,15 +19502,17 @@ function renderOrdRows(){
   const header=`
   <datalist id="ordPlatingList"><option value="실버"><option value="골드"><option value="로즈골드"><option value="무도금"><option value="건메탈"><option value="블랙"><option value="기타"></datalist>
   <datalist id="ordMatList"><option value="브라스 (BRASS)"><option value="925 실버"><option value="14K 골드"><option value="스테인리스"><option value="써지컬스틸"><option value="아연합금"><option value="기타"></datalist>
-  <div style="display:grid;grid-template-columns:22px 28px 1fr 60px 80px 100px 65px 90px 28px;gap:4px;align-items:center;padding:6px 0 4px 0;border-bottom:1px solid var(--bdr);margin-bottom:2px;font-size:10px;color:var(--t3);font-weight:600;letter-spacing:.3px">
+  <div style="display:grid;grid-template-columns:22px 28px 50px 1fr 60px 80px 100px 65px 90px 50px 28px;gap:4px;align-items:center;padding:6px 0 4px 0;border-bottom:1px solid var(--bdr);margin-bottom:2px;font-size:10px;color:var(--t3);font-weight:600;letter-spacing:.3px">
     <div style="text-align:center">#</div>
     <div style="text-align:center">검색</div>
+    <div style="text-align:center">사진</div>
     <div>품목명</div>
     <div style="text-align:center">발주량</div>
     <div style="text-align:center">도금</div>
     <div style="text-align:center">소재</div>
     <div style="text-align:center">규격</div>
     <div style="text-align:right;padding-right:4px">단가(원)</div>
+    <div style="text-align:center">DB</div>
     <div></div>
   </div>`;
 
@@ -19491,20 +19527,45 @@ function renderOrdRows(){
     const barColor=isDone?'var(--grn)':pct>=50?'var(--gold)':'var(--org)';
     const todayStr2=toLocalDateStr(new Date());
 
+    // 이미지 셀: 있으면 썸네일 + 호버 시 🗑/🔁, 없으면 📷 드롭존
+    const imgEsc = r.img ? String(r.img).replace(/'/g,"\\'").replace(/"/g,'&quot;') : '';
+    const nameEsc = (r.name||'품목').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+    const imgCell = r.img
+      ? `<div class="ord-img-cell" style="position:relative;width:44px;height:44px;border-radius:5px;border:1.5px solid var(--gold-line);overflow:hidden;background:var(--s2);cursor:zoom-in;transition:transform .15s,box-shadow .15s"
+           onmouseover="this.style.transform='scale(1.05)';this.style.boxShadow='0 2px 6px rgba(0,0,0,.15)';this.querySelector('.ord-img-tools').style.opacity='1'"
+           onmouseout="this.style.transform='';this.style.boxShadow='';this.querySelector('.ord-img-tools').style.opacity='0'"
+           ondragover="event.preventDefault();this.style.borderColor='var(--gold)'"
+           ondragleave="this.style.borderColor='var(--gold-line)'"
+           ondrop="event.preventDefault();this.style.borderColor='var(--gold-line)';ordRowHandleImageDrop(event,${i})">
+          <img src="${r.img}" onclick="openPrevList([{url:'${imgEsc}',name:'${nameEsc}'}],0,false)" style="width:100%;height:100%;object-fit:cover;display:block">
+          <div class="ord-img-tools" style="position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:space-between;padding:2px;opacity:0;transition:opacity .15s;background:linear-gradient(to top,rgba(0,0,0,.55),transparent 60%);pointer-events:none">
+            <button onclick="event.stopPropagation();ordRowPickImage(${i})" title="이미지 교체" style="pointer-events:auto;background:rgba(255,255,255,.92);border:none;border-radius:3px;width:18px;height:18px;font-size:9px;cursor:pointer;line-height:1;padding:0">🔁</button>
+            <button onclick="event.stopPropagation();ordRowsBuf[${i}].img='';renderOrdRows()" title="이미지 제거" style="pointer-events:auto;background:rgba(255,255,255,.92);border:none;border-radius:3px;width:18px;height:18px;font-size:9px;cursor:pointer;line-height:1;padding:0">🗑</button>
+          </div>
+        </div>`
+      : `<div class="ord-img-cell" style="width:44px;height:44px;border-radius:5px;border:1.5px dashed var(--bdr);background:var(--s2);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--t3);font-size:16px;transition:all .15s"
+           onclick="ordRowPickImage(${i})"
+           onmouseover="this.style.borderColor='var(--gold)';this.style.color='var(--gold)';this.style.background='var(--gold-bg)'"
+           onmouseout="this.style.borderColor='var(--bdr)';this.style.color='var(--t3)';this.style.background='var(--s2)'"
+           ondragover="event.preventDefault();this.style.borderColor='var(--gold)';this.style.background='var(--gold-bg)';this.style.color='var(--gold)'"
+           ondragleave="this.style.borderColor='var(--bdr)';this.style.background='var(--s2)';this.style.color='var(--t3)'"
+           ondrop="event.preventDefault();this.style.borderColor='var(--bdr)';this.style.background='var(--s2)';this.style.color='var(--t3)';ordRowHandleImageDrop(event,${i})"
+           title="클릭하여 이미지 추가 (또는 드래그)">📷</div>`;
+
+    // DB 등록 버튼: 이미 코드가 있으면 ✓ 표시, 없으면 + 버튼
+    const dbCell = r.itemCode
+      ? `<div style="display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--grn)" title="제품DB 등록됨 (${r.itemCode})">✓</div>`
+      : `<button onclick="ordRowRegisterToProductDB(${i})" title="이 품목을 제품DB에 신규 등록" style="padding:3px 5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;cursor:pointer;font-size:9.5px;color:var(--gold-lt);font-weight:600;font-family:inherit;line-height:1.1">+DB</button>`;
+
     return`
   <div style="border-bottom:0.5px solid var(--bdr);padding:8px 0;${isDone?'opacity:.8':''}">
     <!-- 품목 기본 행 -->
-    <div style="display:grid;grid-template-columns:22px 28px 1fr 60px 80px 100px 65px 90px 28px;gap:4px;align-items:center">
+    <div style="display:grid;grid-template-columns:22px 28px 50px 1fr 60px 80px 100px 65px 90px 50px 28px;gap:4px;align-items:center">
       <div style="font-size:10px;color:var(--t3);text-align:center">${i+1}</div>
       <button title="품번 검색" onclick="openItemSearch(${i})" style="padding:3px 5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;cursor:pointer;font-size:13px;line-height:1">🔍</button>
+      ${imgCell}
       <div>
-        ${r.img?`<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
-          <img src="${r.img}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1.5px solid var(--gold-line);cursor:pointer;flex-shrink:0"
-            onclick="openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\'")}'}],0,false)"
-            title="클릭하여 미리보기">
-          <input class="fi" value="${r.name||''}" oninput="ordRowsBuf[${i}].name=this.value" placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;flex:1;min-width:0">
-          <button onclick="ordRowsBuf[${i}].img='';renderOrdRows()" title="이미지 제거" style="padding:2px 5px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;font-size:10px;color:var(--t3);flex-shrink:0">🗑</button>
-        </div>`:`<input class="fi" value="${r.name||''}" oninput="ordRowsBuf[${i}].name=this.value" placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;width:100%">`}
+        <input class="fi" value="${r.name||''}" oninput="ordRowsBuf[${i}].name=this.value" placeholder="품목명 [규격]" style="font-size:11.5px;padding:4px 7px;width:100%">
         ${r.itemCode?`<div style="font-size:9.5px;color:var(--gold-lt);margin-top:2px;font-weight:600">📌 ${r.itemCode}</div>`:''}
       </div>
       <div style="position:relative">
@@ -19515,6 +19576,7 @@ function renderOrdRows(){
       <input class="fi" list="ordMatList" value="${(r.mat||'').replace(/"/g,'&quot;')}" oninput="ordRowsBuf[${i}].mat=this.value" placeholder="소재" style="font-size:11px;padding:4px 6px" title="선택 또는 직접입력">
       <input class="fi" value="${r.size||''}" oninput="ordRowsBuf[${i}].size=this.value" placeholder="11mm" style="font-size:11.5px;padding:4px 7px">
       <input class="fi" type="number" value="${r.unitPrice||''}" oninput="ordRowsBuf[${i}].unitPrice=+this.value" placeholder="단가" style="font-size:11px;padding:4px 6px;text-align:right">
+      ${dbCell}
       <button onclick="ordRowsBuf.splice(${i},1);renderOrdRows()" style="padding:3px 5px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-size:12px;color:var(--t3)">×</button>
     </div>
 
@@ -19576,6 +19638,320 @@ function renderOrdRows(){
   w.innerHTML = header + rows;
 }
 function addOrdRow(){ordRowsBuf.push({name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:'',itemCode:'',unitPrice:0,rcvHistory:[]});renderOrdRows();}
+
+// ─── 발주 품목 행: 이미지 선택 (파일 다이얼로그) ───
+function ordRowPickImage(idx){
+  if(!ordRowsBuf[idx]) return;
+  const inp=document.createElement('input');
+  inp.type='file';
+  inp.accept='image/*';
+  inp.onchange=function(){
+    const f=inp.files&&inp.files[0]; if(!f) return;
+    if(!String(f.type||'').startsWith('image/')){ showToast('이미지 파일만 가능합니다','var(--red)'); return; }
+    if(f.size>10*1024*1024){ showToast('이미지는 10MB 이하만 가능합니다','var(--red)'); return; }
+    const rd=new FileReader();
+    rd.onload=function(){
+      ordRowsBuf[idx].img=rd.result;
+      renderOrdRows();
+      // R2 백그라운드 업로드 (실패해도 base64 그대로 보존)
+      if(typeof uploadFileToR2==='function'){
+        uploadFileToR2(f).then(function(r2){
+          if(r2&&r2.publicUrl&&ordRowsBuf[idx]){
+            ordRowsBuf[idx].img=r2.publicUrl;
+            renderOrdRows();
+          }
+        }).catch(function(){});
+      }
+    };
+    rd.readAsDataURL(f);
+  };
+  inp.click();
+}
+
+// ─── 발주 품목 행: 드래그&드롭으로 이미지 ───
+function ordRowHandleImageDrop(ev, idx){
+  if(!ordRowsBuf[idx]) return;
+  const dt=ev.dataTransfer; if(!dt) return;
+  const f=dt.files&&dt.files[0]; if(!f) return;
+  if(!String(f.type||'').startsWith('image/')){ showToast('이미지 파일만 가능합니다','var(--red)'); return; }
+  if(f.size>10*1024*1024){ showToast('이미지는 10MB 이하만 가능합니다','var(--red)'); return; }
+  const rd=new FileReader();
+  rd.onload=function(){
+    ordRowsBuf[idx].img=rd.result;
+    renderOrdRows();
+    if(typeof uploadFileToR2==='function'){
+      uploadFileToR2(f).then(function(r2){
+        if(r2&&r2.publicUrl&&ordRowsBuf[idx]){
+          ordRowsBuf[idx].img=r2.publicUrl;
+          renderOrdRows();
+        }
+      }).catch(function(){});
+    }
+  };
+  rd.readAsDataURL(f);
+}
+
+// ─── 발주 품목 행: 제품DB에 신규 등록 ───
+async function ordRowRegisterToProductDB(idx){
+  const r=ordRowsBuf[idx]; if(!r) return;
+  const name=(r.name||'').trim();
+  if(!name){ showToast('품목명을 먼저 입력해 주세요','var(--red)'); return; }
+  // 동일 품명 존재 확인
+  const dup=(productDB||[]).find(function(p){
+    return p&&((p.name||'').trim()===name);
+  });
+  if(dup){
+    if(!confirm('동일 품명이 이미 제품DB에 있습니다.\n그래도 새 항목으로 등록할까요?\n\n기존: '+(dup.code||'(품번없음)')+' / '+dup.name)) return;
+  }
+  // 신규 product 객체 생성
+  const newP={
+    id: Date.now()+Math.floor(Math.random()*1000),
+    name: name,
+    code: '',
+    type: '',
+    mat: r.mat||'',
+    plating: r.plating||'',
+    sz1: r.size||'',
+    unitPrice: r.unitPrice||0,
+    imgs: r.img ? [r.img] : [],
+    status: '등록',
+    memo: '발주에서 신규 등록'
+  };
+  try{
+    if(typeof syncProductToNotion==='function' && typeof notionCfg!=='undefined' && notionCfg && notionCfg.workerUrl && notionCfg.productDb){
+      await syncProductToNotion(newP, false);
+    }
+    productDB.push(newP);
+    if(typeof LS!=='undefined'&&LS.prod&&typeof safeSave==='function') safeSave(LS.prod, productDB);
+    renderOrdRows();
+    showToast('✓ 제품DB에 등록됨'+(newP.code?' ('+newP.code+')':' (품번 미설정)'),'var(--grn)');
+  }catch(e){
+    console.warn('제품DB 등록 실패:', e);
+    showToast('등록 실패: '+(e.message||e),'var(--red)');
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//   📋 공장 전송용 발주서 미리보기
+// ════════════════════════════════════════════════════════
+function _ordFactPrevBuildHtml(){
+  const gv = (id)=>{ const el=document.getElementById(id); return el?el.value:''; };
+  const vendor = gv('o_vendor')||'(업체명)';
+  const ordNo  = gv('o_no')||'';
+  const ordDate= gv('o_date')||'';
+  const ship   = gv('o_ship')||'';
+  const factShip = gv('o_factShip')||'';
+  const manager  = gv('o_manager')||'';
+
+  // 기본 주의사항: 발주 모달의 체크리스트(ordMemoList) + memo 텍스트를 합쳐 초기값으로 제공.
+  // 사용자가 미리보기 안에서 자유롭게 편집 가능 (window._ordFactPrevNotes에 보존).
+  let defaultNotes = '';
+  try{
+    const items = (typeof ordMemoList !== 'undefined' && Array.isArray(ordMemoList)) ? ordMemoList : [];
+    if(items.length){
+      defaultNotes = items.map(m => '• ' + (m.text||'')).filter(t=>t!=='• ').join('\n');
+    }
+    const memoTxt = gv('o_memo')||'';
+    if(memoTxt){ defaultNotes = defaultNotes ? (defaultNotes + '\n' + memoTxt) : memoTxt; }
+  }catch(_){}
+  // 한 번 열고 편집했던 값이 있으면 유지
+  if(typeof window._ordFactPrevNotes !== 'string') window._ordFactPrevNotes = defaultNotes;
+  const notes = window._ordFactPrevNotes;
+
+  const rows = (typeof ordRowsBuf!=='undefined' && Array.isArray(ordRowsBuf)) ? ordRowsBuf : [];
+  const totalQty = rows.reduce((s,r)=>s+(typeof parseOrdQty==='function'?parseOrdQty(r.qty):(+r.qty||0)),0);
+
+  const rowsHtml = rows.length ? rows.map((r,i)=>{
+    const q = typeof parseOrdQty==='function'?parseOrdQty(r.qty):(+r.qty||0);
+    const imgCell = r.img
+      ? `<img src="${r.img}" style="width:72px;height:72px;object-fit:cover;border-radius:5px;border:1px solid #ddd;display:block">`
+      : `<div style="width:72px;height:72px;border-radius:5px;border:1px dashed #ccc;background:#fafafa;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:11px">사진 없음</div>`;
+    const codeHtml = r.itemCode ? `<div style="font-size:10px;color:#888;margin-top:2px">📌 ${String(r.itemCode).replace(/</g,'&lt;')}</div>` : '';
+    const noteVal = (r.note||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+    return `<tr>
+      <td style="border:1px solid #ddd;padding:8px;text-align:center;font-size:11px;color:#666">${i+1}</td>
+      <td style="border:1px solid #ddd;padding:6px;text-align:center;width:84px">${imgCell}</td>
+      <td style="border:1px solid #ddd;padding:8px;font-size:12px">
+        <div style="font-weight:600;color:#222">${(r.name||'').replace(/</g,'&lt;')||'<span style="color:#bbb">(품명없음)</span>'}</div>
+        ${codeHtml}
+      </td>
+      <td style="border:1px solid #ddd;padding:8px;text-align:right;font-size:13px;font-weight:600;color:#222;white-space:nowrap">${q.toLocaleString()}</td>
+      <td style="border:1px solid #ddd;padding:8px;text-align:center;font-size:11px;color:#444">${(r.plating||'').replace(/</g,'&lt;')||'—'}</td>
+      <td style="border:1px solid #ddd;padding:8px;text-align:center;font-size:11px;color:#444">${(r.mat||'').replace(/</g,'&lt;')||'—'}</td>
+      <td style="border:1px solid #ddd;padding:8px;text-align:center;font-size:11px;color:#444">${(r.size||'').replace(/</g,'&lt;')||'—'}</td>
+      <td style="border:1px solid #ddd;padding:4px;vertical-align:top">
+        <textarea class="ord-fp-row-note" data-row="${i}" oninput="if(ordRowsBuf[${i}])ordRowsBuf[${i}].note=this.value" placeholder="비고 입력..." style="width:100%;min-height:64px;border:1px dashed #ddd;background:rgba(255,255,255,.5);border-radius:3px;padding:5px 7px;font-size:10.5px;color:#444;font-family:inherit;resize:vertical;line-height:1.4;box-sizing:border-box">${noteVal}</textarea>
+        <div class="ord-fp-row-note-display" data-row="${i}" style="display:none;font-size:10.5px;color:#444;white-space:pre-wrap;line-height:1.4;padding:2px">${(r.note||'').replace(/</g,'&lt;')||'<span style="color:#bbb">—</span>'}</div>
+      </td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="8" style="border:1px solid #ddd;padding:24px;text-align:center;color:#999;font-size:12px">품목이 없습니다</td></tr>';
+
+  // 주의사항 영역: 화면에서는 편집 가능한 textarea, 캡처/인쇄 시에는 표시 전용 div로 교체
+  // (downloadOrdFactPrevPng / printOrdFactPrev 함수에서 처리)
+  const notesHtml = `
+    <div class="ord-fp-notes" style="margin-top:14px;padding:12px 14px;background:#fffbeb;border:1px solid #f5e6a8;border-radius:5px">
+      <div style="font-size:11px;font-weight:700;color:#8b6914;margin-bottom:6px;display:flex;align-items:center;gap:5px">
+        <span>📌</span><span>주의사항</span>
+        <span class="ord-fp-edit-hint" style="font-size:10px;color:#a89263;font-weight:400;margin-left:6px">(클릭해서 편집)</span>
+      </div>
+      <textarea class="ord-fp-notes-input" oninput="window._ordFactPrevNotes=this.value" placeholder="예) 공장 출고 시 검수 부탁드립니다 / 포장 단위 확인 / 사이즈 정확히 등..." style="width:100%;min-height:84px;border:1px dashed #d9c378;background:rgba(255,255,255,.7);border-radius:4px;padding:8px 10px;font-size:11.5px;color:#333;font-family:inherit;resize:vertical;line-height:1.5;box-sizing:border-box">${(notes||'').replace(/</g,'&lt;')}</textarea>
+      <div class="ord-fp-notes-display" style="display:none;font-size:11.5px;color:#333;white-space:pre-wrap;line-height:1.5;padding:2px 0">${(notes||'').replace(/</g,'&lt;')||'<span style="color:#bbb">(주의사항 없음)</span>'}</div>
+    </div>`;
+
+  return `
+  <div id="ordFactPrevContent" style="background:#fff;max-width:780px;margin:0 auto;padding:32px 36px;font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:#222;box-shadow:0 2px 8px rgba(0,0,0,.08);border-radius:6px">
+    <div style="text-align:center;padding-bottom:14px;border-bottom:2px solid #222;margin-bottom:18px">
+      <div style="font-size:22px;font-weight:800;letter-spacing:8px">발 주 서</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;font-size:11.5px">
+      <div>
+        <div style="display:flex;padding:5px 0;border-bottom:1px solid #eee"><div style="width:80px;color:#888;font-weight:600">공장</div><div style="flex:1;font-weight:600">${vendor.replace(/</g,'&lt;')}</div></div>
+        <div style="display:flex;padding:5px 0;border-bottom:1px solid #eee"><div style="width:80px;color:#888;font-weight:600">발주번호</div><div style="flex:1;font-family:monospace">${ordNo.replace(/</g,'&lt;')||'—'}</div></div>
+        <div style="display:flex;padding:5px 0;border-bottom:1px solid #eee"><div style="width:80px;color:#888;font-weight:600">발주일</div><div style="flex:1">${ordDate||'—'}</div></div>
+      </div>
+      <div>
+        <div style="display:flex;padding:5px 0;border-bottom:1px solid #eee"><div style="width:80px;color:#888;font-weight:600">담당</div><div style="flex:1">${manager.replace(/</g,'&lt;')||'—'}</div></div>
+        <div style="display:flex;padding:5px 0;border-bottom:1px solid #eee"><div style="width:80px;color:#888;font-weight:600">공장출고</div><div style="flex:1;font-weight:600;color:#c14a4a">${factShip||'—'}</div></div>
+        <div style="display:flex;padding:5px 0;border-bottom:1px solid #eee"><div style="width:80px;color:#888;font-weight:600">요청출고</div><div style="flex:1">${ship||'—'}</div></div>
+      </div>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;margin-bottom:14px">
+      <thead>
+        <tr style="background:#f8f8f8">
+          <th style="border:1px solid #ddd;padding:8px;font-size:10.5px;color:#666;font-weight:700;width:28px">#</th>
+          <th style="border:1px solid #ddd;padding:8px;font-size:10.5px;color:#666;font-weight:700;width:84px">사진</th>
+          <th style="border:1px solid #ddd;padding:8px;font-size:10.5px;color:#666;font-weight:700;text-align:left">품목</th>
+          <th style="border:1px solid #ddd;padding:8px;font-size:10.5px;color:#666;font-weight:700;width:54px">수량</th>
+          <th style="border:1px solid #ddd;padding:8px;font-size:10.5px;color:#666;font-weight:700;width:60px">도금</th>
+          <th style="border:1px solid #ddd;padding:8px;font-size:10.5px;color:#666;font-weight:700;width:78px">소재</th>
+          <th style="border:1px solid #ddd;padding:8px;font-size:10.5px;color:#666;font-weight:700;width:58px">규격</th>
+          <th style="border:1px solid #ddd;padding:8px;font-size:10.5px;color:#666;font-weight:700;width:130px">비고</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+      <tfoot>
+        <tr style="background:#fafafa">
+          <td colspan="3" style="border:1px solid #ddd;padding:8px;text-align:right;font-size:11px;font-weight:700;color:#444">합계</td>
+          <td style="border:1px solid #ddd;padding:8px;text-align:right;font-size:12.5px;font-weight:700;color:#222">${totalQty.toLocaleString()}</td>
+          <td colspan="4" style="border:1px solid #ddd;padding:8px"></td>
+        </tr>
+      </tfoot>
+    </table>
+
+    ${notesHtml}
+
+    <div style="margin-top:24px;padding-top:14px;border-top:1px dashed #ccc;font-size:10px;color:#aaa;text-align:center">
+      EK OEM · Generated ${new Date().toLocaleString('ko-KR')}
+    </div>
+  </div>`;
+}
+
+function openOrdFactoryPreview(){
+  const body = document.getElementById('mOrdFactPrev_body');
+  const ov = document.getElementById('mOrdFactPrev');
+  if(!body || !ov){ showToast('미리보기 모달을 찾을 수 없습니다','var(--red)'); return; }
+  // 매번 발주서 데이터 기준으로 주의사항 초기화 (편집한 값을 유지하고 싶지 않은 경우)
+  window._ordFactPrevNotes = undefined;
+  body.innerHTML = _ordFactPrevBuildHtml();
+  ov.classList.add('open');
+}
+
+function toggleOrdFactPrevFull(){
+  const ov = document.getElementById('mOrdFactPrev');
+  const modal = ov && ov.querySelector('.modal');
+  if(!modal) return;
+  const isFull = modal.dataset.full === '1';
+  if(isFull){
+    modal.style.maxWidth='900px'; modal.style.width='96%'; modal.style.maxHeight='94vh';
+    modal.dataset.full='0';
+  } else {
+    modal.style.maxWidth='100vw'; modal.style.width='100vw'; modal.style.maxHeight='100vh';
+    modal.style.borderRadius='0';
+    modal.dataset.full='1';
+  }
+}
+
+// 캡처/인쇄 직전: 주의사항 textarea + 행별 비고 textarea → 표시 div로 시각 전환
+function _ordFactPrevToDisplayMode(){
+  const root = document.getElementById('ordFactPrevContent'); if(!root) return ()=>{};
+  // 하단 주의사항
+  const ta = root.querySelector('.ord-fp-notes-input');
+  const dp = root.querySelector('.ord-fp-notes-display');
+  const hint = root.querySelector('.ord-fp-edit-hint');
+  if(ta && dp){
+    dp.innerHTML = (ta.value||'').replace(/</g,'&lt;').replace(/\n/g,'<br>') || '<span style="color:#bbb">(주의사항 없음)</span>';
+    ta.style.display = 'none';
+    dp.style.display = 'block';
+  }
+  if(hint) hint.style.display = 'none';
+  // 행별 비고
+  const rowTas = root.querySelectorAll('.ord-fp-row-note');
+  const rowDps = root.querySelectorAll('.ord-fp-row-note-display');
+  rowTas.forEach((t,idx)=>{
+    const d = rowDps[idx];
+    if(d){
+      d.innerHTML = (t.value||'').replace(/</g,'&lt;').replace(/\n/g,'<br>') || '<span style="color:#bbb">—</span>';
+      t.style.display = 'none';
+      d.style.display = 'block';
+    }
+  });
+  return function(){
+    if(ta && dp){ ta.style.display=''; dp.style.display='none'; }
+    if(hint) hint.style.display='';
+    rowTas.forEach((t,idx)=>{
+      const d = rowDps[idx];
+      if(d){ t.style.display=''; d.style.display='none'; }
+    });
+  };
+}
+
+async function downloadOrdFactPrevPng(){
+  const target = document.getElementById('ordFactPrevContent');
+  if(!target){ showToast('미리보기를 먼저 열어주세요','var(--red)'); return; }
+  showToast('🖼 이미지 변환 중...','var(--blu)',1500);
+  const restore = _ordFactPrevToDisplayMode();
+  try{
+    if(typeof html2canvas==='undefined'){
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+        s.onload=res; s.onerror=rej;
+        document.head.appendChild(s);
+      });
+    }
+    const canvas = await html2canvas(target, {scale:2, backgroundColor:'#fff', useCORS:true});
+    const url = canvas.toDataURL('image/png');
+    const a=document.createElement('a');
+    const gv = (id)=>{ const el=document.getElementById(id); return el?el.value:''; };
+    const name = ('발주서_'+(gv('o_vendor')||'')+'_'+(gv('o_no')||new Date().toISOString().slice(0,10))).replace(/[\\\/:*?"<>|]/g,'_');
+    a.download = name+'.png';
+    a.href = url; a.click();
+    showToast('✓ PNG 저장됨','var(--grn)');
+  }catch(e){
+    console.warn('PNG 저장 실패:', e);
+    showToast('PNG 저장 실패: '+(e.message||e),'var(--red)');
+  }finally{
+    restore();
+  }
+}
+
+function printOrdFactPrev(){
+  const target = document.getElementById('ordFactPrevContent');
+  if(!target){ showToast('미리보기를 먼저 열어주세요','var(--red)'); return; }
+  const restore = _ordFactPrevToDisplayMode();
+  const html = target.outerHTML;
+  restore();
+  const w = window.open('', '_blank', 'width=900,height=1200');
+  if(!w){ showToast('팝업이 차단되었습니다','var(--red)'); return; }
+  w.document.write('<!DOCTYPE html><html><head><meta charset="utf-8"><title>발주서</title>'
+    +'<style>body{margin:0;padding:20px;background:#fff;font-family:"Apple SD Gothic Neo","Malgun Gothic",sans-serif}textarea{display:none!important}.ord-fp-notes-display,.ord-fp-row-note-display{display:block!important}.ord-fp-edit-hint{display:none!important}@media print{body{padding:0}}</style>'
+    +'</head><body>'+html
+    +'<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script>'
+    +'</body></html>');
+  w.document.close();
+}
 
 // ════════════════════════════════
 // 품번 검색
@@ -26543,7 +26919,9 @@ function vendorInitHtml(vendorName, small){
     init='─'; // 한글 전용 이름 — clients 로드 전까지는 중립 표시
   }
   const sz=small?'cl-init cl-init-sm':'cl-init';
-  return`<span class="${sz}" style="background:${strToColor(name)}" title="${name}">${init}</span>`;
+  // 색상도 이니셜 기준 → 같은 회사를 다른 표기로 입력해도 같은 색 보장
+  const colorKey = (init && init !== '─' && init !== '·') ? init : name;
+  return`<span class="${sz}" style="background:${strToColor(colorKey)}" title="${name}">${init}</span>`;
 }
 
 // 고객사 전체 라벨 (뱃지 + 이름 or 뱃지만)
