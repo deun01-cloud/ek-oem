@@ -907,13 +907,14 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="fr3">
     <div class="fg"><label>진행 상태</label>
       <select class="fs" id="o_status">
-        <option value="진행중">진행중</option>
-        <option value="출고완료">출고완료</option>
-        <option value="보류">보류</option>
-        <option value="취소">취소</option>
+        <option value="의뢰">의뢰</option>
+        <option value="제작중">제작중</option>
+        <option value="수정중">수정중</option>
+        <option value="확정">확정</option>
+        <option value="취소보류">취소보류</option>
       </select>
     </div>
-    <div class="fg"><label>출고완료일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(상태가 출고완료일 때)</span></label><input class="fi" type="date" id="o_completedAt"></div>
+    <div class="fg"><label>출고완료일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(상태가 확정일 때 자동)</span></label><input class="fi" type="date" id="o_completedAt"></div>
     <div class="fg"></div>
   </div>
 
@@ -1718,6 +1719,8 @@ function getHoliday(ds){ return KR_HOLIDAYS[ds]||''; }
 const DAY_KR=['일','월','화','수','목','금','토'];
 const STAGES=['주물','도금','검품','포장','출고'];
 const SMP_CATS=['전체','의뢰','제작중','수정중','확정','취소'];
+// 발주 5단계 필터 카테고리 (생산관리 페이지)
+const ORD_CATS=['전체','의뢰','제작중','수정중','확정','취소보류'];
 const SMP_CLS={의뢰:'chip',제작중:'cb',수정중:'co',확정:'cg',취소:'chip'};
 const CATS_SCHED=['업무','커머스','발주출고','샘플출고','중국입고','중국출고'];
 const CAT_BG={'업무':'rgba(26,109,181,.07)','커머스':'rgba(168,90,16,.07)','발주출고':'rgba(46,139,44,.07)','샘플출고':'rgba(26,109,181,.07)','중국입고':'rgba(192,48,48,.07)','중국출고':'rgba(192,48,48,.12)'};
@@ -1746,7 +1749,7 @@ function _toggleCalFilter(key){
 }
 let schedView='week', schedWOff=0;
 let schedMY=TODAY.getFullYear(), schedMM=TODAY.getMonth();
-let smpFilter='전체', smpSearch='', ordSearch='', procFilter='전체';
+let smpFilter='전체', smpSearch='', ordSearch='', ordFilter='전체';
 // 샘플 고급 필터 상태
 let smpAdvFilter={
   manager:'',      // 고객사/담당자 (빈값=전체)
@@ -4191,15 +4194,15 @@ function saveProduct(){
       }
     }
     // 출고단가 변경 시: 진행 중 발주서의 같은 품번 행 단가 자동 동기화 (안전 모드)
-    // 잠금 조건: status가 '출고완료' 또는 '취소'면 제외 (이미 확정된 거래는 보호)
+    // 잠금 조건: status가 '확정' 또는 '취소'면 제외 (이미 확정된 거래는 보호)
     let orderPriceSyncedCount = 0;
     if(id && savedProduct && obj.price !== prevPrice){
       const newPrice = +obj.price||0;
       const code = (savedProduct.code||'').trim();
       if(code && Array.isArray(orders)){
         orders.forEach(o=>{
-          const st = o.status||'진행중';
-          if(st === '출고완료' || st === '취소') return; // 잠금
+          const st = o.status||'의뢰';
+          if(isOrderShipped(st) || isOrderCanceled(st)) return; // 잠금
           if(!Array.isArray(o.rows)) return;
           let touched = false;
           o.rows.forEach(r=>{
@@ -6625,6 +6628,33 @@ function mapNotionSample(row){
     imgs, sourceDoc, cadFiles,
   };
 }
+// 발주 상태 정규화 — 옛 값(진행중/출고완료/보류/취소) → 새 값(의뢰/제작중/수정중/확정/취소보류)
+// 새 5단계: 의뢰(기본) → 제작중 → 수정중 → 확정(=출고완료) | 취소보류
+function normalizeOrderStatus(st){
+  if(!st) return '의뢰';
+  const s = String(st).trim();
+  // 옛 값 매핑
+  if(s === '진행중') return '의뢰';
+  if(s === '확정') return '확정';
+  if(s === '보류' || s === '취소') return '취소보류';
+  // 새 값은 그대로
+  if(['의뢰','제작중','수정중','확정','취소보류'].includes(s)) return s;
+  // 알 수 없는 값은 의뢰로
+  return '의뢰';
+}
+// 확정/취소보류는 "완료된 상태" (재고 차감 또는 종료)
+// 의뢰/제작중/수정중은 "진행 중인 상태" (재고 차감 안 됨)
+function isOrderInProgress(st){
+  const ns = normalizeOrderStatus(st);
+  return ns !== '확정' && ns !== '취소보류';
+}
+function isOrderShipped(st){
+  return normalizeOrderStatus(st) === '확정';
+}
+function isOrderCanceled(st){
+  return normalizeOrderStatus(st) === '취소보류';
+}
+
 function mapNotionOrder(row){
   const p=row.properties||{};
   // 우선 품목상세JSON에서 완전 복원 시도
@@ -6688,7 +6718,7 @@ function mapNotionOrder(row){
     ship:    np.date(p['요청출고일']),
     factShip:np.date(p['공장출고일']),
     completedAt: np.date(p['출고완료일']) || '',
-    status:  np.select(p['상태']) || '진행중',
+    status:  normalizeOrderStatus(np.select(p['상태']) || '의뢰'),
     rows,
     files,
     shipHistory,
@@ -6706,7 +6736,7 @@ function mapNotionProc(row){
     qty:     np.text(p['수량']),
     note:    np.text(p['비고']),
     due:     np.date(p['출고예정일']),
-    shipped: np.check(p['출고완료']),
+    shipped: np.check(p['확정']),
     stageIdx:stageIdx>=0?stageIdx:0,
     ordQty:  np.number(p['발주수량']),
     rcvQty:  np.number(p['입고수량']),
@@ -9380,8 +9410,15 @@ function _addNotif(notif){
 
 // 동기화 전후 데이터 비교 → 알림 생성
 function _detectChanges(prev, curr){
-  if(!prev || (!prev.orders||[]).length === 0 && (!prev.samples||[]).length === 0) {
-    // 첫 동기화 (prev 비어있음) — 알림 생성 안 함
+  // 첫 동기화 (prev 데이터 자체가 없는 경우) — 알림 생성 안 함
+  if(!prev) return;
+  const prevHasData = (prev.orders||[]).length > 0
+                   || (prev.samples||[]).length > 0
+                   || (prev.asItems||[]).length > 0
+                   || (prev.invoiceHistory||[]).length > 0
+                   || (prev.ioItems||[]).length > 0;
+  if(!prevHasData){
+    // 처음 로드 — 모든 데이터가 "신규"로 인식되면 알림이 폭발하므로 스킵
     return;
   }
   // 발주 신규
@@ -9401,9 +9438,9 @@ function _detectChanges(prev, curr){
     const old = prevOrdMap.get(o._notionId);
     if(!old) return;
     if(old.status !== o.status && o.status){
-      if(o.status === '출고완료' || o.status === '취소' || o.status === '보류'){
+      if(isOrderShipped(o.status) || isOrderCanceled(o.status)){
         _addNotif({
-          ico: o.status === '출고완료' ? '✅' : (o.status === '취소' ? '✕' : '⏸'),
+          ico: isOrderShipped(o.status) ? '✅' : (o.status === '취소' ? '✕' : '⏸'),
           kind:'orderStatus', targetId:o.id,
           msg:`${o.vendor||''} 발주가 ${o.status}로 변경됨`
         });
@@ -9420,37 +9457,7 @@ function _detectChanges(prev, curr){
       });
     }
   });
-  // AS 신규
-  const prevAsIds = new Set((prev.asItems||[]).map(a=>a._notionId).filter(Boolean));
-  (curr.asItems||[]).forEach(a=>{
-    if(a._notionId && !prevAsIds.has(a._notionId)){
-      _addNotif({
-        ico:'🔧', kind:'as', targetId:a.id,
-        msg:`새 AS: ${a.item||'(품목없음)'}${a.client?` · ${a.client}`:''}`
-      });
-    }
-  });
-  // 거래명세서 신규
-  const prevInvIds = new Set((prev.invoiceHistory||[]).map(v=>v._notionId).filter(Boolean));
-  (curr.invoiceHistory||[]).forEach(v=>{
-    if(v._notionId && !prevInvIds.has(v._notionId)){
-      _addNotif({
-        ico:'🧾', kind:'invoice', targetId:v.id,
-        msg:`새 거래명세서: ${v.vendor||'-'} · ${(+v.total||0).toLocaleString()}원`
-      });
-    }
-  });
-  // 입출고 신규
-  const prevIoIds = new Set((prev.ioItems||[]).map(x=>x._notionId).filter(Boolean));
-  (curr.ioItems||[]).forEach(io=>{
-    if(io._notionId && !prevIoIds.has(io._notionId)){
-      const icon = io.kind === '출고' ? '📤' : io.kind === '입고' ? '📥' : '🚚';
-      _addNotif({
-        ico:icon, kind:'io', targetId:io.id,
-        msg:`새 ${io.kind||'입출고'}: ${io.title||io.vendor||'-'}`
-      });
-    }
-  });
+  // (AS / 거래명세서 / 입출고 알림은 제외 — 사용자 요청)
   if(_notifs.length){
     _saveNotifs();
     _renderNotifBadge();
@@ -9978,7 +9985,7 @@ async function syncOrderToNotion(o, update){
         ? 'JSON::'+JSON.stringify(o.memoList)
         : (o.memo||'')
     )},
-    "상태":{"select":{"name":o.status||'진행중'}},
+    "상태":{"select":{"name":o.status||'의뢰'}},
   };
   if(o.date) p["발주일"]={"date":{"start":o.date}};
   if(o.ship) p["요청출고일"]={"date":{"start":o.ship}};
@@ -10028,7 +10035,7 @@ async function syncProcToNotion(proc, update){
     "발주서번호":{"rich_text":[{"text":{"content":ord?.no||ord?.id+''||''}}]},
     "업체":{"rich_text":[{"text":{"content":proc.vendor||''}}]},
     "수량":{"rich_text":[{"text":{"content":proc.qty+''||''}}]},
-    "출고완료":{"checkbox":proc.shipped||false},
+    "확정":{"checkbox":proc.shipped||false},
     "비고":{"rich_text":[{"text":{"content":proc.note||''}}]},
     "발주수량":{"number":+proc.ordQty||0},
     "입고수량":{"number":+proc.rcvQty||0},
@@ -10673,7 +10680,12 @@ function save(){
     }catch(e){}
   }
 }
-function load(){try{const s=localStorage.getItem(SK.s);if(s)samples=JSON.parse(s);const o=localStorage.getItem(SK.o);if(o)orders=JSON.parse(o);const p=localStorage.getItem(SK.p);if(p)procItems=JSON.parse(p);const t=localStorage.getItem(SK.t);if(t)tasks=JSON.parse(t);const a=localStorage.getItem(SK.a);if(a)asItems=JSON.parse(a);const pd=localStorage.getItem(SK.pd);if(pd)productDB=JSON.parse(pd);const iv=localStorage.getItem(SK.iv);if(iv)invoiceHistory=JSON.parse(iv);const sh=localStorage.getItem(SK.sh);if(sh)stockHistory=JSON.parse(sh);const io=localStorage.getItem(SK.io);if(io)ioItems=JSON.parse(io);}catch(e){}}
+function load(){try{const s=localStorage.getItem(SK.s);if(s)samples=JSON.parse(s);const o=localStorage.getItem(SK.o);if(o)orders=JSON.parse(o);const p=localStorage.getItem(SK.p);if(p)procItems=JSON.parse(p);const t=localStorage.getItem(SK.t);if(t)tasks=JSON.parse(t);const a=localStorage.getItem(SK.a);if(a)asItems=JSON.parse(a);const pd=localStorage.getItem(SK.pd);if(pd)productDB=JSON.parse(pd);const iv=localStorage.getItem(SK.iv);if(iv)invoiceHistory=JSON.parse(iv);const sh=localStorage.getItem(SK.sh);if(sh)stockHistory=JSON.parse(sh);const io=localStorage.getItem(SK.io);if(io)ioItems=JSON.parse(io);
+  // 로드 시점 발주 상태 마이그레이션: 옛 값(진행중/출고완료/보류/취소) → 새 값
+  if(Array.isArray(orders) && typeof normalizeOrderStatus === 'function'){
+    orders.forEach(o => { if(o) o.status = normalizeOrderStatus(o.status); });
+  }
+}catch(e){}}
 
 // ════════════════════════════════
 // 데모/테스트 데이터 — 콘솔에서 호출
@@ -10698,7 +10710,7 @@ window.loadDemoData = function(){
     {
       id: Date.now()+1, no:'EE-DEMO-001', vendor:'주식회사 레터스', manager:'김예린',
       date: offset(-15), ship: offset(7), factShip: offset(3),
-      status:'진행중', memo:'테스트 발주 1', _demo:true,
+      status:'의뢰', memo:'테스트 발주 1', _demo:true,
       rows:[
         {name:'데모 링', qty:'50', mat:'브라스 (BRASS)', plating:'골드', size:'13호', note:'', itemCode:'DEMO001G', unitPrice:8000},
         {name:'데모 목걸이', qty:'30', mat:'브라스 (BRASS)', plating:'실버', size:'45cm', note:'', itemCode:'DEMO002S', unitPrice:12000},
@@ -10709,7 +10721,7 @@ window.loadDemoData = function(){
     {
       id: Date.now()+2, no:'EE-DEMO-002', vendor:'주식회사 레터스', manager:'김예린',
       date: offset(-10), ship: offset(10), factShip: offset(5),
-      status:'진행중', memo:'테스트 발주 2', _demo:true,
+      status:'의뢰', memo:'테스트 발주 2', _demo:true,
       rows:[
         {name:'데모 귀걸이', qty:'100', mat:'브라스 (BRASS)', plating:'골드', size:'-', note:'', itemCode:'DEMO003G', unitPrice:5500},
       ],
@@ -10719,7 +10731,7 @@ window.loadDemoData = function(){
     {
       id: Date.now()+3, no:'EE-DEMO-003', vendor:'주식회사 레터스', manager:'김예린',
       date: offset(-5), ship: offset(14), factShip: '',
-      status:'진행중', memo:'테스트 발주 3 (긴급)', _demo:true,
+      status:'의뢰', memo:'테스트 발주 3 (긴급)', _demo:true,
       rows:[
         {name:'데모 팔찌', qty:'20', mat:'브라스 (BRASS)', plating:'로즈골드', size:'18cm', note:'긴급', itemCode:'DEMO004R', unitPrice:18000},
         {name:'데모 반지', qty:'40', mat:'925 실버', plating:'무도금', size:'9호', note:'', itemCode:'DEMO005S', unitPrice:25000},
@@ -10731,7 +10743,7 @@ window.loadDemoData = function(){
     {
       id: Date.now()+4, no:'VV-DEMO-001', vendor:'비비케이트', manager:'김숙자',
       date: offset(-20), ship: offset(2), factShip: offset(-1),
-      status:'진행중', memo:'테스트 — D-day 임박', _demo:true,
+      status:'의뢰', memo:'테스트 — D-day 임박', _demo:true,
       rows:[
         {name:'DEMO 체인 목걸이', qty:'200', mat:'스테인리스', plating:'골드', size:'40cm', note:'', itemCode:'DEMO006G', unitPrice:9500},
       ],
@@ -10742,7 +10754,7 @@ window.loadDemoData = function(){
     {
       id: Date.now()+5, no:'VT-DEMO-001', vendor:'주식회사제이스바이브', manager:'정수민',
       date: offset(-30), ship: offset(-2), factShip: offset(-5),
-      status:'진행중', memo:'테스트 — 출고 지연', _demo:true,
+      status:'의뢰', memo:'테스트 — 출고 지연', _demo:true,
       rows:[
         {name:'DEMO 미니 링', qty:'150', mat:'925 실버', plating:'골드', size:'-', note:'', itemCode:'DEMO007G', unitPrice:7500},
       ],
@@ -10753,7 +10765,7 @@ window.loadDemoData = function(){
     {
       id: Date.now()+6, no:'VV-DEMO-002', vendor:'비비케이트', manager:'김숙자',
       date: offset(-40), ship: offset(-15), factShip: offset(-18),
-      status:'출고완료', memo:'테스트 — 출고완료', _demo:true,
+      status:'확정', memo:'테스트 — 출고완료', _demo:true,
       rows:[
         {name:'DEMO 클래식 반지', qty:'80', mat:'브라스 (BRASS)', plating:'실버', size:'12호', note:'', itemCode:'DEMO008S', unitPrice:11000},
       ],
@@ -10763,7 +10775,7 @@ window.loadDemoData = function(){
     {
       id: Date.now()+7, no:'VV-DEMO-003', vendor:'비비케이트', manager:'김숙자',
       date: offset(-50), ship: offset(-25), factShip: offset(-28),
-      status:'출고완료', memo:'테스트 — 출고완료 2', _demo:true,
+      status:'확정', memo:'테스트 — 출고완료 2', _demo:true,
       rows:[
         {name:'DEMO 골드 펜던트', qty:'60', mat:'브라스 (BRASS)', plating:'골드', size:'-', note:'', itemCode:'DEMO009G', unitPrice:13500},
       ],
@@ -14521,8 +14533,8 @@ function updateBadges(){
   setBdg('bdgS',activeSmp);
   // 진행중 발주: 출고완료·취소가 아닌 모든 발주 (기본값 '진행중'은 진행중으로 간주)
   const activeOrd=orders.filter(o=>{
-    const st=o.status||'진행중';
-    return st!=='출고완료' && st!=='취소';
+    const st=o.status||'의뢰';
+    return st!=='확정' && st!=='취소';
   }).length;
   setBdg('bdgO',activeOrd);
   // 공정 배지는 사용 안 함 (발주 배지로 통합 표시)
@@ -14541,10 +14553,10 @@ function renderDash(){
   const todayShip=procItems.filter(p=>!p.shipped&&p.due===todayStr).length;
   const urgP=procItems.filter(p=>!p.shipped&&dday(p.due)!==null&&dday(p.due)<=3&&dday(p.due)>=0).length;
   const activeSmp=samples.filter(s=>s.status!=='확정'&&s.status!=='취소').length;
-  // 진행중 발주: status가 '출고완료' 또는 '취소'가 아닌 모든 발주 (기본값은 '진행중')
+  // 진행중 발주: status가 '확정' 또는 '취소'가 아닌 모든 발주 (기본값은 '진행중')
   const activeOrd=orders.filter(o=>{
-    const st=o.status||'진행중';
-    return st!=='출고완료' && st!=='취소';
+    const st=o.status||'의뢰';
+    return st!=='확정' && st!=='취소';
   }).length;
   const todayT=tasks.filter(t=>t.date===todayStr&&!t.done).length;
 
@@ -14675,23 +14687,23 @@ function renderWeekSchedulePanel(){
     const evts=[];
     // 발주 출고 (o.ship 기준) — 완료/취소는 삭선으로 표시
     orders.filter(o=>o.ship===ds).forEach(o=>{
-      const st=o.status||'진행중';
-      evts.push({cls:'ev-ord',label:'발주출고',name:o.vendor,detail:`${(o.rows||[]).length}개 품목`,done:st==='출고완료'||st==='취소',canceled:st==='취소'});
+      const st=o.status||'의뢰';
+      evts.push({cls:'ev-ord',label:'발주출고',name:o.vendor,detail:`${(o.rows||[]).length}개 품목`,done:isOrderShipped(st) || isOrderCanceled(st),canceled:isOrderCanceled(st)});
     });
     // 샘플 출고 (s.due = 샘플 납기일 기준) — 확정/취소는 삭선
     samples.filter(s=>s.due===ds).forEach(s=>{
       const st=s.status||'의뢰';
-      evts.push({cls:'ev-smp',label:'샘플출고',name:s.name,detail:`${s.manager||''} · ${st}`,done:st==='확정'||st==='취소',canceled:st==='취소'});
+      evts.push({cls:'ev-smp',label:'샘플출고',name:s.name,detail:`${s.manager||''} · ${st}`,done:isOrderShipped(st) || isOrderCanceled(st),canceled:isOrderCanceled(st)});
     });
     // 공장 출고 (샘플) — 중국 출고
     samples.filter(s=>s.factShip===ds).forEach(s=>{
       const st=s.status||'의뢰';
-      evts.push({cls:'ev-ship',label:catLabel('중국출고'),name:s.name,detail:`${s.manager||''} · 샘플 · ${st}`,done:st==='확정'||st==='취소',canceled:st==='취소'});
+      evts.push({cls:'ev-ship',label:catLabel('중국출고'),name:s.name,detail:`${s.manager||''} · 샘플 · ${st}`,done:isOrderShipped(st) || isOrderCanceled(st),canceled:isOrderCanceled(st)});
     });
     // 공장 출고 (발주) — 중국 출고
     orders.filter(o=>o.factShip===ds).forEach(o=>{
-      const st=o.status||'진행중';
-      evts.push({cls:'ev-ship',label:catLabel('중국출고'),name:o.vendor,detail:`발주 · ${(o.rows||[]).length}개 품목 · ${st}`,done:st==='출고완료'||st==='취소',canceled:st==='취소'});
+      const st=o.status||'의뢰';
+      evts.push({cls:'ev-ship',label:catLabel('중국출고'),name:o.vendor,detail:`발주 · ${(o.rows||[]).length}개 품목 · ${st}`,done:isOrderShipped(st) || isOrderCanceled(st),canceled:isOrderCanceled(st)});
     });
     if(evts.length)hasAny=true;
     return{d,ds,isToday,evts};
@@ -14750,12 +14762,12 @@ function renderCalWidget(){
     //    출고완료/취소도 표시 (삭선으로 구분)
     if(_calFilters.ord) orders.filter(o=>o.ship===ds).forEach(o=>{
       const initBadge=vendorInitHtml(o.vendor, true);
-      const st=o.status||'진행중';
-      const isDone = st==='출고완료' || st==='취소';
+      const st=o.status||'의뢰';
+      const isDone = st==='확정' || isOrderCanceled(st);
       r.push({
         cls:'ev-ord',
         done: isDone,
-        canceled: st==='취소',
+        canceled: isOrderCanceled(st),
         t:`${initBadge}<span style="margin-left:4px">발주: ${(o.vendor||'').substring(0,6)}</span>`,
         click:`calGoOrder(${o.id})`,
         title: `${o.vendor||''} — 발주 요청출고일 · 품목 ${(o.rows||[]).length}개 · ${st}`
@@ -14767,11 +14779,11 @@ function renderCalWidget(){
     if(_calFilters.smp) samples.filter(s=>s.due===ds).forEach(s=>{
       const initBadge=vendorInitHtml(s.manager, true);
       const st=s.status||'의뢰';
-      const isDone = st==='확정' || st==='취소';
+      const isDone = st==='확정' || isOrderCanceled(st);
       r.push({
         cls:'ev-smp',
         done: isDone,
-        canceled: st==='취소',
+        canceled: isOrderCanceled(st),
         t:`${initBadge}<span style="margin-left:4px">샘플: ${(s.name||'').substring(0,6)}</span>`,
         click:`calGoSample(${s.id})`,
         title: `${s.name||''} — ${s.manager||''} · 샘플 납기일 (${st})`
@@ -14781,11 +14793,11 @@ function renderCalWidget(){
     // 2-A) 공장 출고일 (샘플) — 중국 출고
     if(_calFilters.ship) samples.filter(s=>s.factShip===ds).forEach(s=>{
       const st=s.status||'의뢰';
-      const isDone = st==='확정' || st==='취소';
+      const isDone = st==='확정' || isOrderCanceled(st);
       r.push({
         cls:'ev-ship',
         done: isDone,
-        canceled: st==='취소',
+        canceled: isOrderCanceled(st),
         t:`<span style="margin-right:3px">🇨🇳→</span><span>샘플: ${(s.name||'').substring(0,8)}</span>`,
         click:`calGoSample(${s.id})`,
         title: `${s.name||''} — 공장 출고일 (${st})`
@@ -14794,12 +14806,12 @@ function renderCalWidget(){
 
     // 2-B) 공장 출고일 (발주) — 중국 출고
     if(_calFilters.ship) orders.filter(o=>o.factShip===ds).forEach(o=>{
-      const st=o.status||'진행중';
-      const isDone = st==='출고완료' || st==='취소';
+      const st=o.status||'의뢰';
+      const isDone = st==='확정' || isOrderCanceled(st);
       r.push({
         cls:'ev-ship',
         done: isDone,
-        canceled: st==='취소',
+        canceled: isOrderCanceled(st),
         t:`<span style="margin-right:3px">🇨🇳→</span><span>발주: ${(o.vendor||'').substring(0,8)}</span>`,
         click:`calGoOrder(${o.id})`,
         title: `${o.vendor||''} — 발주 공장출고일 · 품목 ${(o.rows||[]).length}개 (${st})`
@@ -16788,7 +16800,7 @@ function buildOrderExcel(orderList){
   const dataRows=[];
   let no=0;
   orderList.forEach(o=>{
-    const status=o.status||'진행중';
+    const status=o.status||'의뢰';
     const memoText = Array.isArray(o.memoList)&&o.memoList.length
       ? o.memoList.map(n=>(n.checked?'[✓] ':'[ ] ')+n.text).join(' / ')
       : (o.memo||'');
@@ -16864,13 +16876,18 @@ function renderOrder(){
   let list=[...orders];
   if(ordSearch)list=list.filter(o=>(o.vendor+o.no+(o.rows||[]).map(r=>r.name).join()).toLowerCase().includes(ordSearch.toLowerCase()));
 
-  // 서브탭 필터 (진행중/완료/전체)
+  // 서브탭 필터 (진행중/완료/전체) — 옛 3단계 (호환 유지)
   if(ordSubTab==='inprogress'){
-    list=list.filter(o=>{ const st=o.status||'진행중'; return st!=='출고완료' && st!=='취소'; });
+    list=list.filter(o=>isOrderInProgress(o.status));
   } else if(ordSubTab==='done'){
-    list=list.filter(o=>o.status==='출고완료');
+    list=list.filter(o=>isOrderShipped(o.status));
   }
   // 'all'은 필터 없음
+
+  // 5단계 칩 필터 (의뢰/제작중/수정중/확정/취소보류) — 새 ordFilter
+  if(ordFilter !== '전체'){
+    list = list.filter(o => normalizeOrderStatus(o.status) === ordFilter);
+  }
 
   // 고급 필터 적용
   const af=ordAdvFilter;
@@ -16888,10 +16905,10 @@ function renderOrder(){
   }
   if(af.status){
     list=list.filter(o=>{
-      const st=o.status||'진행중';
-      if(af.status==='done')       return st==='출고완료';
-      if(af.status==='canceled')   return st==='취소';
-      if(af.status==='inprogress') return st!=='출고완료' && st!=='취소';
+      const st=o.status||'의뢰';
+      if(af.status==='done')       return st==='확정';
+      if(af.status==='canceled')   return isOrderCanceled(st);
+      if(af.status==='inprogress') return st!=='확정' && st!=='취소';
       return true;
     });
   }
@@ -16925,13 +16942,13 @@ function renderOrder(){
   // KPI summary row
   const todayShip=procItems.filter(p=>!p.shipped&&p.due===todayStr).length;
   const urgP=procItems.filter(p=>!p.shipped&&dday(p.due)!==null&&dday(p.due)>=0&&dday(p.due)<=3).length;
-  // 진행중 발주: 상태가 '출고완료'/'취소'가 아닌 모든 발주
+  // 진행중 발주: 상태가 '확정'/'취소'가 아닌 모든 발주
   const activeOrd=orders.filter(o=>{
-    const st=o.status||'진행중';
-    return st!=='출고완료' && st!=='취소';
+    const st=o.status||'의뢰';
+    return st!=='확정' && st!=='취소';
   }).length;
   // 완료된 발주 카운트 (공정 기반 → 발주 상태 기반으로 통일)
-  const doneOrd=orders.filter(o=>o.status==='출고완료').length;
+  const doneOrd=orders.filter(o=>isOrderShipped(o.status)).length;
 
   const STAGE_COLORS=['#5040A0','#1A6DB5','#0F6E56','#A85A10','#2E8B2C'];
 
@@ -17003,6 +17020,15 @@ function renderOrder(){
       <button class="btn bp bs" onclick="ordRowsBuf=[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];openOrdModal(null)">+ 발주서 등록</button>
     </div>
     <div class="frow">
+      ${(()=>{
+        // 5단계 카운트 — normalize 적용해서 옛 데이터도 정확히 카운트
+        const ordCounts = {전체: orders.length, 의뢰:0, 제작중:0, 수정중:0, 확정:0, 취소보류:0};
+        orders.forEach(o => {
+          const st = normalizeOrderStatus(o.status);
+          if(ordCounts[st] !== undefined) ordCounts[st]++;
+        });
+        return ORD_CATS.map(f=>`<span class="fc ${ordFilter===f?'on':''}" onclick="ordFilter='${f}';renderOrder()">${f} <span style="font-size:9.5px;opacity:.7">${ordCounts[f]||0}</span></span>`).join('');
+      })()}
       <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
         <button onclick="ordAdvFilter.panelOpen=!ordAdvFilter.panelOpen;renderOrder()"
           style="font-size:11.5px;padding:4px 10px;background:${ordAdvActiveCount()?'var(--gold-bg)':'var(--s1)'};border:1px solid ${ordAdvActiveCount()?'var(--gold)':'var(--bdr)'};border-radius:5px;cursor:pointer;font-family:inherit;color:${ordAdvActiveCount()?'var(--gold-lt)':'var(--t2)'};font-weight:${ordAdvActiveCount()?'700':'500'};display:flex;align-items:center;gap:4px"
@@ -17016,8 +17042,8 @@ function renderOrder(){
       // 업체별 진행중 발주 집계 (status 기반 — 서브탭 카운트와 동일 기준)
       const tally={};
       orders.forEach(o=>{
-        const st=o.status||'진행중';
-        if(st==='출고완료' || st==='취소') return;
+        const st=o.status||'의뢰';
+        if(st==='확정' || isOrderCanceled(st)) return;
         const v=(o.vendor||'').trim(); if(!v) return;
         if(!tally[v]){
           const cl=findClientByVendor(v);
@@ -17165,9 +17191,9 @@ function renderOrder(){
             const urg=dl!==null&&dl<=1;
             const warn=dl!==null&&dl<=3&&dl>1;
             const rows=o.rows||[];
-            const ordStatus = o.status || '진행중';
-            const isOrdDone = ordStatus === '출고완료';
-            const isOrdCanceled = ordStatus === '취소';
+            const ordStatus = normalizeOrderStatus(o.status);
+            const isOrdDone = isOrderShipped(ordStatus);
+            const isOrdCanceled = isOrderCanceled(ordStatus);
             const isOrdChecked=window._ordChecked&&window._ordChecked.has(o.id);
             const missFs=!isOrdDone&&!isOrdCanceled&&!o.factShip;
             const rowCls=[
@@ -17224,11 +17250,11 @@ function renderOrder(){
             const statusBadge = (()=>{
               const ordChip = isOrdDone
                 ? (ordSubTab==='done'
-                   ? '<span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">✓ 출고완료</span>'
-                   : `<span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">✓ 출고완료</span>${completedDateStr?`<span style="font-size:9.5px;color:var(--t3);white-space:nowrap;display:block;margin-top:1px" title="완료일자">${completedDateStr}</span>`:''}`)
+                   ? '<span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">✓ 확정</span>'
+                   : `<span style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">✓ 확정</span>${completedDateStr?`<span style="font-size:9.5px;color:var(--t3);white-space:nowrap;display:block;margin-top:1px" title="완료일자">${completedDateStr}</span>`:''}`)
                 : isOrdCanceled
-                ? '<span style="font-size:9.5px;background:rgba(192,48,48,.12);color:var(--red);border:1px solid rgba(192,48,48,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">취소</span>'
-                : '<span style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">진행중</span>';
+                ? '<span style="font-size:9.5px;background:rgba(120,120,120,.12);color:var(--t3);border:1px solid rgba(120,120,120,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">취소보류</span>'
+                : `<span style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap">${ordStatus}</span>`;
               // 거래명세서 칩이 있으면 두 줄로
               if(invBadge){
                 return `<div style="display:flex;flex-direction:column;align-items:flex-start;gap:3px">${ordChip}${invBadge}</div>`;
@@ -17301,7 +17327,7 @@ function renderOrder(){
           // 필터가 활성화되어 있는데 결과가 0이면 안내 메시지 차별화
           const hasActiveFilter = !!(af.vendor || af.dday || af.status || af.stage!=='' || af.shipFrom || af.shipTo || af.dateFrom || af.dateTo) || !!ordSearch;
           if(hasActiveFilter && subTabTotal>0){
-            return `🔍 필터에 맞는 발주서가 없습니다 (${ordSubTab==='done'?'출고완료':ordSubTab==='inprogress'?'진행중':'전체'} ${subTabTotal}건 중 0건)<br><span style="font-size:11px;display:inline-block;margin-top:6px">필터를 해제하면 전체 발주서를 볼 수 있습니다</span>`;
+            return `🔍 필터에 맞는 발주서가 없습니다 (${ordSubTab==='done'?'확정':ordSubTab==='inprogress'?'진행중':'전체'} ${subTabTotal}건 중 0건)<br><span style="font-size:11px;display:inline-block;margin-top:6px">필터를 해제하면 전체 발주서를 볼 수 있습니다</span>`;
           }
           return ordSubTab==='done' ? '✓ 출고완료된 발주서가 없습니다'
             : ordSubTab==='inprogress' ? '🔄 진행중인 발주서가 없습니다 — 위 드롭존에 발주서 파일을 올려주세요'
@@ -17319,7 +17345,7 @@ function showOrdFiles(ordId){
   openFilePreviewList(o.files, 0);
 }
 
-// 발주 완료 처리: status='출고완료' + completedAt 기록 + 연결 공정도 shipped=true
+// 발주 완료 처리: status='확정' + completedAt 기록 + 연결 공정도 shipped=true
 function completeOrd(ordId){
   const o=orders.find(x=>x.id==ordId);
   if(!o) return;
@@ -17342,7 +17368,7 @@ function completeOrd(ordId){
   showConfirm(
     `"${o.vendor||'발주서'}"를 출고완료 처리합니다.\n연결된 공정도 모두 출고 완료로 변경됩니다.`,
     ()=>{
-      o.status='출고완료';
+      o.status='확정';
       o.completedAt=new Date().toISOString();
       // 연결된 공정도 shipped=true
       const linkedProcs=procItems.filter(p=>p.orderId===ordId);
@@ -17367,7 +17393,7 @@ function completeOrd(ordId){
       const stagedCount = (typeof refreshInvStagesForOrder==='function')
         ? refreshInvStagesForOrder(ordId) : 0;
       save();
-      // Notion 동기화 — 상태를 '출고완료'로
+      // Notion 동기화 — 상태를 '확정'로
       debouncedSync('order', o, true);
       // 연결된 공정도 노션 업데이트
       linkedProcs.forEach(p=>{
@@ -17745,7 +17771,7 @@ function getAutoItems(ds, cat){
       });
     });
     // orderId가 없는 발주 — 공정 연결 안 된 발주 (완료/취소 제외)
-    orders.filter(o=>o.ship===ds&&o.status!=='출고완료'&&o.status!=='취소').forEach(o=>{
+    orders.filter(o=>o.ship===ds&&o.status!=='확정'&&o.status!=='취소').forEach(o=>{
       if(!procItems.find(p=>p.orderId===o.id)){
         const cl=matchClient(o.vendor);
         items.push({
@@ -17763,9 +17789,9 @@ function getAutoItems(ds, cat){
       const cl=matchClient(s.manager);
       items.push({
         auto:true,
-        cont:s.name+(s.status==='확정'?' ✓':''),
+        cont:s.name+(s.isOrderShipped(status)?' ✓':''),
         badge: initBadge(cl, s.manager),
-        done:s.status==='확정',
+        done:s.isOrderShipped(status),
         id:'smp_'+s.id,
         click: `calGoSample(${s.id})`
       });
@@ -17776,9 +17802,9 @@ function getAutoItems(ds, cat){
       const cl=matchClient(s.manager);
       items.push({
         auto:true,
-        cont:'[샘플] '+s.name+(s.status==='확정'?' ✓':''),
+        cont:'[샘플] '+s.name+(s.isOrderShipped(status)?' ✓':''),
         badge: initBadge(cl, s.manager),
-        done:s.status==='확정',
+        done:s.isOrderShipped(status),
         id:'smpfs_'+s.id,
         click: `calGoSample(${s.id})`
       });
@@ -17788,9 +17814,9 @@ function getAutoItems(ds, cat){
       const cl=matchClient(o.vendor);
       items.push({
         auto:true,
-        cont:'[발주] '+o.vendor+' ('+(o.rows||[]).length+'개)'+(o.status==='출고완료'?' ✓':''),
+        cont:'[발주] '+o.vendor+' ('+(o.rows||[]).length+'개)'+(isOrderShipped(o.status)?' ✓':''),
         badge: initBadge(cl, o.vendor),
-        done:o.status==='출고완료',
+        done:isOrderShipped(o.status),
         id:'ordfs_'+o.id,
         click: `calGoOrder(${o.id})`
       });
@@ -17870,13 +17896,13 @@ function renderMonthView(sc){
   const evts=[];
   // 발주 출고 (요청출고일 기준) — 완료/취소는 삭선
   orders.filter(o=>o.ship===ds).forEach(o=>{
-    const st=o.status||'진행중';
-    evts.push({cls:'ev-ord',t:`발주: ${o.vendor.substring(0,5)}`,done:st==='출고완료'||st==='취소',canceled:st==='취소'});
+    const st=o.status||'의뢰';
+    evts.push({cls:'ev-ord',t:`발주: ${o.vendor.substring(0,5)}`,done:isOrderShipped(st) || isOrderCanceled(st),canceled:isOrderCanceled(st)});
   });
   // 샘플 출고 (납기일 기준) — 확정/취소는 삭선
   samples.filter(s=>s.due===ds).forEach(s=>{
     const st=s.status||'의뢰';
-    evts.push({cls:'ev-smp',t:`샘플: ${(s.name||'').substring(0,5)}`,done:st==='확정'||st==='취소',canceled:st==='취소'});
+    evts.push({cls:'ev-smp',t:`샘플: ${(s.name||'').substring(0,5)}`,done:isOrderShipped(st) || isOrderCanceled(st),canceled:isOrderCanceled(st)});
   });
   tasks.filter(t=>t.date===ds&&!t.done).forEach(t=>evts.push({cls:'ev-task',t:t.cont?.substring(0,8)||''}));
   const hol=getHoliday(ds);
@@ -19192,7 +19218,7 @@ function openOrdModal(idOrNull){
   sv('o_id',o?o.id:'');sv('o_vendor',o?o.vendor:'');sv('o_date',o?o.date:todayStr);sv('o_ship',o?o.ship:'');
   sv('o_factShip',o?o.factShip||'':'');
   sv('o_manager',o?o.manager:'');sv('o_no',o?o.no||'':'');sv('o_memo',o?o.memo:'');
-  sv('o_status', o?(o.status||'진행중'):'진행중');
+  sv('o_status', o ? normalizeOrderStatus(o.status) : '의뢰');
   // 출고완료일 — completedAt이 ISO 형식이면 YYYY-MM-DD로 자르기
   let completedDateOnly = '';
   if(o && o.completedAt){
@@ -19652,44 +19678,39 @@ async function saveOrd(forceOverwrite){
     ordNoVal = genOrderNo(vendor, gv('o_date')||todayStr);
   }
   const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),factShip:gv('o_factShip'),manager:gv('o_manager'),no:ordNoVal,memo:memoText,memoList,rows:cleanRows,files:filesToSave};
-  // 진행 상태 + 출고완료일
-  const newStatus = gv('o_status') || '진행중';
+  // 진행 상태 + 출고완료일 (5단계: 의뢰/제작중/수정중/확정/취소보류)
+  const newStatus = normalizeOrderStatus(gv('o_status') || '의뢰');
   obj.status = newStatus;
   const completedDate = gv('o_completedAt');
-  if(newStatus === '출고완료'){
-    // 사용자가 직접 입력한 날짜가 있으면 ISO로 저장, 없으면 자동으로 오늘 날짜
+  if(newStatus === '확정'){
+    // 확정 = 출고완료. 출고완료일 자동 메기기
     if(completedDate){
-      // YYYY-MM-DD를 ISO datetime으로 (시간은 00:00:00)
       obj.completedAt = completedDate + 'T00:00:00.000Z';
     } else if(id){
-      // 기존 발주 수정인데 새로 출고완료로 바뀐 경우 — 기존 completedAt 유지 또는 오늘
       const existing = orders.find(x=>x.id==id);
       obj.completedAt = (existing && existing.completedAt) || new Date().toISOString();
     } else {
       obj.completedAt = new Date().toISOString();
     }
-  } else if(newStatus === '취소' || newStatus === '보류'){
-    // 출고완료가 아닌 상태로 변경: completedAt 비움 (사용자가 명시적으로 입력했어도 무의미)
-    obj.completedAt = '';
   } else {
-    // 진행중 — 비움
+    // 의뢰/제작중/수정중/취소보류 — 완료일 비움
     obj.completedAt = '';
   }
   let ordId;
   let stockReceiveResult={matched:0,unmatched:0}; // 신규 입고로 인한 재고 증가 결과
-  let stockStatusChange = null; // 출고완료 상태 변경에 따른 재고 처리: 'apply' | 'revert' | null
+  let stockStatusChange = null; // 확정 상태 변경에 따른 재고 처리: 'apply' | 'revert' | null
   if(id){
     const i=orders.findIndex(x=>x.id==id);
     if(i>=0){
       // 요청출고일(ship) 변경 이력 기록
       const prev=orders[i];
       // ── 상태 변경에 따른 재고 처리 결정 ──
-      const prevStatus = prev.status || '진행중';
-      if(prevStatus !== '출고완료' && newStatus === '출고완료'){
-        // 진행중/보류/취소 → 출고완료 : 재고 차감 (출고완료 처리 버튼과 동일 효과)
+      const prevStatus = normalizeOrderStatus(prev.status || '의뢰');
+      if(prevStatus !== '확정' && newStatus === '확정'){
+        // 진행 → 확정 : 재고 차감
         stockStatusChange = 'apply';
-      } else if(prevStatus === '출고완료' && newStatus !== '출고완료'){
-        // 출고완료 → 진행중/취소/보류 : 재고 복원
+      } else if(prevStatus === '확정' && newStatus !== '확정'){
+        // 확정 → 진행/취소보류 : 재고 복원
         stockStatusChange = 'revert';
       }
       if(prev && prev.ship && obj.ship && prev.ship !== obj.ship){
@@ -20921,8 +20942,8 @@ function vMonthly(c){
   }
   const mOrdAmt=months.map(m=>{
     const monthOrds=orders.filter(o=>o.date&&o.date.startsWith(m));
-    const doneOrds=monthOrds.filter(o=>o.status==='출고완료');
-    const pendOrds=monthOrds.filter(o=>{ const st=o.status||'진행중'; return st!=='출고완료' && st!=='취소'; });
+    const doneOrds=monthOrds.filter(o=>isOrderShipped(o.status));
+    const pendOrds=monthOrds.filter(o=>{ const st=o.status||'의뢰'; return st!=='확정' && st!=='취소'; });
     return {
       amt: monthOrds.reduce((s,o)=>s+ordAmt(o),0),
       amtDone: doneOrds.reduce((s,o)=>s+ordAmt(o),0),
@@ -20933,14 +20954,14 @@ function vMonthly(c){
     };
   });
   const mSmpCnt=months.map(m=>samples.filter(s=>s.reqDate&&s.reqDate.startsWith(m)).length);
-  const mSmpDone=months.map(m=>samples.filter(s=>s.reqDate&&s.reqDate.startsWith(m)&&s.status==='확정').length);
+  const mSmpDone=months.map(m=>samples.filter(s=>s.reqDate&&s.reqDate.startsWith(m)&&s.isOrderShipped(status)).length);
 
   // ── 잔여(미완료) 집계 — 발주 상태 기반으로 통일 ──
   //   · 진행중 발주(status가 출고완료/취소가 아닌 것) = 잔여 건수
   //   · 그 중 거래명세서 미발행 = 잔여 금액 (발행된 건 이미 청구된 것으로 간주)
   const pendingOrders=orders.filter(o=>{
-    const st=o.status||'진행중';
-    return st!=='출고완료' && st!=='취소';
+    const st=o.status||'의뢰';
+    return st!=='확정' && st!=='취소';
   });
   // 거래명세서 미발행 발주만 골라서 "예상 금액" 합산
   // 매칭: ordId(로컬) 우선, 발주번호(ordNo)로 폴백 — 다른 컴퓨터 동기화 대응
@@ -20980,15 +21001,15 @@ function vMonthly(c){
   orders.forEach(o=>{
     const key=(o.vendor||'기타').trim();
     if(!clientOrdMap[key])clientOrdMap[key]={name:key,doneAmt:0,doneCnt:0,pendAmt:0,pendCnt:0};
-    const st=o.status||'진행중';
+    const st=o.status||'의뢰';
     const a=ordAmt(o);
     const inWindow=o.date && o.date>=ord6mStartStr;
     // 명세서 발행됐거나 출고완료면 확정매출로 분류 (상태가 진행중이라도 명세서 있으면 사실상 확정)
-    const isConfirmed = (st==='출고완료') || hasInvoiceFor(o);
+    const isConfirmed = (st==='확정') || hasInvoiceFor(o);
     if(isConfirmed && inWindow){
       clientOrdMap[key].doneAmt+=a;
       clientOrdMap[key].doneCnt++;
-    } else if(st!=='출고완료' && st!=='취소'){
+    } else if(st!=='확정' && st!=='취소'){
       // 진행중 = 예상매출 (기간 무관 — 진행중 발주는 모두 곧 매출이 될 것)
       clientOrdMap[key].pendAmt+=a;
       clientOrdMap[key].pendCnt++;
@@ -21010,7 +21031,7 @@ function vMonthly(c){
     if(s.status==='취소') return;
     const key=(s.manager||'기타').trim();
     if(!clientSmpMap[key])clientSmpMap[key]={name:key,doneCnt:0,pendCnt:0};
-    if(s.status==='확정') clientSmpMap[key].doneCnt++;
+    if(s.isOrderShipped(status)) clientSmpMap[key].doneCnt++;
     else clientSmpMap[key].pendCnt++;
   });
   const clientSmpList=Object.values(clientSmpMap)
@@ -22909,7 +22930,7 @@ function inferInvStage(v){
   // 이 경우 자동으로 _shipped=true로 보고 billing
   if(v.ordId){
     const o = orders.find(x => String(x.id)===String(v.ordId));
-    if(o && o.status === '출고완료') return 'billing';
+    if(o && isOrderShipped(o.status)) return 'billing';
   }
   // 샘플 명세서는 발주 없음 → status 기준 (발행되면 자동 billing)
   if(v._fromSample){
@@ -22970,8 +22991,8 @@ function markInvoiceShipped(invId, shipped){
       if(shipped){
         // 출고완료로 변경 — 모든 명세서 출고완료인지 확인
         if(typeof areAllInvoicesShipped === 'function' && areAllInvoicesShipped(o)){
-          if(o.status !== '출고완료' && o.status !== '취소'){
-            o.status = '출고완료';
+          if(o.status !== '확정' && o.status !== '취소'){
+            o.status = '확정';
             o.completedAt = new Date().toISOString();
             // 연결 공정 출고
             if(typeof procItems !== 'undefined'){
@@ -22990,7 +23011,7 @@ function markInvoiceShipped(invId, shipped){
         }
       } else {
         // 출고완료 해제 — 발주가 출고완료 상태였으면 진행중으로 되돌림
-        if(o.status === '출고완료'){
+        if(isOrderShipped(o.status)){
           o.status = '진행중';
           o.completedAt = null;
           // 연결 공정 출고 해제
@@ -24356,7 +24377,7 @@ function areAllInvoicesPaidFull(o){
 // 반환: { changed: bool, reason: string }
 function autoCompleteOrderShipment(o){
   if(!o) return { changed: false, reason: 'no order' };
-  if(o.status === '출고완료') return { changed: false, reason: 'already completed' };
+  if(isOrderShipped(o.status)) return { changed: false, reason: 'already completed' };
   if(o.status === '취소') return { changed: false, reason: 'canceled' };
   // 5-A: 가드 — 묶인 명세서 중 미출고가 있으면 자동 출고완료 안 함
   // 입금 100%여도 명세서 출고완료가 우선
@@ -24369,7 +24390,7 @@ function autoCompleteOrderShipment(o){
       return { changed: false, reason: 'some invoices not yet shipped' };
     }
   }
-  o.status = '출고완료';
+  o.status = '확정';
   o.completedAt = new Date().toISOString();
   // 연결 공정도 출고처리
   if(typeof procItems !== 'undefined'){
