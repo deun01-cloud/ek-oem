@@ -4349,6 +4349,15 @@ function saveProduct(){
     if(savedProduct && id){
       debouncedSync('product', savedProduct, true);
     }
+    // 🔧 핵심 마무리 작업 — 이게 빠지면 저장된 것처럼 보이지 않음
+    // 1) localStorage에 저장
+    if(typeof save === 'function') save();
+    // 2) 모달 닫기
+    closeM('mProduct');
+    // 3) 화면 갱신 (제품 탭 / 다른 탭이면 거기로)
+    if(typeof renderTab === 'function') renderTab();
+    // 4) 이미지 버퍼 초기화 (다음 등록 시 깨끗하게)
+    if(typeof pdImgBuf !== 'undefined') pdImgBuf.length = 0;
   };
   if(notionCfg.workerUrl && pdImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
     showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
@@ -19362,7 +19371,14 @@ function saveAndInvoice(){
   const id=gv('s_id');if(!id)return;
   const i=samples.findIndex(x=>x.id==id);if(i<0)return;
   samples[i]={...samples[i],devCost:+gv('s_devCost')||0,unitPrice:+gv('s_unitPrice')||0,invNo:gv('s_invNo')};
-  save();closeM('mSmp');
+  save();
+  // 노션 동기화 (디바운스)
+  if(typeof debouncedSync === 'function' && samples[i]._notionId){
+    debouncedSync('sample', samples[i], true);
+  }
+  // 화면 갱신
+  if(typeof renderTab === 'function') renderTab();
+  closeM('mSmp');
   setTimeout(()=>openInvoice(id),100);
 }
 // ════════════════════════════════
