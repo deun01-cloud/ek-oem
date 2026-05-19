@@ -3332,25 +3332,42 @@ async function uploadImageToR2(file){
   if(file.type.startsWith('image/')){
     try{ processed = await compressImage(dataUrl, 1200); }catch(e){ console.warn('압축 실패:', e); }
   }
-  // workerUrl/r2/upload
+  // PC와 동일한 형식으로 호출 (헤더 기반 + dataURL 그대로 body로)
   const url = notionCfg.workerUrl.replace(/\/+$/,'') + '/r2/upload';
-  const headers = {'Content-Type':'application/json'};
-  if(notionCfg.token) headers['Authorization'] = 'Bearer '+notionCfg.token;
   const fname = `${Date.now()}_${file.name||'img.jpg'}`;
+  const headers = {
+    'Content-Type':'text/plain',
+    'X-File-Name': encodeURIComponent(fname),
+    'X-File-Type': file.type || 'image/jpeg',
+    'X-Encoding': 'base64',
+  };
+  if(notionCfg.token) headers['Authorization'] = 'Bearer '+notionCfg.token;
   try{
-    const r = await fetch(url, {method:'POST', headers, body:JSON.stringify({
-      filename: fname,
-      contentType: file.type||'image/jpeg',
-      data: processed.split(',')[1]
-    })});
-    const j = await r.json();
-    if(j && j.url){
-      return {name:file.name||'사진', url:j.url, type:file.type||'image/jpeg', r2Key:j.key||''};
+    const r = await fetch(url, {method:'POST', headers, body: processed});
+    if(!r.ok){
+      const errText = await r.text().catch(()=>'');
+      console.warn(`[R2 업로드 실패] HTTP ${r.status} — ${fname}: ${errText.slice(0,200)}`);
+    } else {
+      const j = await r.json();
+      // PC 워커는 {success, key, name, type, size}를 반환 — key로 URL 만들기
+      // (구 워커가 j.url을 직접 반환하면 그것도 사용)
+      if(j && j.success && j.key){
+        return {
+          name: file.name||'사진',
+          url: notionCfg.workerUrl.replace(/\/+$/,'') + '/r2/file/' + encodeURIComponent(j.key),
+          type: file.type||'image/jpeg',
+          r2Key: j.key
+        };
+      }
+      if(j && j.url){
+        return {name:file.name||'사진', url:j.url, type:file.type||'image/jpeg', r2Key:j.key||''};
+      }
+      console.warn('[R2 업로드 실패] 응답 형식 인식 못함:', j);
     }
   }catch(e){
     console.warn('R2 업로드 실패:', e);
   }
-  // 폴백 — base64 그대로 (로컬에만)
+  // 폴백 — base64 그대로 (로컬에만, 노션엔 안 올라감)
   return {name:file.name||'사진', url:processed, type:file.type||'image/jpeg'};
 }
 
@@ -5415,6 +5432,45 @@ async function saveIo(ioId){
 
   const applyStock = document.getElementById('io_applyStock').checked;
 
+  // 📸 사진 사전 처리: base64 상태인 사진 있으면 저장 전에 R2 재업로드 시도
+  // (모바일에서 사진 등록 → 곧바로 저장 누르면 R2 업로드 실패한 경우가 있음)
+  let _photoFiles = _photoGet('ioAdd');
+  const _hasBase64 = (_photoFiles||[]).some(f => f && f.url && !String(f.url).startsWith('http'));
+  if(_hasBase64 && notionCfg && notionCfg.workerUrl){
+    showToast('🔄 사진 R2 재업로드 중...','info');
+    try{
+      const retried = [];
+      for(const f of _photoFiles){
+        if(f && f.url && !String(f.url).startsWith('http')){
+          // base64 → File 객체로 변환 후 재업로드
+          try{
+            const m = String(f.url).match(/^data:([^;]+);base64,(.+)$/);
+            if(m){
+              const mime = m[1] || 'image/jpeg';
+              const b64 = m[2];
+              const bin = atob(b64);
+              const u8 = new Uint8Array(bin.length);
+              for(let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i);
+              const blob = new Blob([u8], {type:mime});
+              const fileObj = new File([blob], f.name||'photo.jpg', {type:mime});
+              const r2 = await uploadImageToR2(fileObj);
+              if(r2 && r2.url && String(r2.url).startsWith('http')){
+                retried.push(r2);
+                continue;
+              }
+            }
+          }catch(e){ console.warn('재업로드 실패:', e); }
+          // 재업로드 실패해도 로컬엔 유지 (브라우저엔 보임)
+          retried.push(f);
+        } else {
+          retried.push(f);
+        }
+      }
+      _photoFiles = retried;
+      window._photoBufs['ioAdd'] = retried; // 버퍼도 갱신
+    }catch(e){ console.warn('사진 재업로드 전체 실패:', e); }
+  }
+
   const updated = {
     ...(old||{}),
     id: isEdit ? old.id : Date.now(),
@@ -5427,7 +5483,7 @@ async function saveIo(ioId){
     memo: document.getElementById('io_memo').value.trim(),
     user: document.getElementById('io_user').value.trim(),
     applyStock,
-    files: _photoGet('ioAdd'),
+    files: _photoFiles,
     createdAt: (old && old.createdAt) || new Date().toISOString()
   };
 
