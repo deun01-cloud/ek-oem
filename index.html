@@ -19532,6 +19532,39 @@ function openOrdModal(idOrNull){
         showToast(`✓ ${priceResult.filled}개 행의 단가를 제품DB에서 자동으로 가져옴`, 'var(--grn)', 3000);
       }
     }
+    // 📸 이미지도 자동 채우기 — img 비어있는 행은 제품DB/샘플에서 첫 이미지 가져옴
+    let imgFilled = 0;
+    ordRowsBuf.forEach((r, i) => {
+      if(r && !r.img){
+        let found = null;
+        if(r.itemCode){
+          const p = productDB.find(p => p.code && p.code === r.itemCode);
+          if(p && Array.isArray(p.imgs) && p.imgs.length) found = p.imgs[0];
+          if(!found){
+            const s = samples.find(s => s.itemCode && s.itemCode === r.itemCode);
+            if(s && Array.isArray(s.imgs) && s.imgs.length) found = s.imgs[0];
+          }
+        }
+        if(!found && r.name){
+          const nameKey = String(r.name).replace(/\s*\[[^\]]*\]\s*/g, '').trim();
+          if(nameKey){
+            const p = productDB.find(p => p.name && p.name === nameKey);
+            if(p && Array.isArray(p.imgs) && p.imgs.length) found = p.imgs[0];
+            if(!found){
+              const s = samples.find(s => s.name && s.name === nameKey);
+              if(s && Array.isArray(s.imgs) && s.imgs.length) found = s.imgs[0];
+            }
+          }
+        }
+        if(found){
+          const url = typeof found === 'string' ? found : found.url;
+          if(url){ ordRowsBuf[i].img = url; imgFilled++; }
+        }
+      }
+    });
+    if(imgFilled > 0 && typeof showToast === 'function'){
+      showToast(`📸 ${imgFilled}개 행의 사진을 자동 매칭`, 'var(--grn)', 2500);
+    }
   }
   // 요청 출고일 변경 이력 표시
   const shipHistEl=document.getElementById('o_shipHistArea');
@@ -20004,6 +20037,52 @@ function openOrdFactoryPreview(){
   if(!body || !ov){ showToast('미리보기 모달을 찾을 수 없습니다','var(--red)'); return; }
   // 매번 발주서 데이터 기준으로 주의사항 초기화 (편집한 값을 유지하고 싶지 않은 경우)
   window._ordFactPrevNotes = undefined;
+  // 📸 자동 매칭: 품번/품목명은 있는데 img가 비어있는 행은 제품DB/샘플에서 자동 보충
+  try{
+    if(Array.isArray(ordRowsBuf)){
+      ordRowsBuf.forEach((r, i) => {
+        if(r && !r.img){
+          // 1) 품번으로 제품DB 매칭
+          let found = null;
+          if(r.itemCode){
+            const p = productDB.find(p => p.code && p.code === r.itemCode);
+            if(p && Array.isArray(p.imgs) && p.imgs.length){
+              found = p.imgs[0];
+            }
+            // 샘플에서도 찾기
+            if(!found){
+              const s = samples.find(s => s.itemCode && s.itemCode === r.itemCode);
+              if(s && Array.isArray(s.imgs) && s.imgs.length){
+                found = s.imgs[0];
+              }
+            }
+          }
+          // 2) 품번 없으면 품목명으로 매칭
+          if(!found && r.name){
+            const nameKey = String(r.name).replace(/\s*\[[^\]]*\]\s*/g, '').trim();
+            if(nameKey){
+              const p = productDB.find(p => p.name && p.name === nameKey);
+              if(p && Array.isArray(p.imgs) && p.imgs.length){
+                found = p.imgs[0];
+              }
+              if(!found){
+                const s = samples.find(s => s.name && s.name === nameKey);
+                if(s && Array.isArray(s.imgs) && s.imgs.length){
+                  found = s.imgs[0];
+                }
+              }
+            }
+          }
+          if(found){
+            const url = typeof found === 'string' ? found : found.url;
+            if(url) ordRowsBuf[i].img = url;
+          }
+        }
+      });
+      // 변경된 거 있으면 발주 행도 다시 그리기 (모달이 열려있는 동안)
+      if(typeof renderOrdRows === 'function') renderOrdRows();
+    }
+  }catch(e){ console.warn('미리보기 이미지 자동 매칭 실패:', e); }
   body.innerHTML = _ordFactPrevBuildHtml();
   ov.classList.add('open');
 }
@@ -20514,6 +20593,14 @@ function applyProductToRow(pdId){
   ordRowsBuf[i].size=p.size||ordRowsBuf[i].size;
   ordRowsBuf[i].unitPrice=p.price||0;
   ordRowsBuf[i].note=p.code||'';
+  // 📸 제품DB의 첫 번째 이미지를 발주 row의 img로 복사 (공장전송 미리보기에서 사용)
+  if(Array.isArray(p.imgs) && p.imgs.length){
+    const firstImg = p.imgs[0];
+    if(firstImg){
+      const imgUrl = typeof firstImg === 'string' ? firstImg : firstImg.url;
+      if(imgUrl) ordRowsBuf[i].img = imgUrl;
+    }
+  }
   closeM('mItemSearch');
   renderOrdRows();
   showToast(`✓ "${p.name}" 적용됨`,'var(--gold-lt)');
@@ -20533,6 +20620,14 @@ function applyItemToRow(smpId){
   ordRowsBuf[i].size = s.sz1||ordRowsBuf[i].size;
   ordRowsBuf[i].unitPrice = s.unitPrice||0;
   ordRowsBuf[i].note = s.itemCode||'';
+  // 📸 샘플의 첫 번째 이미지를 발주 row의 img로 복사
+  if(Array.isArray(s.imgs) && s.imgs.length){
+    const firstImg = s.imgs[0];
+    if(firstImg){
+      const imgUrl = typeof firstImg === 'string' ? firstImg : firstImg.url;
+      if(imgUrl) ordRowsBuf[i].img = imgUrl;
+    }
+  }
   
   closeM('mItemSearch');
   renderOrdRows();
