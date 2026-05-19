@@ -1381,7 +1381,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     </div>
     <div class="fg"><label>규격 / 사이즈</label><input class="fi" id="pd_size" placeholder="체인두께 2.7mm, 길이 180mm"></div>
   </div>
-  <div class="fr3" style="grid-template-columns:repeat(4,1fr)">
+  <div class="fr3" style="grid-template-columns:repeat(5,1fr)">
     <div class="fg">
       <label>출고단가 (원)</label>
       <input class="fi" type="number" id="pd_price" placeholder="13000" min="0" oninput="onPdPriceManualEdit()">
@@ -1391,6 +1391,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       </div>
     </div>
     <div class="fg"><label>생산원가 (원) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(ERP 참고)</span></label><input class="fi" type="number" id="pd_costPrice" placeholder="0" min="0"></div>
+    <div class="fg"><label>개발비 (원)</label><input class="fi" type="number" id="pd_devCost" placeholder="0" min="0"></div>
     <div class="fg"><label>재고 수량</label><input class="fi" type="number" id="pd_stock" placeholder="0" min="0"></div>
     <div class="fg"><label>안전재고 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(0=알림 끔)</span></label><input class="fi" type="number" id="pd_safetyStock" placeholder="0" min="0"></div>
   </div>
@@ -3934,6 +3935,7 @@ function openProductModal(idOrNull){
   sv('pd_type',p?p.type:'EARRING');sv('pd_mat',p?p.mat:'브라스 (BRASS)');
   sv('pd_plating',p?p.plating:'골드');sv('pd_size',p?p.size:'');
   sv('pd_price',p?p.price||'':'');sv('pd_costPrice',p?p.costPrice||'':'');
+  sv('pd_devCost',p?p.devCost||'':'');
   sv('pd_cnyPrice', p?p.cnyPrice||'':'');
   sv('pd_stock',p?p.stock||0:0);sv('pd_safetyStock',p?p.safetyStock||0:0);sv('pd_metal',p?p.metal||'':'');
   sv('pd_platingSpec',p?p.platingSpec||'':'');sv('pd_weight',p?p.weight||'':'');
@@ -4140,6 +4142,7 @@ function saveProduct(){
   const obj={
     code,name,type:gv('pd_type'),mat:gv('pd_mat'),plating:gv('pd_plating'),
     size:gv('pd_size'),price:+gv('pd_price')||0,costPrice:+gv('pd_costPrice')||0,
+    devCost:+gv('pd_devCost')||0,
     stock:newStock,safetyStock:newSafety,metal:gv('pd_metal'),platingSpec:gv('pd_platingSpec'),
     weight:+gv('pd_weight')||0,memo:gv('pd_memo'),
     // 원가 분석 필드 (시세, 마진, 생산원가 자동 계산)
@@ -6916,6 +6919,7 @@ function mapNotionProduct(row){
     memo:       np.text(p['메모']),
     price:      np.number(p['출고단가']),
     costPrice:  np.number(p['입고단가']),
+    devCost:    np.number(p['개발비']),
     cnyPrice:   np.number(p['위안화입고단가']),
     matRate:    np.number(p['원자재시세']),
     prodCost:   np.number(p['생산원가']),
@@ -7136,11 +7140,26 @@ async function pullFromNotion(opts){
       const nowForProtect = Date.now();
       // 사용자 직접 입력 필드들 — 노션 eventual consistency 보호 대상
       // 최근 60초 안에 push된 항목은 노션 값보다 로컬 값을 우선 (push가 아직 노션에 반영 안 됐을 수 있음)
-      const USER_FIELDS = ['status','memo','memoList','completedAt','due','reqDate','ship','factShip','date','vendor','manager','no','desc','devNote','caution','notes','price','costPrice','cnyPrice','stock','title','content','reply','phone','address','recipient','brand','shipStatus','matchStatus','returnStatus','returnReason','returnRequestedAt','returnCompletedAt','kind','flow','qty','items','invoice','user'];
+      const USER_FIELDS = ['status','memo','memoList','completedAt','due','reqDate','ship','factShip','date','vendor','manager','no','desc','devNote','caution','notes','price','costPrice','devCost','cnyPrice','stock','title','content','reply','phone','address','recipient','brand','shipStatus','matchStatus','returnStatus','returnReason','returnRequestedAt','returnCompletedAt','kind','flow','qty','items','invoice','user'];
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map(x=>[x._notionId,x]));
+      // 새 id 생성 시 충돌 방지: 카운터 + 노션 페이지 ID 해시 사용
+      // (Date.now()+Math.random()은 같은 ms 안에 여러 건 매핑되면 부동소수점 정밀도 손실로 충돌 가능)
+      let _idCounter = 0;
+      const _genId = (notionId) => {
+        // 노션 페이지 ID(UUID)가 있으면 그것을 안정적인 unique key로 사용
+        // 단 number 비교(==)와 호환되도록 hash → 정수화
+        if(notionId){
+          let h = 0;
+          for(let i=0;i<notionId.length;i++){ h = ((h<<5)-h + notionId.charCodeAt(i))|0; }
+          // 음수면 양수로, ms 단위 timestamp 범위와 안 겹치게 큰 정수로
+          return Math.abs(h) * 1000 + (++_idCounter);
+        }
+        // 노션 ID 없으면 fallback: timestamp + 카운터 (Math.random 대신)
+        return Date.now() * 1000 + (++_idCounter);
+      };
       const merged=remoteDedupe.map(r=>{
         const prev=byNotionId[r._notionId];
-        if(!prev) return {id:Date.now()+Math.random(), ...r};
+        if(!prev) return {id:_genId(r._notionId), ...r};
         const out={...r, id:prev.id};
         // 🔒 최근 sync된 항목은 사용자 입력 필드를 로컬 값으로 보호
         // (노션 PATCH가 PULL보다 늦게 반영되는 race condition 방어)
@@ -7249,6 +7268,16 @@ async function pullFromNotion(opts){
     function upsertMerge(remote, local, idFields){
       if(!remote.length) return local; // 변경 없음
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map((x,i)=>[x._notionId,{x,i}]));
+      // 새 id 생성기 — 카운터 + 노션 ID hash 기반 (Date.now()+Math.random() 충돌 방지)
+      let _idCounter = 0;
+      const _genId = (notionId) => {
+        if(notionId){
+          let h = 0;
+          for(let i=0;i<notionId.length;i++){ h = ((h<<5)-h + notionId.charCodeAt(i))|0; }
+          return Math.abs(h) * 1000 + (++_idCounter);
+        }
+        return Date.now() * 1000 + (++_idCounter);
+      };
       const out=local.slice();
       for(const r of remote){
         const hit=byNotionId[r._notionId];
@@ -7269,7 +7298,7 @@ async function pullFromNotion(opts){
           out[hit.i]=merged;
         } else {
           // 신규 항목 추가
-          out.push({id:Date.now()+Math.random(), ...r});
+          out.push({id:_genId(r._notionId), ...r});
         }
       }
       return out;
@@ -10442,6 +10471,7 @@ async function syncProductToNotion(pd, update){
     "이미지JSON":{"rich_text":[{"text":{"content":imgsJson.slice(0,2000)}}]},
     "출고단가":{"number":+pd.price||0},
     "입고단가":{"number":+pd.costPrice||0},
+    "개발비":{"number":+pd.devCost||0},
     "위안화입고단가":{"number":+pd.cnyPrice||0},
     "원자재시세":{"number":+pd.matRate||0},
     "생산원가":{"number":+pd.prodCost||0},
@@ -12489,7 +12519,14 @@ function hideSmpMgrDropdown(){
 // ════════════════════════════════
 function openPrev(buf,idx){
   const arr=window[buf];
-  if(!arr||!arr.length)return;
+  if(!arr||!arr.length){ console.warn('openPrev: 빈 배열', buf); return; }
+  const im=arr[idx];
+  if(!im){ console.warn('openPrev: 인덱스 범위 초과', buf, idx, arr.length); return; }
+  if(!im.url){
+    console.warn('openPrev: 사진 url 비어있음', buf, idx, im);
+    if(typeof showToast==='function') showToast('이 사진은 데이터가 손상되었습니다 (URL 없음). 다시 업로드해 주세요','var(--red)',3500);
+    return;
+  }
   prevImages=arr;prevIdx=idx;
   showPrev();
   document.getElementById('prevOv').classList.add('open');
