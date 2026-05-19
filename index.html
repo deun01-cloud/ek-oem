@@ -6844,6 +6844,7 @@ function mapNotionOrder(row){
     factShip:np.date(p['공장출고일']),
     completedAt: np.date(p['출고완료일']) || '',
     status:  normalizeOrderStatus(np.select(p['상태']) || '의뢰'),
+    factoryNotice: np.text(p['공장주의사항']) || '',
     rows,
     files,
     shipHistory,
@@ -6927,6 +6928,24 @@ function mapNotionTask(row){
 }
 function mapNotionAS(row){
   const p=row.properties||{};
+  // 모바일에서 보낸 수리내역 배열 파싱
+  let repairs = [];
+  try{
+    const rj = np.text(p['수리내역JSON']);
+    if(rj){
+      const parsed = JSON.parse(rj);
+      if(Array.isArray(parsed)) repairs = parsed;
+    }
+  }catch(e){}
+  // 모바일에서 보낸 사진 URL 배열 파싱
+  let files = [];
+  try{
+    const fj = np.text(p['사진JSON']);
+    if(fj){
+      const parsed = JSON.parse(fj);
+      if(Array.isArray(parsed)) files = parsed;
+    }
+  }catch(e){}
   return{
     _notionId:row.id,
     item:    np.title(p['품목']),
@@ -6941,6 +6960,12 @@ function mapNotionAS(row){
     status:  np.select(p['진행상태'])||'접수',
     billing: np.select(p['청구상태'])||'미청구',
     defectType: np.select(p['수리종류'])||'',
+    // 모바일에서 보낸 필드들 (PC에서도 표시/관리)
+    shippingFee: np.number(p['물류비']) || 0,
+    vatIncluded: !!np.check(p['부가세포함']),
+    totalAmount: np.number(p['합계']) || 0,
+    repairs,
+    files,
   };
 }
 function mapNotionInquiry(row){
@@ -6990,6 +7015,7 @@ function mapNotionProduct(row){
     marginPct:  np.number(p['마진율']),
     priceManual:!!np.check(p['출고단가수동']),
     stock:      np.number(p['재고수량']),
+    safetyStock:np.number(p['안전재고']),
     weight:     np.number(p['중량']),
     imgs,
     createdDate:  np.date(p['최초등록일']),
@@ -7222,7 +7248,7 @@ async function pullFromNotion(opts){
         // 견적/명세서
         'subject','cliManager','ourManager','payment','delivery','cliMemo','intMemo','sentAt','repliedAt','vatIncluded','validUntil','issuedAt','itemSummary',
         // AS
-        'item','client','billing','defectType',
+        'item','client','billing','defectType','shippingFee','vatIncluded','totalAmount','repairs',
         // 업무일지
         'done','ap',
         // 영업제안
@@ -7438,7 +7464,7 @@ async function pullFromNotion(opts){
     proposals     = mergeRows(propRows, proposals,      mapNotionProposal,  ['images','memo','productId'], '영업제안', notionCfg.propDb);
     clients       = mergeRows(cliRows,  clients,        mapNotionClient,    ['files'], '고객사',   notionCfg.clientDb);
     tasks         = mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
-    asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        [], 'AS',       notionCfg.asDb);
+    asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        ['repairs','files'], 'AS',       notionCfg.asDb);
     productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['imgs','importSource','createdAt'], '제품DB',   notionCfg.productDb);
     invoiceHistory= mergeRows(invRows,  invoiceHistory, mapNotionInvoice,   ['items','ordId'], '청구이력', notionCfg.invDb);
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
@@ -10677,6 +10703,7 @@ async function syncProductToNotion(pd, update){
     "마진율":{"number":+pd.marginPct||0},
     "출고단가수동":{"checkbox":!!pd.priceManual},
     "재고수량":{"number":+pd.stock||0},
+    "안전재고":{"number":+pd.safetyStock||0},
     "중량":{"number":+pd.weight||0},
   };
   if(pd.type)    p["유형"]={"select":{"name":pd.type}};
@@ -21624,7 +21651,7 @@ function initLastTab(){
   try{
     const stored = localStorage.getItem('ek3_lastTab');
     // 유효한 탭 이름인지 확인
-    const validTabs = ['dash','sample','order','schedule','as','products','sales','invoices'];
+    const validTabs = ['dash','sample','order','schedule','as','io','products','sales','invoices'];
     if(stored && validTabs.includes(stored)) lastTab = stored;
   }catch(e){}
   try{

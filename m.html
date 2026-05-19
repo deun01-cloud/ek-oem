@@ -735,6 +735,8 @@ const KR_HOLIDAYS={
 // ────────────────────────────────────────
 function goPage(id){
   curPage=id;
+  // 새로고침 후 복원용으로 마지막 페이지 저장
+  try{ localStorage.setItem('ek3m_lastPage', id); }catch(e){}
   document.querySelectorAll('.page').forEach(p=>p.classList.toggle('active',p.id===id));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.pg===id));
   closeDayPop();
@@ -1874,13 +1876,13 @@ async function saveTask(taskId){
     showToast('🔄 노션 ' + (isEdit?'수정':'등록') + ' 중...','info');
     try{
       const props = {
-        "내용":{title:[{text:{content:updated.cont}}]},
+        "업무내용":{title:[{text:{content:updated.cont}}]},
         "날짜":{date:{start:updated.date}},
         "카테고리":{select:{name:updated.cat}},
         "비고":{rich_text:[{text:{content:updated.note||''}}]},
         "완료":{checkbox:!!updated.done}
       };
-      if(updated.ap) props["시간대"] = {select:{name:updated.ap}};
+      if(updated.ap) props["오전오후"] = {select:{name:updated.ap}};
       if(isEdit && updated._notionId){
         await nUpdate(updated._notionId, props);
       } else {
@@ -5902,7 +5904,14 @@ window.onload = async ()=>{
   // 버전 표시
   const verEl = document.getElementById('appVer');
   if(verEl) verEl.textContent = 'v' + APP_VERSION.slice(-2);
-  renderDash();
+  // 새로고침 후 마지막 페이지 복원 (없으면 캘린더로 기본 진입)
+  let lastPage = 'pgDash';
+  try{
+    const stored = localStorage.getItem('ek3m_lastPage');
+    const valid = ['pgDash','pgOrd','pgSmp','pgIO','pgMore'];
+    if(stored && valid.includes(stored)) lastPage = stored;
+  }catch(e){}
+  try{ goPage(lastPage); }catch(e){ renderDash(); }
 
   // 알림: 노션 미설정 시 안내
   if(!notionCfg || !notionCfg.workerUrl){
