@@ -7177,11 +7177,30 @@ async function pullFromNotion(opts){
       });
 
       // 2단계: 기존처럼 병합 (로컬 _notionId 일치 항목 보존)
-      const PROTECT_MS_FIELDS = 60 * 1000;
+      // ⚠ 보호 시간: 노션 PATCH가 PULL에 반영되는 데 시간이 걸림. 3분으로 안전 마진.
+      // 너무 길면 다른 작업자의 변경이 늦게 반영되지만, 짧으면 본인의 변경이 노션 옛 값으로 덮어쓰기됨
+      const PROTECT_MS_FIELDS = 180 * 1000;
       const nowForProtect = Date.now();
       // 사용자 직접 입력 필드들 — 노션 eventual consistency 보호 대상
       // 최근 60초 안에 push된 항목은 노션 값보다 로컬 값을 우선 (push가 아직 노션에 반영 안 됐을 수 있음)
-      const USER_FIELDS = ['status','memo','memoList','completedAt','due','reqDate','ship','factShip','date','vendor','manager','no','desc','devNote','caution','notes','price','costPrice','devCost','cnyPrice','stock','title','content','reply','phone','address','recipient','brand','shipStatus','matchStatus','returnStatus','returnReason','returnRequestedAt','returnCompletedAt','kind','flow','qty','items','invoice','user'];
+      const USER_FIELDS = [
+        // 상태/날짜
+        'status','completedAt','due','reqDate','ship','factShip','date',
+        // 텍스트 — 모든 DB 공통
+        'memo','memoList','notes','desc','devNote','caution','title','content','reply',
+        // 거래처/담당자/번호
+        'vendor','manager','no','phone','address','email','recipient','brand','contact',
+        // 제품DB 텍스트/선택 필드 (★ 품명/품번/유형/소재/도금 등 — 빠지면 노션 풀 시 옛 값으로 덮어쓰기됨)
+        'name','code','type','mat','plating','size','metal','platingSpec','priceManual',
+        // 숫자 필드 (제품DB / 거래 / 재고)
+        'price','costPrice','devCost','cnyPrice','stock','safetyStock','weight','matRate','marginPct','prodCost','unitPrice','qty','total','supplyAmt','tax',
+        // 출입고/반품
+        'shipStatus','matchStatus','returnStatus','returnReason','returnRequestedAt','returnCompletedAt','kind','flow',
+        // 견적/명세서
+        'subject','cliManager','ourManager','payment','delivery','cliMemo','intMemo','sentAt','repliedAt','vatIncluded','validUntil','issuedAt',
+        // 기타
+        'items','invoice','user','initials','cat','grade','cycle','brandStyle','materials','priceRange','itemCode','sz1','sz2','sz3','sz4','wt','engr','card'
+      ];
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map(x=>[x._notionId,x]));
       // 새 id 생성 시 충돌 방지: 카운터 + 노션 페이지 ID 해시 사용
       // (Date.now()+Math.random()은 같은 ms 안에 여러 건 매핑되면 부동소수점 정밀도 손실로 충돌 가능)
@@ -7239,9 +7258,9 @@ async function pullFromNotion(opts){
       const mergedKeys=new Set(merged.map(dupKey).filter(Boolean));
       const mergedNotionIds=new Set(merged.map(x=>x._notionId).filter(Boolean));
 
-      // ⏰ 노션 eventual consistency 보호: 최근 60초 안에 동기화된 항목은
+      // ⏰ 노션 eventual consistency 보호: 최근 3분 안에 동기화된 항목은
       // 노션 풀 결과에 아직 반영 안 됐을 수 있으므로 보존
-      const PROTECT_MS = 60 * 1000;
+      const PROTECT_MS = 180 * 1000;
       const now = Date.now();
       const recentlySynced = local.filter(x => {
         if(!x._notionId) return false;
