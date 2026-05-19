@@ -619,6 +619,28 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
   <div class="fr2"><div class="fg"><label>브랜드 성향</label><input class="fi" id="cl_bs"></div><div class="fg"><label>타겟 가격대</label><select class="fs" id="cl_pr"><option>~2만원</option><option>2~5만원</option><option>5~10만원</option><option>10만원 이상</option></select></div></div>
   <div class="fg"><label>선호 소재</label><input class="fi" id="cl_mat" placeholder="14K 골드, 스털링 실버 등"></div>
+
+  <!-- 📎 사업자 파일 첨부 (사업자등록증, 통장사본 등) -->
+  <div class="fg">
+    <label style="display:flex;align-items:center;gap:6px">
+      📎 사업자 파일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(사업자등록증, 통장사본 등 — PDF·이미지·엑셀)</span>
+    </label>
+    <div class="drop-zone" style="padding:14px 18px;cursor:pointer;min-height:unset"
+      onclick="document.getElementById('cl_fileInput').click()"
+      ondragover="event.preventDefault();this.style.background='var(--gold-bg)';this.style.borderColor='var(--gold)'"
+      ondragleave="this.style.background='';this.style.borderColor=''"
+      ondrop="event.preventDefault();this.style.background='';this.style.borderColor='';handleClFileDrop(event)">
+      <input type="file" id="cl_fileInput" multiple style="display:none"
+        accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.heic,.xlsx,.xls,.csv,.doc,.docx"
+        onchange="handleClFiles(event)">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:18px">📎</span>
+        <span style="font-size:11.5px;color:var(--t3)">파일 드래그·클릭·붙여넣기 (Ctrl+V)</span>
+      </div>
+    </div>
+    <div id="cl_filePrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
+  </div>
+
   <div class="fg"><label>메모</label><textarea class="fta" id="cl_mo"></textarea></div>
   <div class="ma"><button class="btn bg" onclick="closeM('mCl')">취소</button><button class="btn bp-red" id="cl_delBtn" style="display:none" onclick="deleteClient()">삭제</button><button class="btn bp" onclick="saveCl()">저장</button></div>
 </div></div>
@@ -6831,6 +6853,15 @@ function mapNotionProposal(row){
 }
 function mapNotionClient(row){
   const p=row.properties||{};
+  // 사업자 파일 파싱 (JSON 텍스트 필드)
+  let files = [];
+  try{
+    const fj = np.text(p['사업자파일JSON']);
+    if(fj){
+      const parsed = JSON.parse(fj);
+      if(Array.isArray(parsed)) files = parsed;
+    }
+  }catch(e){ /* 무시 */ }
   return{
     _notionId:row.id,
     name:      np.title(p['고객사명']),
@@ -6846,6 +6877,7 @@ function mapNotionClient(row){
     cat:       np.select(p['카테고리']),
     grade:     np.select(p['등급']),
     status:    np.select(p['상태'])==='미활성'?'inactive':'active',
+    files,
   };
 }
 function mapNotionTask(row){
@@ -7337,11 +7369,11 @@ async function pullFromNotion(opts){
     }
 
     // 각 테이블 매핑
-    samples       = mergeRows(smpRows,  samples,        mapNotionSample,    ['imgs','sourceDoc','cadFiles','refs','aiParsed','itemNo','sz2','sz3','sz4','wt','engr','card','devNote','caution','qty','invNo','factShip'], '샘플',     notionCfg.smpDb);
-    orders        = mergeRows(ordRows,  orders,         mapNotionOrder,     ['files','rows','aiParsed','factShip','completedAt'], '발주',     notionCfg.ordDb);
+    samples       = mergeRows(smpRows,  samples,        mapNotionSample,    ['imgs','sourceDoc','cadFiles','refs','aiParsed','itemNo','sz2','sz3','sz4','wt','engr','card','devNote','caution','qty','invNo','factShip','dueHistory'], '샘플',     notionCfg.smpDb);
+    orders        = mergeRows(ordRows,  orders,         mapNotionOrder,     ['files','rows','aiParsed','factShip','completedAt','memoList','shipHistory'], '발주',     notionCfg.ordDb);
     procItems     = mergeRows(procRows, procItems,      mapNotionProc,      ['orderId'], '공정',     notionCfg.procDb);
     proposals     = mergeRows(propRows, proposals,      mapNotionProposal,  ['images','memo','productId'], '영업제안', notionCfg.propDb);
-    clients       = mergeRows(cliRows,  clients,        mapNotionClient,    [], '고객사',   notionCfg.clientDb);
+    clients       = mergeRows(cliRows,  clients,        mapNotionClient,    ['files'], '고객사',   notionCfg.clientDb);
     tasks         = mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
     asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        [], 'AS',       notionCfg.asDb);
     productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['imgs','importSource','createdAt'], '제품DB',   notionCfg.productDb);
@@ -10084,9 +10116,22 @@ async function syncOrderToNotion(o, update){
     return chunks;
   };
   // 품목 상세 전체 JSON — rcvHistory도 포함해서 저장 (긴 경우 여러 청크로 분할)
-  const rowsJson=JSON.stringify(o.rows||[]);
-  // 첨부파일 URL 목록 (R2 URL 포함)
-  const filesJson=JSON.stringify((o.files||[]).map(f=>({name:f.name,url:f.url,type:f.type,r2Key:f.r2Key})));
+  // ⚠ base64 이미지는 노션에 보내지 않음 (용량 폭발 방지) — http URL만 보존
+  const rowsForNotion = (o.rows||[]).map(r=>{
+    const out = {...r};
+    if(out.img && typeof out.img === 'string' && !out.img.startsWith('http')){
+      out.img = ''; // base64 등 → 비움 (R2 업로드 완료 후 다시 sync되면 복구됨)
+    }
+    if(out.img && typeof out.img === 'object' && out.img.url && !String(out.img.url).startsWith('http')){
+      out.img = '';
+    }
+    return out;
+  });
+  const rowsJson=JSON.stringify(rowsForNotion);
+  // 첨부파일: R2 URL만 (base64는 제외)
+  const filesJson=JSON.stringify((o.files||[])
+    .filter(f=>f && f.url && String(f.url).startsWith('http'))
+    .map(f=>({name:f.name,url:f.url,type:f.type,r2Key:f.r2Key})));
   const p={
     "발주번호":{"title":[{"text":{"content":(o.no||o.id+'').slice(0,2000)}}]},
     "업체명":{"rich_text":[{"text":{"content":(o.vendor||'').slice(0,2000)}}]},
@@ -10265,6 +10310,15 @@ async function syncClientToNotion(cl, update){
   if(!notionCfg.workerUrl||!notionCfg.clientDb){
     throw new Error('Notion 미연결: 고객사 DB');
   }
+  // 사업자 파일: R2 URL만 (base64는 제외)
+  const filesJson = (() => {
+    try{
+      const arr = (cl.files||[])
+        .filter(f => f && f.url && String(f.url).startsWith('http'))
+        .map(f => ({name:f.name||'', url:f.url, type:f.type||'', r2Key:f.r2Key||''}));
+      return JSON.stringify(arr);
+    }catch(e){ return '[]'; }
+  })();
   const p={
     "고객사명":{"title":[{"text":{"content":cl.name||''}}]},
     "이니셜":{"rich_text":[{"text":{"content":cl.initials||''}}]},
@@ -10275,6 +10329,7 @@ async function syncClientToNotion(cl, update){
     "선호소재":{"rich_text":[{"text":{"content":cl.materials||''}}]},
     "가격대":{"rich_text":[{"text":{"content":cl.priceRange||''}}]},
     "메모":{"rich_text":[{"text":{"content":cl.memo||''}}]},
+    "사업자파일JSON":{"rich_text":[{"text":{"content":filesJson.slice(0,2000)}}]},
     "제안주기_주":{"number":+cl.cycle||4},
     "상태":{"select":{"name":cl.status==='inactive'?'미활성':'활성'}},
   };
@@ -10365,9 +10420,12 @@ async function syncInqToNotion(q, update){
   if(!notionCfg.workerUrl||!notionCfg.inqDb){
     throw new Error('Notion 미연결: 고객사 문의 DB');
   }
+  // ⚠ R2/외부 URL만 노션에 저장 (base64는 용량 폭발 → 제외)
   const safeJson=(arr)=>{
     try{
-      const lite=(arr||[]).map(x=>({name:x.name||'',url:x.url||'',type:x.type||'',size:x.size||0}));
+      const lite=(arr||[])
+        .filter(x => x && x.url && String(x.url).startsWith('http'))
+        .map(x=>({name:x.name||'',url:x.url||'',type:x.type||'',size:x.size||0}));
       return JSON.stringify(lite).slice(0,1900);
     }catch(e){ return '[]'; }
   };
@@ -10601,12 +10659,19 @@ async function syncInvoiceToNotion(inv, update){
   if(!notionCfg.workerUrl||!notionCfg.invDb){
     throw new Error('Notion 미연결: 거래명세서 DB');
   }
+  // 품목 상세: base64 이미지가 있으면 노션 전송 전에 제거 (용량 폭발 방지)
+  const cleanItems = (inv.items||[]).map(it=>{
+    const out = {...it};
+    if(out.img && typeof out.img === 'string' && !out.img.startsWith('http')) out.img = '';
+    if(out.img && typeof out.img === 'object' && out.img.url && !String(out.img.url).startsWith('http')) out.img = '';
+    return out;
+  });
   const p={
     "고객사":{"title":[{"text":{"content":inv.vendor||''}}]},
     "발주번호":{"rich_text":[{"text":{"content":inv.ordNo||''}}]},
     "품목내역":{"rich_text":[{"text":{"content":(inv.itemSummary||'').slice(0,2000)}}]},
     // 품목 상세 (행 단위 정보 — 카피본 렌더에서 사용)
-    "품목JSON":{"rich_text":[{"text":{"content":JSON.stringify(inv.items||[]).slice(0,2000)}}]},
+    "품목JSON":{"rich_text":[{"text":{"content":JSON.stringify(cleanItems).slice(0,2000)}}]},
     "메모":{"rich_text":[{"text":{"content":inv.memo||''}}]},
     "공급가액":{"number":+inv.supplyAmt||0},
     "부가세":{"number":+inv.tax||0},
@@ -10682,6 +10747,20 @@ async function syncQuoteToNotion(qt, update){
   if(!notionCfg.workerUrl||!notionCfg.quoteDb||!qt) return;
   const txt=v=>String(v==null?'':v);
   const j=v=>JSON.stringify(v||[]);
+  // ⚠ base64 이미지는 노션에 안 보냄 (R2 URL만)
+  const jFilesOnly=arr=>{
+    const filtered = (arr||[])
+      .filter(f => f && f.url && String(f.url).startsWith('http'))
+      .map(f => ({name:f.name||'', url:f.url, type:f.type||''}));
+    return JSON.stringify(filtered);
+  };
+  // 품목 행에서 base64 이미지 제거
+  const cleanRows = (qt.rows||[]).map(r=>{
+    const out = {...r};
+    if(out.img && typeof out.img === 'string' && !out.img.startsWith('http')) out.img = '';
+    if(out.img && typeof out.img === 'object' && out.img.url && !String(out.img.url).startsWith('http')) out.img = '';
+    return out;
+  });
   const p={
     "견적번호":{"title":[{"text":{"content":qt.no||''}}]},
     "고객사":{"rich_text":[{"text":{"content":txt(qt.vendor)}}]},
@@ -10700,9 +10779,9 @@ async function syncQuoteToNotion(qt, update){
     "발송일시":{"rich_text":[{"text":{"content":txt(qt.sentAt)}}]},
     "회신일시":{"rich_text":[{"text":{"content":txt(qt.repliedAt)}}]},
     "샘플IDs":{"rich_text":[{"text":{"content":j(qt.sampleIds)}}]},
-    "품목JSON":{"rich_text":[{"text":{"content":j(qt.rows).slice(0,2000)}}]},
-    "이미지JSON":{"rich_text":[{"text":{"content":j(qt.imgs).slice(0,2000)}}]},
-    "파일JSON":{"rich_text":[{"text":{"content":j(qt.files).slice(0,2000)}}]},
+    "품목JSON":{"rich_text":[{"text":{"content":JSON.stringify(cleanRows).slice(0,2000)}}]},
+    "이미지JSON":{"rich_text":[{"text":{"content":jFilesOnly(qt.imgs).slice(0,2000)}}]},
+    "파일JSON":{"rich_text":[{"text":{"content":jFilesOnly(qt.files).slice(0,2000)}}]},
   };
   if(qt.issuedAt)   p["발행일"]={"date":{"start":qt.issuedAt}};
   if(qt.validUntil) p["유효기한"]={"date":{"start":qt.validUntil}};
@@ -21624,6 +21703,9 @@ function openClModal(idOrNull){
   sv('cl_mat',cl?cl.materials||'':'');
   sv('cl_pr',cl?cl.priceRange||'~2만원':'~2만원');
   sv('cl_mo',cl?cl.memo||'':'');
+  // 사업자 파일 버퍼 초기화
+  window.clFilesBuf = cl && Array.isArray(cl.files) ? [...cl.files] : [];
+  renderClFilePrev();
   document.getElementById('mCl_t').textContent=cl?'고객사 수정':'고객사 등록';
   document.getElementById('cl_delBtn').style.display=cl?'':'none';
   updateInitPreview();
@@ -21642,7 +21724,8 @@ async function saveCl(){
   const obj={
     name:nm, initials:init, contact:gv('cl_ct'), phone:gv('cl_ph'), email:gv('cl_em'),
     cat:gv('cl_ca'), grade:gv('cl_gr'), cycle:parseFloat(gv('cl_cycle'))||4,
-    brandStyle:gv('cl_bs'), materials:gv('cl_mat'), priceRange:gv('cl_pr'), status:'active', memo:gv('cl_mo')
+    brandStyle:gv('cl_bs'), materials:gv('cl_mat'), priceRange:gv('cl_pr'), status:'active', memo:gv('cl_mo'),
+    files: Array.isArray(window.clFilesBuf) ? [...window.clFilesBuf] : []
   };
   if(id){
     // 충돌 감지: 다른 사용자가 사이에 수정했는지 체크
@@ -21684,6 +21767,109 @@ function _doSaveCl(id, obj){
   document.getElementById('mCl').classList.remove('open');
   sv('cl_id',''); sv('cl_init','');
   _salesInited=false; renderSalesTab();
+}
+
+// ─── 고객사 사업자 파일 첨부 핸들러 ───
+window.clFilesBuf = window.clFilesBuf || [];
+
+function handleClFiles(ev){
+  const files = ev.target.files;
+  if(!files || !files.length) return;
+  _loadClFiles([...files]);
+  ev.target.value = ''; // 같은 파일 다시 선택 가능하게
+}
+
+function handleClFileDrop(ev){
+  const dt = ev.dataTransfer;
+  if(!dt || !dt.files || !dt.files.length) return;
+  _loadClFiles([...dt.files]);
+}
+
+function _loadClFiles(files){
+  files.forEach(f=>{
+    if(f.size > 20 * 1024 * 1024){
+      showToast(`⚠ "${f.name}" 파일이 20MB를 초과합니다`,'var(--red)');
+      return;
+    }
+    const r = new FileReader();
+    r.onload = ev => {
+      const entry = {
+        name: f.name,
+        type: f.type || '',
+        size: f.size,
+        url: ev.target.result // base64 우선 — R2 업로드 후 교체
+      };
+      window.clFilesBuf.push(entry);
+      renderClFilePrev();
+      // R2 백그라운드 업로드
+      if(typeof uploadFileToR2 === 'function'){
+        uploadFileToR2(f).then(r2 => {
+          if(r2 && r2.publicUrl){
+            const idx = window.clFilesBuf.indexOf(entry);
+            if(idx >= 0){
+              window.clFilesBuf[idx].url = r2.publicUrl;
+              window.clFilesBuf[idx].r2Key = r2.key || '';
+              renderClFilePrev();
+            }
+          }
+        }).catch(e => console.warn('R2 업로드 실패:', e));
+      }
+    };
+    r.readAsDataURL(f);
+  });
+}
+
+function removeClFile(idx){
+  if(!Array.isArray(window.clFilesBuf)) return;
+  window.clFilesBuf.splice(idx, 1);
+  renderClFilePrev();
+}
+
+function renderClFilePrev(){
+  const el = document.getElementById('cl_filePrev');
+  if(!el) return;
+  const files = window.clFilesBuf || [];
+  if(!files.length){ el.innerHTML = ''; return; }
+  el.innerHTML = files.map((f, i) => {
+    const type = (f.type || '').toLowerCase();
+    const ext = ((f.name || '').split('.').pop() || '').toUpperCase().slice(0, 4);
+    const isImg = type.startsWith('image/') || (f.url && String(f.url).startsWith('data:image/'));
+    const isPdf = type === 'application/pdf' || ext === 'PDF';
+    let icon = '📄', iconBg = 'var(--s2)';
+    if(isPdf){ icon = '📕'; iconBg = '#fee'; }
+    else if(['XLSX','XLS','CSV'].includes(ext)){ icon = '📊'; iconBg = '#efe'; }
+    else if(['DOC','DOCX'].includes(ext)){ icon = '📘'; iconBg = '#eef'; }
+    const isHttp = f.url && String(f.url).startsWith('http');
+    const statusBadge = isHttp
+      ? '<span style="position:absolute;bottom:2px;right:2px;background:var(--grn);color:#fff;font-size:8px;padding:1px 4px;border-radius:3px;font-weight:700">R2</span>'
+      : '<span style="position:absolute;bottom:2px;right:2px;background:var(--org);color:#fff;font-size:8px;padding:1px 4px;border-radius:3px;font-weight:700">⏳</span>';
+    const thumb = isImg
+      ? `<img src="${f.url}" style="width:100%;height:100%;object-fit:cover">`
+      : `<div style="width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:${iconBg};font-size:22px"><div>${icon}</div><div style="font-size:8px;color:var(--t3);margin-top:2px;font-weight:700">${ext||''}</div></div>`;
+    const safeName = (f.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    return `<div style="position:relative;width:74px;height:74px;border:1px solid var(--bdr);border-radius:6px;overflow:hidden;cursor:pointer" onclick="openClFilePrev(${i})" title="${safeName}">
+      ${thumb}
+      ${statusBadge}
+      <button onclick="event.stopPropagation();removeClFile(${i})" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.7);color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;cursor:pointer;line-height:1;padding:0">×</button>
+      <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.55);color:#fff;font-size:8.5px;padding:1px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${(f.name||'').slice(0,16)}</div>
+    </div>`;
+  }).join('');
+}
+
+function openClFilePrev(idx){
+  const f = (window.clFilesBuf || [])[idx];
+  if(!f || !f.url){ showToast('파일을 열 수 없습니다','var(--red)'); return; }
+  const type = (f.type || '').toLowerCase();
+  const isImg = type.startsWith('image/') || String(f.url).startsWith('data:image/');
+  if(isImg){
+    // 이미지: openPrevList 사용
+    if(typeof openPrevList === 'function'){
+      openPrevList([{url: f.url, name: f.name || '파일'}], 0, false);
+    }
+  } else {
+    // PDF 등: 새 탭으로 열기
+    window.open(f.url, '_blank');
+  }
 }
 
 function deleteClient(){
