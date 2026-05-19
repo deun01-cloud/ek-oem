@@ -7185,21 +7185,33 @@ async function pullFromNotion(opts){
       // 최근 60초 안에 push된 항목은 노션 값보다 로컬 값을 우선 (push가 아직 노션에 반영 안 됐을 수 있음)
       const USER_FIELDS = [
         // 상태/날짜
-        'status','completedAt','due','reqDate','ship','factShip','date',
+        'status','completedAt','due','reqDate','ship','factShip','date','shipDate','receivedAt',
         // 텍스트 — 모든 DB 공통
-        'memo','memoList','notes','desc','devNote','caution','title','content','reply',
+        'memo','memoList','notes','desc','devNote','caution','title','content','reply','note','cont',
         // 거래처/담당자/번호
-        'vendor','manager','no','phone','address','email','recipient','brand','contact',
+        'vendor','manager','no','phone','address','email','recipient','brand','contact','ordNo',
         // 제품DB 텍스트/선택 필드 (★ 품명/품번/유형/소재/도금 등 — 빠지면 노션 풀 시 옛 값으로 덮어쓰기됨)
         'name','code','type','mat','plating','size','metal','platingSpec','priceManual',
         // 숫자 필드 (제품DB / 거래 / 재고)
-        'price','costPrice','devCost','cnyPrice','stock','safetyStock','weight','matRate','marginPct','prodCost','unitPrice','qty','total','supplyAmt','tax',
+        'price','costPrice','devCost','cnyPrice','stock','safetyStock','weight','matRate','marginPct','prodCost','unitPrice','qty','total','supplyAmt','tax','unitCost','totalPaid','paymentRatio','cnCostTotal','ordQty','rcvQty','stageIdx',
         // 출입고/반품
-        'shipStatus','matchStatus','returnStatus','returnReason','returnRequestedAt','returnCompletedAt','kind','flow',
+        'shipStatus','matchStatus','returnStatus','returnReason','returnRequestedAt','returnCompletedAt','kind','flow','deliveryMemo',
         // 견적/명세서
-        'subject','cliManager','ourManager','payment','delivery','cliMemo','intMemo','sentAt','repliedAt','vatIncluded','validUntil','issuedAt',
+        'subject','cliManager','ourManager','payment','delivery','cliMemo','intMemo','sentAt','repliedAt','vatIncluded','validUntil','issuedAt','itemSummary',
+        // AS
+        'item','client','billing','defectType',
+        // 업무일지
+        'done','ap',
+        // 영업제안
+        'clientId','clientName','reaction','nextDate',
+        // 고객문의
+        'category',
+        // 공정
+        'shipped',
         // 기타
-        'items','invoice','user','initials','cat','grade','cycle','brandStyle','materials','priceRange','itemCode','sz1','sz2','sz3','sz4','wt','engr','card'
+        'items','invoice','user','initials','cat','grade','cycle','brandStyle','materials','priceRange','itemCode','sz1','sz2','sz3','sz4','wt','engr','card',
+        // 자동 메타데이터 (덮어쓰기 방지)
+        'createdDate','lastModified'
       ];
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map(x=>[x._notionId,x]));
       // 새 id 생성 시 충돌 방지: 카운터 + 노션 페이지 ID 해시 사용
