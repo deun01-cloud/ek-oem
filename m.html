@@ -3351,18 +3351,28 @@ async function uploadImageToR2(file){
       const j = await r.json();
       // PC 워커는 {success, key, name, type, size}를 반환 — key로 URL 만들기
       // (구 워커가 j.url을 직접 반환하면 그것도 사용)
+      let r2Url = null, r2Key = '';
       if(j && j.success && j.key){
+        r2Url = notionCfg.workerUrl.replace(/\/+$/,'') + '/r2/file/' + encodeURIComponent(j.key);
+        r2Key = j.key;
+      } else if(j && j.url){
+        r2Url = j.url;
+        r2Key = j.key || '';
+      } else {
+        console.warn('[R2 업로드 실패] 응답 형식 인식 못함:', j);
+      }
+      // R2 URL이 생성되면 실제 접근 가능한지 빠르게 검증 (HEAD 요청)
+      if(r2Url){
+        // ⚡ 검증 안 하고 그냥 반환 (HEAD가 R2 CORS 등으로 실패할 수 있음)
+        //    대신 _localDataUrl로 base64도 같이 보관 → R2 깨지면 fallback으로 사용 가능
         return {
           name: file.name||'사진',
-          url: notionCfg.workerUrl.replace(/\/+$/,'') + '/r2/file/' + encodeURIComponent(j.key),
+          url: r2Url,
           type: file.type||'image/jpeg',
-          r2Key: j.key
+          r2Key: r2Key,
+          _localDataUrl: processed // ⚡ R2 깨졌을 때 fallback용
         };
       }
-      if(j && j.url){
-        return {name:file.name||'사진', url:j.url, type:file.type||'image/jpeg', r2Key:j.key||''};
-      }
-      console.warn('[R2 업로드 실패] 응답 형식 인식 못함:', j);
     }
   }catch(e){
     console.warn('R2 업로드 실패:', e);
@@ -3380,7 +3390,7 @@ function photoWidget(id, files){
   return `
     <div class="photo-grid" id="${id}_grid">
       ${files.map((f,i)=>`<div class="photo-item">
-        <img src="${f.url}" alt="" onclick="openLightbox(_photoGet('${id}'), ${i})">
+        <img src="${f.url}" alt="" onclick="openLightbox(_photoGet('${id}'), ${i})"${f._localDataUrl?` onerror="this.onerror=null;this.src='${f._localDataUrl}'"`:''}>
         <div class="rm" onclick="_photoRemove('${id}',${i})">✕</div>
       </div>`).join('')}
       <label class="photo-add" for="${id}_cam">
@@ -3420,7 +3430,7 @@ function _photoRefresh(id){
   if(!grid) return;
   const files = _photoGet(id);
   grid.innerHTML = `${files.map((f,i)=>`<div class="photo-item">
-    <img src="${f.url}" alt="" onclick="openLightbox(_photoGet('${id}'), ${i})">
+    <img src="${f.url}" alt="" onclick="openLightbox(_photoGet('${id}'), ${i})"${f._localDataUrl?` onerror="this.onerror=null;this.src='${f._localDataUrl}'"`:''}>
     <div class="rm" onclick="_photoRemove('${id}',${i})">✕</div>
   </div>`).join('')}
   <label class="photo-add" for="${id}_cam">
@@ -5483,7 +5493,11 @@ async function saveIo(ioId){
     memo: document.getElementById('io_memo').value.trim(),
     user: document.getElementById('io_user').value.trim(),
     applyStock,
-    files: _photoFiles,
+    // 사진: _localDataUrl은 임시(표시용)이라 localStorage엔 저장하지 않음 (용량 절약)
+    files: (_photoFiles||[]).map(f=>{
+      const {_localDataUrl, ...rest} = f;
+      return rest;
+    }),
     createdAt: (old && old.createdAt) || new Date().toISOString()
   };
 
@@ -5606,18 +5620,32 @@ async function deleteIo(ioId){
   const io = ioItems.find(x=>x.id==ioId);
   if(!io) return;
   if(!confirm(`이 기록 "${io.title||io.vendor}"을(를) 삭제할까요?`)) return;
+  // 1) 노션에서 먼저 archive (실패 시 사용자 확인)
+  let notionOk = true;
   if(io._notionId && notionCfg && notionCfg.workerUrl){
     try{
-      await notionProxy(`/pages/${io._notionId}`, {method:'PATCH', body:JSON.stringify({archived:true})});
+      const r = await notionProxy(`/pages/${io._notionId}`, {method:'PATCH', body:JSON.stringify({archived:true})});
+      // 노션 응답에 error 있으면 실패
+      if(!r || r.object === 'error' || r.error){
+        notionOk = false;
+        console.warn('[deleteIo] 노션 archive 실패:', r);
+      }
     }catch(e){
-      showToast('노션 삭제 실패 — 로컬만 삭제','warn');
+      notionOk = false;
+      console.warn('[deleteIo] 노션 archive 예외:', e);
     }
   }
+  if(!notionOk){
+    if(!confirm('⚠ Notion에서 삭제하지 못했습니다.\n로컬에서만 삭제하면 다음 동기화 시 다시 나타날 수 있습니다.\n그래도 삭제하시겠습니까?')){
+      return;
+    }
+  }
+  // 2) 로컬에서 제거
   ioItems = ioItems.filter(x=>x.id!=ioId);
   saveAll();
   closeModal();
   renderIoList();
-  showToast('✓ 삭제됨','success');
+  showToast(notionOk ? '✓ 삭제됨' : '⚠ 로컬만 삭제 — 노션 실패','success');
 }
 
 

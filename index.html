@@ -5612,24 +5612,18 @@ function deleteInvRecord(id){
     showToast('🔒 '+lockInfo.message,'var(--org)', 4500);
     return;
   }
-  showConfirm((v&&v.vendor||'명세서')+' 이력을 삭제합니다.\n(Notion에서 같은 발주번호의 모든 페이지가 함께 삭제됩니다)',function(){
-    // 1) Notion에서 같은 발주번호/고객사/발행일을 가진 모든 페이지 archive
-    //    (중복으로 생성된 좀비 페이지까지 함께 정리)
-    if(v && notionCfg.workerUrl && notionCfg.invDb){
-      archiveAllMatchingInvoices(v.ordNo, v.vendor, v.issuedAt).then(function(res){
-        if(res.archived>1){
-          showToast('🧹 Notion 페이지 '+res.archived+'개 정리됨 (중복 좀비 포함)','var(--grn)',3000);
-        } else if(res.errors){
-          showToast('⚠ Notion 일부 삭제 실패 — 콘솔 확인','var(--org)',3000);
-        }
-      }).catch(function(e){
-        console.warn('Notion 일괄 삭제 실패:', e);
-        // 실패하면 fallback으로 _notionId만이라도 archive
-        if(v._notionId) nDelete(v._notionId).catch(function(){});
+  showConfirm((v&&v.vendor||'명세서')+' 이력을 삭제합니다.\n이 명세서 한 건만 Notion에서 삭제됩니다.',function(){
+    // 1) Notion에서 해당 페이지 1건만 archive (같은 발주번호의 다른 명세서는 보호)
+    // ⚠ 옛 코드는 archiveAllMatchingInvoices로 같은 ordNo의 모든 페이지를 archive했었음
+    //   → 사용자가 일부러 만든 분할 명세서까지 같이 삭제되는 버그
+    //   → 이제는 클릭한 명세서의 _notionId만 archive
+    if(v && v._notionId && notionCfg.workerUrl && notionCfg.invDb){
+      nDelete(v._notionId).catch(function(e){
+        console.warn('Notion 페이지 archive 실패:', e);
         showToast('⚠ Notion 삭제 실패 — 로컬만 삭제됨','var(--org)',3000);
       });
     }
-    // 2) 로컬에서 제거
+    // 2) 로컬에서 제거 (클릭한 1건만)
     invoiceHistory=invoiceHistory.filter(function(x){return x.id!=id;});
     save();renderInvoiceHistory();
     showToast('✓ 삭제됨','var(--grn)');
@@ -7449,7 +7443,7 @@ async function pullFromNotion(opts){
     invoiceHistory= mergeRows(invRows,  invoiceHistory, mapNotionInvoice,   ['items','ordId'], '청구이력', notionCfg.invDb);
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
-    ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        [], '입출고',   notionCfg.ioDb);
+    ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files'], '입출고',   notionCfg.ioDb);
 
     // 풀 모드를 성공적으로 마쳤다면 마지막 풀 동기화 시각 기록
     if(!useIncremental){
@@ -8091,6 +8085,13 @@ function openIoModal(idOrNull){
         <input type="file" id="io_photo_input" accept="image/*" multiple style="display:none" onchange="_addIoPhoto(event)">
         <button type="button" onclick="document.getElementById('io_photo_input').click()" style="margin-top:6px;padding:6px 12px;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;font-size:11.5px;color:var(--t2);cursor:pointer;font-family:inherit">📷 사진 추가</button>
       </div>
+      <div class="fg" style="margin-top:10px;padding:10px 12px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:7px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;color:var(--t1);margin:0">
+          <input type="checkbox" id="io_applyStock" ${v('applyStock')?'checked':''} style="width:auto;margin:0">
+          <span>📊 제품DB 재고에 자동 반영</span>
+        </label>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:4px;margin-left:24px;line-height:1.4">입고: +수량 / 출고: -수량 · 품목이 제품DB에 있어야 적용됨 (이름 또는 품번 매칭)</div>
+      </div>
     </div>
     <div class="mb" style="display:flex;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px;align-items:center">
       ${isEdit?`<button class="btn br bs" onclick="deleteIo(${io.id})">🗑 삭제</button>`:'<span></span>'}
@@ -8176,6 +8177,7 @@ async function saveIo(idOrNull){
   const invoice = document.getElementById('io_invoice').value.trim();
   const memo = document.getElementById('io_memo').value.trim();
   const user = document.getElementById('io_user').value.trim();
+  const applyStock = document.getElementById('io_applyStock')?.checked || false;
   if(!date || !kind){
     showToast('⚠ 일자와 구분은 필수입니다','var(--red)',3000);
     return;
@@ -8189,6 +8191,7 @@ async function saveIo(idOrNull){
     ...(old||{}),
     id: old?.id || Date.now(),
     title, date, kind, flow, vendor, items, qty, invoice, memo, user,
+    applyStock,
     files: _ioPhotoBuf.slice()
   };
   if(isEdit){
@@ -8197,9 +8200,17 @@ async function saveIo(idOrNull){
   } else {
     ioItems.unshift(updated);
   }
+  // 재고 자동 반영 (신규일 때만)
+  let stockMsg = '';
+  if(applyStock && !isEdit){
+    const applied = _applyIoToStockPC(updated);
+    if(applied > 0){
+      stockMsg = ` · 재고 ${applied}건 반영`;
+    }
+  }
   save();
   closeM('mIo');
-  showToast(`✓ ${isEdit?'수정':'등록'} 완료`,'var(--grn)',2000);
+  showToast(`✓ ${isEdit?'수정':'등록'} 완료${stockMsg}`,'var(--grn)',2500);
   renderIo();
   // 노션 동기화 (백그라운드)
   if(notionCfg.workerUrl && notionCfg.ioDb){
@@ -8209,25 +8220,78 @@ async function saveIo(idOrNull){
   }
 }
 
+// 출입고 항목을 제품DB 재고에 반영 (입고:+ / 출고:-)
+function _applyIoToStockPC(io){
+  if(!Array.isArray(productDB) || !productDB.length) return 0;
+  if(!io.items) return 0;
+  const parts = String(io.items).split(/[,\n;]+/).map(s=>s.trim()).filter(Boolean);
+  const sign = io.kind === '입고' ? 1 : (io.kind === '출고' ? -1 : 0);
+  if(!sign) return 0;
+  let applied = 0;
+  parts.forEach(part => {
+    // "품목명 30개" 형태에서 수량 추출
+    const m = part.match(/^(.+?)\s*(\d+)\s*(?:개|EA|ea|pcs)?$/);
+    const name = m ? m[1].trim() : part;
+    const qty = m ? parseInt(m[2],10) : (+io.qty||0);
+    if(!qty) return;
+    const prod = productDB.find(p =>
+      (p.name||'').toLowerCase() === name.toLowerCase() ||
+      (p.code||'').toLowerCase() === name.toLowerCase()
+    );
+    if(prod){
+      // applyStockChange로 통일 (재고 이력 기록까지)
+      if(typeof applyStockChange === 'function'){
+        applyStockChange({
+          productId: prod.id,
+          delta: sign * qty,
+          type: sign>0 ? 'order_recv' : 'order_ship',
+          refId: io.id,
+          refLabel: io.title || io.vendor || '',
+          note: `[입출고] ${io.title||''}`
+        });
+      } else {
+        prod.stock = (+prod.stock||0) + (sign * qty);
+      }
+      // 노션 동기화
+      if(prod._notionId && notionCfg && notionCfg.workerUrl && typeof syncProductToNotion === 'function'){
+        syncProductToNotion(prod, true).catch(()=>{});
+      }
+      applied++;
+    }
+  });
+  return applied;
+}
+
 async function deleteIo(idOrNull){
   if(!confirm('이 입출고 기록을 삭제하시겠습니까?')) return;
   const io = ioItems.find(x=>x.id==idOrNull);
   if(!io) return;
+  // 1) 노션에서 먼저 archive (실패하면 사용자에게 알림 — 안 그러면 풀에서 다시 받아옴)
+  let notionOk = true;
+  if(io._notionId && notionCfg.workerUrl){
+    try {
+      const r = await nDelete(io._notionId);
+      // nDelete는 성공 시 응답 객체, 실패 시 null 반환
+      if(r === null){
+        notionOk = false;
+        console.warn('[deleteIo] 노션 archive 실패 — pageId:', io._notionId);
+      }
+    } catch(e){
+      notionOk = false;
+      console.warn('[deleteIo] 노션 archive 예외:', e);
+    }
+  }
+  if(!notionOk){
+    if(!confirm('⚠ Notion에서 삭제하지 못했습니다.\n로컬에서만 삭제하면 다음 동기화 시 다시 나타날 수 있어요.\n그래도 계속 삭제하시겠습니까?')){
+      return;
+    }
+  }
+  // 2) 로컬에서 제거
   ioItems = ioItems.filter(x=>x.id!=idOrNull);
   save();
   closeM('mIo');
-  showToast('✓ 삭제 완료','var(--grn)',2000);
+  showToast(notionOk ? '✓ 삭제 완료' : '⚠ 로컬만 삭제 — 노션 실패','var(--grn)',2500);
   renderIo();
-  if(io._notionId && notionCfg.workerUrl){
-    try {
-      // 노션 페이지 삭제는 archived: true
-      await fetch(`${notionCfg.workerUrl}/notion/v1/pages/${io._notionId}`, {
-        method:'PATCH',
-        headers:{'Content-Type':'application/json','Notion-Token':notionCfg.token},
-        body: JSON.stringify({archived:true})
-      });
-    } catch(e){ console.warn('노션 삭제 실패:', e); }
-  }
 }
 
 // 상세보기 (수정 모달과 동일하게 — 편집 가능)
