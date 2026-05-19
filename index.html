@@ -7579,10 +7579,11 @@ async function syncIOToNotion(io){
   try {
     if(io._notionId){
       await nUpdate(io._notionId, props);
+      io._syncedAt = new Date().toISOString();
       return true;
     } else {
       const res = await nCreate(notionCfg.ioDb, props);
-      if(res?.id){ io._notionId = res.id; return true; }
+      if(res?.id){ io._notionId = res.id; io._syncedAt = new Date().toISOString(); return true; }
     }
   } catch(e){ console.warn('IO 노션 동기화 실패:', e); }
   return false;
@@ -10025,6 +10026,10 @@ function debouncedSync(type, obj, isUpdate){
   if(!obj || obj.id==null) return;
   const fn = _syncFnMap[type];
   if(!fn){ console.warn('debouncedSync: unknown type', type); return; }
+  // 🔒 race condition 즉시 보호: 디바운스 대기(800ms) + 노션 push 시간(1~2초) 동안
+  // pull이 들어와도 로컬 값이 우선시되도록 즉시 _syncedAt 기록
+  // (노션 push 끝나면 syncFn 안에서 다시 한 번 찍히지만, 그 전에라도 보호 효력 발생)
+  try{ obj._syncedAt = new Date().toISOString(); }catch(e){}
   const key = type+':'+obj.id;
   const existing = _syncDebounceTimers.get(key);
   if(existing && existing.timer) clearTimeout(existing.timer);
@@ -10282,6 +10287,7 @@ async function syncProposalToNotion(prop, update){
     saveNotionId(proposals,prop.id,r.id,SL_K.prop);
     prop._notionId = r.id;
   }
+  prop._syncedAt = new Date().toISOString();
 }
 async function deleteProposalFromNotion(prop){
   if(prop._notionId) await nDelete(prop._notionId);
@@ -10383,6 +10389,7 @@ async function syncClientToNotion(cl, update){
     saveNotionId(clients,cl.id,r.id,SL_K.cli);
     cl._notionId = r.id;
   }
+  cl._syncedAt = new Date().toISOString();
 }
 async function deleteClientFromNotion(cl){
   if(cl._notionId) await nDelete(cl._notionId);
@@ -10487,6 +10494,7 @@ async function syncInqToNotion(q, update){
     q._notionId=r.id;
     try{ slSave(); }catch(e){}
   }
+  q._syncedAt = new Date().toISOString();
 }
 async function deleteInqFromNotion(q){
   if(q && q._notionId) await nDelete(q._notionId);
@@ -10594,6 +10602,8 @@ async function syncProductToNotion(pd, update){
     // 호출자가 _notionId를 확인할 수 있도록 객체에도 설정
     pd._notionId = r.id;
   }
+  // 🔒 race condition 보호: 노션 PATCH 직후 PULL이 옛 값을 가져와도 로컬 값을 우선시키도록 타임스탬프 기록
+  pd._syncedAt = new Date().toISOString();
   return pd;
 }
 async function deleteProductFromNotion(pd){
@@ -10745,6 +10755,7 @@ async function syncInvoiceToNotion(inv, update){
   if(inv.status)   p["상태"]={"select":{"name":inv.status}};
   if(inv._notionId){
     await nUpdate(inv._notionId,p);
+    inv._syncedAt = new Date().toISOString();
     return;
   }
   // 중복 생성 방지: 같은 키로 이미 Notion에 페이지가 있으면 그것을 update
@@ -10771,13 +10782,16 @@ async function syncInvoiceToNotion(inv, update){
         inv._notionId=existing.id;
         save();
         await nUpdate(existing.id,p);
+        inv._syncedAt = new Date().toISOString();
         return;
       }
     }catch(e){ console.warn('중복 검사 실패, 신규 생성으로 진행:',e); }
   }
   const r=await nCreate(notionCfg.invDb,p);
   if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (거래명세서)');
-  inv._notionId=r.id; save();
+  inv._notionId=r.id;
+  inv._syncedAt = new Date().toISOString();
+  save();
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -10829,6 +10843,7 @@ async function syncQuoteToNotion(qt, update){
   if(qt.type)       p["유형"]={"select":{"name":qt.type}};
   if(qt._notionId){
     await nUpdate(qt._notionId,p);
+    qt._syncedAt = new Date().toISOString();
     return;
   }
   // 중복 방지: 같은 견적번호 이미 있으면 update
@@ -10840,12 +10855,13 @@ async function syncQuoteToNotion(qt, update){
         qt._notionId=existing.id;
         slSave();
         await nUpdate(existing.id,p);
+        qt._syncedAt = new Date().toISOString();
         return;
       }
     }catch(e){ console.warn('견적 중복 검사 실패:',e); }
   }
   const r=await nCreate(notionCfg.quoteDb,p);
-  if(r?.id){ qt._notionId=r.id; slSave(); }
+  if(r?.id){ qt._notionId=r.id; qt._syncedAt = new Date().toISOString(); slSave(); }
 }
 
 async function deleteQuoteFromNotion(qt){
