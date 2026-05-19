@@ -6389,7 +6389,36 @@ async function notionCall(method, path, body, opts){
     const res=await fetch(route,{method,headers,body:body?JSON.stringify(body):undefined});
     if(!res.ok){
       let bodyText='';
-      try{ bodyText=(await res.text()||'').slice(0,200); }catch(e){}
+      try{ bodyText=(await res.text()||'').slice(0,2000); }catch(e){}
+
+      // 🩹 자동 복구: 노션이 모르는 컬럼이라고 400 거부 시, 그 컬럼만 빼고 1회 재시도
+      // 메시지 예: "개발비 is not a property that exists." 또는 "X-Y is not a property that exists"
+      if(res.status === 400 && bodyText && body && body.properties && !opts._retryNoSchema){
+        const m = bodyText.match(/([^\s"']+)\s+is not a property that exists/);
+        if(m && m[1] && body.properties[m[1]]){
+          const missingProp = m[1];
+          console.warn(`[Notion 자동복구] 노션 DB에 "${missingProp}" 컬럼이 없음 → 이 필드 빼고 재시도`);
+          const newBody = {...body, properties: {...body.properties}};
+          delete newBody.properties[missingProp];
+          // 누락 컬럼 누적 기록 (사용자 알림용)
+          if(!window._notionMissingCols) window._notionMissingCols = new Set();
+          window._notionMissingCols.add(missingProp);
+          // 첫 발견 시에만 토스트 (반복 방지)
+          if(!window._notionMissingNotified) window._notionMissingNotified = new Set();
+          if(!window._notionMissingNotified.has(missingProp)){
+            window._notionMissingNotified.add(missingProp);
+            if(typeof showToast === 'function'){
+              showToast(
+                `⚠ 노션 DB에 "${missingProp}" 컬럼이 없어 이 데이터는 노션에 저장 안 됩니다. 노션 DB에 컬럼을 추가해주세요.`,
+                'var(--org)', 6000
+              );
+            }
+          }
+          // 한 번만 재귀 재시도 (무한루프 방지)
+          return notionCall(method, path, newBody, {...opts, _retryNoSchema: true});
+        }
+      }
+
       _recordNotionFail({status:res.status, message:bodyText||res.statusText});
       _logNotionErr('Notion API error: '+res.status+(bodyText?' '+bodyText:''));
       if(_notionFailCount>=_NOTION_FAIL_THRESHOLD) _openNotionCircuit('API '+res.status+' 반복');
