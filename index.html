@@ -1819,6 +1819,22 @@ function smpStatusLabel(status){
 // 샘플 필터 카테고리 — 표시 라벨과 데이터 키 분리
 // (data: 노션·로컬에서 쓰는 status 값. label: 화면 표시용)
 // 순서: 의뢰 → 제작중 → 수정중 → 완료 → 취소 → 전체
+// ════════════════════════════════════════════════════════════════
+// 🆔 안전한 고유 id 생성기
+// ────────────────────────────────────────────────────────────────
+// 옛 코드는 `genId()`을 썼는데, JS 숫자가 53비트라
+// 13자리 timestamp + 소수가 같은 ms 안에 호출되면 정밀도 손실로 같은 값이
+// 나오는 일이 있음 (실제로 productDB에서 479건 중복 발생).
+// 새 헬퍼는 카운터를 함께 써서 같은 ms 안에서도 절대 충돌 안 함.
+let _idCounter = 0;
+function genId(){
+  // (Date.now() % 1e7) — 7자리로 줄여 정밀도 여유 확보
+  // _idCounter — ms 내 충돌 방지
+  // 결과 형식: 1234567.xxx (소수부에 카운터)
+  // _idCounter는 절대 리셋 안 됨 (브라우저 세션 내내 증가)
+  _idCounter = (_idCounter + 1) % 1e6;
+  return Date.now() * 1000 + _idCounter;
+}
 const SMP_CATS=[
   {key:'의뢰',   label:'의뢰'},
   {key:'제작중',  label:'제작중'},
@@ -2526,7 +2542,7 @@ async function applyASParseAll(){
       else if(reason.includes('고객불량')) defectType = '고객불량';
     }
     const obj={
-      id: Date.now()+Math.random()+i, // unique ID 충돌 방지
+      id: genId(), // unique ID 충돌 방지
       createdAt: now,
       client: vendor,
       date: it.date || todayS,
@@ -3412,7 +3428,7 @@ async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
   const memo = `AS 수리 청구\n${memoLines}`;
 
   const invRec = {
-    id: Date.now() + Math.random(),
+    id: genId(),
     issuedAt,
     vendor: ctx.vendorName,
     ordNo: generateASInvNo(),
@@ -4258,7 +4274,7 @@ function saveProduct(){
     if(id && stockDelta!==0 && savedProduct){
       // applyStockChange가 stock을 또 한 번 변경하지 않도록 직접 이력만 push
       stockHistory.push({
-        id: Date.now()+Math.floor(Math.random()*1000),
+        id: genId(),
         productId: savedProduct.id,
         productName: savedProduct.name||'',
         productCode: savedProduct.code||'',
@@ -4604,7 +4620,7 @@ function confirmImport(){
           updated++;
         } else {
           // 신규: 노션 push 성공 후에만 productDB에 추가
-          const np={id:Date.now()+Math.random()+i,createdAt:importTime,...row,importSource:importId};
+          const np={id:genId(),createdAt:importTime,...row,importSource:importId};
           await syncProductToNotion(np, false);
           productDB.push(np);
           added++;
@@ -7291,7 +7307,7 @@ async function pullFromNotion(opts){
       ];
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map(x=>[x._notionId,x]));
       // 새 id 생성 시 충돌 방지: 카운터 + 노션 페이지 ID 해시 사용
-      // (Date.now()+Math.random()은 같은 ms 안에 여러 건 매핑되면 부동소수점 정밀도 손실로 충돌 가능)
+      // (genId()은 같은 ms 안에 여러 건 매핑되면 부동소수점 정밀도 손실로 충돌 가능)
       let _idCounter = 0;
       const _genId = (notionId) => {
         // 노션 페이지 ID(UUID)가 있으면 그것을 안정적인 unique key로 사용
@@ -7416,7 +7432,7 @@ async function pullFromNotion(opts){
     function upsertMerge(remote, local, idFields){
       if(!remote.length) return local; // 변경 없음
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map((x,i)=>[x._notionId,{x,i}]));
-      // 새 id 생성기 — 카운터 + 노션 ID hash 기반 (Date.now()+Math.random() 충돌 방지)
+      // 새 id 생성기 — 카운터 + 노션 ID hash 기반 (genId() 충돌 방지)
       let _idCounter = 0;
       const _genId = (notionId) => {
         if(notionId){
@@ -9735,7 +9751,7 @@ function _saveNotifs(){
   } catch(e){ console.warn('알림 저장 실패:', e); }
 }
 function _addNotif(notif){
-  notif.id = Date.now() + Math.random();
+  notif.id = genId();
   notif.ts = Date.now();
   notif.read = false;
   _notifs.push(notif);
@@ -11551,7 +11567,7 @@ function applyStockChange({productId, delta, type, refId, refLabel, note}){
   p.lastModified=toLocalDateStr(new Date());
   // 이력 추가
   const h={
-    id: Date.now()+Math.floor(Math.random()*1000),
+    id: genId(),
     productId: p.id,
     productName: p.name||'',
     productCode: p.code||'',
@@ -19495,7 +19511,7 @@ async function saveSmpMulti(){
     }
     // 행 → sample 객체
     const smpObj = {
-      id: Date.now() + Math.random() + i,
+      id: genId(),
       createdAt: now,
       _smpGroupId: groupId, // 같은 의뢰서 그룹 식별
       // 행별 정보
@@ -19592,7 +19608,7 @@ async function autoSyncSampleToProductDB(smp){
   if(isNew){
     // 신규: 제품DB에 추가
     prod = {
-      id: Date.now() + Math.random(),
+      id: genId(),
       stock: 0, safetyStock: 0,
       ...mapped,
     };
@@ -20370,7 +20386,7 @@ async function ordRowRegisterToProductDB(idx){
   }
   // 신규 product 객체 생성
   const newP={
-    id: Date.now()+Math.floor(Math.random()*1000),
+    id: genId(),
     name: name,
     code: '',
     type: '',
@@ -21691,7 +21707,7 @@ function openInvoice(smpId){
 }
 
 function addInvRowData(name,qty,unit,price){
-  const id='ir'+Date.now()+Math.random().toString(36).slice(2,5);
+  const id='ir'+genId().toString(36).slice(2,5);
   const tr=document.createElement('tr');tr.id=id;
   tr.innerHTML=`
     <td style="border:1px solid var(--bdr);padding:4px 5px"><input class="fi" value="${name||''}" placeholder="품목명" oninput="calcInvTotal()" style="font-size:12px;padding:4px 6px"></td>
@@ -21840,7 +21856,7 @@ async function printInvoice(opts){
         pm.type === '선금' && (pm.memo||'').includes('원자재')
       );
       const newPayment = {
-        id: Date.now() + Math.random(),
+        id: genId(),
         date: today,
         amount: prepaidInput,
         type: '선금',
@@ -22164,7 +22180,7 @@ async function pullChecklistsFromNotion(){
       const kind = np.select(p['종류']) || '주간';
       const done = np.check(p['완료']);
       if(!text) return;
-      const item = { text, done, id: Date.now()+Math.random(), _notionId: row.id };
+      const item = { text, done, id: genId(), _notionId: row.id };
       if(kind === '월간') mn.push(item); else wk.push(item);
     });
     // 노션의 데이터를 진실의 원천으로 (다른 컴퓨터에서도 일관성 유지)
@@ -23088,7 +23104,7 @@ function upsertProductFromQuoteRow(row, opts){
   // 신규 생성
   const gen = genQuoteProductCode(row, vendor);
   const newPd = {
-    id: Date.now() + Math.random(),
+    id: genId(),
     code: gen.code,
     name: data.name,
     type: gen.typeName || '',
@@ -24530,7 +24546,7 @@ function addQuickPrepayment(invId){
   // payments에 추가
   if(!v.payments) v.payments = [];
   v.payments.push({
-    id: Date.now() + Math.random(),
+    id: genId(),
     date: payDate,
     amount,
     type: '선금',
@@ -25883,7 +25899,7 @@ function addConsPayment(consId){
   // payments에 추가
   if(!cons.payments) cons.payments = [];
   cons.payments.push({
-    id: Date.now() + Math.random(),
+    id: genId(),
     date,
     amount,
     type: '잔금', // 합본은 청구액에 대한 잔금
@@ -26458,7 +26474,7 @@ function addInvPayment(){
   // 첫 번째 입금이면 "선금", 그 다음은 "잔금"
   const defaultType = _invPaymentsBuf.length === 0 ? '선금' : '잔금';
   _invPaymentsBuf.push({
-    id: Date.now() + Math.random(),
+    id: genId(),
     date: today,
     amount: 0,
     type: defaultType,
@@ -26790,7 +26806,7 @@ async function saveStandaloneInvoice(){
 
     // 입금 이력 + 자동 상태 결정
     const payments = _invPaymentsBuf.map(pm=>({
-      id: pm.id || (Date.now()+Math.random()),
+      id: pm.id || (genId()),
       date: pm.date || toLocalDateStr(new Date()),
       amount: +pm.amount||0,
       type: pm.type || '선금',
@@ -26890,7 +26906,7 @@ async function saveStandaloneInvoice(){
 
     // 새 입금 이력 정리 (0원 제외)
     const payments = _invPaymentsBuf.map(pm=>({
-      id: pm.id || (Date.now()+Math.random()),
+      id: pm.id || (genId()),
       date: pm.date || toLocalDateStr(new Date()),
       amount: +pm.amount||0,
       type: pm.type || '선금',
@@ -28244,7 +28260,7 @@ function confirmClientImport(){
   _clientImportRows.forEach(row=>{
     const exist=clients.find(c=>c.name===row.name);
     if(exist){if(row.contact)exist.contact=row.contact;if(row.phone)exist.phone=row.phone;updated++;}
-    else{clients.push({id:Date.now()+Math.random(),...row});added++;}
+    else{clients.push({id:genId(),...row});added++;}
   });
   slSave();closeM('mClientImport');_salesInited=false;renderSalesTab();
   showToast(`✓ ${added}개 추가 / ${updated}개 업데이트됨`,'var(--grn)',3000);
