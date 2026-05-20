@@ -5024,9 +5024,81 @@ async function saveSmp(smpId){
     samples.unshift(updated);
   }
   saveAll();
+  // 🔗 제품DB 자동 동기화 (품번 있을 때) — 같은 코드의 제품 생성/업데이트
+  if(updated.itemCode){
+    autoSyncSmpToProductDB(updated).catch(e=>console.warn('[제품DB 자동 등록]', e));
+  }
   closeModal();
   renderSmpList();
   renderDash();
+}
+
+// 샘플 → 제품DB 자동 동기화 (모바일)
+async function autoSyncSmpToProductDB(smp){
+  if(!smp || !smp.itemCode) return null;
+  if(!Array.isArray(productDB)) return null;
+  // 1) 기존 제품 찾기 (품번 매칭)
+  let prod = productDB.find(p => (p.code||'').trim() === smp.itemCode.trim());
+  const isNew = !prod;
+  const mapped = {
+    code: smp.itemCode,
+    name: smp.name || '',
+    type: smp.type || '',
+    mat: smp.mat || '',
+    plating: smp.plating || '',
+    size: [smp.sz1, smp.sz2].filter(Boolean).join(' / '),
+    weight: +(smp.wt||0) || 0,
+    costPrice: +(smp.costPrice||0) || 0,
+    price: +(smp.unitPrice||0) || 0,
+    devCost: +(smp.devCost||0) || 0,
+    imgs: Array.isArray(smp.imgs) ? smp.imgs.slice(0, 12) : [],
+    memo: smp.desc || '',
+    createdDate: isNew ? todayStr() : (prod && prod.createdDate) || '',
+    lastModified: todayStr(),
+  };
+  if(isNew){
+    prod = { id: Date.now() + Math.random(), stock: 0, safetyStock: 0, ...mapped };
+    productDB.unshift(prod);
+  } else {
+    Object.assign(prod, mapped);
+  }
+  saveAll();
+  // 2) 노션 동기화
+  if(notionCfg && notionCfg.workerUrl && notionCfg.productDb){
+    try{
+      const notionProps = {
+        "품목코드":{title:[{text:{content:prod.code}}]},
+        "품목명":{rich_text:[{text:{content:prod.name||''}}]},
+        "규격":{rich_text:[{text:{content:prod.size||''}}]},
+        "출고단가":{number:+prod.price||0},
+        "입고단가":{number:+prod.costPrice||0},
+        "재고수량":{number:+prod.stock||0},
+        "안전재고":{number:+prod.safetyStock||0},
+        "중량":{number:+prod.weight||0},
+      };
+      if(prod.type)    notionProps["유형"]    = {select:{name:prod.type}};
+      if(prod.mat)     notionProps["소재"]    = {select:{name:prod.mat}};
+      if(prod.plating) notionProps["도금"]    = {select:{name:prod.plating}};
+      if(prod.memo)    notionProps["메모"]    = {rich_text:[{text:{content:prod.memo}}]};
+      if(prod.devCost) notionProps["개발비"]  = {number:+prod.devCost||0};
+      if(prod.imgs && prod.imgs.length){
+        notionProps["이미지JSON"] = {rich_text:[{text:{content:JSON.stringify(prod.imgs).slice(0,2000)}}]};
+      }
+      if(prod._notionId){
+        await nUpdate(prod._notionId, notionProps);
+      } else {
+        const res = await nCreate(notionCfg.productDb, notionProps);
+        if(res && res.id){
+          prod._notionId = res.id;
+          saveAll();
+        }
+      }
+      prod._syncedAt = new Date().toISOString();
+    }catch(e){
+      console.warn('[제품DB 자동 동기화] 노션 실패:', e);
+    }
+  }
+  return prod;
 }
 
 async function deleteSmp(smpId){

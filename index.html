@@ -734,7 +734,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <option value="의뢰">의뢰</option>
         <option value="제작중">제작중</option>
         <option value="수정중">수정중</option>
-        <option value="확정">확정</option>
+        <option value="확정">완료</option>
         <option value="취소">취소</option>
       </select>
     </div>
@@ -866,7 +866,8 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <button class="btn bgo" onclick="closeM('mSmp')">취소</button>
     <button class="btn bp-red" id="s_delBtn" onclick="deleteSmp()" style="display:none">삭제</button>
     <button class="btn bgo" id="s_invBtn" onclick="saveAndInvoice()" style="display:none;border-color:var(--gold);color:var(--gold-lt)">🧾 명세서 발행</button>
-    <button class="btn bp-grn" id="s_cfmBtn" onclick="confirmSmp()" style="display:none">✓ 확정 → 발주 생성</button>
+    <button class="btn" id="s_completeBtn" onclick="toggleSmpComplete()" style="display:none;background:var(--grn);color:#fff;border-color:var(--grn)">✓ 완료</button>
+    <button class="btn bp-grn" id="s_cfmBtn" onclick="confirmSmp()" style="display:none">✓ 완료 + 발주 생성</button>
     <button class="btn bp" id="s_saveBtn" onclick="saveSmp()" style="font-size:13px;padding:7px 20px">✓ 샘플 등록</button>
   </div>
 </div></div>
@@ -966,11 +967,11 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <option value="의뢰">의뢰</option>
         <option value="제작중">제작중</option>
         <option value="수정중">수정중</option>
-        <option value="확정">확정</option>
+        <option value="확정">완료</option>
         <option value="취소보류">취소보류</option>
       </select>
     </div>
-    <div class="fg"><label>출고완료일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(상태가 확정일 때 자동)</span></label><input class="fi" type="date" id="o_completedAt"></div>
+    <div class="fg"><label>출고완료일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(상태가 완료일 때 자동)</span></label><input class="fi" type="date" id="o_completedAt"></div>
     <div class="fg"></div>
   </div>
 
@@ -1027,6 +1028,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="ma">
     <button class="btn bgo" onclick="closeM('mOrd')">취소</button>
     <button class="btn bp-red" id="o_delBtn" onclick="deleteOrd()" style="display:none">삭제</button>
+    <button class="btn" id="o_completeBtn" onclick="toggleOrdComplete()" style="display:none;background:var(--grn);color:#fff;border-color:var(--grn)">✓ 출고완료</button>
     <button class="btn bp" onclick="saveOrd()">저장</button>
   </div>
 </div></div>
@@ -1809,9 +1811,34 @@ const KR_HOLIDAYS={
 function getHoliday(ds){ return KR_HOLIDAYS[ds]||''; }
 const DAY_KR=['일','월','화','수','목','금','토'];
 const STAGES=['주물','도금','검품','포장','출고'];
-const SMP_CATS=['전체','의뢰','제작중','수정중','확정','취소'];
+// 샘플 상태 데이터값 → 표시 라벨 변환 ('확정' → '완료')
+function smpStatusLabel(status){
+  if(status === '확정') return '완료';
+  return status || '의뢰';
+}
+// 샘플 필터 카테고리 — 표시 라벨과 데이터 키 분리
+// (data: 노션·로컬에서 쓰는 status 값. label: 화면 표시용)
+// 순서: 의뢰 → 제작중 → 수정중 → 완료 → 취소 → 전체
+const SMP_CATS=[
+  {key:'의뢰',   label:'의뢰'},
+  {key:'제작중',  label:'제작중'},
+  {key:'수정중',  label:'수정중'},
+  {key:'확정',   label:'완료'},  // '확정' 데이터값 = 완료. 표시 통일
+  {key:'취소',   label:'취소'},
+  {key:'전체',   label:'전체'},
+];
 // 발주 5단계 필터 카테고리 (생산관리 페이지)
-const ORD_CATS=['전체','의뢰','제작중','수정중','확정','취소보류'];
+// 발주 필터 카테고리 — 표시 라벨과 데이터 키 분리
+// (data: 노션·로컬 데이터에서 쓰는 status 값. label: 화면 표시용)
+// 순서: 의뢰 → 제작중 → 수정중 → 완료 → 취소보류 → 전체
+const ORD_CATS=[
+  {key:'의뢰',     label:'의뢰'},
+  {key:'제작중',    label:'제작중'},
+  {key:'수정중',    label:'수정중'},
+  {key:'확정',     label:'완료'},   // '확정' 데이터값 = 출고완료. 표시는 '완료'로 통일
+  {key:'취소보류',  label:'취소보류'},
+  {key:'전체',     label:'전체'},
+];
 const SMP_CLS={의뢰:'chip',제작중:'cb',수정중:'co',확정:'cg',취소:'chip'};
 const CATS_SCHED=['업무','커머스','발주출고','샘플출고','중국입고','중국출고'];
 const CAT_BG={'업무':'rgba(26,109,181,.07)','커머스':'rgba(168,90,16,.07)','발주출고':'rgba(46,139,44,.07)','샘플출고':'rgba(26,109,181,.07)','중국입고':'rgba(192,48,48,.07)','중국출고':'rgba(192,48,48,.12)'};
@@ -14890,8 +14917,32 @@ function switchTab(tab,el){
     const onclickImport   = pdConnected ? 'openProductImport()'    : 'pdRequireNotionWarning()';
     acts.innerHTML=`<button class="btn bp bs" onclick="${onclickRegister}" style="${disabledStyle}"${tipMsg}>+ 제품 등록</button><button class="btn bgo bs" onclick="${onclickImport}" style="${disabledStyle}"${tipMsg}>📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button>`;
   }
-  else if(tab==='sample') acts.innerHTML='<button class="btn bp bs" onclick="openSmpMultiModal()">+ 샘플 의뢰서 작성</button><button class="btn bgo bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)" title="한 품목만 등록 (옛 방식)">+ 단일 품목</button>';
-  else if(tab==='order') acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button>';
+  else if(tab==='sample'){
+    acts.innerHTML='<button class="btn bp bs" onclick="openSmpMultiModal()">+ 샘플 의뢰서 작성</button><button class="btn bgo bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)" title="한 품목만 등록 (옛 방식)">+ 단일 품목</button>';
+    // 샘플 탭 진입 시 기본 필터: 의뢰 → 비어있으면 제작중 → 그것도 비어있으면 전체
+    // (사용자가 이미 다른 필터를 선택해 둔 상태는 유지 — 자동 진입 첫 회만 적용)
+    if(!window._smpFilterTouched){
+      const reqCount   = samples.filter(s => s.status==='의뢰').length;
+      const makingCount= samples.filter(s => s.status==='제작중').length;
+      if(reqCount > 0) smpFilter = '의뢰';
+      else if(makingCount > 0) smpFilter = '제작중';
+      else smpFilter = '전체';
+      window._smpFilterTouched = true;
+    }
+  }
+  else if(tab==='order'){
+    acts.innerHTML='<button class="btn bp bs" onclick="ordRowsBuf=[{name:\'\',qty:\'\',plating:\'실버\',mat:\'브라스 (BRASS)\',size:\'\',note:\'\'}];openOrdModal(null)">+ 발주서 등록</button>';
+    // 발주 탭 진입 시 기본 필터: 의뢰 → 비어있으면 제작중 → 그것도 비어있으면 전체
+    // (사용자가 이미 다른 필터를 선택해 둔 상태는 유지 — 자동 진입 첫 회만 적용)
+    if(!window._ordFilterTouched){
+      const reqCount   = orders.filter(o => normalizeOrderStatus(o.status)==='의뢰').length;
+      const makingCount= orders.filter(o => normalizeOrderStatus(o.status)==='제작중').length;
+      if(reqCount > 0) ordFilter = '의뢰';
+      else if(makingCount > 0) ordFilter = '제작중';
+      else ordFilter = '전체';
+      window._ordFilterTouched = true; // 한 번만 자동 선택
+    }
+  }
   else if(tab==='schedule') acts.innerHTML='<button class="btn bp bs" onclick="openTaskModal()">+ 업무 추가</button>';
   else if(tab==='sales') acts.innerHTML='<button class="btn bp bs" onclick="openClModal(null)">+ 고객사 등록</button><button class="btn bgo bs" onclick="openPropModal(null)">+ 영업 등록</button><button class="btn bgo bs" onclick="openClientImport()">📥 고객사 엑셀 업로드</button>';
   renderTab();updateBadges();
@@ -15327,7 +15378,7 @@ function renderSample(){
   }
 
   const list=filteredSamples();
-  const counts={};SMP_CATS.forEach(cat=>{counts[cat]=cat==='전체'?samples.length:samples.filter(s=>s.status===cat).length;});
+  const counts={};SMP_CATS.forEach(cat=>{counts[cat.key]=cat.key==='전체'?samples.length:samples.filter(s=>s.status===cat.key).length;});
 
   // checked sample ids (persisted in window for re-render)
   if(!window._smpChecked)window._smpChecked=new Set();
@@ -15381,7 +15432,7 @@ function renderSample(){
       <button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 직접 등록</button>
     </div>
     <div class="frow">
-      ${SMP_CATS.map(f=>`<span class="fc ${smpFilter===f?'on':''}" onclick="smpFilter='${f}';renderSample()">${f} <span style="font-size:9.5px;opacity:.7">${counts[f]||0}</span></span>`).join('')}
+      ${SMP_CATS.map(c=>`<span class="fc ${smpFilter===c.key?'on':''}" onclick="smpFilter='${c.key}';window._smpFilterTouched=true;renderSample()">${c.label} <span style="font-size:9.5px;opacity:.7">${counts[c.key]||0}</span></span>`).join('')}
       <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
         <button onclick="smpAdvFilter.panelOpen=!smpAdvFilter.panelOpen;renderSample()"
           style="font-size:11.5px;padding:4px 10px;background:${smpAdvActiveCount()?'var(--gold-bg)':'var(--s1)'};border:1px solid ${smpAdvActiveCount()?'var(--gold)':'var(--bdr)'};border-radius:5px;cursor:pointer;font-family:inherit;color:${smpAdvActiveCount()?'var(--gold-lt)':'var(--t2)'};font-weight:${smpAdvActiveCount()?'700':'500'};display:flex;align-items:center;gap:4px"
@@ -15590,7 +15641,7 @@ function renderSample(){
               <td><span class="chip" style="font-size:9.5px">${s.type||'—'}</span></td>
               <td onclick="event.stopPropagation()" style="position:relative">
                 <span class="chip ${SMP_CLS[s.status]||''}" style="font-size:9.5px;cursor:pointer;user-select:none"
-                  onclick="openSmpStatusDropdown(event,${s.id})" title="클릭하여 상태 변경">${s.status} ▾</span>
+                  onclick="openSmpStatusDropdown(event,${s.id})" title="클릭하여 상태 변경">${smpStatusLabel(s.status)} ▾</span>
               </td>
               <td style="font-size:10.5px;color:var(--t2);white-space:nowrap">${s.reqDate||'—'}</td>
               <td style="font-size:10.5px;white-space:nowrap;${s.factShip?'color:var(--t2)':missFs?'color:var(--red);font-weight:600':'color:var(--t3)'}">${s.factShip||'—'}</td>
@@ -15695,18 +15746,25 @@ function openSmpStatusDropdown(ev, sid){
   const s=samples.find(x=>x.id==sid); if(!s) return;
   const target=ev.currentTarget;
   const rect=target.getBoundingClientRect();
-  const opts=['의뢰','제작중','수정중','확정','취소'];
+  // 데이터값과 표시 라벨 분리 — '확정' → '완료'
+  const opts=[
+    {val:'의뢰',   label:'의뢰'},
+    {val:'제작중',  label:'제작중'},
+    {val:'수정중',  label:'수정중'},
+    {val:'확정',   label:'완료'},
+    {val:'취소',   label:'취소'},
+  ];
   const dd=document.createElement('div');
   dd.id='smpStatusDropdown';
   dd.dataset.sid=sid;
   dd.style.cssText=`position:fixed;top:${rect.bottom+4}px;left:${rect.left}px;background:var(--s1);border:1px solid var(--gold-line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:9999;min-width:110px;padding:4px;display:flex;flex-direction:column;gap:2px`;
-  dd.innerHTML=opts.map(st=>`
-    <div onclick="event.stopPropagation();changeSmpStatus(${sid},'${st}')"
-      style="padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11.5px;display:flex;align-items:center;gap:6px;${st===s.status?'background:var(--gold-bg);font-weight:700':''}"
+  dd.innerHTML=opts.map(opt=>`
+    <div onclick="event.stopPropagation();changeSmpStatus(${sid},'${opt.val}')"
+      style="padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11.5px;display:flex;align-items:center;gap:6px;${opt.val===s.status?'background:var(--gold-bg);font-weight:700':''}"
       onmouseover="this.style.background='var(--gold-bg)'"
-      onmouseout="this.style.background='${st===s.status?'var(--gold-bg)':''}'">
-      <span class="chip ${SMP_CLS[st]||''}" style="font-size:9.5px;pointer-events:none">${st}</span>
-      ${st===s.status?'<span style="font-size:10px;color:var(--gold-lt);margin-left:auto">✓</span>':''}
+      onmouseout="this.style.background='${opt.val===s.status?'var(--gold-bg)':''}'">
+      <span class="chip ${SMP_CLS[opt.val]||''}" style="font-size:9.5px;pointer-events:none">${opt.label}</span>
+      ${opt.val===s.status?'<span style="font-size:10px;color:var(--gold-lt);margin-left:auto">✓</span>':''}
     </div>`).join('');
   document.body.appendChild(dd);
   // 바깥 클릭 시 닫기
@@ -15751,7 +15809,14 @@ function openOrdStatusDropdown(ev, oid){
   const curSt = normalizeOrderStatus(o.status);
   const target=ev.currentTarget;
   const rect=target.getBoundingClientRect();
-  const opts=['의뢰','제작중','수정중','확정','취소보류'];
+  // 데이터값과 표시 라벨 분리 — '확정'은 출고완료 상태, 표시는 '완료'
+  const opts=[
+    {val:'의뢰',     label:'의뢰'},
+    {val:'제작중',    label:'제작중'},
+    {val:'수정중',    label:'수정중'},
+    {val:'확정',     label:'완료'},
+    {val:'취소보류',  label:'취소보류'},
+  ];
   const colors={
     '의뢰':'background:rgba(26,109,181,.12);color:var(--blu);border:1px solid rgba(26,109,181,.3)',
     '제작중':'background:rgba(168,90,16,.12);color:var(--org);border:1px solid rgba(168,90,16,.3)',
@@ -15763,13 +15828,13 @@ function openOrdStatusDropdown(ev, oid){
   dd.id='ordStatusDropdown';
   dd.dataset.oid=oid;
   dd.style.cssText=`position:fixed;top:${rect.bottom+4}px;left:${rect.left}px;background:var(--s1);border:1px solid var(--gold-line);border-radius:6px;box-shadow:0 6px 20px rgba(0,0,0,.18);z-index:9999;min-width:120px;padding:4px;display:flex;flex-direction:column;gap:2px`;
-  dd.innerHTML=opts.map(st=>`
-    <div onclick="event.stopPropagation();changeOrdStatusInline(${oid},'${st}')"
-      style="padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11.5px;display:flex;align-items:center;gap:6px;${st===curSt?'background:var(--gold-bg);font-weight:700':''}"
+  dd.innerHTML=opts.map(opt=>`
+    <div onclick="event.stopPropagation();changeOrdStatusInline(${oid},'${opt.val}')"
+      style="padding:6px 10px;border-radius:4px;cursor:pointer;font-size:11.5px;display:flex;align-items:center;gap:6px;${opt.val===curSt?'background:var(--gold-bg);font-weight:700':''}"
       onmouseover="this.style.background='var(--gold-bg)'"
-      onmouseout="this.style.background='${st===curSt?'var(--gold-bg)':''}'">
-      <span style="font-size:9.5px;padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;${colors[st]||''}">${st}</span>
-      ${st===curSt?'<span style="font-size:10px;color:var(--gold-lt);margin-left:auto">✓</span>':''}
+      onmouseout="this.style.background='${opt.val===curSt?'var(--gold-bg)':''}'">
+      <span style="font-size:9.5px;padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;${colors[opt.val]||''}">${opt.label}</span>
+      ${opt.val===curSt?'<span style="font-size:10px;color:var(--gold-lt);margin-left:auto">✓</span>':''}
     </div>`).join('');
   document.body.appendChild(dd);
   // 바깥 클릭 시 닫기
@@ -17488,12 +17553,13 @@ function renderOrder(){
     <div class="frow">
       ${(()=>{
         // 5단계 카운트 — normalize 적용해서 옛 데이터도 정확히 카운트
-        const ordCounts = {전체: orders.length, 의뢰:0, 제작중:0, 수정중:0, 확정:0, 취소보류:0};
+        // (순서: 의뢰 → 제작중 → 수정중 → 완료(확정) → 취소보류 → 전체)
+        const ordCounts = {의뢰:0, 제작중:0, 수정중:0, 확정:0, 취소보류:0, 전체: orders.length};
         orders.forEach(o => {
           const st = normalizeOrderStatus(o.status);
           if(ordCounts[st] !== undefined) ordCounts[st]++;
         });
-        return ORD_CATS.map(f=>`<span class="fc ${ordFilter===f?'on':''}" onclick="ordFilter='${f}';renderOrder()">${f} <span style="font-size:9.5px;opacity:.7">${ordCounts[f]||0}</span></span>`).join('');
+        return ORD_CATS.map(c=>`<span class="fc ${ordFilter===c.key?'on':''}" onclick="ordFilter='${c.key}';window._ordFilterTouched=true;renderOrder()">${c.label} <span style="font-size:9.5px;opacity:.7">${ordCounts[c.key]||0}</span></span>`).join('');
       })()}
       <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
         <button onclick="ordAdvFilter.panelOpen=!ordAdvFilter.panelOpen;renderOrder()"
@@ -17716,8 +17782,8 @@ function renderOrder(){
             const statusBadge = (()=>{
               const ordChip = isOrdDone
                 ? (ordSubTab==='done'
-                   ? `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">✓ 확정</span>`
-                   : `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">✓ 확정</span>${completedDateStr?`<span style="font-size:9.5px;color:var(--t3);white-space:nowrap;display:block;margin-top:1px" title="완료일자">${completedDateStr}</span>`:''}`)
+                   ? `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">✓ 완료</span>`
+                   : `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">✓ 완료</span>${completedDateStr?`<span style="font-size:9.5px;color:var(--t3);white-space:nowrap;display:block;margin-top:1px" title="완료일자">${completedDateStr}</span>`:''}`)
                 : isOrdCanceled
                 ? `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(120,120,120,.12);color:var(--t3);border:1px solid rgba(120,120,120,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">취소보류</span>`
                 : `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">${ordStatus}</span>`;
@@ -18504,6 +18570,29 @@ function openSmpModal(idOrNull){
   document.getElementById('s_delBtn').style.display=s?'':'none';
   document.getElementById('s_cfmBtn').style.display=(s&&s.status!=='확정'&&s.status!=='취소')?'':'none';
   document.getElementById('s_invBtn').style.display=s?'':'none';
+  // 완료 버튼: 수정 모드 + 미완료 상태일 때 표시. 이미 완료면 "완료 해제"
+  const completeBtn = document.getElementById('s_completeBtn');
+  if(completeBtn){
+    if(s){
+      if(s.status === '취소'){
+        completeBtn.style.display = 'none';
+      } else if(s.status === '확정'){
+        completeBtn.style.display = '';
+        completeBtn.textContent = '↺ 완료 해제';
+        completeBtn.style.background = 'var(--s2)';
+        completeBtn.style.color = 'var(--t2)';
+        completeBtn.style.borderColor = 'var(--bdr)';
+      } else {
+        completeBtn.style.display = '';
+        completeBtn.textContent = '✓ 완료';
+        completeBtn.style.background = 'var(--grn)';
+        completeBtn.style.color = '#fff';
+        completeBtn.style.borderColor = 'var(--grn)';
+      }
+    } else {
+      completeBtn.style.display = 'none';
+    }
+  }
   document.getElementById('smp_ai_badge').style.display=(s&&s.aiParsed)?'':'none';
   // 생성일자 표시 (모달 안에서만)
   var createdDispEl=document.getElementById('smp_created_disp');
@@ -19437,6 +19526,14 @@ async function saveSmpMulti(){
       smpObj._syncedAt = new Date().toISOString();
       samples.push(smpObj);
       success++;
+      // 🔗 제품DB 자동 동기화 (품번 있을 때)
+      if(smpObj.itemNo){
+        try{
+          await autoSyncSampleToProductDB(smpObj);
+        }catch(pdErr){
+          console.warn(`[제품DB 자동 등록 실패] ${smpObj.name}:`, pdErr);
+        }
+      }
     } catch(e){
       console.error(`샘플 등록 실패 [${row.name}]:`, e);
       failedItems.push({name: row.name, error: e.message});
@@ -19460,6 +19557,110 @@ async function saveSmpMulti(){
   }
 }
 
+// ════════════════════════════════════════════════════════════════
+// 🔗 샘플 → 제품DB 자동 동기화
+// ────────────────────────────────────────────────────────────────
+// 샘플 등록/저장 시 같은 품번(itemNo)을 가진 제품DB 행을 자동 생성/업데이트
+// - itemNo가 비어있으면 동기화 안 함
+// - 이미 존재하면 업데이트(샘플의 최신 정보로)
+// - 새로 생기면 생성
+// 호출자가 await할 수도 있고 fire-and-forget도 가능 (둘 다 안전)
+async function autoSyncSampleToProductDB(smp){
+  if(!smp || !smp.itemNo) return null; // 품번 없으면 스킵
+  if(!Array.isArray(productDB)) return null;
+  // 1) 기존 제품 찾기 (품번 기준)
+  let prod = productDB.find(p => (p.code||'').trim() === smp.itemNo.trim());
+  const isNew = !prod;
+  // 2) 샘플 → 제품 매핑
+  const mapped = {
+    code: smp.itemNo,
+    name: smp.name || '',
+    type: smp.type || '',
+    mat: smp.mat || '',
+    plating: smp.plating || '',
+    size: [smp.sz1, smp.sz2, smp.sz3, smp.sz4].filter(Boolean).join(' / '),
+    weight: +(smp.wt||0) || 0,
+    costPrice: +(smp.costPrice||0) || 0,
+    price: +(smp.unitPrice||0) || 0,
+    devCost: +(smp.devCost||0) || 0,
+    imgs: Array.isArray(smp.imgs) ? smp.imgs.slice(0, 12) : [],
+    memo: smp.devNote || '',
+    // 신규 등록 시에만 등록일 세팅, 기존이면 유지
+    createdDate: isNew ? toLocalDateStr(new Date()) : (prod && prod.createdDate) || '',
+    lastModified: toLocalDateStr(new Date()),
+  };
+  if(isNew){
+    // 신규: 제품DB에 추가
+    prod = {
+      id: Date.now() + Math.random(),
+      stock: 0, safetyStock: 0,
+      ...mapped,
+    };
+    productDB.unshift(prod);
+  } else {
+    // 기존: 업데이트 (재고/안전재고/_notionId는 유지)
+    Object.assign(prod, mapped);
+  }
+  // 3) 노션 동기화 (백그라운드)
+  if(notionCfg.workerUrl && notionCfg.productDb){
+    try{
+      await syncProductToNotion(prod);
+    }catch(e){
+      console.warn('[autoSyncSample→Product] 노션 동기화 실패:', e);
+    }
+  }
+  return prod;
+}
+// 샘플 모달의 완료 토글 버튼 — 단순히 status를 '확정'으로 변경 (발주 생성 없음)
+function toggleSmpComplete(){
+  const id = gv('s_id');
+  if(!id){ showToast('⚠ 신규 등록은 저장 후 가능합니다','var(--org)',2500); return; }
+  const i = samples.findIndex(x=>x.id==id);
+  if(i<0){ showToast('⚠ 샘플을 찾을 수 없습니다','var(--red)',2500); return; }
+  const s = samples[i];
+  const isDone = s.status === '확정';
+  if(isDone){
+    // 완료 해제
+    showConfirm(
+      `이 샘플을 "제작중"으로 되돌립니다.\n\n계속할까요?`,
+      ()=>{
+        s.status = '제작중';
+        if(s._notionId && typeof debouncedSync === 'function'){
+          debouncedSync('sample', s, true);
+        }
+        save();
+        closeM('mSmp');
+        renderTab();
+        updateBadges();
+        showToast('↺ 완료 해제됨','var(--blu)',2500);
+      },
+      '완료 해제',
+      '↺',
+      '해제',
+      'blu'
+    );
+    return;
+  }
+  // 완료 처리
+  showConfirm(
+    `이 샘플을 "완료" 처리합니다.\n\n• 발주서는 자동 생성되지 않습니다\n  (발주 생성을 함께 하려면 "✓ 확정 → 발주 생성" 버튼 사용)\n\n계속할까요?`,
+    ()=>{
+      s.status = '확정';
+      if(s._notionId && typeof debouncedSync === 'function'){
+        debouncedSync('sample', s, true);
+      }
+      save();
+      closeM('mSmp');
+      renderTab();
+      updateBadges();
+      showToast('✓ 완료 처리됨','var(--grn)',2500);
+    },
+    '완료 처리',
+    '✅',
+    '완료 처리',
+    'grn'
+  );
+}
 function saveSmp(){
   const name=gv('s_name');if(!name)return showToast('⚠ 샘플명을 입력해 주세요','var(--red)');
   const id=gv('s_id');
@@ -19515,6 +19716,16 @@ function saveSmp(){
       const us=samples.find(x=>x.id==id);
       debouncedSync('sample', us||finalObj, true);
     }
+    // 🔗 제품DB 자동 동기화 (품번 있을 때)
+    if(finalObj.itemNo){
+      const smpSaved = !id ? samples[samples.length-1] : samples.find(x=>x.id==id);
+      autoSyncSampleToProductDB(smpSaved||finalObj).then(prod=>{
+        if(prod){
+          save(); // _notionId 등이 갱신됐을 수 있음
+          if(currentTab==='products') renderProducts();
+        }
+      });
+    }
   };
   // 모든 파일(예시이미지/작업지시서/CAD)에 base64 데이터가 있으면 R2에 업로드
   const hasAnyLocalFile =
@@ -19542,6 +19753,15 @@ function saveAndInvoice(){
   // 노션 동기화 (디바운스)
   if(typeof debouncedSync === 'function' && samples[i]._notionId){
     debouncedSync('sample', samples[i], true);
+  }
+  // 🔗 제품DB 자동 동기화 (가격 정보 갱신 시점에서 가장 정확)
+  if(samples[i].itemNo){
+    autoSyncSampleToProductDB(samples[i]).then(prod=>{
+      if(prod){
+        save();
+        if(currentTab==='products') renderProducts();
+      }
+    });
   }
   // 화면 갱신
   if(typeof renderTab === 'function') renderTab();
@@ -19616,7 +19836,61 @@ function deleteProc(){
   const ord={id:Date.now(),vendor:s.manager||'',date:todayStr,ship:s.due||'',no:genOrderNo(s.manager||'', todayStr),manager:'',memo:`샘플 확정 자동전환: ${s.name}`,rows:[{name:s.name,qty:s.qty||'',plating:s.plating||'',mat:s.mat||'',size:s.sz1||'',note:''}]};
   orders.push(ord);
   if(s.due)procItems.push({id:Date.now()+1,name:s.name,vendor:(s.manager||'').substring(0,8),qty:s.qty||'',due:s.due,stageIdx:0,note:`확정: ${s.name}`,shipped:false});
-  save();closeM('mSmp');showToast(`✓ "${s.name}" 확정 완료 — 발주서 자동 생성`);renderTab();updateBadges();
+  // 노션 동기화
+  if(s._notionId && typeof debouncedSync === 'function'){
+    debouncedSync('sample', s, true);
+  }
+  save();closeM('mSmp');showToast(`✓ "${s.name}" 완료 처리 + 발주서 자동 생성`);renderTab();updateBadges();
+}
+
+// 샘플 모달의 완료 토글 버튼 — 발주 생성 없이 상태만 전환
+function toggleSmpComplete(){
+  const id = gv('s_id');
+  if(!id){ showToast('⚠ 신규 등록은 저장 후 가능합니다','var(--org)',2500); return; }
+  const s = samples.find(x=>x.id==id);
+  if(!s){ showToast('⚠ 샘플을 찾을 수 없습니다','var(--red)',2500); return; }
+  const isDone = s.status === '확정' || s.status === '완료';
+  if(isDone){
+    // 완료 해제 — 제작중으로 되돌림
+    showConfirm(
+      `이 샘플을 "제작중"으로 되돌립니다.\n\n• 발주서/공정은 자동 삭제되지 않습니다\n  (이미 생성된 게 있으면 수동 정리 필요)\n\n계속할까요?`,
+      ()=>{
+        s.status = '제작중';
+        if(s._notionId && typeof debouncedSync === 'function'){
+          debouncedSync('sample', s, true);
+        }
+        save();
+        closeM('mSmp');
+        renderTab();
+        updateBadges();
+        showToast('↺ 완료 해제됨','var(--blu)',2500);
+      },
+      '완료 해제',
+      '↺',
+      '해제',
+      'blu'
+    );
+    return;
+  }
+  // 완료 처리 (발주 생성 없이)
+  showConfirm(
+    `이 샘플을 "완료" 처리합니다.\n\n• 발주서는 자동 생성되지 않습니다\n  (필요하면 "✓ 완료 + 발주 생성" 버튼 사용)\n• 노션과 동기화됩니다\n\n계속할까요?`,
+    ()=>{
+      s.status = '확정';
+      if(s._notionId && typeof debouncedSync === 'function'){
+        debouncedSync('sample', s, true);
+      }
+      save();
+      closeM('mSmp');
+      renderTab();
+      updateBadges();
+      showToast('✓ 완료 처리됨','var(--grn)',2500);
+    },
+    '샘플 완료 처리',
+    '✅',
+    '완료 처리',
+    'grn'
+  );
 }
 // ════════════════════════════════
 // CRUD: ORDER
@@ -19703,6 +19977,31 @@ function openOrdModal(idOrNull){
   ordMemoBuf = loadOrdMemos(o);
   renderOrdMemos();
   document.getElementById('o_delBtn').style.display=o?'':'none';
+  // 출고완료 버튼: 수정 모드일 때만 표시. 이미 완료/취소면 "완료 해제", 그 외엔 "출고완료"
+  const completeBtn = document.getElementById('o_completeBtn');
+  if(completeBtn){
+    if(o){
+      const isDone = o.status === '출고완료' || o.status === '완료';
+      const isCancel = o.status === '취소';
+      if(isCancel){
+        completeBtn.style.display = 'none'; // 취소 건은 해당 없음
+      } else if(isDone){
+        completeBtn.style.display = '';
+        completeBtn.textContent = '↺ 완료 해제';
+        completeBtn.style.background = 'var(--s2)';
+        completeBtn.style.color = 'var(--t2)';
+        completeBtn.style.borderColor = 'var(--bdr)';
+      } else {
+        completeBtn.style.display = '';
+        completeBtn.textContent = '✓ 출고완료';
+        completeBtn.style.background = 'var(--grn)';
+        completeBtn.style.color = '#fff';
+        completeBtn.style.borderColor = 'var(--grn)';
+      }
+    } else {
+      completeBtn.style.display = 'none';
+    }
+  }
   document.getElementById('ord_ai_badge').style.display='none';
   if(!ordRowsBuf||!ordRowsBuf.length)ordRowsBuf=o?(o.rows||[]).map(r=>({...r})):[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];
   // 단가가 비어있는 행 자동 채우기: 상품명/품번이 제품DB와 일치하면 단가 가져옴
@@ -20815,6 +21114,83 @@ function applyItemToRow(smpId){
   closeM('mItemSearch');
   renderOrdRows();
   showToast(`✓ "${s.name}" 적용됨`, 'var(--gold-lt)');
+}
+// 발주 모달의 출고완료 토글 버튼 — 수동으로 상태 전환 + 재고/명세서/공정 일괄 처리
+function toggleOrdComplete(){
+  const id = gv('o_id');
+  if(!id){ showToast('⚠ 신규 등록은 저장 후 가능합니다','var(--org)',2500); return; }
+  const o = orders.find(x=>x.id==id);
+  if(!o){ showToast('⚠ 발주서를 찾을 수 없습니다','var(--red)',2500); return; }
+  const isDone = o.status === '출고완료' || o.status === '완료' || o.status === '확정';
+  if(isDone){
+    // 출고완료 해제
+    showConfirm(
+      `이 발주서를 "진행중"으로 되돌립니다.\n\n• 연결 공정의 출고 표시가 해제됩니다\n• 거래명세서는 자동 변경되지 않습니다 (별도 확인 필요)\n\n계속할까요?`,
+      ()=>{
+        o.status = '진행중';
+        delete o.completedAt;
+        // 연결 공정 출고 해제
+        if(Array.isArray(procItems)){
+          procItems.filter(p=>p.orderId===o.id).forEach(p=>{
+            if(p.shipped){
+              p.shipped = false;
+              if(p._notionId && typeof debouncedSync === 'function'){
+                debouncedSync('proc', p, true);
+              }
+            }
+          });
+        }
+        // 노션 push
+        if(o._notionId && typeof debouncedSync === 'function'){
+          debouncedSync('order', o, true);
+        }
+        save();
+        closeM('mOrd');
+        renderTab();
+        updateBadges();
+        showToast('↺ 출고완료 해제됨','var(--blu)',2500);
+      },
+      '출고완료 해제',
+      '↺',
+      '해제',
+      'blu'
+    );
+    return;
+  }
+  // 출고완료 처리 — 모달에서 수동 트리거이므로 가드 우회 (사용자가 알고 누른 것)
+  showConfirm(
+    `이 발주서를 "출고완료" 처리합니다.\n\n• 연결 공정도 출고완료 표시됨\n• 연결 거래명세서가 자동으로 청구 단계로 이동\n\n계속할까요?`,
+    ()=>{
+      o.status = '출고완료';
+      o.completedAt = new Date().toISOString();
+      // 연결 공정도 출고처리
+      if(Array.isArray(procItems)){
+        procItems.filter(p=>p.orderId===o.id).forEach(p=>{
+          p.shipped = true;
+          if(p._notionId && typeof debouncedSync === 'function'){
+            debouncedSync('proc', p, true);
+          }
+        });
+      }
+      // 노션 push
+      if(o._notionId && typeof debouncedSync === 'function'){
+        debouncedSync('order', o, true);
+      }
+      // 거래명세서 단계 자동 이동 (draft → billing)
+      if(typeof refreshInvStagesForOrder === 'function'){
+        refreshInvStagesForOrder(o.id);
+      }
+      save();
+      closeM('mOrd');
+      renderTab();
+      updateBadges();
+      showToast('✓ 출고완료 처리됨','var(--grn)',2500);
+    },
+    '출고완료 처리',
+    '✅',
+    '완료 처리',
+    'grn'
+  );
 }
 async function saveOrd(forceOverwrite){
   const vendor=gv('o_vendor');if(!vendor)return showToast('⚠ 업체명을 입력해 주세요','var(--red)');
