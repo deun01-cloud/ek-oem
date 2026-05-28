@@ -151,10 +151,10 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .prev-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.93);z-index:500;align-items:center;justify-content:center;flex-direction:column;gap:10px}
 .prev-ov.open{display:flex}
 .prev-img-wrap{position:relative;width:96vw;height:88vh;display:flex;align-items:center;justify-content:center;overflow:auto}
-/* 이미지는 화면 가득 (작은 원본도 늘려서 표시), 비율 유지 */
-.prev-img-wrap img{width:auto;height:auto;max-width:96vw;max-height:88vh;min-width:min(60vw, 600px);object-fit:contain;border-radius:4px;cursor:zoom-in;background:#222;transition:transform .15s}
+/* 이미지는 화면 안에 비율 유지하며 표시 (작은 원본을 억지로 늘리지 않음) */
+.prev-img-wrap img{max-width:96vw;max-height:88vh;width:auto;height:auto;object-fit:contain;border-radius:4px;cursor:zoom-in;background:#222;transition:transform .15s}
 /* 1:1 원본 픽셀 모드 — 사용자가 클릭하면 토글 */
-.prev-img-wrap img.zoomed{max-width:none;max-height:none;width:auto;height:auto;min-width:0;cursor:zoom-out}
+.prev-img-wrap img.zoomed{max-width:none;max-height:none;width:auto;height:auto;cursor:zoom-out}
 .prev-nav{display:flex;align-items:center;gap:20px}
 .prev-nb{background:rgba(255,255,255,.18);border:none;color:#FFF;width:48px;height:48px;border-radius:50%;font-size:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s}
 .prev-nb:hover{background:rgba(255,255,255,.35)}
@@ -7312,7 +7312,7 @@ async function pullFromNotion(opts){
         // 공정
         'shipped',
         // 기타
-        'items','invoice','user','initials','cat','grade','cycle','brandStyle','materials','priceRange','itemCode','sz1','sz2','sz3','sz4','wt','engr','card',
+        'items','invoice','user','initials','cat','grade','cycle','brandStyle','materials','priceRange','itemCode','itemNo','invNo','sz1','sz2','sz3','sz4','wt','engr','card',
         // 자동 메타데이터 (덮어쓰기 방지)
         'createdDate','lastModified'
       ];
@@ -7349,17 +7349,26 @@ async function pullFromNotion(opts){
           out._syncedAt = prev._syncedAt;
         }
         idFields.forEach(f=>{
-          // 배열 필드: 로컬이 더 많은 항목을 가지고 있으면 로컬 유지 (데이터 유실 방지)
+          // 배열 필드 (rows, files 등) 보호 정책:
+          // - 최근에 이 기기에서 push했으면(recentlyPushed) → 로컬 유지 (노션 PATCH가 PULL보다 늦는 race 방어)
+          // - 그렇지 않으면 → 노션 값 우선 (다른 기기에서 바뀐 입고현황 등을 반드시 반영)
+          //   단, 노션이 비었는데 로컬에 데이터가 있으면(노션 유실 의심) 로컬 유지 (데이터 보호)
           const isArr = Array.isArray(prev[f]) || Array.isArray(out[f]);
           if(isArr){
             const prevArr = Array.isArray(prev[f]) ? prev[f] : [];
             const remoteArr = Array.isArray(out[f]) ? out[f] : [];
-            if(prevArr.length >= remoteArr.length){
+            if(recentlyPushed){
+              // 방금 이 기기가 push한 직후 — 로컬이 최신이므로 로컬 유지
+              out[f] = prevArr.length >= remoteArr.length ? prevArr : remoteArr;
+            } else if(remoteArr.length === 0 && prevArr.length > 0){
+              // 노션이 비었는데 로컬엔 있음 — 유실 방지로 로컬 유지
               out[f] = prevArr;
             } else {
+              // 그 외 — 노션 값 우선 (다른 기기의 변경사항 반영)
               out[f] = remoteArr;
             }
-          } else if(prev[f] !== undefined){
+          } else if(recentlyPushed && prev[f] !== undefined && prev[f] !== null && prev[f] !== ''){
+            // 비배열 필드도 최근 push한 경우만 로컬 보호
             out[f] = prev[f];
           }
         });
@@ -7512,10 +7521,10 @@ async function pullFromNotion(opts){
     }
 
     // 각 테이블 매핑
-    samples       = mergeRows(smpRows,  samples,        mapNotionSample,    ['imgs','sourceDoc','cadFiles','refs','aiParsed','itemNo','sz2','sz3','sz4','wt','engr','card','devNote','caution','qty','invNo','factShip','dueHistory'], '샘플',     notionCfg.smpDb);
-    orders        = mergeRows(ordRows,  orders,         mapNotionOrder,     ['files','rows','aiParsed','factShip','completedAt','memoList','shipHistory'], '발주',     notionCfg.ordDb);
+    samples       = mergeRows(smpRows,  samples,        mapNotionSample,    ['imgs','sourceDoc','cadFiles','refs','aiParsed','dueHistory'], '샘플',     notionCfg.smpDb);
+    orders        = mergeRows(ordRows,  orders,         mapNotionOrder,     ['files','rows','aiParsed','memoList','shipHistory'], '발주',     notionCfg.ordDb);
     procItems     = mergeRows(procRows, procItems,      mapNotionProc,      ['orderId'], '공정',     notionCfg.procDb);
-    proposals     = mergeRows(propRows, proposals,      mapNotionProposal,  ['images','memo','productId'], '영업제안', notionCfg.propDb);
+    proposals     = mergeRows(propRows, proposals,      mapNotionProposal,  ['images','productId'], '영업제안', notionCfg.propDb);
     clients       = mergeRows(cliRows,  clients,        mapNotionClient,    ['files'], '고객사',   notionCfg.clientDb);
     tasks         = mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
     asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        ['repairs','files'], 'AS',       notionCfg.asDb);
@@ -9985,6 +9994,8 @@ function startAutoSync(){
   if(!notionCfg.workerUrl) return;
   _currentSyncInterval = _pickSyncInterval();
   _syncTimer=setInterval(()=>pullFromNotion({silent:true}), _currentSyncInterval);
+  // 실패한 push 자동 재시도 루프도 시작
+  if(typeof _startSyncRetryLoop==='function') _startSyncRetryLoop();
 }
 
 // 화면 가시성 변화 감지: 활성 ↔ 백그라운드 전환 시 주기 재조정
@@ -10220,10 +10231,63 @@ function debouncedSync(type, obj, isUpdate){
     _syncDebounceTimers.delete(key);
     Promise.resolve(fn(merged.obj, merged.isUpdate)).catch(e=>{
       console.warn('[debouncedSync] '+type+' 실패:', e);
+      // 🔁 실패 시 재시도 큐에 등록 (노션이 일시적으로 막혔다 풀리면 자동 재시도)
+      _enqueueSyncRetry(type, merged.obj, merged.isUpdate);
     });
   }, SYNC_DEBOUNCE_MS);
   _syncDebounceTimers.set(key, { timer, latest: merged });
 }
+
+// ── 동기화 실패 재시도 큐 ──
+// 노션이 일시적으로 막혔을 때(API 키 오류, 회로차단기, 네트워크) 실패한 push를
+// 큐에 모아두고, 주기적으로 자동 재시도한다. (데이터 유실/불일치 방지)
+const _syncRetryQueue = new Map(); // key: type:id → {type, obj, isUpdate, attempts}
+function _enqueueSyncRetry(type, obj, isUpdate){
+  if(!obj || obj.id==null) return;
+  const key = type+':'+obj.id;
+  const prev = _syncRetryQueue.get(key);
+  _syncRetryQueue.set(key, {
+    type, obj, isUpdate: !!(prev?.isUpdate || isUpdate),
+    attempts: (prev?.attempts||0)
+  });
+}
+let _syncRetryTimer = null;
+function _startSyncRetryLoop(){
+  if(_syncRetryTimer) return;
+  // 30초마다 실패 큐 재시도
+  _syncRetryTimer = setInterval(()=>{
+    if(_syncRetryQueue.size===0) return;
+    if(!notionCfg.workerUrl) return;
+    if(_notionCircuitOpen) return; // 회로 아직 열려있으면 대기 (닫히면 재시도)
+    const entries = Array.from(_syncRetryQueue.entries());
+    entries.forEach(([key, item])=>{
+      const fn = _syncFnMap[item.type];
+      if(!fn){ _syncRetryQueue.delete(key); return; }
+      // 너무 많이 실패한 건(10회 초과)은 큐에서 제거 (무한 루프 방지)
+      if(item.attempts >= 10){
+        console.warn('[syncRetry] 10회 초과 — 큐에서 제거:', key);
+        _syncRetryQueue.delete(key);
+        return;
+      }
+      item.attempts++;
+      Promise.resolve(fn(item.obj, item.isUpdate))
+        .then(()=>{
+          _syncRetryQueue.delete(key); // 성공 → 큐에서 제거
+          console.log('[syncRetry] ✓ 재시도 성공:', key);
+        })
+        .catch(e=>{
+          console.warn('[syncRetry] 재시도 실패('+item.attempts+'회):', key, e.message);
+        });
+    });
+  }, 30000);
+}
+// 디버그용 — 콘솔에서 재시도 큐 확인
+window.syncRetryQueue = ()=>{
+  const arr=[];
+  _syncRetryQueue.forEach((v,k)=>arr.push({key:k, type:v.type, attempts:v.attempts}));
+  console.table(arr);
+  return arr;
+};
 
 // 페이지 닫힘 시 — 대기 중 sync 모두 즉시 실행 (데이터 유실 방지)
 function flushPendingSyncs(){
@@ -12643,8 +12707,8 @@ function thumbHtml(im,i,buf,size=80){
   const moveBtn = (buf==='smpImgBuf')
     ? `<button onmousedown="event.stopPropagation()" onclick="event.stopPropagation();event.preventDefault();moveSmpFile('smpImgBuf',${i},'smpSrcBuf')" style="position:absolute;top:2px;left:2px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:9px;padding:1px 6px;font-size:9px;cursor:pointer;z-index:10;font-family:inherit" title="작업지시서로 이동">→📋</button>`
     : '';
-  return `<div class="file-thumb" style="width:${size}px;height:${size}px;position:relative" onclick="openPrev('${buf}',${i})">
-    <img src="${safeUrl}" style="width:100%;height:100%;object-fit:cover;display:block">
+  return `<div class="file-thumb" style="width:${size}px;height:${size}px;position:relative;cursor:zoom-in" onclick="event.stopPropagation();openPrev('${buf}',${i})">
+    <img src="${safeUrl}" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none">
     ${moveBtn}
     <button class="ft-del" style="z-index:10" onmousedown="event.stopPropagation()" onclick="event.stopPropagation();event.preventDefault();removeBuf('${buf}',${i})">✕</button>
     <div class="ft-lbl" style="pointer-events:none">${im.name||''}</div>
@@ -26481,8 +26545,13 @@ function _renderInvRows(){
         stockHint = `<div style="grid-column:2/7;font-size:9.5px;color:var(--org);padding:0 4px;line-height:1.2">⚠ 제품DB에 없는 품번 — 재고 차감 안 됨</div>`;
       }
       return `
-      <div style="display:grid;grid-template-columns:30px 2fr 1.2fr 0.8fr 1fr 1.2fr 30px;gap:4px 4px;align-items:center;margin-bottom:6px;padding-bottom:3px;border-bottom:1px dashed transparent">
-        <div style="text-align:center;font-size:11px;color:var(--t3);font-weight:600">${i+1}</div>
+      <div id="invRow_${i}"
+        ondragover="_invRowDragOver(event,${i})"
+        ondragleave="_invRowDragLeave(event,${i})"
+        ondrop="_invRowDrop(event,${i})"
+        data-invrow="${i}"
+        style="display:grid;grid-template-columns:30px 2fr 1.2fr 0.8fr 1fr 1.2fr 30px;gap:4px 4px;align-items:center;margin-bottom:6px;padding-bottom:3px;border-bottom:1px dashed transparent;border-radius:4px">
+        <div draggable="true" ondragstart="_invRowDragStart(event,${i})" ondragend="_invRowDragEnd(event)" title="드래그하여 순서 변경" style="text-align:center;font-size:13px;color:var(--t3);cursor:grab;user-select:none;line-height:1.1">⠿<div style="font-size:10px;font-weight:600">${i+1}</div></div>
         <input class="fi" id="sivName_${i}" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].name=this.value" placeholder="품명" style="font-size:11.5px;padding:4px 6px">
         <input class="fi" id="sivCode_${i}" value="${(r.code||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].code=this.value;_updateInvRowCalc(${i})" placeholder="품번 (재고 연동)" style="font-size:11px;padding:4px 6px;font-family:monospace">
         <input class="fi" id="sivQty_${i}" type="number" value="${r.qty||1}" oninput="_invRowsBuf[${i}].qty=+this.value;_updateInvRowCalc(${i})" style="font-size:11.5px;padding:4px 6px;text-align:center">
@@ -26493,9 +26562,60 @@ function _renderInvRows(){
       </div>`;
     }).join('')}
     <div style="font-size:10px;color:var(--t3);padding:6px 8px;background:var(--s1);border-radius:4px;margin-top:6px">
-      💡 발행 시 <b>품번이 일치하는 제품DB의 재고에서 자동 차감</b>됩니다. 품번 없는 행은 차감 안 됨.
+      💡 발행 시 <b>품번이 일치하는 제품DB의 재고에서 자동 차감</b>됩니다. 품번 없는 행은 차감 안 됨. · <b>⠿ 핸들을 드래그</b>해서 순서를 바꿀 수 있어요.
     </div>
   `;
+}
+
+// ── 거래명세서 품목 행 드래그 순서 변경 ──
+let _invDragFromIdx = null;
+function _invRowDragStart(e, idx){
+  _invDragFromIdx = idx;
+  if(e.dataTransfer){
+    e.dataTransfer.effectAllowed = 'move';
+    try{ e.dataTransfer.setData('text/plain', String(idx)); }catch(_){}
+  }
+  // 드래그 중인 행 살짝 투명하게
+  const row = document.getElementById('invRow_'+idx);
+  if(row) row.style.opacity = '0.4';
+}
+function _invRowDragOver(e, idx){
+  e.preventDefault(); // drop 허용
+  if(e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  if(_invDragFromIdx === null || _invDragFromIdx === idx) return;
+  // 드롭 위치 표시 (위/아래 테두리)
+  const row = document.getElementById('invRow_'+idx);
+  if(row){
+    row.style.borderBottom = (idx > _invDragFromIdx) ? '2px solid var(--gold)' : '1px dashed transparent';
+    row.style.borderTop = (idx < _invDragFromIdx) ? '2px solid var(--gold)' : '';
+  }
+}
+function _invRowDragLeave(e, idx){
+  const row = document.getElementById('invRow_'+idx);
+  if(row){ row.style.borderBottom = '1px dashed transparent'; row.style.borderTop = ''; }
+}
+function _invRowDrop(e, toIdx){
+  e.preventDefault();
+  const fromIdx = _invDragFromIdx;
+  if(fromIdx === null || fromIdx === toIdx){ _invRowDragEnd(e); return; }
+  // 배열에서 요소 이동
+  const moved = _invRowsBuf.splice(fromIdx, 1)[0];
+  _invRowsBuf.splice(toIdx, 0, moved);
+  _invDragFromIdx = null;
+  // 다시 렌더 + 합계 갱신
+  const area = document.getElementById('siv_rowsArea');
+  if(area) area.innerHTML = _renderInvRows();
+  const totalsEl = document.getElementById('siv_totalsBox');
+  if(totalsEl) totalsEl.innerHTML = _renderInvTotalsBox();
+}
+function _invRowDragEnd(e){
+  _invDragFromIdx = null;
+  // 모든 행의 시각 효과 리셋
+  document.querySelectorAll('[data-invrow]').forEach(row=>{
+    row.style.opacity = '';
+    row.style.borderBottom = '1px dashed transparent';
+    row.style.borderTop = '';
+  });
 }
 
 function _renderInvTotalsBox(){
