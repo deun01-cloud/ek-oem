@@ -1381,7 +1381,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div class="mt" id="mProduct_t">📦 제품 등록</div>
   <input type="hidden" id="pd_id">
   <div class="fr3">
-    <div class="fg"><label>품목코드 * <button type="button" onclick="autoGenProductCode()" style="margin-left:6px;padding:1px 7px;font-size:9.5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;color:var(--gold-lt);cursor:pointer;font-family:inherit;font-weight:600">🔄 자동 생성</button></label><input class="fi" id="pd_code" placeholder="VTBB042401S" style="font-family:monospace"></div>
+    <div class="fg"><label>품목코드 * <button type="button" onclick="autoGenProductCode()" style="margin-left:6px;padding:1px 7px;font-size:9.5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;color:var(--gold-lt);cursor:pointer;font-family:inherit;font-weight:600">🔄 자동 생성</button></label><input class="fi" id="pd_code" placeholder="VTBB042401S" style="font-family:monospace" oninput="autoSelectTypeFromCode(this.value)"></div>
     <div class="fg"><label>품목명 *</label><input class="fi" id="pd_name" placeholder="박스 체인 팔찌"></div>
     <div class="fg"><label>유형</label>
       <select class="fs" id="pd_type">
@@ -3997,7 +3997,13 @@ function openProductModal(idOrNull){
   const p=idOrNull?productDB.find(x=>x.id==idOrNull):null;
   pdImgBuf=p?[...(p.imgs||[])]:[];
   sv('pd_id',p?p.id:'');sv('pd_code',p?p.code:'');sv('pd_name',p?p.name:'');
-  sv('pd_type',p?p.type:'EARRING');sv('pd_mat',p?p.mat:'브라스 (BRASS)');
+  // 유형: 기존 제품에 유형이 있으면 그대로, 비어있으면 품번 3번째 글자로 자동 추론
+  let pdTypeVal = p ? (p.type||'') : 'EARRING';
+  if(p && !pdTypeVal && p.code && typeof _codeCatToType === 'function'){
+    pdTypeVal = _codeCatToType(p.code) || '';
+  }
+  sv('pd_type', pdTypeVal);
+  sv('pd_mat',p?p.mat:'브라스 (BRASS)');
   sv('pd_plating',p?p.plating:'골드');sv('pd_size',p?p.size:'');
   sv('pd_price',p?p.price||'':'');sv('pd_costPrice',p?p.costPrice||'':'');
   sv('pd_devCost',p?p.devCost||'':'');
@@ -12543,7 +12549,7 @@ function loadFilesToBuf(files,key){
   files.forEach(f=>{
     const r=new FileReader();
     r.onload=ev=>{
-      if(key==='smpImg'){if(smpImgBuf.length>=12)return;smpImgBuf.push({url:ev.target.result,name:f.name});}
+      if(key==='smpImg'){if(smpImgBuf.length>=12)return;if(smpImgBuf.some(x=>x&&x.url===ev.target.result))return;smpImgBuf.push({url:ev.target.result,name:f.name});}
       renderSmpPrev();
     };
     r.readAsDataURL(f);
@@ -12551,6 +12557,15 @@ function loadFilesToBuf(files,key){
 }
 
 function renderSmpPrev(){
+  // 🔁 중복 자동 정리: 같은 url 이미지가 여러 개면 첫 번째만 (in-place, 역순)
+  if(Array.isArray(smpImgBuf) && smpImgBuf.length > 1){
+    const seen = new Set();
+    for(let i = smpImgBuf.length - 1; i >= 0; i--){
+      const k = smpImgBuf[i] && smpImgBuf[i].url;
+      if(!k) continue;
+      if(seen.has(k)){ smpImgBuf.splice(i, 1); } else { seen.add(k); }
+    }
+  }
   const p=document.getElementById('smpImgPrev');
   if(p)p.innerHTML=smpImgBuf.map((im,i)=>thumbHtml(im,i,'smpImgBuf')).join('');
   // 이미지 프리뷰 wrap 표시/숨김
@@ -12667,6 +12682,10 @@ function handleSmpAllPaste(e){
   }
   if(files.length){
     e.preventDefault();
+    // 🔁 짧은 시간 내 같은 붙여넣기 중복 처리 방지 (핸들러 이중 등록 대비)
+    const now = Date.now();
+    if(window._lastSmpPasteAt && (now - window._lastSmpPasteAt) < 500){ return; }
+    window._lastSmpPasteAt = now;
     // 붙여넣기(스크린샷) 이미지는 "작업지시서" 기본 — 스크린샷/워드 캡처 케이스 많음
     _classifyAndLoad(files, 'paste');
     showToast(`✓ ${files.length}개 파일 붙여넣기 — 자동 분류됨`,'var(--blu)',1800);
@@ -12706,13 +12725,18 @@ function _classifyAndLoad(files, origin){
         const ex=(f.type||'image/png').split('/')[1]||'png';
         nm=`pasted_${ts}.${ex}`;
       }
+      const dataUrl = ev.target.result;
+      const isDupe = (buf)=> buf.some(x => x && x.url === dataUrl);
       if(kind==='img'){
+        if(isDupe(smpImgBuf)){ return; }
         if(smpImgBuf.length>=12){ showToast('⚠ 이미지는 최대 12장까지','var(--org)',2000); return; }
-        smpImgBuf.push({url:ev.target.result,name:nm,type:f.type||'image/jpeg'});
+        smpImgBuf.push({url:dataUrl,name:nm,type:f.type||'image/jpeg'});
       } else if(kind==='src'){
-        smpSrcBuf.push({name:nm,type:f.type||'application/octet-stream',size:f.size,url:ev.target.result});
+        if(isDupe(smpSrcBuf)){ return; }
+        smpSrcBuf.push({name:nm,type:f.type||'application/octet-stream',size:f.size,url:dataUrl});
       } else {
-        smpCadBuf.push({name:nm,type:f.type||'application/octet-stream',size:f.size,url:ev.target.result});
+        if(isDupe(smpCadBuf)){ return; }
+        smpCadBuf.push({name:nm,type:f.type||'application/octet-stream',size:f.size,url:dataUrl});
       }
       renderSmpPrev();
       renderSmpCadPrev();
@@ -16204,7 +16228,32 @@ function autoGenProductCode(){
   if(inp){
     inp.value = code;
     inp.focus();
+    autoSelectTypeFromCode(code); // 생성된 품번 기준으로 유형도 맞춤
     showToast(`✓ 품번 생성: ${code}`, 'var(--gold-lt)', 2500);
+  }
+}
+
+// 품번 → 유형 자동 선택
+// 품번 형식: {고객사이니셜2}{카테고리1}{소재1}{MMDD}{시퀀스2}{도금1}
+// 카테고리는 3번째 글자 (index 2): E/R/N/B/P
+// 매핑: E→EARRING, R→RING, N→NECKLACE, B→BRACELET, P→BROOCH
+function _codeCatToType(code){
+  if(!code || code.length < 3) return '';
+  // 고객사 이니셜이 2글자라고 가정 → 3번째 글자가 카테고리
+  const catChar = String(code).charAt(2).toUpperCase();
+  const map = { 'E':'EARRING', 'R':'RING', 'N':'NECKLACE', 'B':'BRACELET', 'P':'BROOCH' };
+  return map[catChar] || '';
+}
+// 제품DB 모달: 품번 입력/변경 시 유형 드롭다운 자동 선택
+function autoSelectTypeFromCode(code){
+  const type = _codeCatToType(code);
+  if(!type) return;
+  const sel = document.getElementById('pd_type');
+  if(!sel) return;
+  // 옵션에 해당 유형이 있으면 선택
+  const hasOption = Array.from(sel.options).some(o => o.value === type || o.text === type);
+  if(hasOption){
+    sel.value = type;
   }
 }
 
@@ -19588,10 +19637,24 @@ async function autoSyncSampleToProductDB(smp){
   let prod = productDB.find(p => (p.code||'').trim() === smp.itemNo.trim());
   const isNew = !prod;
   // 2) 샘플 → 제품 매핑
+  // 유형 표준화: 샘플 유형을 제품DB 드롭다운 값(EARRING 등)으로 정규화
+  // 샘플 type이 비었거나 비표준이면 품번 3번째 글자로 폴백
+  const typeMap = {
+    'EARRING':'EARRING','귀걸이':'EARRING','귀거리':'EARRING',
+    'RING':'RING','반지':'RING',
+    'NECKLACE':'NECKLACE','목걸이':'NECKLACE',
+    'BRACELET':'BRACELET','팔찌':'BRACELET',
+    'BROOCH':'BROOCH','브로치':'BROOCH','브롯치':'BROOCH'
+  };
+  let stdType = typeMap[String(smp.type||'').toUpperCase().trim()] || '';
+  if(!stdType && typeof _codeCatToType === 'function'){
+    stdType = _codeCatToType(smp.itemNo); // 품번에서 유형 추출 (3번째 글자)
+  }
+  if(!stdType) stdType = smp.type || ''; // 그래도 없으면 원본 유지
   const mapped = {
     code: smp.itemNo,
     name: smp.name || '',
-    type: smp.type || '',
+    type: stdType,
     mat: smp.mat || '',
     plating: smp.plating || '',
     size: [smp.sz1, smp.sz2, smp.sz3, smp.sz4].filter(Boolean).join(' / '),
@@ -23461,8 +23524,8 @@ function _renderQtTotalsBox(){
 // 품목 행 렌더 (모달 안) — 2줄 구조: PDF용 / 내부 원가용
 function _renderQtRows(){
   return `
-    <div style="display:grid;grid-template-columns:30px 1.6fr 1fr 1fr 0.8fr 0.7fr 0.7fr 1fr 30px;gap:4px;align-items:center;font-size:10.5px;color:var(--t3);font-weight:600;padding:4px 4px;background:var(--s1);border-radius:4px;margin-bottom:4px">
-      <div style="text-align:center">NO</div><div>품명</div><div>소재</div><div>도금</div><div>규격</div><div>중량</div><div>수량</div><div style="text-align:right">판매단가</div><div></div>
+    <div style="display:grid;grid-template-columns:30px 1.6fr 1fr 1fr 0.8fr 0.7fr 0.7fr 1fr 1fr 30px;gap:4px;align-items:center;font-size:10.5px;color:var(--t3);font-weight:600;padding:4px 4px;background:var(--s1);border-radius:4px;margin-bottom:4px">
+      <div style="text-align:center">NO</div><div>품명</div><div>소재</div><div>도금</div><div>규격</div><div>중량</div><div>수량</div><div style="text-align:right">개당단가</div><div style="text-align:right">합계</div><div></div>
     </div>
     ${_qtRowsBuf.map((r,i)=>{
       const prodCost = calcProdCost(r);
@@ -23473,7 +23536,7 @@ function _renderQtRows(){
       return `
       <div style="border:1px solid var(--bdr);border-radius:5px;padding:5px;margin-bottom:5px;background:var(--s1)">
         <!-- 1행: PDF에 표시되는 정보 -->
-        <div style="display:grid;grid-template-columns:30px 1.6fr 1fr 1fr 0.8fr 0.7fr 0.7fr 1fr 30px;gap:4px;align-items:center;margin-bottom:4px">
+        <div style="display:grid;grid-template-columns:30px 1.6fr 1fr 1fr 0.8fr 0.7fr 0.7fr 1fr 1fr 30px;gap:4px;align-items:center;margin-bottom:4px">
           <div style="text-align:center">
             <div style="font-size:11px;color:var(--t3);font-weight:600">${i+1}</div>
             ${r.itemCode?`<div style="font-size:8.5px;color:var(--gold-lt);font-family:monospace;line-height:1.1;margin-top:1px" title="기존 품번 매칭됨: ${r.itemCode}">📌</div>`:''}
@@ -23483,8 +23546,9 @@ function _renderQtRows(){
           <input class="fi" value="${(r.plating||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].plating=this.value" placeholder="무도금" style="font-size:11.5px;padding:4px 6px">
           <input class="fi" value="${(r.spec||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].spec=this.value" placeholder="목걸이" style="font-size:11.5px;padding:4px 6px">
           <input class="fi" value="${(r.weight||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].weight=this.value;_updateQtRowCalc(${i})" placeholder="예: 0.5g" style="font-size:11.5px;padding:4px 6px" title="중량을 입력하세요. 'g' 빼고 숫자만(0.5) 또는 '0.5g' 둘 다 가능. 비우면 원자재 시세 부분이 계산되지 않습니다.">
-          <input class="fi" type="number" value="${r.qty||1}" oninput="_qtRowsBuf[${i}].qty=+this.value;_updateQtTotals()" style="font-size:11.5px;padding:4px 6px;text-align:center">
-          <input class="fi" type="number" id="qtUnitPrice_${i}" value="${r.unitPrice||0}" oninput="_qtRowsBuf[${i}].unitPrice=+this.value;_onQtUnitPriceChange(${i})" placeholder="판매단가" style="font-size:11.5px;padding:4px 6px;text-align:right;font-weight:600;color:var(--gold-lt)">
+          <input class="fi" type="number" value="${r.qty||1}" oninput="_qtRowsBuf[${i}].qty=+this.value;_updateQtRowAmt(${i});_updateQtTotals()" style="font-size:11.5px;padding:4px 6px;text-align:center">
+          <input class="fi" type="number" id="qtUnitPrice_${i}" value="${r.unitPrice||0}" oninput="_qtRowsBuf[${i}].unitPrice=+this.value;_onQtUnitPriceChange(${i})" placeholder="개당단가" style="font-size:11.5px;padding:4px 6px;text-align:right;font-weight:600;color:var(--gold-lt)">
+          <div id="qtRowAmt_${i}" style="font-size:11.5px;padding:4px 6px;text-align:right;font-weight:700;color:var(--t1);font-family:monospace;background:var(--s2);border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="수량 × 개당단가">₩${((+r.qty||0)*(+r.unitPrice||0)).toLocaleString()}</div>
           <button onclick="removeQuoteRow(${i})" style="padding:2px 6px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;color:var(--t3);font-size:12px">×</button>
         </div>
         <!-- 2행: 내부 원가 정보 (PDF에 안 보임) -->
@@ -23551,8 +23615,20 @@ function _updateQtRowCalc(i){
     amtEl.textContent = sale>0 ? '₩'+margin.toLocaleString() : '-';
   }
 
+  // 행 합계 칸 갱신 (수량 × 개당단가)
+  _updateQtRowAmt(i);
+
   // 합계 박스도 갱신
   _updateQtTotals();
+}
+
+// 행의 합계 칸 갱신 (수량 × 개당단가)
+function _updateQtRowAmt(i){
+  const r = _qtRowsBuf[i];
+  if(!r) return;
+  const amt = (+r.qty||0) * (+r.unitPrice||0);
+  const el = document.getElementById('qtRowAmt_'+i);
+  if(el) el.textContent = '₩' + amt.toLocaleString();
 }
 
 // 판매단가 변경 시: 마진율 자동 재계산
@@ -23604,6 +23680,7 @@ function _onQtMarginPctChange(i){
     amtEl.textContent = '₩'+margin.toLocaleString();
   }
   // 합계 박스 갱신
+  _updateQtRowAmt(i);
   _updateQtTotals();
 }
 
