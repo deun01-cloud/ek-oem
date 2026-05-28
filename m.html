@@ -625,19 +625,19 @@ function getInitial(name){
     return ascii + ascii; // 1글자면 두번 (예: J → JJ)
   };
   // 1) 고객사 DB에서 매칭 — 이니셜 정확 일치 → 정규화 이름 일치 → 포함 매칭 순
-  const norm = (s) => String(s||'').replace(/^\(.*?\)/,'').replace(/주식회사|㈜|\(주\)|유한회사|\(유\)/g,'').replace(/\s+/g,'').trim().toLowerCase();
+  const norm = (s) => String(s||'').replace(/^\(.*?\)/,'').replace(/주식회사|㈜|\(주\)|유한회사|\(유\)|회사/g,'').replace(/[\s\-_.()]/g,'').trim().toLowerCase();
   const nmNorm = norm(nm);
-  const nmUpper = nm.toUpperCase();
+  const nmUpper = nm.toUpperCase().replace(/[^A-Z0-9]/g,'');
   let cl =
     // 1-A) 이니셜이 정확히 일치 (이미 'JJ' 같은 코드로 입력된 경우)
-    clients.find(c => (c.initials||'').trim().toUpperCase() === nmUpper)
+    clients.find(c => (c.initials||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'') === nmUpper && nmUpper.length>0)
     // 1-B) 정규화된 이름 일치
-    || clients.find(c => c.name && norm(c.name) === nmNorm)
-    // 1-C) 포함 매칭 (입력된 이름이 등록된 이름을 포함, 또는 반대)
+    || clients.find(c => c.name && norm(c.name) === nmNorm && nmNorm.length>0)
+    // 1-C) 포함 매칭 (정규화된 이름끼리 — 표기 차이 흡수: "바이위캔드" ⊂ "주식회사바이위캔드")
     || clients.find(c => {
-        const cn = (c.name||'').trim();
-        if(!cn) return false;
-        return nm.includes(cn) || cn.includes(nm);
+        const cn = norm(c.name);
+        if(!cn || !nmNorm) return false;
+        return nmNorm.includes(cn) || cn.includes(nmNorm);
       });
   if(cl && cl.initials){
     const r = onlyAscii2(cl.initials);
@@ -1739,20 +1739,34 @@ function renderTaskDay(){
   });
 
   // 카테고리별 섹션 렌더
+  // 접힘 상태 저장 (날짜 무관, 카테고리별로 기억)
+  if(!window._taskCatCollapsed) window._taskCatCollapsed = {};
   let html = '';
   CAT_DEFS.forEach(d => {
     const items = grouped[d.cat];
     if(!items.length) return; // 빈 섹션은 숨김
 
-    // 섹션 헤더
     const doneCount = items.filter(t => t.done).length;
-    html += `<div style="background:${d.bg};border-left:3px solid ${d.color};padding:8px 14px;display:flex;align-items:center;justify-content:space-between">
+    // 자동 항목(발주출고/샘플출고 등)이 5건 이상이면 기본 접힘 — "업무" 수동 항목이 묻히지 않게
+    const allAuto = items.every(t => t.auto);
+    const collapseKey = d.cat;
+    if(window._taskCatCollapsed[collapseKey] === undefined){
+      window._taskCatCollapsed[collapseKey] = (allAuto && items.length >= 5);
+    }
+    const collapsed = window._taskCatCollapsed[collapseKey];
+
+    // 섹션 헤더 (클릭하면 접기/펴기)
+    html += `<div onclick="_toggleTaskCat('${collapseKey}')" style="background:${d.bg};border-left:3px solid ${d.color};padding:8px 14px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none">
       <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:11px;color:${d.color};transition:transform .15s;display:inline-block;transform:rotate(${collapsed?'-90deg':'0deg'})">▼</span>
         <span style="font-size:13px">${d.ico}</span>
         <span style="font-size:12px;font-weight:700;color:${d.color}">${d.cat}</span>
         <span style="font-size:10.5px;color:var(--t3);font-weight:500">${doneCount}/${items.length}</span>
       </div>
+      ${collapsed?`<span style="font-size:10px;color:var(--t3)">펼치기</span>`:''}
     </div>`;
+
+    if(collapsed) return; // 접혀있으면 아이템 렌더 안 함
 
     // 섹션 아이템들
     html += items.map(t => {
@@ -1779,6 +1793,13 @@ function renderTaskDay(){
   });
 
   list.innerHTML = html;
+}
+
+// 업무일지 카테고리 접기/펴기 토글
+function _toggleTaskCat(cat){
+  if(!window._taskCatCollapsed) window._taskCatCollapsed = {};
+  window._taskCatCollapsed[cat] = !window._taskCatCollapsed[cat];
+  renderTaskDay();
 }
 
 async function toggleTask(taskId){
@@ -2230,13 +2251,18 @@ function openDayPop(ds){
   const dows=['일','월','화','수','목','금','토'];
   document.getElementById('dayPopDt').textContent = `${pad2(dt.getMonth()+1)}/${pad2(dt.getDate())} (${dows[dt.getDay()]})${KR_HOLIDAYS[ds]?` · ${KR_HOLIDAYS[ds]}`:''}`;
   let html='';
-  const ords = orders.filter(o=>o.ship===ds);
+  // 발주: 요청 출고일(ship) 또는 공장 출고일(factShip)이 이 날짜인 건
+  const ords = orders.filter(o=>o.ship===ds || o.factShip===ds);
   if(ords.length){
-    html += `<div style="font-size:11.5px;font-weight:700;color:var(--org);margin:8px 0 4px">📋 발주 (${ords.length})</div>`;
+    html += `<div style="font-size:11.5px;font-weight:700;color:var(--org);margin:8px 0 4px">📋 발주·출고 (${ords.length})</div>`;
     ords.forEach(o=>{
       const st=o.status||'진행중';
       const stCls = st==='출고완료'?'s-done':st==='취소'?'s-cancel':st==='보류'?'s-hold':'s-prog';
-      html += `<div onclick="closeDayPop();showOrdDetail(${o.id})" style="padding:9px;border:1px solid var(--bdr-lt);border-radius:6px;margin-bottom:6px;font-size:13px;cursor:pointer"><div style="display:flex;gap:6px;align-items:center">${initBadge(o.vendor)}<span style="font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(o.vendor||'-')}</span><span class="li-status ${stCls}">${_ordStLabel(st)}</span></div><div style="font-size:11px;color:var(--t3);margin-top:2px">${(o.rows||[]).length}개 품목 · ${escapeHtml(o.no||'')}</div></div>`;
+      // 이 날짜가 무슨 출고일인지 표시
+      const shipType = (o.factShip===ds && o.ship===ds) ? '요청·공장출고'
+                     : (o.factShip===ds) ? '공장출고일'
+                     : '요청출고일';
+      html += `<div onclick="closeDayPop();showOrdDetail(${o.id})" style="padding:9px;border:1px solid var(--bdr-lt);border-radius:6px;margin-bottom:6px;font-size:13px;cursor:pointer"><div style="display:flex;gap:6px;align-items:center">${initBadge(o.vendor)}<span style="font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(o.vendor||'-')}</span><span class="li-status ${stCls}">${_ordStLabel(st)}</span></div><div style="font-size:11px;color:var(--t3);margin-top:2px">${(o.rows||[]).length}개 품목 · ${escapeHtml(o.no||'')} · <span style="color:var(--org)">${shipType}</span></div></div>`;
     });
   }
   const smps = samples.filter(s=>s.due===ds);
