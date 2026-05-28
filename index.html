@@ -4834,13 +4834,24 @@ function confirmOrdDoc(){
     const rowsHtml=activeRows.map((r,i)=>{
       const unit=+r.unitPrice||0,amt=+r._docQty*unit;
       totalAmt+=amt;
+      // 제품DB에서 이미지 찾기
+      let pd=null;
+      if(r.itemCode) pd=productDB.find(p=>p.code===r.itemCode);
+      if(!pd && r.name) pd=productDB.find(p=>p.name===r.name);
+      let imgUrl='';
+      if(pd && Array.isArray(pd.imgs) && pd.imgs.length){
+        const f=pd.imgs[0]; imgUrl=(f&&f.url)?f.url:(typeof f==='string'?f:'');
+      }
+      const imgCell=imgUrl
+        ? `<img src="${imgUrl}" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid #ddd;display:block;margin:0 auto">`
+        : `<div style="width:40px;height:40px;border-radius:4px;border:1px solid #eee;background:#f7f3eb;margin:0 auto"></div>`;
       return`<tr>
         <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${i+1}</td>
+        <td style="text-align:center;padding:4px;border:1px solid #ddd;width:50px">${imgCell}</td>
         <td style="padding:7px 8px;border:1px solid #ddd;font-family:monospace;font-size:9pt">${r.itemCode||''}</td>
         <td style="padding:7px 8px;border:1px solid #ddd">${r.name||''}</td>
         <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.mat||''}</td>
         <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.plating||''}</td>
-        <td style="text-align:center;padding:7px 6px;border:1px solid #ddd">${r.size||''}</td>
         <td style="text-align:right;padding:7px 8px;border:1px solid #ddd;font-weight:700">${Number(r._docQty).toLocaleString()}</td>
         <td style="text-align:right;padding:7px 8px;border:1px solid #ddd">${unit?unit.toLocaleString():''}</td>
         <td style="text-align:right;padding:7px 8px;border:1px solid #ddd;font-weight:600">${amt?amt.toLocaleString():''}</td>
@@ -4882,7 +4893,7 @@ function confirmOrdDoc(){
         <tr><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600">발행일자</td><td style="padding:7px 10px;border:1px solid #ddd">${today}</td><td style="background:#f7f3eb;padding:7px 10px;border:1px solid #ddd;font-weight:600;color:#c03030">합계금액</td><td style="padding:7px 10px;border:1px solid #ddd;font-weight:700;font-size:12pt;color:#c03030">${total?'₩'+total.toLocaleString():'-'}</td></tr>
       </table>
       <table style="width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:16px">
-        <thead><tr style="background:#8B6914;color:#fff"><th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">품목코드</th><th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:70px">소재</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:65px">규격</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:65px;text-align:right">수량</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:80px;text-align:right">단가</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:90px;text-align:right">금액</th></tr></thead>
+        <thead><tr style="background:#8B6914;color:#fff"><th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:50px">사진</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">품목코드</th><th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:70px">소재</th><th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:65px;text-align:right">수량</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:80px;text-align:right">단가</th><th style="padding:8px 8px;border:1px solid #6B4E0A;width:90px;text-align:right">금액</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
       <table style="width:300px;margin-left:auto;border-collapse:collapse;font-size:10pt;margin-bottom:20px">
@@ -5361,16 +5372,27 @@ function renderInvoiceCopyHtml(v){
     var ordRow = lookupOrdRow(r);
     var mat = (ordRow && ordRow.mat) || r.mat || '';
     var plating = (ordRow && ordRow.plating) || r.plating || '';
-    var size = (ordRow && ordRow.size) || r.size || '';
     var unit = +r.unit || 0;
     var amt = +r.amt || (+r.qty||0)*unit;
+    // 제품DB에서 코드/이름으로 이미지 찾기
+    var pd = null;
+    if(r.code) pd = productDB.find(function(p){return p.code===r.code;});
+    if(!pd && r.name) pd = productDB.find(function(p){return p.name===r.name;});
+    var imgUrl = '';
+    if(pd && Array.isArray(pd.imgs) && pd.imgs.length){
+      var first = pd.imgs[0];
+      imgUrl = (first && first.url) ? first.url : (typeof first==='string'?first:'');
+    }
+    var imgCell = imgUrl
+      ? '<img src="'+imgUrl+'" style="width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid #ddd;display:block;margin:0 auto">'
+      : '<div style="width:40px;height:40px;border-radius:4px;border:1px solid #eee;background:#f7f3eb;margin:0 auto"></div>';
     return '<tr>' +
       '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd">'+(i+1)+'</td>' +
+      '<td style="text-align:center;padding:4px;border:1px solid #ddd;width:50px">'+imgCell+'</td>' +
       '<td style="padding:7px 8px;border:1px solid #ddd;font-family:monospace;font-size:9pt">'+(r.code||'')+'</td>' +
       '<td style="padding:7px 8px;border:1px solid #ddd">'+(r.name||'')+'</td>' +
       '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd">'+mat+'</td>' +
       '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd">'+plating+'</td>' +
-      '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd">'+size+'</td>' +
       '<td style="text-align:right;padding:7px 8px;border:1px solid #ddd;font-weight:700">'+(r.qty?Number(r.qty).toLocaleString():'')+'</td>' +
       '<td style="text-align:right;padding:7px 8px;border:1px solid #ddd">'+(unit?unit.toLocaleString():'')+'</td>' +
       '<td style="text-align:right;padding:7px 8px;border:1px solid #ddd;font-weight:600">'+(amt?amt.toLocaleString():'')+'</td>' +
@@ -5382,9 +5404,9 @@ function renderInvoiceCopyHtml(v){
   for(var bi=0; bi<blankCount; bi++){
     rowsHtml += '<tr>' +
       '<td style="text-align:center;padding:7px 6px;border:1px solid #ddd;color:#ccc">&nbsp;</td>' +
-      '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
-      '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
       '<td style="padding:7px 6px;border:1px solid #ddd">&nbsp;</td>' +
+      '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
+      '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
       '<td style="padding:7px 6px;border:1px solid #ddd">&nbsp;</td>' +
       '<td style="padding:7px 6px;border:1px solid #ddd">&nbsp;</td>' +
       '<td style="padding:7px 8px;border:1px solid #ddd">&nbsp;</td>' +
@@ -5430,11 +5452,11 @@ function renderInvoiceCopyHtml(v){
     '<table style="width:100%;border-collapse:collapse;font-size:9.5pt;margin-bottom:16px">' +
       '<thead><tr style="background:#8B6914;color:#fff">' +
         '<th style="padding:8px 6px;border:1px solid #6B4E0A;width:36px">No</th>' +
+        '<th style="padding:8px 6px;border:1px solid #6B4E0A;width:50px">사진</th>' +
         '<th style="padding:8px 8px;border:1px solid #6B4E0A;width:110px">품목코드</th>' +
         '<th style="padding:8px 8px;border:1px solid #6B4E0A">품목명</th>' +
         '<th style="padding:8px 6px;border:1px solid #6B4E0A;width:70px">소재</th>' +
         '<th style="padding:8px 6px;border:1px solid #6B4E0A;width:55px">도금</th>' +
-        '<th style="padding:8px 6px;border:1px solid #6B4E0A;width:65px">규격</th>' +
         '<th style="padding:8px 8px;border:1px solid #6B4E0A;width:65px;text-align:right">수량</th>' +
         '<th style="padding:8px 8px;border:1px solid #6B4E0A;width:80px;text-align:right">단가</th>' +
         '<th style="padding:8px 8px;border:1px solid #6B4E0A;width:90px;text-align:right">금액</th>' +
