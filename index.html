@@ -6225,6 +6225,11 @@ async function pullApiKeyFromNotion(){
     });
     if(!apiKeyPage) return false;
     const val = np.text(apiKeyPage.properties?.['값']);
+    // 🛡 마스킹된/잘린 값은 복원하지 않음 (invalid x-api-key 방지)
+    if(val && (val.includes('...') || val.includes('…') || val.length < 40)){
+      console.warn('[API키 복원] 노션의 키가 마스킹/잘린 값이라 복원 스킵:', val.slice(0,20));
+      return false;
+    }
     if(val && val.trim() && val !== anthropicKey){
       anthropicKey = val.trim();
       try{ localStorage.setItem(ANTHROPIC_KEY_SK, anthropicKey); }catch(e){}
@@ -10025,6 +10030,11 @@ function initAutoSync(){
 // 로컬 API 키가 Notion에 백업되어 있는지 확인하고 없으면 업로드
 async function checkAndBackupApiKey(){
   if(!anthropicKey || !notionCfg.workerUrl) return;
+  // 🛡 로컬 키가 마스킹/잘린 값이면 백업하지 않음 (오염 전파 방지)
+  if(anthropicKey.includes('...') || anthropicKey.includes('…') || anthropicKey.length < 40){
+    console.warn('[API키 백업] 로컬 키가 마스킹/잘린 값이라 백업 스킵');
+    return;
+  }
   try{
     const rows = await nQueryAll(APP_SETTINGS_DB);
     const apiKeyPage = rows.find(r=>{
@@ -11914,6 +11924,12 @@ function saveAnthropicKey(inputId){
   }
   if(!k.startsWith('sk-ant-')){
     showToast('⚠ 올바른 형식이 아닙니다 — sk-ant- 로 시작해야 합니다','var(--org)',4000);
+    return;
+  }
+  // 🛡 마스킹된 값 저장 방지 — "sk-ant-api03-rTw...EwAA" 같은 표시용 문자열을 진짜 키로 저장하면
+  //    다른 기기에서 invalid x-api-key 오류 발생. '...' 또는 비정상적으로 짧은 키 거부
+  if(k.includes('...') || k.includes('…') || k.length < 40){
+    showToast('⚠ 잘린/마스킹된 키입니다. Anthropic Console에서 전체 키를 복사해 주세요 (sk-ant-api03-... 약 100자)','var(--red)',6000);
     return;
   }
   anthropicKey=k;
@@ -15009,8 +15025,10 @@ function renderTab(){
   {const sm=document.getElementById('salesModalArea');if(sm)sm.style.display='none';const dp=document.getElementById('slDp');if(dp)dp.style.display='none';}
 }
 function updateBadges(){
-  // 진행중 샘플: 확정·취소가 아닌 모든 의뢰 (대시보드와 동일 정의)
-  const activeSmp=samples.filter(s=>s.status!=='확정'&&s.status!=='취소').length;
+  // 진행중 샘플: 확정·완료·취소·보류가 아닌 모든 의뢰
+  // ('완료'는 '확정'과 동의어 — 옛 데이터 호환)
+  const DONE_SMP=['확정','완료','취소','보류'];
+  const activeSmp=samples.filter(s=>!DONE_SMP.includes((s.status||'').trim())).length;
   setBdg('bdgS',activeSmp);
   // 진행중 발주: 출고완료·취소가 아닌 모든 발주 (기본값 '진행중'은 진행중으로 간주)
   const activeOrd=orders.filter(o=>{
@@ -15033,7 +15051,7 @@ function renderDash(){
   const c=document.getElementById('content');
   const todayShip=procItems.filter(p=>!p.shipped&&p.due===todayStr).length;
   const urgP=procItems.filter(p=>!p.shipped&&dday(p.due)!==null&&dday(p.due)<=3&&dday(p.due)>=0).length;
-  const activeSmp=samples.filter(s=>s.status!=='확정'&&s.status!=='취소').length;
+  const activeSmp=samples.filter(s=>!['확정','완료','취소','보류'].includes((s.status||'').trim())).length;
   // 진행중 발주: status가 '확정' 또는 '취소'가 아닌 모든 발주 (기본값은 '진행중')
   const activeOrd=orders.filter(o=>{
     const st=o.status||'의뢰';
@@ -15425,7 +15443,9 @@ function renderSample(){
   }
 
   const list=filteredSamples();
-  const counts={};SMP_CATS.forEach(cat=>{counts[cat.key]=cat.key==='전체'?samples.length:samples.filter(s=>s.status===cat.key).length;});
+  // status 정규화: '완료'는 '확정'과 동일 취급 (옛 데이터 호환)
+  const _normSmpSt=(st)=>{ const s=(st||'').trim(); return s==='완료'?'확정':s; };
+  const counts={};SMP_CATS.forEach(cat=>{counts[cat.key]=cat.key==='전체'?samples.length:samples.filter(s=>_normSmpSt(s.status)===cat.key).length;});
 
   // checked sample ids (persisted in window for re-render)
   if(!window._smpChecked)window._smpChecked=new Set();
@@ -15719,7 +15739,9 @@ function renderSample(){
   applySmpIndeterminate();
 }
 function filteredSamples(){
-  let list=smpFilter==='전체'?samples:samples.filter(s=>s.status===smpFilter);
+  // status 정규화: '완료'는 '확정'과 동일 취급 (옛 데이터 호환)
+  const _ns=(st)=>{ const s=(st||'').trim(); return s==='완료'?'확정':s; };
+  let list=smpFilter==='전체'?samples:samples.filter(s=>_ns(s.status)===smpFilter);
   if(smpSearch)list=list.filter(s=>(s.name+s.manager+s.mat+(s.itemCode||'')).toLowerCase().includes(smpSearch.toLowerCase()));
 
   // 고급 필터 적용
