@@ -12854,11 +12854,18 @@ function openPrev(buf,idx){
   document.getElementById('prevOv').classList.add('open');
 }
 function openPrevList(list,idx,isSourceDoc){
-  prevImages=list;prevIdx=idx;
+  // 안전 가드: 리스트가 비었거나 잘못된 경우
+  if(!Array.isArray(list) || list.length===0){
+    if(typeof showToast==='function') showToast('표시할 이미지가 없습니다','var(--org)',2000);
+    return;
+  }
+  const ov = document.getElementById('prevOv');
+  if(!ov){ console.warn('prevOv 요소 없음'); return; }
+  prevImages=list;prevIdx=Math.max(0, Math.min(idx||0, list.length-1));
   showPrev();
   const lbl=document.getElementById('prevSrcLabel');
   if(lbl)lbl.style.display=(isSourceDoc===true)?'block':'none';
-  document.getElementById('prevOv').classList.add('open');
+  ov.classList.add('open');
 }
 function showPrev(){
   const im=prevImages[prevIdx];
@@ -15652,12 +15659,12 @@ function renderSample(){
               <td onclick="event.stopPropagation()">
                 ${imgs.length
                   ?`<div style="display:flex;gap:3px">
-                      ${imgs.slice(0,2).map((im,i)=>`<div title="${(im.name||'').replace(/"/g,'')}" style="width:32px;height:32px;border-radius:4px;overflow:hidden;border:1.5px solid var(--gold-line);cursor:pointer" onclick="openPrevList(window['${imgsKey}'],${i},true)"><img src="${im.url}" style="width:100%;height:100%;object-fit:cover;display:block"></div>`).join('')}
+                      ${imgs.slice(0,2).map((im,i)=>`<div title="${(im.name||'').replace(/"/g,'')}" style="width:32px;height:32px;border-radius:4px;overflow:hidden;border:1.5px solid var(--gold-line);cursor:zoom-in" onclick="event.stopPropagation();openPrevList(window['${imgsKey}'],${i},true)"><img src="${im.url}" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none"></div>`).join('')}
                       ${imgs.length>2?`<span style="font-size:9px;color:var(--t3);align-self:center">+${imgs.length-2}</span>`:''}
                     </div>`
                   :sourceDocs.length
                   ?`<div style="display:flex;gap:3px">
-                      ${sourceDocs.slice(0,2).map((doc,i)=>`<div title="${(doc.name||'').replace(/"/g,'')}" style="width:32px;height:32px;border-radius:4px;overflow:hidden;border:1.5px solid var(--gold-line);cursor:pointer" onclick="openPrevList(window['${srcKey}'],${i},true)"><img src="${doc.url}" style="width:100%;height:100%;object-fit:cover;display:block"></div>`).join('')}
+                      ${sourceDocs.slice(0,2).map((doc,i)=>`<div title="${(doc.name||'').replace(/"/g,'')}" style="width:32px;height:32px;border-radius:4px;overflow:hidden;border:1.5px solid var(--gold-line);cursor:zoom-in" onclick="event.stopPropagation();openPrevList(window['${srcKey}'],${i},true)"><img src="${doc.url}" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none"></div>`).join('')}
                     </div>`
                   :`<span style="font-size:10px;color:var(--t3)">없음</span>`}
               </td>
