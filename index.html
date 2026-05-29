@@ -96,11 +96,12 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .cal-cell:nth-child(7n){border-right:none}
 .cal-cell:hover{background:#FFFBF4}
 .cal-cell.other{opacity:.5;background:var(--s2)}
-.cal-cell.today-c{background:var(--gold-bg)}
-.cal-cell.today-c .cal-dn{background:var(--gold);color:#FFF;border-radius:50%}
+.cal-cell.today-c{background:rgba(255,213,0,.18)}
+.cal-cell.today-c .cal-dn{background:#FFD500;color:#222;border-radius:50%;font-weight:800;box-shadow:0 1px 3px rgba(0,0,0,.18)}
 .cal-cell.sun .cal-dn{color:var(--red)}.cal-cell.sat .cal-dn{color:var(--blu)}
+.cal-cell.sun.today-c .cal-dn,.cal-cell.sat.today-c .cal-dn{color:#222}
 .cal-cell.holiday{background:rgba(192,48,48,.04)}
-.cal-cell.holiday.today-c{background:linear-gradient(135deg,var(--gold-bg) 0%,rgba(192,48,48,.08) 100%)}
+.cal-cell.holiday.today-c{background:linear-gradient(135deg,rgba(255,213,0,.22) 0%,rgba(192,48,48,.08) 100%)}
 .cal-dn{font-size:11px;font-weight:600;color:var(--t2);width:20px;height:20px;display:flex;align-items:center;justify-content:center;margin-bottom:2px}
 .cal-evt{font-size:9px;padding:1px 4px;border-radius:2px;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;border-left:2px solid;display:flex;align-items:center;gap:2px}
 .cal-evt .cl-init{width:14px;height:14px;font-size:8px;border-radius:3px;flex-shrink:0}
@@ -517,6 +518,14 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
   <div class="fg"><label>📬 고객사 문의 DB ID</label><input class="fi" id="notion_inq_db" placeholder="28ad79cef0bc4895..."></div>
   <div class="fg"><label>📋 주간/월간 업무 목표 DB ID <span style="font-size:9.5px;color:var(--t3)">(신규 — 비워두면 동기화 안 함)</span></label><input class="fi" id="notion_checklist_db" placeholder="Notion에서 DB 생성 후 ID 입력"></div>
+  <div class="fg" style="background:rgba(60,108,170,.05);padding:10px 12px;border-radius:6px;border:1px solid rgba(60,108,170,.2)">
+    <label style="color:var(--blu);font-weight:600">🌐 실시간 동기화 Worker URL <span style="font-size:9.5px;color:var(--t3)">(Phase 2 — WebSocket 기반 실시간)</span></label>
+    <input class="fi" id="notion_realtime_url" placeholder="https://ek-realtime.deun01.workers.dev">
+    <div style="font-size:10px;color:var(--t3);margin-top:4px;line-height:1.5">
+      • 비우면 옛 방식(30초 폴링)으로 작동<br>
+      • 입력하면 다른 기기와 1초 이내 동기화 됨
+    </div>
+  </div>
   <div style="margin-top:10px;padding:12px 14px;background:rgba(46,139,44,.06);border:1px solid rgba(46,139,44,.3);border-radius:6px">
     <div style="font-size:12px">
       <b style="color:var(--grn)">🔒 노션-우선 모드 (항상 적용)</b><br>
@@ -3464,6 +3473,7 @@ async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
   }
 
   invoiceHistory.unshift(invRec);
+  if(typeof realtimePublish === 'function') realtimePublish('invoice', invRec);
   // 명세서 단계: 출고일이 이미 있으니 청구 단계로 (월말 합본 대상)
   invRec._invStage = (typeof inferInvStage === 'function') ? inferInvStage(invRec) : 'billing';
 
@@ -4872,6 +4882,7 @@ function confirmOrdDoc(){
       status:'발행완료',memo:''
     };
     invoiceHistory.unshift(invRec);
+  if(typeof realtimePublish === 'function') realtimePublish('invoice', invRec);
     // ⚠ 단계 3: 거래명세서 발행 시 출고완료 자동 처리하던 로직 제거
     // 이제 출고완료는 거래명세서 입금 100% 도달 시점에 자동 처리됨 (checkAutoCompleteShipment)
     // 또는 사용자가 수동으로 발주 모달에서 출고완료 처리
@@ -5801,21 +5812,119 @@ function deleteInvRecord(id){
     return;
   }
   showConfirm((v&&v.vendor||'명세서')+' 이력을 삭제합니다.\n이 명세서 한 건만 Notion에서 삭제됩니다.',function(){
-    // 1) Notion에서 해당 페이지 1건만 archive (같은 발주번호의 다른 명세서는 보호)
-    // ⚠ 옛 코드는 archiveAllMatchingInvoices로 같은 ordNo의 모든 페이지를 archive했었음
-    //   → 사용자가 일부러 만든 분할 명세서까지 같이 삭제되는 버그
-    //   → 이제는 클릭한 명세서의 _notionId만 archive
+    // 0) 묘비 기록 — 노션 archive가 실패해도 pull 시 다시 가져오지 않도록 차단
+    //    (노션이 진실의 원천이라 archive 실패 시 다음 pull에서 부활하던 좀비 버그 방지)
+    if(v._notionId){
+      _markNotionIdDeleted(v._notionId, 'invoice');
+    }
+    // 1) Notion에서 해당 페이지 1건만 archive
     if(v && v._notionId && notionCfg.workerUrl && notionCfg.invDb){
-      nDelete(v._notionId).catch(function(e){
-        console.warn('Notion 페이지 archive 실패:', e);
-        showToast('⚠ Notion 삭제 실패 — 로컬만 삭제됨','var(--org)',3000);
+      nDelete(v._notionId).then(function(){
+        // 성공 → 묘비는 일정 시간 후 정리 가능 (다른 기기 pull 후)
+        _markNotionArchiveConfirmed(v._notionId);
+      }).catch(function(e){
+        console.warn('Notion 페이지 archive 실패 — 묘비로 차단, 재시도 큐에 등록:', e);
+        // 실패 → 재시도 큐에 등록 (회복되면 자동 archive)
+        _enqueueNotionArchiveRetry(v._notionId, 'invoice');
+        showToast('⚠ Notion 삭제는 나중에 재시도됩니다 (로컬은 정상 삭제)','var(--org)',3000);
       });
     }
-    // 2) 로컬에서 제거 (클릭한 1건만)
+    // 2) 로컬에서 제거
     invoiceHistory=invoiceHistory.filter(function(x){return x.id!=id;});
     save();renderInvoiceHistory();
+    // 🌐 실시간 동기화 — 다른 기기에서도 즉시 삭제
+    if(typeof realtimeDelete === 'function') realtimeDelete('invoice', id);
     showToast('✓ 삭제됨','var(--grn)');
   },'이력 삭제','🗑');
+}
+
+// ── 노션 삭제 묘비 (Tombstone) — 좀비 부활 방지 ──
+// 로컬에서 삭제했는데 노션 archive가 실패한 경우, 다음 pull에서 다시 끌려오는 걸 막음
+// localStorage에 저장 → 모든 탭/세션에서 공유
+const _TOMBSTONE_KEY = 'ek_deletedNotionIds';
+const _ARCHIVE_RETRY_KEY = 'ek_archiveRetryQueue';
+const _TOMBSTONE_TTL_DAYS = 30; // 30일 후 묘비 자동 정리
+function _loadTombstones(){
+  try{
+    const raw = localStorage.getItem(_TOMBSTONE_KEY);
+    if(!raw) return {};
+    const obj = JSON.parse(raw);
+    // TTL 만료 정리
+    const now = Date.now();
+    const cutoff = _TOMBSTONE_TTL_DAYS * 86400 * 1000;
+    let changed = false;
+    Object.keys(obj).forEach(k=>{
+      if(obj[k] && obj[k].ts && (now - obj[k].ts) > cutoff){
+        delete obj[k]; changed = true;
+      }
+    });
+    if(changed){ try{ localStorage.setItem(_TOMBSTONE_KEY, JSON.stringify(obj)); }catch(e){} }
+    return obj;
+  }catch(e){ return {}; }
+}
+function _saveTombstones(obj){
+  try{ localStorage.setItem(_TOMBSTONE_KEY, JSON.stringify(obj)); }catch(e){}
+}
+function _markNotionIdDeleted(notionId, type){
+  if(!notionId) return;
+  const ts = _loadTombstones();
+  ts[notionId] = { ts: Date.now(), type: type||'invoice', confirmed: false };
+  _saveTombstones(ts);
+}
+function _markNotionArchiveConfirmed(notionId){
+  if(!notionId) return;
+  const ts = _loadTombstones();
+  if(ts[notionId]){
+    ts[notionId].confirmed = true;
+    _saveTombstones(ts);
+  }
+}
+function _isNotionIdDeleted(notionId){
+  if(!notionId) return false;
+  const ts = _loadTombstones();
+  return !!ts[notionId];
+}
+// 외부 디버그용
+window.tombstones = ()=>{ const t=_loadTombstones(); console.table(t); return t; };
+window.clearTombstones = ()=>{ localStorage.removeItem(_TOMBSTONE_KEY); console.log('묘비 정리됨'); };
+
+// ── 노션 archive 실패 재시도 큐 ──
+function _loadArchiveRetryQueue(){
+  try{ return JSON.parse(localStorage.getItem(_ARCHIVE_RETRY_KEY) || '{}'); }catch(e){ return {}; }
+}
+function _saveArchiveRetryQueue(q){
+  try{ localStorage.setItem(_ARCHIVE_RETRY_KEY, JSON.stringify(q)); }catch(e){}
+}
+function _enqueueNotionArchiveRetry(notionId, type){
+  if(!notionId) return;
+  const q = _loadArchiveRetryQueue();
+  q[notionId] = { ts: Date.now(), type: type||'invoice', attempts: (q[notionId]?.attempts||0) };
+  _saveArchiveRetryQueue(q);
+}
+let _archiveRetryTimer = null;
+function _startArchiveRetryLoop(){
+  if(_archiveRetryTimer) return;
+  _archiveRetryTimer = setInterval(async ()=>{
+    if(!notionCfg.workerUrl) return;
+    if(_notionCircuitOpen) return;
+    const q = _loadArchiveRetryQueue();
+    const ids = Object.keys(q);
+    if(!ids.length) return;
+    for(const nid of ids){
+      const item = q[nid];
+      if(item.attempts >= 10){ delete q[nid]; continue; }
+      try{
+        await nDelete(nid);
+        delete q[nid];
+        _markNotionArchiveConfirmed(nid);
+        console.log('[archiveRetry] ✓ 재시도 성공:', nid);
+      }catch(e){
+        item.attempts++;
+        console.warn('[archiveRetry] 실패('+item.attempts+'회):', nid, e.message);
+      }
+    }
+    _saveArchiveRetryQueue(q);
+  }, 60000); // 1분마다
 }
 
 // ── Notion 좀비 청소: 로컬에 없는데 Notion에만 살아있는 거래명세서 페이지를 모두 archive ──
@@ -6444,11 +6553,16 @@ let notionCfg = {
   ioDb:    'a6024595f92f4f039493e907492b8eef', // 📦 입출고 현황
   checklistDb: '', // 📋 주간/월간 업무 목표 — 사용자가 노션 설정에서 DB ID 입력
   strictMode: true, // 🔒 노션 진실의 원천 모드 — 항상 ON (모든 데이터 적용)
+  // 🌐 Realtime Worker (실시간 동기화 — Phase 2 추가)
+  // 기본값: ek-realtime.deun01.workers.dev. 사용자 환경 다르면 노션 설정에서 변경.
+  realtimeUrl: 'https://ek-realtime.deun01.workers.dev',
 };
 
 function loadNotionCfg(){
   try{ const s=localStorage.getItem(NOTION_CFG_KEY); if(s) notionCfg={...notionCfg,...JSON.parse(s)}; }catch(e){}
   updateNotionNavLabel();
+  // Realtime 연결 시도 (workerUrl 또는 realtimeUrl 있으면)
+  if(typeof realtimeConnect === 'function') setTimeout(()=>realtimeConnect(), 500);
 }
 function saveNotionSettings(){
   const wasStrict = !!notionCfg.strictMode;
@@ -6468,6 +6582,7 @@ function saveNotionSettings(){
     inqDb:   document.getElementById('notion_inq_db')?.value.trim()||notionCfg.inqDb,
     quoteDb: notionCfg.quoteDb, // 견적서 DB (UI 입력 필드 없음 — 기존 값 유지)
     checklistDb: document.getElementById('notion_checklist_db')?.value.trim()||notionCfg.checklistDb,
+    realtimeUrl: document.getElementById('notion_realtime_url')?.value.trim()||notionCfg.realtimeUrl,
     strictMode: true, // 🔒 노션-우선 모드는 항상 ON (모든 데이터에 적용)
   };
   try{ localStorage.setItem(NOTION_CFG_KEY, JSON.stringify(notionCfg)); }catch(e){}
@@ -6490,6 +6605,11 @@ function saveNotionSettings(){
     setTimeout(()=>pullFromNotion({silent:false}), 400);
     startAutoSync();
   }
+  // 🌐 Realtime URL 바뀌었으면 재연결
+  if(typeof realtimeDisconnect === 'function' && typeof realtimeConnect === 'function'){
+    realtimeDisconnect();
+    setTimeout(()=>realtimeConnect(), 500);
+  }
 }
 function openNotionSettings(){
   loadNotionCfg();
@@ -6503,6 +6623,7 @@ function openNotionSettings(){
   if(g('notion_product_db')) g('notion_product_db').value=notionCfg.productDb||'';
   if(g('notion_inq_db')) g('notion_inq_db').value=notionCfg.inqDb||'';
   if(g('notion_checklist_db')) g('notion_checklist_db').value=notionCfg.checklistDb||'';
+  if(g('notion_realtime_url')) g('notion_realtime_url').value=notionCfg.realtimeUrl||'';
   if(g('notion_strict_mode')) g('notion_strict_mode').checked=!!notionCfg.strictMode;
   const res=document.getElementById('notionTestResult'); if(res) res.textContent='';
   updateNotionMode(); openM('mNotion');
@@ -6517,11 +6638,389 @@ function updateNotionNavLabel(){
   const lbl=document.getElementById('notionSyncLabel');
   const ico=document.getElementById('notionSyncIcon');
   if(!lbl||!ico) return;
-  // 모든 데이터가 노션-우선 모드 — 항상 자물쇠 표시
-  if(notionCfg.workerUrl){ lbl.textContent='Notion 🟢 🔒'; lbl.style.color='var(--grn)'; ico.textContent='☁'; lbl.title='Notion 동기화 활성 (Worker 연결됨) · 🔒 노션-우선 모드 (모든 데이터)'; }
-  else if(notionCfg.token){ lbl.textContent='Notion ⚠'; lbl.style.color='var(--org)'; ico.textContent='🔄'; lbl.title='Notion 토큰은 있지만 Worker URL이 없음 — 동기화 불가'; }
-  else { lbl.textContent='Notion ❌'; lbl.style.color='var(--red)'; ico.textContent='⚠'; lbl.title='Notion 미연결 — 모든 등록이 불가합니다. 클릭해서 설정하세요'; }
+  // 진단: 어느 조건에서 ⚠ 뜨는지 명확히 구분
+  const hasWorker = !!notionCfg.workerUrl;
+  const hasToken = !!notionCfg.token;
+  const circuitOpen = (typeof _notionCircuitOpen !== 'undefined') && _notionCircuitOpen;
+  const failCount = (typeof _notionFailCount !== 'undefined') ? _notionFailCount : 0;
+  // Realtime 상태 추가
+  const rtUrl = !!notionCfg.realtimeUrl;
+  const rtOn = (typeof _rtConnected !== 'undefined') && _rtConnected;
+  const rtBadge = rtUrl ? (rtOn ? ' ⚡' : ' 🔌') : ''; // ⚡=연결됨, 🔌=시도 중
+  if(circuitOpen){
+    // 연속 실패로 회로차단기 열림 (가장 흔한 ⚠ 원인)
+    lbl.textContent='Notion ⚠'+rtBadge; lbl.style.color='var(--org)'; ico.textContent='🔌';
+    lbl.title=`Notion 연결 일시 중단 (연속 ${failCount}회 실패 후 자동 차단) — 잠시 후 자동 복구 시도합니다.${rtUrl?'\n실시간 동기화: '+(rtOn?'연결됨 ⚡':'재연결 중'):''}`;
+  } else if(hasWorker){
+    lbl.textContent='Notion 🟢 🔒'+rtBadge; lbl.style.color='var(--grn)'; ico.textContent='☁';
+    lbl.title='Notion 동기화 활성 (Worker 연결됨) · 🔒 노션-우선 모드'+(rtUrl?'\n실시간 동기화: '+(rtOn?'연결됨 ⚡ (1초 이내 동기화)':'재연결 중 🔌'):'\n실시간 동기화: 비활성 (옛 30초 폴링)');
+  } else if(hasToken){
+    lbl.textContent='Notion ⚠'; lbl.style.color='var(--org)'; ico.textContent='🔄';
+    lbl.title='Notion 토큰은 있지만 Worker URL이 없음 — 동기화 불가';
+  } else {
+    lbl.textContent='Notion ❌'; lbl.style.color='var(--red)'; ico.textContent='⚠';
+    lbl.title='Notion 미연결 — 모든 등록이 불가합니다. 클릭해서 설정하세요';
+  }
 }
+
+// ════════════════════════════════════════════════════════════════
+// 🌐 REALTIME 동기화 클라이언트 (Cloudflare Durable Objects)
+// ════════════════════════════════════════════════════════════════
+//
+// Worker: ek-realtime.deun01.workers.dev
+// 기능:
+//   - WebSocket 연결로 실시간 푸시 (한 기기 변경 → 즉시 다른 기기 반영)
+//   - 자동 재연결 (지수 백오프)
+//   - 변경 큐 (오프라인 → 재연결 시 자동 push)
+//   - REST 폴백 (WebSocket 안 되면 HTTP)
+//   - 노션과 공존 (백업 용도로 유지)
+//
+// 데이터 타입:
+//   invoice, order, sample, product, customer, task, quote, proposal,
+//   as, proc, io, checklist
+//
+// 흐름:
+//   로컬 변경 → realtimePublish(type, item)
+//     → WebSocket으로 즉시 푸시
+//     → 다른 기기는 realtime:change 이벤트 받음
+//     → 로컬 데이터 갱신 + 화면 다시 그림
+// ════════════════════════════════════════════════════════════════
+
+const RT_LOG_PREFIX = '[Realtime]';
+let _rtWs = null;
+let _rtConnected = false;
+let _rtClientId = (function(){
+  try{ let id = localStorage.getItem('ek_rt_client_id'); if(!id){ id = 'client-' + Math.random().toString(36).slice(2,11); localStorage.setItem('ek_rt_client_id', id); } return id; }
+  catch(e){ return 'client-' + Math.random().toString(36).slice(2,11); }
+})();
+let _rtReconnectTimer = null;
+let _rtReconnectDelay = 1000; // 1초부터 시작, 지수 백오프
+let _rtPingTimer = null;
+let _rtPendingAcks = new Map(); // reqId → {resolve, reject, timeout}
+let _rtSnapshotReceived = new Set(); // 어떤 타입의 초기 스냅샷을 받았는지
+let _rtOutboundQueue = []; // 오프라인 중 누적된 outbound 메시지 (재연결 시 flush)
+
+// 현재 사용 중인 realtimeUrl
+function realtimeWsUrl(){
+  const base = (notionCfg.realtimeUrl || 'https://ek-realtime.deun01.workers.dev').trim();
+  // https:// → wss://, http:// → ws://
+  return base.replace(/^http/, 'ws') + '/ws';
+}
+function realtimeHttpUrl(){
+  return (notionCfg.realtimeUrl || 'https://ek-realtime.deun01.workers.dev').trim();
+}
+
+function realtimeConnect(){
+  if(!notionCfg.realtimeUrl){ console.log(RT_LOG_PREFIX, 'realtimeUrl 미설정 — 실시간 비활성'); return; }
+  if(_rtWs && (_rtWs.readyState === WebSocket.OPEN || _rtWs.readyState === WebSocket.CONNECTING)) return;
+  try{
+    const url = realtimeWsUrl();
+    console.log(RT_LOG_PREFIX, 'WebSocket 연결 시도:', url);
+    _rtWs = new WebSocket(url);
+    _rtWs.addEventListener('open', _rtOnOpen);
+    _rtWs.addEventListener('message', _rtOnMessage);
+    _rtWs.addEventListener('close', _rtOnClose);
+    _rtWs.addEventListener('error', _rtOnError);
+  }catch(e){
+    console.error(RT_LOG_PREFIX, 'WebSocket 생성 실패:', e);
+    _rtScheduleReconnect();
+  }
+}
+
+function realtimeDisconnect(){
+  if(_rtPingTimer){ clearInterval(_rtPingTimer); _rtPingTimer = null; }
+  if(_rtReconnectTimer){ clearTimeout(_rtReconnectTimer); _rtReconnectTimer = null; }
+  if(_rtWs){
+    try{ _rtWs.close(); }catch(_){}
+    _rtWs = null;
+  }
+  _rtConnected = false;
+}
+
+function _rtOnOpen(){
+  console.log(RT_LOG_PREFIX, '✓ WebSocket 연결됨');
+  _rtConnected = true;
+  _rtReconnectDelay = 1000; // 재연결 지연 리셋
+  // 구독 메시지 보냄
+  _rtSend({
+    op: 'subscribe',
+    clientId: _rtClientId,
+    types: ['invoice','order','sample','product','customer','task','quote','proposal','as','proc','io','checklist'],
+  });
+  // 큐에 있던 outbound 메시지 flush
+  if(_rtOutboundQueue.length){
+    console.log(RT_LOG_PREFIX, `대기 중인 ${_rtOutboundQueue.length}건 전송`);
+    const queue = _rtOutboundQueue.slice();
+    _rtOutboundQueue = [];
+    queue.forEach(m => _rtSend(m));
+  }
+  // 주기적 ping (연결 유지)
+  if(_rtPingTimer) clearInterval(_rtPingTimer);
+  _rtPingTimer = setInterval(()=>{ if(_rtConnected) _rtSend({ op: 'ping' }); }, 30000);
+  // 라벨 갱신
+  if(typeof updateNotionNavLabel === 'function') updateNotionNavLabel();
+}
+
+function _rtOnMessage(ev){
+  let msg;
+  try{ msg = JSON.parse(ev.data); }catch(e){ console.error(RT_LOG_PREFIX, '잘못된 메시지:', ev.data); return; }
+  switch(msg.op){
+    case 'snapshot':
+      _rtHandleSnapshot(msg);
+      break;
+    case 'change':
+      _rtHandleChange(msg);
+      break;
+    case 'ack':
+      _rtHandleAck(msg);
+      break;
+    case 'subscribed':
+      console.log(RT_LOG_PREFIX, '구독 완료, clientId:', msg.clientId);
+      break;
+    case 'pong':
+      // keep-alive 응답
+      break;
+    case 'error':
+      console.warn(RT_LOG_PREFIX, '서버 에러:', msg.error);
+      break;
+    default:
+      console.log(RT_LOG_PREFIX, '알 수 없는 op:', msg.op);
+  }
+}
+
+function _rtOnClose(ev){
+  console.log(RT_LOG_PREFIX, `WebSocket 닫힘 (code=${ev.code})`);
+  _rtConnected = false;
+  if(_rtPingTimer){ clearInterval(_rtPingTimer); _rtPingTimer = null; }
+  _rtScheduleReconnect();
+  if(typeof updateNotionNavLabel === 'function') updateNotionNavLabel();
+}
+
+function _rtOnError(ev){
+  console.warn(RT_LOG_PREFIX, 'WebSocket 에러');
+}
+
+function _rtScheduleReconnect(){
+  if(_rtReconnectTimer) return;
+  const delay = Math.min(_rtReconnectDelay, 30000); // 최대 30초
+  console.log(RT_LOG_PREFIX, `${delay/1000}초 후 재연결 시도`);
+  _rtReconnectTimer = setTimeout(()=>{
+    _rtReconnectTimer = null;
+    _rtReconnectDelay = Math.min(_rtReconnectDelay * 2, 30000);
+    realtimeConnect();
+  }, delay);
+}
+
+function _rtSend(msg){
+  if(!_rtWs || _rtWs.readyState !== WebSocket.OPEN){
+    // 큐에 보관 (재연결 시 flush). 단 구독/ping 같은 메타는 큐 안 함
+    if(msg.op === 'upsert' || msg.op === 'delete'){
+      _rtOutboundQueue.push(msg);
+      if(_rtOutboundQueue.length > 500) _rtOutboundQueue.shift(); // 한도 초과 방지
+      console.log(RT_LOG_PREFIX, '오프라인 큐에 보관:', msg.op, msg.type);
+    }
+    return false;
+  }
+  try{
+    _rtWs.send(JSON.stringify(msg));
+    return true;
+  }catch(e){
+    console.error(RT_LOG_PREFIX, '전송 실패:', e);
+    return false;
+  }
+}
+
+// ────────────────────────────────────────────────
+// 외부 API — realtimePublish, realtimeDelete
+// 로컬 변경 시 호출하면 서버에 푸시
+// ────────────────────────────────────────────────
+
+function realtimePublish(type, item){
+  if(!notionCfg.realtimeUrl) return;
+  if(!item || (item.id === undefined && item.id === null)) return;
+  const ts = Date.now();
+  const sent = _rtSend({
+    op: 'upsert',
+    type,
+    item,
+    ts,
+    clientId: _rtClientId,
+  });
+  // WebSocket 안 되면 HTTP 폴백 (백그라운드)
+  if(!sent){
+    _rtHttpFallback({ op: 'upsert', type, item, ts, clientId: _rtClientId });
+  }
+}
+
+function realtimeDelete(type, id){
+  if(!notionCfg.realtimeUrl) return;
+  if(id === undefined || id === null) return;
+  const ts = Date.now();
+  const sent = _rtSend({
+    op: 'delete',
+    type,
+    id: String(id),
+    ts,
+    clientId: _rtClientId,
+  });
+  if(!sent){
+    _rtHttpFallback({ op: 'delete', type, id: String(id), ts, clientId: _rtClientId });
+  }
+}
+
+async function _rtHttpFallback(payload){
+  try{
+    await fetch(realtimeHttpUrl() + '/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }catch(e){ console.warn(RT_LOG_PREFIX, 'HTTP 폴백 실패:', e); }
+}
+
+// ────────────────────────────────────────────────
+// 수신 핸들러 — 다른 기기 변경을 로컬에 반영
+// ────────────────────────────────────────────────
+
+function _rtHandleSnapshot(msg){
+  // 초기 스냅샷 수신 — 서버 데이터를 로컬에 머지
+  // (서버가 비어있으면 items=[], 무시)
+  if(!msg.items || !msg.items.length){
+    _rtSnapshotReceived.add(msg.type);
+    return;
+  }
+  console.log(RT_LOG_PREFIX, `스냅샷 수신: ${msg.type} ${msg.items.length}건`);
+  _rtSnapshotReceived.add(msg.type);
+  // 각 타입별로 로컬 배열에 머지 (Last-Write-Wins by _ts)
+  msg.items.forEach(item => _applyRemoteItem(msg.type, item, msg.ts || Date.now(), null));
+  // 화면 갱신
+  if(typeof save === 'function') save();
+  if(typeof renderTab === 'function'){ try{ renderTab(); updateBadges(); }catch(_){} }
+}
+
+function _rtHandleChange(msg){
+  // 다른 기기에서 변경 → 즉시 로컬 반영
+  if(msg.fromClient === _rtClientId) return; // 내가 보낸 것 무시
+  console.log(RT_LOG_PREFIX, `변경 수신: ${msg.type} ${msg.action}`);
+  if(msg.action === 'upsert'){
+    _applyRemoteItem(msg.type, msg.item, msg.ts, msg.fromClient);
+  } else if(msg.action === 'delete'){
+    _applyRemoteDelete(msg.type, msg.item?.id || msg.id, msg.ts);
+  }
+  if(typeof save === 'function') save();
+  if(typeof renderTab === 'function'){ try{ renderTab(); updateBadges(); }catch(_){} }
+}
+
+function _rtHandleAck(msg){
+  if(!msg.ok && msg.error){
+    if(msg.error === 'stale_write' || msg.error === 'stale_delete'){
+      console.warn(RT_LOG_PREFIX, `충돌 감지 (서버 ts=${msg.conflictTs}) — 다음 변경 수신 시 자동 정정됨`);
+    } else {
+      console.warn(RT_LOG_PREFIX, '서버 거부:', msg.error);
+    }
+  }
+}
+
+// 타입별 로컬 배열 매핑 (이번 세션은 명세서부터)
+function _rtGetLocalArray(type){
+  if(type === 'invoice')  return (typeof invoiceHistory !== 'undefined') ? invoiceHistory : null;
+  if(type === 'order')    return (typeof orders !== 'undefined') ? orders : null;
+  if(type === 'sample')   return (typeof samples !== 'undefined') ? samples : null;
+  if(type === 'product')  return (typeof productDB !== 'undefined') ? productDB : null;
+  if(type === 'customer') return (typeof clients !== 'undefined') ? clients : null;
+  if(type === 'task')     return (typeof tasks !== 'undefined') ? tasks : null;
+  if(type === 'quote')    return (typeof quoteHistory !== 'undefined') ? quoteHistory : null;
+  if(type === 'proposal') return (typeof proposals !== 'undefined') ? proposals : null;
+  if(type === 'as')       return (typeof asItems !== 'undefined') ? asItems : null;
+  if(type === 'proc')     return (typeof procItems !== 'undefined') ? procItems : null;
+  if(type === 'io')       return (typeof ioRecords !== 'undefined') ? ioRecords : null;
+  if(type === 'checklist'){
+    // checklist는 주간/월간 두 배열로 나뉘어 있음 — kind로 구분
+    return null; // 별도 핸들링
+  }
+  return null;
+}
+
+function _applyRemoteItem(type, item, ts, fromClient){
+  if(!item || (item.id === undefined && item.id === null)) return;
+  const arr = _rtGetLocalArray(type);
+  if(!arr){
+    // 미지원 타입은 일단 스킵 (다음 세션에서 확장)
+    return;
+  }
+  const idx = arr.findIndex(x => String(x.id) === String(item.id));
+  // LWW: 더 늦은 _ts가 이김
+  if(idx >= 0){
+    const local = arr[idx];
+    const localTs = +local._ts || 0;
+    if(localTs > (item._ts || ts || 0)) return; // 로컬이 더 최신 → 무시
+    // 머지: 로컬에만 있는 비동기 메타(_notionId 등)는 유지
+    const merged = { ...local, ...item, _ts: item._ts || ts };
+    if(local._notionId && !merged._notionId) merged._notionId = local._notionId;
+    arr[idx] = merged;
+  } else {
+    arr.push({ ...item, _ts: item._ts || ts });
+  }
+}
+
+function _applyRemoteDelete(type, id, ts){
+  if(id === undefined || id === null) return;
+  const arr = _rtGetLocalArray(type);
+  if(!arr) return;
+  const idx = arr.findIndex(x => String(x.id) === String(id));
+  if(idx >= 0){
+    arr.splice(idx, 1);
+  }
+  // 노션 묘비도 등록 (혹시 노션엔 아직 있을 수 있음)
+  // 단 _notionId가 있으면 그 ID로 묘비 등록
+}
+
+// 디버그 헬퍼
+window.realtimeStatus = ()=>{
+  return {
+    url: notionCfg.realtimeUrl,
+    connected: _rtConnected,
+    clientId: _rtClientId,
+    snapshotsReceived: Array.from(_rtSnapshotReceived),
+    queueSize: _rtOutboundQueue.length,
+    wsState: _rtWs ? _rtWs.readyState : 'null',
+  };
+};
+window.realtimeReconnect = ()=>{ realtimeDisconnect(); _rtReconnectDelay=1000; realtimeConnect(); };
+
+// 마이그레이션: 첫 연결 시 로컬 명세서를 서버에 한 번에 업로드
+// (이미 마이그레이션 된 기기에선 스킵)
+const RT_MIGRATION_KEY = 'ek_rt_migrated_v1';
+async function realtimeMigrateLocalData(force){
+  if(!notionCfg.realtimeUrl){ console.log(RT_LOG_PREFIX, '실시간 URL 없음 — 마이그레이션 스킵'); return; }
+  if(!force && localStorage.getItem(RT_MIGRATION_KEY)){
+    console.log(RT_LOG_PREFIX, '이미 마이그레이션 완료됨');
+    return;
+  }
+  console.log(RT_LOG_PREFIX, '로컬 데이터 마이그레이션 시작...');
+  try{
+    // 명세서만 우선 마이그레이션 (이번 세션 범위)
+    if(typeof invoiceHistory !== 'undefined' && invoiceHistory.length){
+      const items = invoiceHistory.filter(v=>!v._isConsolidated || v._isConsolidated); // 합본 포함 전체
+      const res = await fetch(realtimeHttpUrl() + '/api/snapshot/invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, ts: Date.now() }),
+      });
+      const data = await res.json();
+      console.log(RT_LOG_PREFIX, `✓ 명세서 ${data.inserted || 0}건 서버 업로드 완료`);
+    }
+    localStorage.setItem(RT_MIGRATION_KEY, new Date().toISOString());
+    console.log(RT_LOG_PREFIX, '✓ 마이그레이션 완료');
+  }catch(e){
+    console.error(RT_LOG_PREFIX, '마이그레이션 실패:', e);
+  }
+}
+window.realtimeMigrate = realtimeMigrateLocalData;
+
+// 페이지 시작 시 자동 연결 (loadNotionCfg에서 호출되도록 등록)
+// (즉시 연결하지 않고 notionCfg 로드 후에 호출됨)
+console.log(RT_LOG_PREFIX, '모듈 로드됨, clientId:', _rtClientId);
 
 // ── Worker API 호출 코어 ──
 // Notion 연결 상태 추적 (연속 실패 시 차단)
@@ -6549,6 +7048,7 @@ function _recordNotionFail(info){
   _notionFailTimes.push(now);
   _notionFailCount=_notionFailTimes.length;
   _notionLastError={...info, when:now};
+  if(typeof updateNotionNavLabel === 'function') updateNotionNavLabel();
 }
 function resetNotionCircuit(){
   _notionFailCount=0;
@@ -6556,6 +7056,7 @@ function resetNotionCircuit(){
   _notionCircuitOpen=false;
   _notionLastError=null;
   console.log('[Notion] 회로차단기 재설정됨');
+  if(typeof updateNotionNavLabel === 'function') updateNotionNavLabel();
 }
 
 // notionCall(method, path, body, opts)
@@ -6653,7 +7154,25 @@ async function nCreate(dbId,props){ return notionCall('POST','/pages',{parent:{d
 async function nUpdate(pageId,props){ return notionCall('PATCH','/pages/'+pageId,{properties:props}); }
 async function nDelete(pageId){
   if(!notionCfg.workerUrl||!pageId) return;
-  return notionCall('PATCH','/pages/'+pageId,{archived:true});
+  // 🪦 묘비 자동 등록 — 노션 archive를 시도하기 전에 먼저 로컬에 "삭제 의도" 기록
+  //    이러면 archive가 실패해도 다음 pull 시 다시 가져오지 않음
+  if(typeof _markNotionIdDeleted === 'function'){
+    _markNotionIdDeleted(pageId, 'generic');
+  }
+  try{
+    const result = await notionCall('PATCH','/pages/'+pageId,{archived:true});
+    // 성공 → 묘비 confirmed 표시
+    if(typeof _markNotionArchiveConfirmed === 'function'){
+      _markNotionArchiveConfirmed(pageId);
+    }
+    return result;
+  } catch(e){
+    // 실패 → 재시도 큐에 등록 (회복되면 자동 archive)
+    if(typeof _enqueueNotionArchiveRetry === 'function'){
+      _enqueueNotionArchiveRetry(pageId, 'generic');
+    }
+    throw e;
+  }
 }
 // 단일 페이지 GET — stale 체크용 (전체 동기화 없이 한 항목만 빠르게 확인)
 async function nGetPage(pageId){
@@ -7643,6 +8162,30 @@ async function pullFromNotion(opts){
 
     // ── 디스패치 헬퍼: 증분 모드면 upsertMerge, 풀 모드면 기존 mergeLocalAttachments ──
     function mergeRows(remoteRows, localArr, mapper, idFields, label, dbId){
+      // 🪦 묘비 필터: 로컬에서 삭제한 노션 페이지는 다시 가져오지 않음
+      //    (노션 archive가 실패했거나 다른 기기에서 archive 전인 경우 좀비 부활 방지)
+      if(typeof _loadTombstones === 'function' && Array.isArray(remoteRows)){
+        const ts = _loadTombstones();
+        const tombIds = Object.keys(ts);
+        if(tombIds.length){
+          const beforeCount = remoteRows.length;
+          // 원본 remote ID 집합 (재시도 등록용)
+          const remoteIdSet = new Set(remoteRows.map(r=>r.id));
+          remoteRows = remoteRows.filter(r => !ts[r.id]);
+          const filteredOut = beforeCount - remoteRows.length;
+          if(filteredOut > 0){
+            console.log(`[pull/tombstone] ${label}: ${filteredOut}건 묘비로 차단됨`);
+            // 묘비된 페이지가 노션에 살아있으면 재시도 큐에 등록
+            if(typeof _enqueueNotionArchiveRetry === 'function'){
+              tombIds.forEach(tid=>{
+                if(remoteIdSet.has(tid) && !ts[tid].confirmed){
+                  _enqueueNotionArchiveRetry(tid, label);
+                }
+              });
+            }
+          }
+        }
+      }
       // 증분 모드: remote가 비어있으면 변경 없음 → 그대로 두고 sync time만 그대로 유지
       if(useIncremental){
         if(!remoteRows.length){
@@ -10149,6 +10692,8 @@ function startAutoSync(){
   _syncTimer=setInterval(()=>pullFromNotion({silent:true}), _currentSyncInterval);
   // 실패한 push 자동 재시도 루프도 시작
   if(typeof _startSyncRetryLoop==='function') _startSyncRetryLoop();
+  // 노션 archive 실패 재시도 루프도 시작 (좀비 부활 방지)
+  if(typeof _startArchiveRetryLoop==='function') _startArchiveRetryLoop();
 }
 
 // 화면 가시성 변화 감지: 활성 ↔ 백그라운드 전환 시 주기 재조정
@@ -15428,11 +15973,11 @@ function renderWeekSchedulePanel(){
   const cols=dayBlocks.filter(b=>b.evts.length).map(b=>{
     const dl=dday(b.ds);
     const isUrgent=b.evts.some(e=>e.cls==='ev-ship')||dl===0;
-    return`<div style="flex:1;min-width:130px;border-right:0.5px solid var(--bdr);padding:10px 12px;${b.isToday?'background:var(--gold-bg)':''}">
+    return`<div style="flex:1;min-width:130px;border-right:0.5px solid var(--bdr);padding:10px 12px;${b.isToday?'background:rgba(255,213,0,.18)':''}">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--bdr)">
-        <div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;${b.isToday?'background:var(--gold);color:#FFF':'background:var(--s3);color:var(--t2)'}">${b.d.getDate()}</div>
+        <div style="width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;${b.isToday?'background:#FFD500;color:#222;box-shadow:0 1px 3px rgba(0,0,0,.18)':'background:var(--s3);color:var(--t2)'}">${b.d.getDate()}</div>
         <div>
-          <div style="font-size:11px;font-weight:600;color:${b.isToday?'var(--gold-lt)':'var(--t2)'}">${DAY_KR[b.d.getDay()]}요일</div>
+          <div style="font-size:11px;font-weight:600;color:${b.isToday?'#222':'var(--t2)'}">${DAY_KR[b.d.getDay()]}요일</div>
           <div style="font-size:9.5px;color:var(--t3)">${b.d.getMonth()+1}/${b.d.getDate()}</div>
         </div>
         ${dl!==null&&dl<=3?`<span class="dd ${dl<=0?'dd-r':'dd-o'}" style="margin-left:auto">${dl<=0?'오늘':'D-'+dl}</span>`:''}
@@ -20079,7 +20624,7 @@ function saveAndInvoice(){
 // ════════════════════════════════
 // CUSTOM CONFIRM (confirm() blocked in iframe)
 // ════════════════════════════════
-function showConfirm(msg, onOk, title, icon, okLabel, okColor){
+function showConfirm(msg, onOk, title, icon, okLabel, okColor, onCancel){
   document.getElementById('confirmTitle').textContent = title||'삭제하시겠습니까?';
   document.getElementById('confirmMsg').textContent = msg||'이 작업은 되돌릴 수 없습니다.';
   document.getElementById('confirmIcon').textContent = icon||'🗑';
@@ -20104,6 +20649,17 @@ function showConfirm(msg, onOk, title, icon, okLabel, okColor){
     btn.style.border='';
   }
   btn.onclick = ()=>{ closeM('mConfirm'); onOk(); };
+  // 취소 버튼이 있으면 onCancel 연결 (안전: 기존 동작 보존)
+  const cancelBtn = document.querySelector('#mConfirm .btn:not(#confirmOkBtn)');
+  if(cancelBtn && onCancel){
+    const origClick = cancelBtn.onclick;
+    cancelBtn.onclick = (e)=>{
+      try{ onCancel(); }catch(_){}
+      // 기본 닫기 동작 유지
+      if(typeof origClick === 'function') origClick.call(cancelBtn, e);
+      else closeM('mConfirm');
+    };
+  }
   openM('mConfirm');
 }
 
@@ -22331,6 +22887,7 @@ async function printInvoice(opts){
       invoiceHistory[existingIdx] = invRec;
     } else {
       invoiceHistory.unshift(invRec);
+  if(typeof realtimePublish === 'function') realtimePublish('invoice', invRec);
     }
     save();
   }
@@ -22545,10 +23102,93 @@ function calcProcRemain(){
 // ════════════════════════════════
 let _checklistMode='week';
 const CL_KEY_WEEK='ek3_chk_week', CL_KEY_MONTH='ek3_chk_month';
+const CL_KEY_CARRY_DECLINED = 'ek3_chk_carryDeclined';  // 주차별 carry-over 거절 기억
 let weekChecklist=[], monthChecklist=[];
-function loadChecklists(){try{const w=localStorage.getItem(CL_KEY_WEEK);if(w)weekChecklist=JSON.parse(w);const m=localStorage.getItem(CL_KEY_MONTH);if(m)monthChecklist=JSON.parse(m);}catch(e){}}
-function saveChecklists(){try{localStorage.setItem(CL_KEY_WEEK,JSON.stringify(weekChecklist));localStorage.setItem(CL_KEY_MONTH,JSON.stringify(monthChecklist));}catch(e){}}
+
+// 주차 키: 2026-W22 형식 (ISO 주차)
+function getWeekKey(date){
+  const d = date ? new Date(date) : new Date();
+  // ISO 주차: 목요일 기준
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const weekNum = Math.ceil(((t - yearStart) / 86400000 + 1) / 7);
+  return t.getUTCFullYear() + '-W' + String(weekNum).padStart(2,'0');
+}
+// 월 키: 2026-05
+function getMonthKey(date){
+  const d = date ? new Date(date) : new Date();
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+// 현재 보고 있는 주차 (캘린더/스케줄 탭에서 보는 주). 기본은 오늘 주.
+function getCurrentWeekKey(){
+  // _calCur (캘린더 현재 주 시작일) 있으면 그걸로
+  if(typeof _schedWeekStart !== 'undefined' && _schedWeekStart){
+    return getWeekKey(_schedWeekStart);
+  }
+  return getWeekKey();
+}
+function getCurrentMonthKey(){
+  if(typeof _schedMonthStart !== 'undefined' && _schedMonthStart){
+    return getMonthKey(_schedMonthStart);
+  }
+  return getMonthKey();
+}
+
+function loadChecklists(){
+  try{
+    const w=localStorage.getItem(CL_KEY_WEEK);
+    if(w){
+      const parsed = JSON.parse(w);
+      // 옛 형식 호환: 배열이면 현재 주차로 마이그레이션
+      if(Array.isArray(parsed)){
+        const wk = getCurrentWeekKey();
+        weekChecklist = parsed.map(it=>({...it, weekKey: it.weekKey || wk}));
+      } else {
+        weekChecklist = parsed;
+      }
+    }
+    const m=localStorage.getItem(CL_KEY_MONTH);
+    if(m){
+      const parsed = JSON.parse(m);
+      if(Array.isArray(parsed)){
+        const mk = getCurrentMonthKey();
+        monthChecklist = parsed.map(it=>({...it, monthKey: it.monthKey || mk}));
+      } else {
+        monthChecklist = parsed;
+      }
+    }
+  }catch(e){}
+}
+function saveChecklists(){
+  try{
+    localStorage.setItem(CL_KEY_WEEK,JSON.stringify(weekChecklist));
+    localStorage.setItem(CL_KEY_MONTH,JSON.stringify(monthChecklist));
+  }catch(e){}
+}
 loadChecklists();
+
+// carry-over 거절 기억 (한 번 거절한 주차는 다시 안 물어봄)
+function _loadCarryDeclined(){
+  try{ return JSON.parse(localStorage.getItem(CL_KEY_CARRY_DECLINED)||'{}'); }catch(e){ return {}; }
+}
+function _markCarryDeclined(weekKey){
+  const obj = _loadCarryDeclined();
+  obj[weekKey] = Date.now();
+  try{ localStorage.setItem(CL_KEY_CARRY_DECLINED, JSON.stringify(obj)); }catch(e){}
+}
+function _isCarryDeclined(weekKey){
+  return !!_loadCarryDeclined()[weekKey];
+}
+
+// 현재 주/월의 항목만 필터
+function getWeekChecklistForKey(weekKey){
+  return weekChecklist.filter(it => (it.weekKey || getWeekKey()) === weekKey);
+}
+function getMonthChecklistForKey(monthKey){
+  return monthChecklist.filter(it => (it.monthKey || getMonthKey()) === monthKey);
+}
 
 // ── Notion 동기화 ──
 // 노션 DB 스키마: 할일(title), 종류(select: 주간/월간), 완료(checkbox)
@@ -22561,10 +23201,22 @@ async function syncChecklistItemToNotion(item, mode, isUpdate){
       "종류": {"select":{"name": mode==='month'?'월간':'주간'}},
       "완료": {"checkbox": !!item.done},
     };
+    // 주차/월 정보 — 노션 DB에 "주차" 컬럼이 있으면 저장 (없으면 노션이 무시)
+    const periodKey = mode==='month' ? (item.monthKey || getCurrentMonthKey()) : (item.weekKey || getCurrentWeekKey());
+    props["주차"] = {"rich_text":[{"text":{"content":periodKey}}]};
     if(isUpdate && item._notionId){
       await nUpdate(item._notionId, props);
     } else {
-      const r = await nCreate(notionCfg.checklistDb, props);
+      let r;
+      try{
+        r = await nCreate(notionCfg.checklistDb, props);
+      } catch(e){
+        // "주차" 컬럼이 노션에 없으면 그 필드 빼고 재시도
+        if(String(e?.message||'').includes('주차')){
+          delete props["주차"];
+          r = await nCreate(notionCfg.checklistDb, props);
+        } else { throw e; }
+      }
       if(r && r.id){
         item._notionId = r.id;
         saveChecklists();
@@ -22591,9 +23243,16 @@ async function pullChecklistsFromNotion(){
       const text = np.title(p['할일']) || '';
       const kind = np.select(p['종류']) || '주간';
       const done = np.check(p['완료']);
+      const periodKey = np.text(p['주차']) || ''; // 노션에 컬럼 없으면 빈값
       if(!text) return;
       const item = { text, done, id: genId(), _notionId: row.id };
-      if(kind === '월간') mn.push(item); else wk.push(item);
+      if(kind === '월간'){
+        item.monthKey = periodKey || getCurrentMonthKey();
+        mn.push(item);
+      } else {
+        item.weekKey = periodKey || getCurrentWeekKey();
+        wk.push(item);
+      }
     });
     // 노션의 데이터를 진실의 원천으로 (다른 컴퓨터에서도 일관성 유지)
     weekChecklist = wk;
@@ -22617,21 +23276,39 @@ function openChecklist(mode){
   openM('mChecklist');
 }
 function renderChecklistBody(){
-  const list=_checklistMode==='month'?monthChecklist:weekChecklist;
+  const periodKey = _checklistMode==='month' ? getCurrentMonthKey() : getCurrentWeekKey();
+  const list = _checklistMode==='month' ? getMonthChecklistForKey(periodKey) : getWeekChecklistForKey(periodKey);
   const el=document.getElementById('checklistBody');if(!el)return;
-  if(!list.length){el.innerHTML='<div style="text-align:center;color:var(--t3);font-size:12px;padding:16px 0">등록된 항목이 없습니다</div>';return;}
-  el.innerHTML=list.map((item,i)=>`
-    <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:${item.done?'var(--grn-bg)':'var(--s2)'};border-radius:6px;border:1px solid ${item.done?'rgba(46,139,44,.2)':'var(--bdr)'}">
-      <input type="checkbox" ${item.done?'checked':''} onchange="toggleChecklist(${i})">
+  // 주차/월 표시 추가
+  const periodLabel = _checklistMode==='month' ? `${periodKey} (이번 달)` : `${periodKey} (이번 주)`;
+  if(!list.length){
+    el.innerHTML=`<div style="font-size:10.5px;color:var(--t3);margin-bottom:8px">📅 ${periodLabel}</div>` +
+      '<div style="text-align:center;color:var(--t3);font-size:12px;padding:16px 0">등록된 항목이 없습니다</div>';
+    return;
+  }
+  el.innerHTML = `<div style="font-size:10.5px;color:var(--t3);margin-bottom:8px">📅 ${periodLabel} · ${list.length}건</div>` +
+    list.map((item)=>{
+      const realIdx = (_checklistMode==='month'?monthChecklist:weekChecklist).indexOf(item);
+      return `
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:${item.done?'var(--grn-bg)':'var(--s2)'};border-radius:6px;border:1px solid ${item.done?'rgba(46,139,44,.2)':'var(--bdr)'};margin-bottom:4px">
+      <input type="checkbox" ${item.done?'checked':''} onchange="toggleChecklist(${realIdx})">
       <span style="flex:1;font-size:12.5px;${item.done?'text-decoration:line-through;color:var(--t3)':''}">${item.text}</span>
-      <button onclick="deleteChecklist(${i})" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:15px;padding:0 3px;line-height:1">×</button>
-    </div>`).join('');
+      <button onclick="deleteChecklist(${realIdx})" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:15px;padding:0 3px;line-height:1">×</button>
+    </div>`;
+    }).join('');
 }
 function addChecklistItem(){
   const inp=document.getElementById('checklistInput');
   const text=(inp?.value||'').trim();if(!text)return;
-  const newItem = {text,done:false,id:Date.now()};
-  (_checklistMode==='month'?monthChecklist:weekChecklist).push(newItem);
+  const newItem = {text, done:false, id: Date.now()};
+  // 현재 주/월 키 부여
+  if(_checklistMode==='month'){
+    newItem.monthKey = getCurrentMonthKey();
+    monthChecklist.push(newItem);
+  } else {
+    newItem.weekKey = getCurrentWeekKey();
+    weekChecklist.push(newItem);
+  }
   saveChecklists();inp.value='';renderChecklistBody();
   // 노션 동기화 (백그라운드)
   syncChecklistItemToNotion(newItem, _checklistMode, false);
@@ -22660,9 +23337,14 @@ function toggleChecklistInline(mode,idx){
   saveChecklists();if(currentTab==='schedule')renderSchedContent();
 }
 function renderChecklistWidget(mode){
-  const list=mode==='month'?monthChecklist:weekChecklist;
+  const periodKey = mode==='month' ? getCurrentMonthKey() : getCurrentWeekKey();
+  const list = mode==='month' ? getMonthChecklistForKey(periodKey) : getWeekChecklistForKey(periodKey);
   const done=list.filter(x=>x.done).length;
   const pct=list.length?Math.round(done/list.length*100):0;
+  // carry-over 체크: 이 주차에 항목이 0건 + 거절 안 함 → 이전 기간 미완료 있는지 확인
+  if(mode==='week' && list.length===0 && !_isCarryDeclined(periodKey)){
+    setTimeout(()=>maybePromptCarryOver(periodKey), 100);
+  }
   return`<div class="card">
     <div class="ch">
       <div style="display:flex;align-items:center;gap:10px;flex:1">
@@ -22675,12 +23357,67 @@ function renderChecklistWidget(mode){
       <button class="btn bgo bs" onclick="openChecklist('${mode}')" style="font-size:11px">✏️ 관리</button>
     </div>
     ${list.length?`<div style="display:flex;flex-direction:column;gap:3px;padding:0 14px 12px">
-      ${list.map((item,i)=>`<div style="display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px solid var(--bdr)">
-        <input type="checkbox" ${item.done?'checked':''} onchange="toggleChecklistInline('${mode}',${i})">
+      ${list.map((item)=>{
+        const realIdx = (mode==='month'?monthChecklist:weekChecklist).indexOf(item);
+        return `<div style="display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px solid var(--bdr)">
+        <input type="checkbox" ${item.done?'checked':''} onchange="toggleChecklistInline('${mode}',${realIdx})">
         <span style="font-size:12px;flex:1;${item.done?'text-decoration:line-through;color:var(--t3)':''}">${item.text}</span>
-      </div>`).join('')}
+      </div>`;
+      }).join('')}
     </div>`:`<div style="padding:10px 14px 12px;text-align:center;color:var(--t3);font-size:11.5px">목표를 등록해 보세요 <button class="btn bgo bs" onclick="openChecklist('${mode}')" style="font-size:10.5px;margin-left:6px">+ 추가</button></div>`}
   </div>`;
+}
+
+// 새 주차 진입 시 — 이전 주에 미완료 있으면 1회 carry-over 묻기
+function maybePromptCarryOver(currentWeekKey){
+  // 이미 물어봤거나 거절했으면 스킵
+  if(_isCarryDeclined(currentWeekKey)) return;
+  if(window._carryPromptShownFor === currentWeekKey) return;
+  // 이전 주차들 찾기 (현재가 아닌 다른 주차의 미완료 항목)
+  const otherWeekUndone = weekChecklist.filter(it =>
+    (it.weekKey && it.weekKey !== currentWeekKey) && !it.done
+  );
+  if(otherWeekUndone.length === 0) return;
+  // 가장 최근 이전 주의 미완료만
+  const sortedKeys = Array.from(new Set(otherWeekUndone.map(it=>it.weekKey))).sort();
+  const prevKey = sortedKeys[sortedKeys.length-1]; // 가장 최근 이전 주
+  const prevWeekUndone = otherWeekUndone.filter(it => it.weekKey === prevKey);
+  if(prevWeekUndone.length === 0) return;
+  window._carryPromptShownFor = currentWeekKey;
+  showConfirm(
+    `📋 새 주간이 시작됐어요 (${currentWeekKey})\n\n` +
+    `이전 주(${prevKey})에 완료하지 못한 업무가 ${prevWeekUndone.length}건 있어요:\n` +
+    prevWeekUndone.slice(0,5).map(it=>'  • '+it.text).join('\n') +
+    (prevWeekUndone.length>5?`\n  ...외 ${prevWeekUndone.length-5}건`:'') +
+    `\n\n이번 주로 가져올까요?`,
+    ()=>{
+      // YES: 이번 주차로 복사
+      prevWeekUndone.forEach(it=>{
+        const newItem = {
+          text: it.text,
+          done: false,
+          id: genId(),
+          weekKey: currentWeekKey,
+        };
+        weekChecklist.push(newItem);
+        if(notionCfg.workerUrl && notionCfg.checklistDb){
+          syncChecklistItemToNotion(newItem, 'week', false);
+        }
+      });
+      saveChecklists();
+      if(currentTab==='schedule' && typeof renderSchedContent === 'function') renderSchedContent();
+      showToast(`✓ ${prevWeekUndone.length}건 가져옴`,'var(--grn)',2500);
+    },
+    '이전 주 업무 가져오기',
+    '📋',
+    '가져오기',
+    'grn',
+    ()=>{
+      // NO: 이번 주차는 다시 안 물어봄
+      _markCarryDeclined(currentWeekKey);
+      showToast('↩ 이번 주는 빈 상태로 시작','var(--t3)',2000);
+    }
+  );
 }
 
 // ════════════════════════════════
@@ -25114,6 +25851,8 @@ function markInvoiceShipped(invId, shipped){
   // _invStage 자동 재계산
   v._invStage = inferInvStage(v);
   if(typeof save === 'function') save();
+  // 🌐 실시간 동기화 — 다른 기기에 즉시 푸시
+  if(typeof realtimePublish === 'function') realtimePublish('invoice', v);
   // 노션 동기화
   if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
     syncInvoiceToNotion(v, true).catch(e=>console.warn('명세서 출고완료 동기화 실패:',e));
@@ -25189,6 +25928,8 @@ function toggleInvPaid(invId, checked){
   v._paid = !!checked;
   _syncInvStatusFromFlags(v);
   if(typeof save === 'function') save();
+  // 🌐 실시간 동기화
+  if(typeof realtimePublish === 'function') realtimePublish('invoice', v);
   if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
     syncInvoiceToNotion(v, true).catch(e=>console.warn('명세서 입금상태 동기화 실패:',e));
   }
@@ -25206,6 +25947,8 @@ function toggleInvTaxIssued(invId, checked){
   v._taxInvoiceIssued = !!checked;
   _syncInvStatusFromFlags(v);
   if(typeof save === 'function') save();
+  // 🌐 실시간 동기화
+  if(typeof realtimePublish === 'function') realtimePublish('invoice', v);
   if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
     syncInvoiceToNotion(v, true).catch(e=>console.warn('명세서 계산서상태 동기화 실패:',e));
   }
@@ -25898,6 +26641,7 @@ function createConsolidatedInvoice(vendor, month, options){
   });
   // invoiceHistory 맨 앞에 추가
   invoiceHistory.unshift(invRec);
+  if(typeof realtimePublish === 'function') realtimePublish('invoice', invRec);
   if(typeof save==='function') save();
   // 노션 동기화 — 합본 + 묶인 명세서들 모두
   if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && typeof syncInvoiceToNotion==='function'){
@@ -27410,6 +28154,7 @@ async function saveStandaloneInvoice(){
     }
 
     invoiceHistory.unshift(invRec);
+  if(typeof realtimePublish === 'function') realtimePublish('invoice', invRec);
 
     // 4-A: 명세서 단계 자동 분류 (draft/billing/done)
     invRec._invStage = inferInvStage(invRec);
