@@ -11949,7 +11949,16 @@ async function syncQuoteToNotion(qt, update){
     "합계금액":{"number":+qt.total||0},
     "중국입고원가합계":{"number":+qt.cnCostTotal||0},
     "부가세포함":{"checkbox":!!qt.vatIncluded},
-    "결제조건":{"rich_text":[{"text":{"content":txt(qt.payment).slice(0,2000)}}]},
+    // 📌 결제조건: prepayPct가 있으면 자동 계산된 텍스트로 저장 (노션에서 의미 있게 보이도록)
+    //    qt.payment가 별도로 입력되어 있으면 그것을 우선 (사용자 의도 존중)
+    "결제조건":{"rich_text":[{"text":{"content":(function(){
+      const txt0 = txt(qt.payment);
+      if(txt0) return txt0.slice(0,2000);
+      const auto = (typeof _formatPrepayPaymentText === 'function')
+        ? _formatPrepayPaymentText(qt.prepayPct, +qt.total||0)
+        : null;
+      return (auto || '').slice(0,2000);
+    })()}}]},
     "납기조건":{"rich_text":[{"text":{"content":txt(qt.delivery).slice(0,2000)}}]},
     "고객메모":{"rich_text":[{"text":{"content":txt(qt.cliMemo).slice(0,2000)}}]},
     "내부메모":{"rich_text":[{"text":{"content":txt(qt.intMemo).slice(0,2000)}}]},
@@ -24725,7 +24734,20 @@ function openQuoteModal(idOrNull){
 
     <hr style="border:none;border-top:1px solid var(--bdr);margin:12px 0 8px">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div class="fg"><label>결제 조건</label><input class="fi" id="qt_payment" value="${q?q.payment||'':''}" placeholder="예: 발주 시 80%, 출고 시 20%"></div>
+      <div class="fg">
+        <label>결제 조건</label>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+          <input class="fi" id="qt_prepayPct" type="number" min="0" max="100" step="1"
+            value="${q?(q.prepayPct??''):''}"
+            placeholder="선금 %"
+            oninput="_updateQtPayPreview()"
+            title="선금 % (0~100). 입력하면 자동으로 금액 계산되어 견적서에 표시됩니다."
+            style="width:90px;flex:0 0 auto">
+          <span style="font-size:11px;color:var(--t3)">% 입력 시 자동 계산</span>
+        </div>
+        <input class="fi" id="qt_payment" value="${q?q.payment||'':''}" placeholder="또는 직접 입력: 발주 시 80%, 출고 시 20%">
+        <div id="qt_payPreview" style="margin-top:4px;font-size:11px;color:var(--gold-lt);min-height:14px"></div>
+      </div>
       <div class="fg"><label>납기 조건</label><input class="fi" id="qt_delivery" value="${q?q.delivery||'':''}" placeholder="예: 발주 후 영업일 기준 14일"></div>
     </div>
     <div class="fg"><label>특이사항 (고객메모)</label>
@@ -24764,6 +24786,8 @@ function openQuoteModal(idOrNull){
   // 첫 렌더 후 모든 행의 계산식 표시 갱신 (DOM이 그려진 다음 실행되도록 setTimeout)
   setTimeout(()=>{
     _qtRowsBuf.forEach((_,i)=>_updateQtRowCalc(i));
+    // 📌 선금 % 미리보기 초기 표시
+    if(typeof _updateQtPayPreview === 'function') _updateQtPayPreview();
   }, 0);
 
   // 충돌 감지
@@ -24771,6 +24795,43 @@ function openQuoteModal(idOrNull){
 }
 
 // 합계 박스 렌더
+// 📌 선금 % 기반 결제조건 텍스트 생성
+// pct가 1~99 사이면 "선금 X% (₩금액), 잔금 Y% (₩금액)" 형태 반환
+// pct가 100이면 "선금 100% (₩금액) — 전액 선금" 반환
+// pct가 0 또는 빈값이면 null 반환 (직접 입력한 payment 텍스트 사용)
+function _formatPrepayPaymentText(pct, totalVat){
+  const p = +pct;
+  const total = +totalVat || 0;
+  if(!p || p < 0 || p > 100) return null;
+  if(total <= 0) return null;
+  const prepayAmt = Math.round(total * p / 100);
+  const remainAmt = total - prepayAmt;
+  const remainPct = 100 - p;
+  if(p === 100){
+    return `선금 100% (₩${prepayAmt.toLocaleString()}) — 전액 선금`;
+  }
+  return `선금 ${p}% (₩${prepayAmt.toLocaleString()}), 잔금 ${remainPct}% (₩${remainAmt.toLocaleString()})`;
+}
+
+// 견적서 모달 안의 결제조건 미리보기 갱신
+function _updateQtPayPreview(){
+  const pctEl = document.getElementById('qt_prepayPct');
+  const previewEl = document.getElementById('qt_payPreview');
+  if(!previewEl) return;
+  const pct = pctEl ? +pctEl.value : 0;
+  // 현재 모달의 총액 계산 (VAT 포함)
+  const supply = _qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.unitPrice||0),0);
+  const tax = Math.round(supply*0.1);
+  const total = supply+tax;
+  const text = _formatPrepayPaymentText(pct, total);
+  if(text){
+    previewEl.textContent = '🔵 자동: ' + text;
+    previewEl.style.color = 'var(--gold-lt)';
+  } else {
+    previewEl.textContent = '';
+  }
+}
+
 function _renderQtTotalsBox(){
   const supply = _qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.unitPrice||0),0);
   const tax = Math.round(supply*0.1);
@@ -24976,6 +25037,8 @@ function removeQuoteRow(i){
 function _updateQtTotals(){
   const el=document.getElementById('qt_totalArea');
   if(el) el.innerHTML = _renderQtTotalsBox();
+  // 📌 합계가 바뀌면 선금 % 미리보기도 자동 갱신
+  if(typeof _updateQtPayPreview === 'function') _updateQtPayPreview();
 }
 
 // 샘플 연결 영역 렌더
@@ -25515,7 +25578,14 @@ function transferQuoteToOrder(quoteId){
     vendor: q.vendor,
     quoteId: q.id,
     quoteNo: q.no,
-    payment: q.payment || '',
+    // 📌 prepayPct 있으면 자동 계산된 텍스트 우선 사용
+    payment: (function(){
+      if(q.payment) return q.payment;
+      const auto = (typeof _formatPrepayPaymentText === 'function')
+        ? _formatPrepayPaymentText(q.prepayPct, +q.total||0)
+        : null;
+      return auto || '';
+    })(),
     issuedAt: q.issuedAt || ''
   };
   // 견적서 모달 닫고 발주서 모달 열기
@@ -25717,6 +25787,14 @@ async function saveQuote(forceOverwrite){
     type: gv('qt_type') || '신규',
     vatIncluded: !!document.getElementById('qt_vatIncluded')?.checked,
     payment: gv('qt_payment'),
+    // 📌 선금 % (0~100). 입력되면 PDF에서 "선금 X% (₩금액), 잔금 Y% (₩금액)" 자동 표시.
+    //    빈값이면 payment 텍스트만 사용.
+    prepayPct: (function(){
+      const v = gv('qt_prepayPct');
+      if(v === '' || v == null) return null;
+      const n = +v;
+      return (isFinite(n) && n >= 0 && n <= 100) ? n : null;
+    })(),
     delivery: gv('qt_delivery'),
     cliMemo: gv('qt_cliMemo'),
     intMemo: gv('qt_intMemo'),
@@ -28680,7 +28758,17 @@ function buildQuoteHtml(q){
       </tfoot>
     </table>
 
-    ${q.payment?`<div style="display:flex;gap:8px;margin-bottom:6px;padding:8px 12px;background:#fafafa;border-left:3px solid #3a6b3a;font-size:11px"><b style="color:#3a6b3a;min-width:80px">결 제 조 건</b><span>${escHtml(q.payment)}</span></div>`:''}
+    ${(function(){
+      // 📌 선금 %가 입력되어 있으면 자동 계산된 텍스트 우선
+      //    없으면 기존 payment 자유 텍스트 사용
+      const auto = (typeof _formatPrepayPaymentText === 'function')
+        ? _formatPrepayPaymentText(q.prepayPct, total)
+        : null;
+      const payText = auto || q.payment || '';
+      return payText
+        ? `<div style="display:flex;gap:8px;margin-bottom:6px;padding:8px 12px;background:#fafafa;border-left:3px solid #3a6b3a;font-size:11px"><b style="color:#3a6b3a;min-width:80px">결 제 조 건</b><span>${escHtml(payText)}</span></div>`
+        : '';
+    })()}
     ${q.delivery?`<div style="display:flex;gap:8px;margin-bottom:6px;padding:8px 12px;background:#fafafa;border-left:3px solid #3a6b3a;font-size:11px"><b style="color:#3a6b3a;min-width:80px">납 기 조 건</b><span>${escHtml(q.delivery)}</span></div>`:''}
     <div style="display:flex;gap:8px;margin-bottom:14px;padding:8px 12px;background:#fafafa;border-left:3px solid #3a6b3a;font-size:11px">
       <b style="color:#3a6b3a;min-width:80px">유 효 기 한</b>
