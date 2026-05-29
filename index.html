@@ -5832,8 +5832,8 @@ function deleteInvRecord(id){
     // 2) 로컬에서 제거
     invoiceHistory=invoiceHistory.filter(function(x){return x.id!=id;});
     save();renderInvoiceHistory();
-    // 🌐 실시간 동기화 — 다른 기기에서도 즉시 삭제
-    if(typeof realtimeDelete === 'function') realtimeDelete('invoice', id);
+    // 🌐 실시간 동기화 — _notionId 기반으로 다른 기기에서도 즉시 삭제
+    if(typeof realtimeDelete === 'function') realtimeDelete('invoice', v);
     showToast('✓ 삭제됨','var(--grn)');
   },'이력 삭제','🗑');
 }
@@ -6833,38 +6833,56 @@ function _rtSend(msg){
 // ────────────────────────────────────────────────
 // 외부 API — realtimePublish, realtimeDelete
 // 로컬 변경 시 호출하면 서버에 푸시
+// 식별자 정책: _notionId가 있으면 그걸 id로 사용 (모든 기기 동일)
+//             없으면 로컬 id 사용 (로컬 전용 데이터)
 // ────────────────────────────────────────────────
+
+function _rtItemKey(item){
+  // 노션 동기화된 항목은 _notionId가 진짜 식별자 (모든 기기에서 동일)
+  // 로컬 전용 항목만 item.id 사용 (Notion 미연결 환경 대비)
+  return item._notionId || (item.id !== undefined && item.id !== null ? String(item.id) : null);
+}
 
 function realtimePublish(type, item){
   if(!notionCfg.realtimeUrl) return;
-  if(!item || (item.id === undefined && item.id === null)) return;
+  if(!item) return;
+  const key = _rtItemKey(item);
+  if(!key) return;
+  // 서버에 저장될 형태: id 필드를 _notionId(또는 로컬 id)로 통일
+  const payload = { ...item, id: key };
   const ts = Date.now();
   const sent = _rtSend({
     op: 'upsert',
     type,
-    item,
+    item: payload,
     ts,
     clientId: _rtClientId,
   });
-  // WebSocket 안 되면 HTTP 폴백 (백그라운드)
   if(!sent){
-    _rtHttpFallback({ op: 'upsert', type, item, ts, clientId: _rtClientId });
+    _rtHttpFallback({ op: 'upsert', type, item: payload, ts, clientId: _rtClientId });
   }
 }
 
-function realtimeDelete(type, id){
+function realtimeDelete(type, idOrItem){
   if(!notionCfg.realtimeUrl) return;
-  if(id === undefined || id === null) return;
+  // idOrItem이 객체면 _notionId 우선, 문자열/숫자면 그대로
+  let key;
+  if(typeof idOrItem === 'object' && idOrItem !== null){
+    key = _rtItemKey(idOrItem);
+  } else {
+    key = idOrItem !== undefined && idOrItem !== null ? String(idOrItem) : null;
+  }
+  if(!key) return;
   const ts = Date.now();
   const sent = _rtSend({
     op: 'delete',
     type,
-    id: String(id),
+    id: key,
     ts,
     clientId: _rtClientId,
   });
   if(!sent){
-    _rtHttpFallback({ op: 'delete', type, id: String(id), ts, clientId: _rtClientId });
+    _rtHttpFallback({ op: 'delete', type, id: key, ts, clientId: _rtClientId });
   }
 }
 
@@ -6942,24 +6960,34 @@ function _rtGetLocalArray(type){
 }
 
 function _applyRemoteItem(type, item, ts, fromClient){
-  if(!item || (item.id === undefined && item.id === null)) return;
+  if(!item) return;
   const arr = _rtGetLocalArray(type);
-  if(!arr){
-    // 미지원 타입은 일단 스킵 (다음 세션에서 확장)
-    return;
-  }
-  const idx = arr.findIndex(x => String(x.id) === String(item.id));
-  // LWW: 더 늦은 _ts가 이김
+  if(!arr) return;
+  // 매칭 키: _notionId가 있으면 그것으로, 없으면 id로
+  const remoteKey = item._notionId || (item.id !== undefined ? String(item.id) : null);
+  if(!remoteKey) return;
+  const idx = arr.findIndex(x => {
+    const k = x._notionId || (x.id !== undefined ? String(x.id) : null);
+    return k === remoteKey;
+  });
   if(idx >= 0){
     const local = arr[idx];
     const localTs = +local._ts || 0;
-    if(localTs > (item._ts || ts || 0)) return; // 로컬이 더 최신 → 무시
-    // 머지: 로컬에만 있는 비동기 메타(_notionId 등)는 유지
+    if(localTs > (item._ts || ts || 0)) return;
+    // 머지: 로컬 id 유지 (다른 기기에선 다를 수 있으므로)
     const merged = { ...local, ...item, _ts: item._ts || ts };
+    if(local.id !== undefined && (item.id === undefined || item.id === local._notionId)){
+      merged.id = local.id; // 로컬 id 유지
+    }
     if(local._notionId && !merged._notionId) merged._notionId = local._notionId;
     arr[idx] = merged;
   } else {
-    arr.push({ ...item, _ts: item._ts || ts });
+    // 신규 — 로컬 id 새로 부여
+    const newItem = { ...item, _ts: item._ts || ts };
+    if(typeof genId === 'function' && (!newItem.id || String(newItem.id) === String(newItem._notionId))){
+      newItem.id = genId();
+    }
+    arr.push(newItem);
   }
 }
 
@@ -6967,12 +6995,25 @@ function _applyRemoteDelete(type, id, ts){
   if(id === undefined || id === null) return;
   const arr = _rtGetLocalArray(type);
   if(!arr) return;
-  const idx = arr.findIndex(x => String(x.id) === String(id));
+  const keyStr = String(id);
+  // _notionId 또는 id로 매칭
+  const idx = arr.findIndex(x =>
+    (x._notionId && x._notionId === keyStr) ||
+    (x.id !== undefined && String(x.id) === keyStr)
+  );
   if(idx >= 0){
+    // 묘비도 등록 (혹시 노션 pull로 다시 들어오는 것 차단)
+    const removed = arr[idx];
+    if(removed._notionId && typeof _markNotionIdDeleted === 'function'){
+      _markNotionIdDeleted(removed._notionId, type);
+    }
     arr.splice(idx, 1);
+  } else {
+    // 로컬엔 없지만 묘비는 등록 (Notion ID로 보이는 경우)
+    if(typeof _markNotionIdDeleted === 'function'){
+      _markNotionIdDeleted(keyStr, type);
+    }
   }
-  // 노션 묘비도 등록 (혹시 노션엔 아직 있을 수 있음)
-  // 단 _notionId가 있으면 그 ID로 묘비 등록
 }
 
 // 디버그 헬퍼
@@ -7913,7 +7954,7 @@ async function pullFromNotion(opts){
 
     // "Notion 마스터" 정책 — 로컬의 이미지/파일 필드는 id로 매칭해서 보존
     // (이미지/첨부파일은 Notion에 저장되지 않기 때문)
-    function mergeLocalAttachments(remote, local, idFields){
+    function mergeLocalAttachments(remote, local, idFields, label){
       // 중복 판정 키 (발주번호, 샘플명+의뢰일, 고객사 이니셜 등)
       const dupKey=(item)=>{
         if(!item) return null;
@@ -8203,7 +8244,7 @@ async function pullFromNotion(opts){
       // 풀 모드: 기존 안전장치 + 전체 머지
       if(isSafePull(remoteRows, localArr, label) && (remoteRows.length || localArr.some(x=>x._notionId))){
         const mapped=remoteRows.map(mapper);
-        const next=mergeLocalAttachments(mapped, localArr, idFields);
+        const next=mergeLocalAttachments(mapped, localArr, idFields, label);
         // 풀 동기화에서도 sync time 기록 (이후 증분 시작점)
         const maxT=maxEditedTime(remoteRows);
         if(maxT && dbId) setDbSyncTime(dbId, maxT);
