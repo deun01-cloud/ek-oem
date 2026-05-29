@@ -23397,16 +23397,48 @@ function getMonthKey(date){
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
 }
 // 현재 보고 있는 주차 (캘린더/스케줄 탭에서 보는 주). 기본은 오늘 주.
+// 📌 화면에서 보고 있는 주차의 키 반환
+// 업무일지의 schedWOff는 schedView에 따라 의미가 다름:
+//   - 'week':  주 단위 오프셋 (×7일)
+//   - 'day':   일 단위 오프셋
+//   - 'month': 사용 안 함 (schedMOff 별도)
 function getCurrentWeekKey(){
-  // _calCur (캘린더 현재 주 시작일) 있으면 그걸로
   if(typeof _schedWeekStart !== 'undefined' && _schedWeekStart){
     return getWeekKey(_schedWeekStart);
   }
+  if(typeof schedWOff !== 'undefined' && schedWOff !== 0
+     && typeof schedView !== 'undefined'){
+    const base = new Date(TODAY);
+    if(schedView === 'week'){
+      base.setDate(TODAY.getDate() + schedWOff * 7);
+    } else if(schedView === 'day'){
+      base.setDate(TODAY.getDate() + schedWOff);
+    } else {
+      // month 모드 등 — 주차 키는 그냥 현재로
+      return getWeekKey();
+    }
+    return getWeekKey(base);
+  }
   return getWeekKey();
 }
+// 📌 화면에서 보고 있는 월의 키 반환
 function getCurrentMonthKey(){
   if(typeof _schedMonthStart !== 'undefined' && _schedMonthStart){
     return getMonthKey(_schedMonthStart);
+  }
+  // 월간 뷰에서는 schedMOff가 있다면 월 오프셋
+  if(typeof schedMOff !== 'undefined' && schedMOff !== 0){
+    const base = new Date(TODAY);
+    base.setMonth(TODAY.getMonth() + schedMOff);
+    return getMonthKey(base);
+  }
+  // 주간/일간 뷰에서 사용자가 멀리 이동했을 때도 월 키를 보고 있는 화면에 맞춤
+  if(typeof schedWOff !== 'undefined' && schedWOff !== 0
+     && typeof schedView !== 'undefined'){
+    const base = new Date(TODAY);
+    if(schedView === 'week')      base.setDate(TODAY.getDate() + schedWOff * 7);
+    else if(schedView === 'day')  base.setDate(TODAY.getDate() + schedWOff);
+    return getMonthKey(base);
   }
   return getMonthKey();
 }
@@ -23458,11 +23490,15 @@ function _isCarryDeclined(weekKey){
 }
 
 // 현재 주/월의 항목만 필터
+// 📌 weekKey가 없는 옛 항목은 어디에도 보이지 않게 (이전엔 getWeekKey() fallback이라
+//    매번 보는 주차에 다 떴음 — 주차 이동해도 같은 항목 보이는 버그)
+//    옛 항목은 loadChecklists의 마이그레이션 로직에서 weekKey를 자동 부여하므로
+//    여기 fallback 없어도 정상 동작.
 function getWeekChecklistForKey(weekKey){
-  return weekChecklist.filter(it => (it.weekKey || getWeekKey()) === weekKey);
+  return weekChecklist.filter(it => it.weekKey === weekKey);
 }
 function getMonthChecklistForKey(monthKey){
-  return monthChecklist.filter(it => (it.monthKey || getMonthKey()) === monthKey);
+  return monthChecklist.filter(it => it.monthKey === monthKey);
 }
 
 // ── Notion 동기화 ──
@@ -23521,11 +23557,16 @@ async function pullChecklistsFromNotion(){
       const periodKey = np.text(p['주차']) || ''; // 노션에 컬럼 없으면 빈값
       if(!text) return;
       const item = { text, done, id: genId(), _notionId: row.id };
+      // 📌 노션 페이지의 created_time을 fallback에 사용
+      //    예전엔 getCurrentWeekKey()를 fallback으로 썼는데, 풀할 때마다 현재 주차로 덮어씌워서
+      //    "주차 이동해도 같은 항목이 보이는" 버그가 났음. created_time이면 페이지 생성 시점에
+      //    고정되어 있어 안전.
+      const createdAt = row.created_time ? new Date(row.created_time) : null;
       if(kind === '월간'){
-        item.monthKey = periodKey || getCurrentMonthKey();
+        item.monthKey = periodKey || (createdAt ? getMonthKey(createdAt) : getCurrentMonthKey());
         mn.push(item);
       } else {
-        item.weekKey = periodKey || getCurrentWeekKey();
+        item.weekKey = periodKey || (createdAt ? getWeekKey(createdAt) : getCurrentWeekKey());
         wk.push(item);
       }
     });
