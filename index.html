@@ -24110,10 +24110,51 @@ function vMonthly(c){
   const pendingSmp=samples.filter(s=>s.status!=='확정'&&s.status!=='취소');
   const pendingSmpCnt=pendingSmp.length;
 
+  // ── 📌 새 KPI 정의 ──
+  // (1) 진행 발주 건수 = 미출고 발주 + (출고완료 했는데 명세서 미발행) 합계
+  //     - 미출고 = isOrderInProgress (의뢰/제작중/수정중/취소보류 — 단, 취소보류 제외)
+  //     - 출고완료(확정) 중 명세서 미발행 = 청구 전, 소속시켜야 할 건
+  const ordersShippedNoInvoice = orders.filter(o => {
+    if(!isOrderShipped(o.status)) return false; // 확정/출고완료 상태만
+    if(o.status === '취소') return false;
+    return !invoiceHistory.some(v=>
+      (v.ordId && v.ordId===o.id) ||
+      (o.no && v.ordNo && v.ordNo===o.no)
+    );
+  });
+  // 미출고 발주만 (취소/취소보류 제외)
+  const ordersNotShipped = orders.filter(o => {
+    if(o.status === '취소' || o.status === '취소보류') return false;
+    return !isOrderShipped(o.status);
+  });
+  const activeOrderCnt = ordersNotShipped.length + ordersShippedNoInvoice.length;
+  const activeOrderAmt = ordersNotShipped.reduce((s,o)=>s+ordAmt(o),0)
+                       + ordersShippedNoInvoice.reduce((s,o)=>s+ordAmt(o),0);
+
+  // (2) 이번달 누적 매출 = 이번달 발행된 거래명세서의 공급가액 합계 (취소 명세서 제외)
+  //     명세서 발행일(issuedAt) 기준 — 출고완료일이 아니라 발행일이 매출 인식 시점
+  const thisMonthInvoices = invoiceHistory.filter(v => {
+    if(v._isConsolidated) return false; // 합본은 묶인 명세서의 중복이므로 제외
+    if(v.status === '취소') return false;
+    return v.issuedAt && v.issuedAt.startsWith(thisMStr);
+  });
+  const thisMonthRevenue = thisMonthInvoices.reduce((s,v)=>s+(+v.supplyAmt||0), 0);
+
   // 이번달 발주
   const thisMonthOrds=orders.filter(o=>o.date&&o.date.startsWith(thisMStr));
   const thisMonthAmt=thisMonthOrds.reduce((s,o)=>s+ordAmt(o),0);
   const thisMonthSmp=samples.filter(s=>s.reqDate&&s.reqDate.startsWith(thisMStr)).length;
+
+  // ── 📌 월별 매출 (최근 6개월, 명세서 발행일 기준) ──
+  const mRevenue = months.map(m => {
+    const monthInvs = invoiceHistory.filter(v => {
+      if(v._isConsolidated) return false;
+      if(v.status === '취소') return false;
+      return v.issuedAt && v.issuedAt.startsWith(m);
+    });
+    return monthInvs.reduce((s,v)=>s+(+v.supplyAmt||0), 0);
+  });
+  const maxRevenue = Math.max(...mRevenue, 1);
 
   const maxOrdAmt=Math.max(...mOrdAmt.map(m=>m.amt),1);
   const maxSmpCnt=Math.max(...mSmpCnt,1);
@@ -24174,54 +24215,83 @@ function vMonthly(c){
   const totalSmpDone=clientSmpList.reduce((s,x)=>s+x.doneCnt,0);
   const totalSmpPend=clientSmpList.reduce((s,x)=>s+x.pendCnt,0);
 
+  // 금액 단위 표시 헬퍼 (만/천만/억 단위)
+  const fmtMoney = (n) => {
+    const v = +n || 0;
+    if(v >= 100000000) return (v/100000000).toFixed(1).replace(/\.0$/,'') + '억';
+    if(v >= 10000000) return (v/10000000).toFixed(1).replace(/\.0$/,'') + '천만';
+    if(v >= 10000) return Math.round(v/10000).toLocaleString() + '만';
+    if(v > 0) return v.toLocaleString();
+    return '0';
+  };
+
   c.innerHTML=`
-  <!-- ① 핵심 현황 — 잔여 집계 -->
+  <!-- ① 핵심 KPI 4개 -->
   <div style="margin-bottom:14px">
-    <div style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">📌 현재 잔여 현황</div>
+    <div style="font-size:10px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">📌 현재 현황</div>
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
-      <div style="background:var(--s1);border:2px solid var(--red);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden">
-        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--red)"></div>
-        <div style="font-size:10px;color:var(--red);font-weight:700;margin-bottom:6px">잔여 발주 건수</div>
-        <div style="font-size:28px;font-weight:700;color:var(--t1)">${pendingOrdCnt}<span style="font-size:13px;font-weight:400;color:var(--t3);margin-left:2px">건</span></div>
-        <div style="font-size:10.5px;color:var(--t3);margin-top:4px">미출고 발주서</div>
-      </div>
-      <div style="background:var(--s1);border:2px solid var(--org);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden">
-        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--org)"></div>
-        <div style="font-size:10px;color:var(--org);font-weight:700;margin-bottom:6px">잔여 발주 금액</div>
-        <div style="font-size:24px;font-weight:700;color:var(--t1)">${pendingOrdAmt>0?pendingOrdAmt.toLocaleString():'—'}<span style="font-size:12px;font-weight:400;color:var(--t3);margin-left:2px">${pendingOrdAmt>0?'원':''}</span></div>
-        <div style="font-size:10.5px;color:var(--t3);margin-top:4px">거래명세서 미발행 · ${pendingOrdersNotInvoiced.length}건</div>
-      </div>
+      <!-- 진행 발주 건수 -->
       <div style="background:var(--s1);border:2px solid var(--blu);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden">
         <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--blu)"></div>
-        <div style="font-size:10px;color:var(--blu);font-weight:700;margin-bottom:6px">잔여 샘플 개발</div>
+        <div style="font-size:10px;color:var(--blu);font-weight:700;margin-bottom:6px">진행 발주 건수</div>
+        <div style="font-size:28px;font-weight:700;color:var(--t1)">${activeOrderCnt}<span style="font-size:13px;font-weight:400;color:var(--t3);margin-left:2px">건</span></div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:4px">미출고 ${ordersNotShipped.length} · 명세서 미발행 ${ordersShippedNoInvoice.length}</div>
+      </div>
+      <!-- 진행 샘플 건수 -->
+      <div style="background:var(--s1);border:2px solid var(--gold);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden">
+        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--gold)"></div>
+        <div style="font-size:10px;color:var(--gold-lt);font-weight:700;margin-bottom:6px">진행 샘플 건수</div>
         <div style="font-size:28px;font-weight:700;color:var(--t1)">${pendingSmpCnt}<span style="font-size:13px;font-weight:400;color:var(--t3);margin-left:2px">건</span></div>
         <div style="font-size:10.5px;color:var(--t3);margin-top:4px">확정 전 진행 중</div>
       </div>
-      <div style="background:var(--gold-bg);border:2px solid var(--gold-line);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden">
-        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--gold)"></div>
-        <div style="font-size:10px;color:var(--gold-lt);font-weight:700;margin-bottom:6px">이번달 신규 발주</div>
-        <div style="font-size:28px;font-weight:700;color:var(--gold-lt)">${thisMonthOrds.length}<span style="font-size:13px;font-weight:400;color:var(--t3);margin-left:2px">건</span></div>
-        <div style="font-size:10.5px;color:var(--t3);margin-top:4px">샘플 ${thisMonthSmp}건 진행</div>
+      <!-- 이번달 누적 매출 -->
+      <div style="background:var(--s1);border:2px solid var(--grn);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden">
+        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--grn)"></div>
+        <div style="font-size:10px;color:var(--grn);font-weight:700;margin-bottom:6px">이번달 누적 매출</div>
+        <div style="font-size:24px;font-weight:700;color:var(--t1)" title="${thisMonthRevenue.toLocaleString()}원">${fmtMoney(thisMonthRevenue)}<span style="font-size:12px;font-weight:400;color:var(--t3);margin-left:2px">${thisMonthRevenue>0?'원':''}</span></div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:4px">명세서 ${thisMonthInvoices.length}건 발행</div>
+      </div>
+      <!-- 잔여 발주 금액 -->
+      <div style="background:var(--s1);border:2px solid var(--org);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden">
+        <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--org)"></div>
+        <div style="font-size:10px;color:var(--org);font-weight:700;margin-bottom:6px">잔여 발주 금액</div>
+        <div style="font-size:24px;font-weight:700;color:var(--t1)" title="${activeOrderAmt.toLocaleString()}원">${fmtMoney(activeOrderAmt)}<span style="font-size:12px;font-weight:400;color:var(--t3);margin-left:2px">${activeOrderAmt>0?'원':''}</span></div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:4px">미출고 + 명세서 미발행</div>
       </div>
     </div>
   </div>
 
-  <!-- ② 동기부여 메시지 -->
-  ${pendingOrdCnt===0&&pendingSmpCnt===0?`
-  <div style="background:var(--grn-bg);border:1px solid rgba(46,139,44,.3);border-radius:var(--r);padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
-    <span style="font-size:20px">🎯</span>
-    <div><div style="font-size:12.5px;font-weight:600;color:var(--grn)">잔여 건이 없습니다!</div><div style="font-size:11.5px;color:var(--t2);margin-top:2px">새로운 발주와 샘플 개발을 적극적으로 유치해 보세요.</div></div>
-  </div>`:pendingOrdCnt>0||pendingSmpCnt>0?`
-  <div style="background:var(--org-bg);border:1px solid rgba(168,90,16,.3);border-radius:var(--r);padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
-    <span style="font-size:20px">💪</span>
-    <div><div style="font-size:12.5px;font-weight:600;color:var(--org)">발주 ${pendingOrdCnt}건, 샘플 ${pendingSmpCnt}건이 진행 중입니다</div>
-    <div style="font-size:11.5px;color:var(--t2);margin-top:2px">완료율을 높이고, 새로운 고객사 영업도 병행해 보세요!</div></div>
-  </div>`:''}
-
-  <!-- ③ 월별 트렌드 차트 -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+  <!-- ② 월별 트렌드 차트 (3개: 매출 / 발주 건수 / 샘플 의뢰) -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+    <!-- (1) 월별 매출 -->
     <div class="card">
-      <div class="ch"><div class="ch-t">월별 발주 건수 추이</div><div class="ch-s">최근 6개월 · OEM 발주서 기준</div></div>
+      <div class="ch"><div class="ch-t">월별 매출</div><div class="ch-s">최근 6개월 · 명세서 발행일 기준</div></div>
+      <div style="padding:12px 14px">
+        <div class="bar-chart" style="height:100px">
+          ${mRevenue.map((amt,i)=>{
+            const h = Math.max(Math.round(amt/maxRevenue*100), amt>0?8:0);
+            return `<div class="bar-col">
+              <div class="bar-val" title="${amt.toLocaleString()}원">${amt>0?fmtMoney(amt):''}</div>
+              <div class="bar-area">
+                <div class="bar" style="height:${h}%;background:${i===5?'var(--grn)':'rgba(46,139,44,0.25)'};border:1px solid var(--grn);border-radius:2px"></div>
+              </div>
+              <div class="bar-lbl" style="${i===5?'font-weight:700;color:var(--grn)':''}">${mLabels[i]}</div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div style="margin-top:10px;border-top:1px solid var(--bdr);padding-top:8px;font-size:10.5px;color:var(--t2);display:flex;justify-content:space-between">
+          <span>월평균</span>
+          <b style="color:var(--t1)">${fmtMoney(Math.round(mRevenue.reduce((s,x)=>s+x,0)/6))}원</b>
+        </div>
+        <div style="margin-top:4px;font-size:10.5px;color:var(--t2);display:flex;justify-content:space-between">
+          <span>6개월 합계</span>
+          <b style="color:var(--t1)">${fmtMoney(mRevenue.reduce((s,x)=>s+x,0))}원</b>
+        </div>
+      </div>
+    </div>
+    <!-- (2) 월별 발주 건수 -->
+    <div class="card">
+      <div class="ch"><div class="ch-t">월별 발주 건수</div><div class="ch-s">최근 6개월 · 발주일 기준</div></div>
       <div style="padding:12px 14px">
         <div class="bar-chart" style="height:100px">
           ${mOrdAmt.map((m,i)=>{
@@ -24230,7 +24300,7 @@ function vMonthly(c){
             return`<div class="bar-col">
               <div class="bar-val">${m.cnt||''}</div>
               <div class="bar-area">
-                <div class="bar" style="height:${h}%;background:${i===5?'var(--t1)':'var(--s3)'};border:1px solid ${i===5?'var(--t1)':'var(--bdr)'};position:relative">
+                <div class="bar" style="height:${h}%;background:${i===5?'var(--t1)':'var(--s3)'};border:1px solid ${i===5?'var(--t1)':'var(--bdr)'};position:relative;border-radius:2px">
                   ${m.cntDone>0?`<div style="position:absolute;bottom:0;left:0;right:0;height:${donePct}%;background:var(--grn);opacity:.7"></div>`:''}
                 </div>
               </div>
@@ -24239,28 +24309,19 @@ function vMonthly(c){
           }).join('')}
         </div>
         <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:10.5px;color:var(--t3);border-top:1px solid var(--bdr);padding-top:8px">
-          ${mOrdAmt.map((m,i)=>`<div style="text-align:center;${i===5?'color:var(--t1);font-weight:700':''}">
+          ${mOrdAmt.map((m,i)=>`<div style="text-align:center;flex:1;${i===5?'color:var(--t1);font-weight:700':''}">
             ${m.cnt}건${m.cntDone>0?`<div style="color:var(--grn)">${m.cntDone}출고</div>`:''}
           </div>`).join('')}
         </div>
-        <div style="margin-top:6px;display:flex;justify-content:space-between;font-size:10px;color:var(--t3);padding-top:4px">
-          ${mOrdAmt.map((m,i)=>{
-            const amt=isFinite(m.amt)?m.amt:0;
-            const disp=amt>=10000000?`${(amt/10000000).toFixed(1)}천만`:amt>=10000?`${Math.round(amt/10000)}만`:amt>0?amt.toLocaleString():'-';
-            return`<div style="text-align:center;flex:1;${i===5?'color:var(--t1);font-weight:700':''}" title="${amt.toLocaleString()}원">${disp}</div>`;
-          }).join('')}
-        </div>
-        <div style="margin-top:6px;display:flex;gap:10px;font-size:10px;color:var(--t3);flex-wrap:wrap;align-items:center">
+        <div style="margin-top:6px;display:flex;gap:8px;font-size:10px;color:var(--t3);align-items:center">
           <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--s3);border:1px solid var(--bdr);border-radius:1px"></span>진행</span>
           <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--grn);border-radius:1px;opacity:.7"></span>출고완료</span>
-          <span style="margin-left:auto;font-size:10.5px;color:var(--t2)">
-            6개월 합계: <b style="color:var(--t1)">${mOrdAmt.reduce((s,m)=>s+(isFinite(m.amt)?m.amt:0),0).toLocaleString()}원</b>
-          </span>
         </div>
       </div>
     </div>
+    <!-- (3) 월별 샘플 의뢰 -->
     <div class="card">
-      <div class="ch"><div class="ch-t">월별 신규 샘플 의뢰</div><div class="ch-s">최근 6개월 · 의뢰일 기준</div></div>
+      <div class="ch"><div class="ch-t">월별 샘플 의뢰</div><div class="ch-s">최근 6개월 · 의뢰일 기준</div></div>
       <div style="padding:12px 14px">
         <div class="bar-chart" style="height:100px">
           ${mSmpCnt.map((cnt,i)=>{
@@ -24269,7 +24330,7 @@ function vMonthly(c){
             return`<div class="bar-col">
               <div class="bar-val">${cnt||''}</div>
               <div class="bar-area">
-                <div class="bar" style="height:${h}%;background:${i===5?'var(--blu)':'var(--blu-bg)'};border:1px solid var(--blu);position:relative">
+                <div class="bar" style="height:${h}%;background:${i===5?'var(--blu)':'var(--blu-bg)'};border:1px solid var(--blu);position:relative;border-radius:2px">
                   ${done>0?`<div style="position:absolute;bottom:0;left:0;right:0;height:${Math.round(done/cnt*100)}%;background:var(--grn);opacity:.7"></div>`:''}
                 </div>
               </div>
@@ -24278,17 +24339,13 @@ function vMonthly(c){
           }).join('')}
         </div>
         <div style="margin-top:10px;display:flex;justify-content:space-between;font-size:10.5px;color:var(--t3);border-top:1px solid var(--bdr);padding-top:8px">
-          ${mSmpCnt.map((cnt,i)=>`<div style="text-align:center;${i===5?'color:var(--blu);font-weight:700':''}">
+          ${mSmpCnt.map((cnt,i)=>`<div style="text-align:center;flex:1;${i===5?'color:var(--blu);font-weight:700':''}">
             ${cnt}건${mSmpDone[i]>0?`<div style="color:var(--grn)">${mSmpDone[i]}확정</div>`:''}
           </div>`).join('')}
         </div>
-        <div style="margin-top:6px;display:flex;gap:10px;font-size:10px;color:var(--t3);flex-wrap:wrap;align-items:center">
+        <div style="margin-top:6px;display:flex;gap:8px;font-size:10px;color:var(--t3);align-items:center">
           <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--blu-bg);border:1px solid var(--blu);border-radius:1px"></span>진행</span>
           <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:8px;height:8px;background:var(--grn);border-radius:1px;opacity:.7"></span>확정</span>
-          <span style="margin-left:auto;font-size:10.5px;color:var(--t2)">
-            최근 6개월 합계: <b style="color:var(--t1)">${mSmpCnt.reduce((s,c)=>s+c,0)}건</b>
-            · 전체 진행 중: <b style="color:var(--gold-lt)">${pendingSmpCnt}건</b>
-          </span>
         </div>
       </div>
     </div>
