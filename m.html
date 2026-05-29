@@ -2753,7 +2753,12 @@ function renderOrdList(){
   if(q) list = list.filter(o=>{
     return (o.vendor||'').toLowerCase().includes(q) || (o.no||'').toLowerCase().includes(q) || (o.rows||[]).some(r=>(r.name||'').toLowerCase().includes(q));
   });
-  list.sort((a,b)=>(b.ship||'').localeCompare(a.ship||''));
+  // 📌 발주일(date) 최신순. 같은 날짜면 id가 큰 것(최근 등록) 우선
+  list.sort((a,b)=>{
+    const d = (b.date||'').localeCompare(a.date||'');
+    if(d !== 0) return d;
+    return (+b.id||0) - (+a.id||0);
+  });
   document.getElementById('ordCnt').textContent = list.length;
   const el = document.getElementById('ordList');
   if(!list.length){
@@ -2847,7 +2852,12 @@ function renderSmpList(){
     list = list.filter(s => getInitial(s.manager||'') === _smpCliFilter);
   }
   if(q) list = list.filter(s=>(s.name||'').toLowerCase().includes(q) || (s.itemCode||'').toLowerCase().includes(q));
-  list.sort((a,b)=>(b.due||b.reqDate||'').localeCompare(a.due||a.reqDate||''));
+  // 📌 의뢰일(reqDate) 최신순. 같은 날짜면 id가 큰 것 우선
+  list.sort((a,b)=>{
+    const d = (b.reqDate||'').localeCompare(a.reqDate||'');
+    if(d !== 0) return d;
+    return (+b.id||0) - (+a.id||0);
+  });
   document.getElementById('smpCnt').textContent = list.length;
   const el = document.getElementById('smpList');
   if(!list.length){
