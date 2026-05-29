@@ -5229,8 +5229,18 @@ function renderInvoiceHistory(){
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">공급가액</th>';
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">부가세</th>';
     h+='<th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">합계금액</th>';
-    h+='<th style="padding:8px 8px;text-align:center;font-weight:600;white-space:nowrap" title="명세서별 출고완료 여부">출고</th>';
-    h+='<th onclick="invToggleSort(\'status\')" style="padding:8px 10px;text-align:center;font-weight:600;cursor:pointer;user-select:none" title="클릭하여 상태 정렬 (위급도 순: 미수→발행완료→청구완료→입금완료→발송→작성중)">상태'+_invSortIndicator('status')+'</th>';
+    // 탭별 액션 컬럼:
+    // - 미청구(draft): "청구" 토글 ("청구하기" 버튼)
+    // - 청구(billing): "입금" + "계산서" 2개 체크박스
+    // - 완료(done) / 전체(all): "상태" 셀렉트
+    if(subTab === 'draft' || subTab === 'unbilled'){
+      h+='<th style="padding:8px 8px;text-align:center;font-weight:600;white-space:nowrap" title="청구 단계로 이동">청구</th>';
+    } else if(subTab === 'billing' || subTab === 'billed'){
+      h+='<th style="padding:8px 8px;text-align:center;font-weight:600;white-space:nowrap" title="입금 받았는지">입금</th>';
+      h+='<th style="padding:8px 8px;text-align:center;font-weight:600;white-space:nowrap" title="세금계산서 발행 여부">계산서</th>';
+    } else {
+      h+='<th onclick="invToggleSort(\'status\')" style="padding:8px 10px;text-align:center;font-weight:600;cursor:pointer;user-select:none" title="클릭하여 상태 정렬">상태'+_invSortIndicator('status')+'</th>';
+    }
     h+='<th style="padding:8px 4px;width:64px"></th>';
     h+='</tr></thead><tbody>';
     list.forEach(function(v){
@@ -5288,41 +5298,67 @@ function renderInvoiceHistory(){
           : '';
         h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:var(--gold-lt)">'+(v.total?v.total.toLocaleString():'-')+'</div>'+prepaidChip+'</td>';
       }
-      // 5-A: 출고완료 토글 셀
-      // - 합본: 표시 안 함 (— 처리)
-      // - 합본에 묶인 명세서: 잠금 표시
-      // - 샘플: "—" (개념 없음)
-      // - 입금완료: 잠금 (이미 done)
-      // - 일반: 클릭 가능한 토글
-      h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center;white-space:nowrap">';
-      if(isCons){
-        h+='<span style="color:var(--t3);font-size:11px">—</span>';
-      } else if(v._fromSample){
-        h+='<span style="color:var(--t3);font-size:11px" title="샘플 명세서는 발행 시점에 자동 청구 단계">—</span>';
-      } else if(v._consolidatedInvoiceId){
-        h+='<span style="font-size:13px" title="합본에 묶여있어 변경 불가">🔒</span>';
-      } else if(v.status === '입금완료'){
-        h+='<span style="font-size:13px;color:var(--grn)" title="이미 입금완료">✓</span>';
+      // 탭별 액션 셀
+      if(subTab === 'draft' || subTab === 'unbilled'){
+        // 미청구 탭 — "청구하기" 버튼 (청구 단계로 이동)
+        h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center;white-space:nowrap">';
+        if(isCons){
+          h+='<span style="color:var(--t3);font-size:11px">—</span>';
+        } else if(v._consolidatedInvoiceId){
+          h+='<span style="font-size:13px" title="합본에 묶여있어 변경 불가">🔒</span>';
+        } else {
+          var isShipped = v._shipped === true;
+          var btnBg = isShipped ? 'var(--blu-bg)' : 'var(--s1)';
+          var btnBorder = isShipped ? 'var(--blu)' : 'var(--bdr)';
+          var btnColor = isShipped ? 'var(--blu)' : 'var(--t3)';
+          var btnText = isShipped ? '✓ 청구함' : '청구하기';
+          var btnTitle = isShipped ? '클릭하면 미청구로 되돌립니다' : '청구 단계로 이동';
+          h+='<button onclick="markInvoiceShipped('+v.id+','+(!isShipped)+')" title="'+btnTitle+'" style="padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid '+btnBorder+';background:'+btnBg+';color:'+btnColor+';cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">'+btnText+'</button>';
+        }
+        h+='</td>';
+      } else if(subTab === 'billing' || subTab === 'billed'){
+        // 청구 탭 — 입금 체크박스 + 계산서 체크박스 (둘 다 체크 시 자동 완료 탭으로)
+        var paid = (v._paid === true) || v.status === '입금완료';
+        var taxIssued = (v._taxInvoiceIssued === true);
+        h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center">';
+        if(isCons){
+          h+='<span style="color:var(--t3);font-size:11px">—</span>';
+        } else {
+          h+='<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11.5px;color:'+(paid?'var(--grn)':'var(--t3)')+';font-weight:'+(paid?'700':'500')+'" title="입금 받았는지">'
+            +'<input type="checkbox" '+(paid?'checked':'')+' onchange="toggleInvPaid('+v.id+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--grn)">'
+            +(paid?'완료':'대기')+'</label>';
+        }
+        h+='</td>';
+        h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center">';
+        if(isCons){
+          h+='<span style="color:var(--t3);font-size:11px">—</span>';
+        } else {
+          h+='<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11.5px;color:'+(taxIssued?'var(--blu)':'var(--t3)')+';font-weight:'+(taxIssued?'700':'500')+'" title="세금계산서 발행 여부">'
+            +'<input type="checkbox" '+(taxIssued?'checked':'')+' onchange="toggleInvTaxIssued('+v.id+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blu)">'
+            +(taxIssued?'발행':'대기')+'</label>';
+        }
+        h+='</td>';
       } else {
-        // 일반 명세서: 토글 가능
-        // 흐름: 미청구(draft) → [청구하기] 클릭 → 청구(billing) 탭으로 이동
-        var isShipped = v._shipped === true;
-        var btnBg = isShipped ? 'var(--blu-bg)' : 'var(--s1)';
-        var btnBorder = isShipped ? 'var(--blu)' : 'var(--bdr)';
-        var btnColor = isShipped ? 'var(--blu)' : 'var(--t3)';
-        var btnText = isShipped ? '✓ 청구함' : '청구하기';
-        var btnTitle = isShipped ? '클릭하면 미청구 단계로 되돌립니다' : '클릭하면 이 명세서를 청구 단계로 이동합니다';
-        h+='<button onclick="markInvoiceShipped('+v.id+','+(!isShipped)+')" title="'+btnTitle+'" style="padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid '+btnBorder+';background:'+btnBg+';color:'+btnColor+';cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">'+btnText+'</button>';
+        // 완료/전체/합본 탭 — 상태 표시 (읽기 전용 라벨)
+        h+='<td onclick="event.stopPropagation()" style="padding:8px 10px;text-align:center">';
+        var paid2 = (v._paid === true) || v.status === '입금완료';
+        var taxIssued2 = (v._taxInvoiceIssued === true);
+        if(isCons){
+          h+='<select onchange="updateInvStatus('+v.id+',this.value)" style="font-size:10.5px;padding:2px 6px;border-radius:12px;border:1px solid var(--bdr);background:var(--s1);color:'+sc+';font-family:inherit;cursor:pointer">'
+            +'<option value="발행완료"'+(v.status==='발행완료'?' selected':'')+'>발행완료</option>'
+            +'<option value="입금완료"'+(v.status==='입금완료'?' selected':'')+'>입금완료</option>'
+            +'</select>';
+        } else {
+          // 두 체크 상태에 따라 라벨 표시
+          var lbl, lblColor;
+          if(paid2 && taxIssued2){ lbl='✓ 완료'; lblColor='#7A4DB5'; }
+          else if(paid2){ lbl='입금됨'; lblColor='var(--grn)'; }
+          else if(taxIssued2){ lbl='계산서 발행'; lblColor='var(--blu)'; }
+          else { lbl='청구 대기'; lblColor='var(--t3)'; }
+          h+='<span style="font-size:11px;font-weight:700;color:'+lblColor+';padding:3px 9px;border-radius:11px;background:var(--s1);border:1px solid var(--bdr)">'+lbl+'</span>';
+        }
+        h+='</td>';
       }
-      h+='</td>';
-      // 상태 select — 합본도 동일하게 보임 (해제는 합본 상세 모달에서)
-      h+='<td onclick="event.stopPropagation()" style="padding:8px 10px;text-align:center">';
-      h+='<select onchange="updateInvStatus('+v.id+',this.value)" style="font-size:10.5px;padding:2px 6px;border-radius:12px;border:1px solid var(--bdr);background:var(--s1);color:'+sc+';font-family:inherit;cursor:pointer">';
-      h+='<option value="발행완료"'+(v.status==='발행완료'?' selected':'')+'>발행완료</option>';
-      h+='<option value="청구완료"'+(v.status==='청구완료'?' selected':'')+'>청구완료</option>';
-      h+='<option value="미수"'+(v.status==='미수'?' selected':'')+'>미수</option>';
-      h+='<option value="입금완료"'+(v.status==='입금완료'?' selected':'')+'>입금완료</option>';
-      h+='</select></td>';
       // 액션 버튼 — 합본은 다르게 (📄 인쇄 / ↩ 해제 / 일반: 카피/삭제)
       h+='<td onclick="event.stopPropagation()" style="padding:8px 4px;text-align:center;white-space:nowrap">';
       if(isCons){
@@ -5497,6 +5533,86 @@ function openInvDetail(id){
   var SC={'발행완료':'var(--grn)','청구완료':'var(--blu)','미수':'var(--red)','입금완료':'#7A4DB5'};
   var sc=SC[v.status]||'var(--t2)';
   document.getElementById('mInvDetail_t').textContent='🧾 '+v.vendor+' — '+v.issuedAt;
+  // 미청구(draft) 탭 — 간소 모달: 선금 입력 + 카피/재발행만
+  // (행에서 "청구하기" 버튼이 이미 있으니 상태 변경 UI 불필요)
+  var isDraft = (v._invStage === 'draft') || (v._shipped === false);
+  if(isDraft && !v._isConsolidated){
+    var bd='';
+    // 헤더 정보 — 한 줄로 간결하게
+    bd+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:12px;font-size:11.5px">';
+    bd+='<div style="background:var(--s2);padding:7px 11px;border-radius:6px;border:1px solid var(--bdr)"><div style="color:var(--t3);font-size:10px;margin-bottom:2px">발주번호</div><div style="font-weight:600;font-family:monospace;font-size:12px">'+(v.ordNo||'—')+'</div></div>';
+    bd+='<div style="background:var(--s2);padding:7px 11px;border-radius:6px;border:1px solid var(--bdr)"><div style="color:var(--t3);font-size:10px;margin-bottom:2px">출고일</div><div style="font-weight:600;font-size:12px">'+(v.shipDate||'—')+'</div></div>';
+    bd+='<div style="background:var(--gold-bg);padding:7px 11px;border-radius:6px;border:1px solid var(--gold-line)"><div style="color:var(--t3);font-size:10px;margin-bottom:2px">합계</div><div style="font-weight:700;font-size:13px;color:var(--gold-lt)">'+(v.total?v.total.toLocaleString()+'원':'-')+'</div></div>';
+    bd+='</div>';
+    // 품목 요약 (간략)
+    var items=v.items||[];
+    if(items.length){
+      bd+='<div style="border:1px solid var(--bdr);border-radius:6px;overflow:hidden;margin-bottom:12px">';
+      bd+='<table style="width:100%;border-collapse:collapse;font-size:11.5px"><tbody>';
+      items.forEach(function(r){
+        bd+='<tr style="border-bottom:1px solid var(--bdr-lt)"><td style="padding:6px 10px"><span style="font-weight:600">'+(r.name||'')+'</span>'+(r.code?'<span style="font-size:10px;color:var(--t3);font-family:monospace;margin-left:6px">'+r.code+'</span>':'')+'</td><td style="padding:6px 8px;text-align:right;color:var(--t3);width:80px">×'+(r.qty?r.qty.toLocaleString():'')+'</td></tr>';
+      });
+      bd+='</tbody></table></div>';
+    }
+    // 기존 선금 이력 (있으면)
+    var pmts = v.payments || [];
+    var prepaidList = pmts.filter(function(pm){ return pm.type==='선금' || pm.type==='중도금'; });
+    if(prepaidList.length){
+      bd+='<div style="margin-bottom:12px;padding:10px 12px;background:var(--s2);border-radius:6px;border:1px solid var(--bdr)">';
+      bd+='<div style="font-size:11px;color:#7A4DB5;font-weight:700;margin-bottom:6px">💰 선금 이력 ('+prepaidList.length+'건)</div>';
+      bd+='<div style="display:flex;flex-direction:column;gap:4px">';
+      prepaidList.forEach(function(pm, pmIdx){
+        var realIdx = pmts.indexOf(pm);
+        bd+='<div style="display:grid;grid-template-columns:90px 1fr auto auto;gap:8px;align-items:center;font-size:11.5px;padding:4px 6px;background:var(--s1);border-radius:4px">';
+        bd+='<span style="color:var(--t3)">'+(pm.date||'')+'</span>';
+        bd+='<span style="color:var(--t3);font-size:10.5px">'+((pm.memo||'').replace(/</g,'&lt;'))+'</span>';
+        bd+='<span style="font-weight:700;color:#7A4DB5;text-align:right">₩'+(+pm.amount||0).toLocaleString()+'</span>';
+        bd+='<button onclick="removeInvoicePayment('+v.id+','+realIdx+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">×</button>';
+        bd+='</div>';
+      });
+      bd+='</div></div>';
+    }
+    // 선금 입력
+    bd+='<div style="padding:12px 14px;background:rgba(122,77,181,.05);border:1px solid rgba(122,77,181,.25);border-radius:6px">';
+    bd+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
+    bd+='<span style="font-size:14px">💰</span>';
+    bd+='<span style="font-size:11.5px;color:#7A4DB5;font-weight:700">원자재 선금 입력</span>';
+    bd+='<span style="font-size:10px;color:var(--t3)">— 발주 시점에 받은 선금을 기록하세요</span>';
+    bd+='</div>';
+    bd+='<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">';
+    bd+='<div style="flex:1;min-width:180px;position:relative">';
+    bd+='<input type="text" id="quickPrepay_amount" placeholder="금액 입력 (예: 800000)" inputmode="numeric" onkeydown="if(event.key===\'Enter\'){addQuickPrepayment('+v.id+');}" style="width:100%;padding:8px 36px 8px 12px;font-size:13px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;background:var(--s1);box-sizing:border-box">';
+    bd+='<span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--t3);pointer-events:none">원</span>';
+    bd+='</div>';
+    var _todayStr=(typeof toLocalDateStr==="function")?toLocalDateStr(new Date()):new Date().toISOString().slice(0,10);
+    bd+='<div style="display:flex;align-items:center;gap:4px">';
+    bd+='<span style="font-size:11px;color:var(--t3);white-space:nowrap">입금일</span>';
+    bd+='<input type="date" id="quickPrepay_date" value="'+_todayStr+'" onkeydown="if(event.key===\'Enter\'){addQuickPrepayment('+v.id+');}" style="padding:8px 10px;font-size:13px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;background:var(--s1);box-sizing:border-box">';
+    bd+='</div>';
+    bd+='<button onclick="addQuickPrepayment('+v.id+')" style="padding:8px 16px;font-size:12px;border:1px solid #7A4DB5;background:#7A4DB5;color:#fff;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">+ 선금 추가</button>';
+    bd+='</div></div>';
+    document.getElementById('mInvDetail_body').innerHTML = bd;
+    // 카피/재발행 버튼 핸들러 (기존과 동일)
+    var cbD=document.getElementById('mInvDetail_copy');
+    if(cbD){ cbD.onclick=function(){ closeM('mInvDetail'); showInvoiceCopy(v.id); }; }
+    var rbD=document.getElementById('mInvDetail_reprint');
+    if(rbD){
+      rbD.onclick=function(){
+        closeM('mInvDetail');
+        if(v.ordId === null || v._isStandalone || (v.ordNo && String(v.ordNo).startsWith('STOCK-'))){
+          openStandaloneInvoiceModal(v.id); return;
+        }
+        var o=null;
+        if(v.ordId) o=orders.find(function(x){return x.id==v.ordId;});
+        if(!o && v.ordNo) o=orders.find(function(x){return x.no===v.ordNo;});
+        if(o){ openOrdTaxInvoice(o.id); return; }
+        showToast('원본 발주서를 찾을 수 없습니다','var(--org)');
+      };
+    }
+    openM('mInvDetail');
+    return;
+  }
+  // 청구/완료/전체/합본 등 — 기존 풀 모달
   var b='';
   // 합본에 묶여 있으면 잠금 안내
   var lockInfo = isInvoiceLocked(v);
@@ -7142,6 +7258,19 @@ function mapNotionInvoice(row){
     })(),
     // 5-A: 명세서별 출고완료 플래그 (사용자가 행에서 토글)
     _shipped: !!np.check(p['명세서출고완료']),
+    // 5-B: 입금/계산서 발행 플래그 — status로부터 복원 (노션 status 인코딩으로 일관성 유지)
+    //   입금완료  = 입금 ☑ + 계산서 ☑
+    //   청구완료  = 입금 ☑ + 계산서 ☐
+    //   미수      = 입금 ☐ + 계산서 ☑
+    //   발행완료  = 입금 ☐ + 계산서 ☐
+    _paid: (function(){
+      const st = np.select(p['상태']);
+      return st === '입금완료' || st === '청구완료';
+    })(),
+    _taxInvoiceIssued: (function(){
+      const st = np.select(p['상태']);
+      return st === '입금완료' || st === '미수';
+    })(),
   };
 }
 // 견적서 매핑 (📋 견적 DB)
@@ -24925,15 +25054,16 @@ function removeInvoicePayment(invId, paymentIdx){
 function inferInvStage(v){
   if(!v) return 'draft';
   if(v._isConsolidated) return null; // 합본은 stage 없음
-  // status가 '입금완료'면 무조건 done
+  // 새 흐름: 입금 + 계산서 둘 다 체크되면 → done (완료 탭)
+  if(v._paid === true && v._taxInvoiceIssued === true) return 'done';
+  // status가 '입금완료'면 무조건 done (옛 호환)
   if(v.status === '입금완료') return 'done';
   // 입금률 100% → done (status 누락 케이스 대비)
   if((+v.paymentRatio || 0) >= 100) return 'done';
   // 5-A: 명세서별 출고완료 플래그가 핵심 기준
-  // _shipped=true → billing (청구 단계)
-  if(v._shipped === true) return 'billing';
+  // _shipped=true 또는 _paid/_taxInvoiceIssued 하나라도 → billing (청구 단계)
+  if(v._shipped === true || v._paid === true || v._taxInvoiceIssued === true) return 'billing';
   // _shipped가 명시적으로 false면 발주 상태를 보지 않고 draft 유지
-  // (명세서 자체 플래그를 신뢰 → 기기마다 발주 데이터가 달라도 stage 일관성 보장)
   if(v._shipped === false) return 'draft';
   // _shipped가 미설정(undefined)인 옛 데이터만 발주 출고완료 여부로 추론
   if(v.ordId){
@@ -25035,6 +25165,56 @@ function markInvoiceShipped(invId, shipped){
   }
   // 일반 토스트
   showToast(shipped ? `✓ 출고완료 — 청구 단계로 이동` : `↩ 출고완료 해제 — 미청구 단계로 되돌림`, shipped?'var(--grn)':'var(--org)', 3000);
+  return true;
+}
+
+// ── 청구 탭 — 입금/계산서 체크박스 토글 ──
+// 둘 다 체크되면 자동으로 완료(done) 단계로 이동
+// status 인코딩 (노션 호환):
+//   입금완료  = 입금 ☑ + 계산서 ☑   (done)
+//   청구완료  = 입금 ☑ + 계산서 ☐   (billing)
+//   미수      = 입금 ☐ + 계산서 ☑   (billing)
+//   발행완료  = 입금 ☐ + 계산서 ☐   (billing)
+function _syncInvStatusFromFlags(v){
+  const p = (v._paid === true);
+  const t = (v._taxInvoiceIssued === true);
+  if(p && t){ v.status = '입금완료'; v._invStage = 'done'; }
+  else if(p){ v.status = '청구완료'; v._invStage = 'billing'; }
+  else if(t){ v.status = '미수';     v._invStage = 'billing'; }
+  else {       v.status = '발행완료'; v._invStage = 'billing'; }
+}
+function toggleInvPaid(invId, checked){
+  const v = invoiceHistory.find(x => String(x.id)===String(invId));
+  if(!v) return false;
+  v._paid = !!checked;
+  _syncInvStatusFromFlags(v);
+  if(typeof save === 'function') save();
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+    syncInvoiceToNotion(v, true).catch(e=>console.warn('명세서 입금상태 동기화 실패:',e));
+  }
+  if(typeof renderTab==='function') renderTab();
+  if(v._invStage === 'done'){
+    showToast('✓ 입금 + 계산서 모두 완료 — 완료 탭으로 이동','#7A4DB5', 3000);
+  } else {
+    showToast(checked ? '✓ 입금 체크' : '↩ 입금 해제', checked?'var(--grn)':'var(--t3)', 2000);
+  }
+  return true;
+}
+function toggleInvTaxIssued(invId, checked){
+  const v = invoiceHistory.find(x => String(x.id)===String(invId));
+  if(!v) return false;
+  v._taxInvoiceIssued = !!checked;
+  _syncInvStatusFromFlags(v);
+  if(typeof save === 'function') save();
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+    syncInvoiceToNotion(v, true).catch(e=>console.warn('명세서 계산서상태 동기화 실패:',e));
+  }
+  if(typeof renderTab==='function') renderTab();
+  if(v._invStage === 'done'){
+    showToast('✓ 입금 + 계산서 모두 완료 — 완료 탭으로 이동','#7A4DB5', 3000);
+  } else {
+    showToast(checked ? '✓ 계산서 발행 체크' : '↩ 계산서 해제', checked?'var(--blu)':'var(--t3)', 2000);
+  }
   return true;
 }
 
