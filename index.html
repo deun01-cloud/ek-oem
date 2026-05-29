@@ -13675,8 +13675,18 @@ function thumbHtml(im,i,buf,size=80){
   </div>`;
 }
 function removeBuf(buf,i){
-  if(!window[buf])return;
-  window[buf].splice(i,1);
+  // 📌 `let`으로 선언된 변수는 window에 자동 노출 안 됨
+  //    직접 참조 fallback으로 robust하게 동작
+  let arr = window[buf];
+  if(!arr){
+    if(buf === 'smpImgBuf')      arr = smpImgBuf;
+    else if(buf === 'smpSrcBuf') arr = smpSrcBuf;
+    else if(buf === 'smpCadBuf') arr = smpCadBuf;
+    else if(buf === 'smpRefBuf') arr = smpRefBuf;
+    else return;
+  }
+  if(!arr || i < 0 || i >= arr.length) return;
+  arr.splice(i,1);
   renderSmpPrev();
 }
 
@@ -13786,10 +13796,20 @@ function _classifyAndLoad(files, origin){
 }
 // 파일을 카테고리 간 이동 (사용자가 수동으로 옮길 때)
 function moveSmpFile(fromBuf, fromIdx, toBuf){
-  const src=window[fromBuf];
-  const dst=window[toBuf];
+  // 📌 `let`으로 선언된 변수는 window에 자동 노출 안 됨 → 직접 참조 fallback
+  const resolve = (name)=>{
+    let a = window[name];
+    if(a) return a;
+    if(name === 'smpImgBuf')      return smpImgBuf;
+    if(name === 'smpSrcBuf')      return smpSrcBuf;
+    if(name === 'smpCadBuf')      return smpCadBuf;
+    if(name === 'smpRefBuf')      return smpRefBuf;
+    return null;
+  };
+  const src=resolve(fromBuf);
+  const dst=resolve(toBuf);
   if(!src||!dst||!src[fromIdx])return;
-  if(toBuf==='smpImgBuf' && dst.length>=4){ showToast('⚠ 이미지는 최대 12장까지','var(--org)',2000); return; }
+  if(toBuf==='smpImgBuf' && dst.length>=12){ showToast('⚠ 이미지는 최대 12장까지','var(--org)',2000); return; }
   const [item]=src.splice(fromIdx,1);
   dst.push(item);
   renderSmpPrev();
@@ -13880,7 +13900,14 @@ function hideSmpMgrDropdown(){
 // IMAGE PREVIEW LIGHTBOX
 // ════════════════════════════════
 function openPrev(buf,idx){
-  const arr=window[buf];
+  // 📌 `let`으로 선언된 변수는 window에 자동 노출 안 됨 → 직접 참조 fallback
+  let arr = window[buf];
+  if(!arr){
+    if(buf === 'smpImgBuf')      arr = smpImgBuf;
+    else if(buf === 'smpSrcBuf') arr = smpSrcBuf;
+    else if(buf === 'smpCadBuf') arr = smpCadBuf;
+    else if(buf === 'smpRefBuf') arr = smpRefBuf;
+  }
   if(!arr||!arr.length){ console.warn('openPrev: 빈 배열', buf); return; }
   const im=arr[idx];
   if(!im){ console.warn('openPrev: 인덱스 범위 초과', buf, idx, arr.length); return; }
