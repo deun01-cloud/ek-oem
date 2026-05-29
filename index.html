@@ -1017,6 +1017,11 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   </div>
   <!-- 기존 데이터 마이그레이션용 숨김 필드 (memo plaintext 저장) -->
   <input type="hidden" id="o_memo">
+  <!-- 📌 견적서 기반 발주의 선금 % (없으면 빈값) -->
+  <input type="hidden" id="o_prepayPct">
+
+  <!-- 💰 결제 추적 (견적 기반 발주만 표시됨) -->
+  <div id="o_prepayBlock"></div>
 
   <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--t2);cursor:pointer;padding:7px 9px;background:var(--grn-bg);border-radius:5px;border:1px solid rgba(46,139,44,.2);margin-top:8px"><input type="checkbox" id="o_toProc" checked>저장 시 공정관리에 자동 추가</label>
 
@@ -11193,6 +11198,16 @@ async function syncSampleToNotion(s, update){
   if(!notionCfg.workerUrl||!notionCfg.smpDb){
     throw new Error('Notion 미연결: 샘플의뢰 DB');
   }
+  // 📌 긴 텍스트 청크 분할 (Notion API: 요소당 최대 2000자)
+  const chunkRichText=(str)=>{
+    const s2=String(str||'');
+    if(!s2) return [{text:{content:''}}];
+    const chunks=[];
+    for(let i=0;i<s2.length;i+=2000){
+      chunks.push({text:{content:s2.slice(i,i+2000)}});
+    }
+    return chunks;
+  };
   // notes 체크리스트를 JSON으로 "개발사항" 필드에 저장 (하위 호환 위해 "주의사항"은 빈 값)
   const notesJson = Array.isArray(s.notes) && s.notes.length
     ? 'JSON::'+JSON.stringify(s.notes) // prefix로 JSON임을 표시 (plaintext와 구분)
@@ -11210,9 +11225,9 @@ async function syncSampleToNotion(s, update){
     "각인위치":{"rich_text":[{"text":{"content":s.engr||''}}]},
     "카드파일":{"rich_text":[{"text":{"content":s.card||''}}]},
     "발주량":{"rich_text":[{"text":{"content":s.qty||''}}]},
-    "메모":{"rich_text":[{"text":{"content":(s.desc||'').slice(0,2000)}}]},
-    "개발사항":{"rich_text":[{"text":{"content":notesJson.slice(0,2000)}}]},
-    "주의사항":{"rich_text":[{"text":{"content":(s.caution||'').slice(0,2000)}}]},
+    "메모":{"rich_text":chunkRichText(s.desc||'')},
+    "개발사항":{"rich_text":chunkRichText(notesJson)},
+    "주의사항":{"rich_text":chunkRichText(s.caution||'')},
   };
   if(s.type)    p["유형"]={"select":{"name":s.type}};
   if(s.plating) p["도금"]={"select":{"name":s.plating}};
@@ -11224,10 +11239,9 @@ async function syncSampleToNotion(s, update){
   if(s.costPrice) p["입고원가"]={"number":+s.costPrice};
   if(s.unitPrice) p["샘플단가"]={"number":+s.unitPrice};
   if(s.devCost)   p["개발비"]={"number":+s.devCost};
-  // 납기일 변경 이력 (JSON 문자열로 저장, 2000자 제한)
+  // 납기일 변경 이력 (JSON 문자열로 저장 — 청크 분할)
   if(Array.isArray(s.dueHistory) && s.dueHistory.length){
-    const histJson = JSON.stringify(s.dueHistory);
-    p["납기일변경이력"] = {"rich_text":[{"text":{"content": histJson.slice(0, 2000)}}]};
+    p["납기일변경이력"] = {"rich_text": chunkRichText(JSON.stringify(s.dueHistory))};
   } else {
     p["납기일변경이력"] = {"rich_text":[{"text":{"content": ""}}]};
   }
@@ -11238,9 +11252,9 @@ async function syncSampleToNotion(s, update){
       .map(f=>({name:f.name||'', url:f.url, type:f.type||'', r2Key:f.r2Key||''}));
     return httpsOnly.length ? JSON.stringify(httpsOnly) : '';
   };
-  p["작업지시서JSON"] = {"rich_text":[{"text":{"content": filesForNotion(s.sourceDoc).slice(0, 2000)}}]};
-  p["예시이미지JSON"] = {"rich_text":[{"text":{"content": filesForNotion(s.imgs).slice(0, 2000)}}]};
-  p["CAD파일JSON"]   = {"rich_text":[{"text":{"content": filesForNotion(s.cadFiles).slice(0, 2000)}}]};
+  p["작업지시서JSON"] = {"rich_text": chunkRichText(filesForNotion(s.sourceDoc))};
+  p["예시이미지JSON"] = {"rich_text": chunkRichText(filesForNotion(s.imgs))};
+  p["CAD파일JSON"]   = {"rich_text": chunkRichText(filesForNotion(s.cadFiles))};
   if(s._notionId){ await nUpdate(s._notionId,p); }
   else{
     const r=await nCreate(notionCfg.smpDb,p);
@@ -11473,6 +11487,16 @@ async function syncClientToNotion(cl, update){
   if(!notionCfg.workerUrl||!notionCfg.clientDb){
     throw new Error('Notion 미연결: 고객사 DB');
   }
+  // 📌 긴 텍스트 청크 분할
+  const chunkRichText=(str)=>{
+    const s2=String(str||'');
+    if(!s2) return [{text:{content:''}}];
+    const chunks=[];
+    for(let i=0;i<s2.length;i+=2000){
+      chunks.push({text:{content:s2.slice(i,i+2000)}});
+    }
+    return chunks;
+  };
   // 사업자 파일: R2 URL만 (base64는 제외)
   const filesJson = (() => {
     try{
@@ -11491,8 +11515,8 @@ async function syncClientToNotion(cl, update){
     "브랜드성향":{"rich_text":[{"text":{"content":cl.brandStyle||''}}]},
     "선호소재":{"rich_text":[{"text":{"content":cl.materials||''}}]},
     "가격대":{"rich_text":[{"text":{"content":cl.priceRange||''}}]},
-    "메모":{"rich_text":[{"text":{"content":cl.memo||''}}]},
-    "사업자파일JSON":{"rich_text":[{"text":{"content":filesJson.slice(0,2000)}}]},
+    "메모":{"rich_text":chunkRichText(cl.memo||'')},
+    "사업자파일JSON":{"rich_text":chunkRichText(filesJson)},
     "제안주기_주":{"number":+cl.cycle||4},
     "상태":{"select":{"name":cl.status==='inactive'?'미활성':'활성'}},
   };
@@ -11587,22 +11611,32 @@ async function syncInqToNotion(q, update){
   if(!notionCfg.workerUrl||!notionCfg.inqDb){
     throw new Error('Notion 미연결: 고객사 문의 DB');
   }
+  // 📌 긴 텍스트 청크 분할
+  const chunkRichText=(str)=>{
+    const s2=String(str||'');
+    if(!s2) return [{text:{content:''}}];
+    const chunks=[];
+    for(let i=0;i<s2.length;i+=2000){
+      chunks.push({text:{content:s2.slice(i,i+2000)}});
+    }
+    return chunks;
+  };
   // ⚠ R2/외부 URL만 노션에 저장 (base64는 용량 폭발 → 제외)
   const safeJson=(arr)=>{
     try{
       const lite=(arr||[])
         .filter(x => x && x.url && String(x.url).startsWith('http'))
         .map(x=>({name:x.name||'',url:x.url||'',type:x.type||'',size:x.size||0}));
-      return JSON.stringify(lite).slice(0,1900);
+      return JSON.stringify(lite);
     }catch(e){ return '[]'; }
   };
   const p={
     "고객사":{"title":[{"text":{"content":q.vendor||''}}]},
     "담당자":{"rich_text":[{"text":{"content":q.manager||''}}]},
-    "문의내용":{"rich_text":[{"text":{"content":(q.content||'').slice(0,2000)}}]},
-    "답변메모":{"rich_text":[{"text":{"content":(q.reply||'').slice(0,2000)}}]},
-    "이미지JSON":{"rich_text":[{"text":{"content":safeJson(q.imgs)}}]},
-    "파일JSON":{"rich_text":[{"text":{"content":safeJson(q.files)}}]},
+    "문의내용":{"rich_text":chunkRichText(q.content||'')},
+    "답변메모":{"rich_text":chunkRichText(q.reply||'')},
+    "이미지JSON":{"rich_text":chunkRichText(safeJson(q.imgs))},
+    "파일JSON":{"rich_text":chunkRichText(safeJson(q.files))},
   };
   if(q.receivedAt) p["접수일"]={"date":{"start":q.receivedAt}};
   if(q.category)   p["카테고리"]={"select":{"name":q.category}};
@@ -11676,6 +11710,16 @@ async function syncProductToNotion(pd, update){
   if(!notionCfg.workerUrl||!notionCfg.productDb){
     throw new Error('Notion 미연결: Worker URL 또는 제품DB ID가 설정되지 않음');
   }
+  // 📌 긴 텍스트 청크 분할
+  const chunkRichText=(str)=>{
+    const s2=String(str||'');
+    if(!s2) return [{text:{content:''}}];
+    const chunks=[];
+    for(let i=0;i<s2.length;i+=2000){
+      chunks.push({text:{content:s2.slice(i,i+2000)}});
+    }
+    return chunks;
+  };
   // 이미지 JSON 직렬화 — R2에 업로드된 외부 URL만 노션에 보냄
   // 노션은 text 필드에 JSON 문자열로 저장 (다른 모듈과 동일한 패턴)
   const _safeImgJson = (arr) => {
@@ -11694,8 +11738,8 @@ async function syncProductToNotion(pd, update){
     "규격":{"rich_text":[{"text":{"content":pd.size||''}}]},
     "금속종류":{"rich_text":[{"text":{"content":pd.metal||''}}]},
     "도금스펙":{"rich_text":[{"text":{"content":pd.platingSpec||''}}]},
-    "메모":{"rich_text":[{"text":{"content":(pd.memo||'').slice(0,2000)}}]},
-    "이미지JSON":{"rich_text":[{"text":{"content":imgsJson.slice(0,2000)}}]},
+    "메모":{"rich_text":chunkRichText(pd.memo||'')},
+    "이미지JSON":{"rich_text":chunkRichText(imgsJson)},
     "출고단가":{"number":+pd.price||0},
     "입고단가":{"number":+pd.costPrice||0},
     "개발비":{"number":+pd.devCost||0},
@@ -11832,6 +11876,17 @@ async function syncInvoiceToNotion(inv, update){
   if(!notionCfg.workerUrl||!notionCfg.invDb){
     throw new Error('Notion 미연결: 거래명세서 DB');
   }
+  // 📌 긴 텍스트 청크 분할 (Notion API: 요소당 최대 2000자)
+  //    JSON을 단순 .slice(0,2000)으로 자르면 파싱 실패 → 청크 분할로 무손실 저장
+  const chunkRichText=(str)=>{
+    const s=String(str||'');
+    if(!s) return [{text:{content:''}}];
+    const chunks=[];
+    for(let i=0;i<s.length;i+=2000){
+      chunks.push({text:{content:s.slice(i,i+2000)}});
+    }
+    return chunks;
+  };
   // 품목 상세: base64 이미지가 있으면 노션 전송 전에 제거 (용량 폭발 방지)
   const cleanItems = (inv.items||[]).map(it=>{
     const out = {...it};
@@ -11842,15 +11897,15 @@ async function syncInvoiceToNotion(inv, update){
   const p={
     "고객사":{"title":[{"text":{"content":inv.vendor||''}}]},
     "발주번호":{"rich_text":[{"text":{"content":inv.ordNo||''}}]},
-    "품목내역":{"rich_text":[{"text":{"content":(inv.itemSummary||'').slice(0,2000)}}]},
+    "품목내역":{"rich_text":chunkRichText(inv.itemSummary||'')},
     // 품목 상세 (행 단위 정보 — 카피본 렌더에서 사용)
-    "품목JSON":{"rich_text":[{"text":{"content":JSON.stringify(cleanItems).slice(0,2000)}}]},
-    "메모":{"rich_text":[{"text":{"content":inv.memo||''}}]},
+    "품목JSON":{"rich_text":chunkRichText(JSON.stringify(cleanItems))},
+    "메모":{"rich_text":chunkRichText(inv.memo||'')},
     "공급가액":{"number":+inv.supplyAmt||0},
     "부가세":{"number":+inv.tax||0},
     "합계금액":{"number":+inv.total||0},
     // 입금 이력 (단계 1 추가)
-    "입금이력JSON":{"rich_text":[{"text":{"content":JSON.stringify(inv.payments||[]).slice(0,2000)}}]},
+    "입금이력JSON":{"rich_text":chunkRichText(JSON.stringify(inv.payments||[]))},
     "총입금액":{"number":+inv.totalPaid||0},
     "입금률":{"number":+inv.paymentRatio||0},
     // 샘플 명세서 식별 (1-A 단계 — 발주서 명세서와 구분)
@@ -11859,7 +11914,7 @@ async function syncInvoiceToNotion(inv, update){
     "명세서유형":{"rich_text":[{"text":{"content":(inv.invType||'').slice(0,100)}}]},
     // 합본 청구서 (2-A 단계)
     "합본청구서":{"checkbox":!!inv._isConsolidated},
-    "포함명세서IDs":{"rich_text":[{"text":{"content":JSON.stringify(inv.includedInvoiceIds||[]).slice(0,2000)}}]},
+    "포함명세서IDs":{"rich_text":chunkRichText(JSON.stringify(inv.includedInvoiceIds||[]))},
     "선금차감":{"number":+inv.prepaidDeducted||0},
     "청구액":{"number":+inv.chargeAmount||0},
     "청구월":{"rich_text":[{"text":{"content":(inv.consolidationMonth||'').slice(0,20)}}]},
@@ -11924,6 +11979,17 @@ async function syncQuoteToNotion(qt, update){
   if(!notionCfg.workerUrl||!notionCfg.quoteDb||!qt) return;
   const txt=v=>String(v==null?'':v);
   const j=v=>JSON.stringify(v||[]);
+  // 📌 긴 텍스트를 2000자 단위 청크로 분할 (Notion API: 요소당 최대 2000자, 배열은 무제한)
+  //    JSON 데이터를 단순 .slice(0,2000)으로 자르면 파싱 실패 → 청크 분할로 무손실 저장
+  const chunkRichText=(str)=>{
+    const s=String(str||'');
+    if(!s) return [{text:{content:''}}];
+    const chunks=[];
+    for(let i=0;i<s.length;i+=2000){
+      chunks.push({text:{content:s.slice(i,i+2000)}});
+    }
+    return chunks;
+  };
   // ⚠ base64 이미지는 노션에 안 보냄 (R2 URL만)
   const jFilesOnly=arr=>{
     const filtered = (arr||[])
@@ -11960,14 +12026,14 @@ async function syncQuoteToNotion(qt, update){
       return (auto || '').slice(0,2000);
     })()}}]},
     "납기조건":{"rich_text":[{"text":{"content":txt(qt.delivery).slice(0,2000)}}]},
-    "고객메모":{"rich_text":[{"text":{"content":txt(qt.cliMemo).slice(0,2000)}}]},
-    "내부메모":{"rich_text":[{"text":{"content":txt(qt.intMemo).slice(0,2000)}}]},
+    "고객메모":{"rich_text":chunkRichText(txt(qt.cliMemo))},
+    "내부메모":{"rich_text":chunkRichText(txt(qt.intMemo))},
     "발송일시":{"rich_text":[{"text":{"content":txt(qt.sentAt)}}]},
     "회신일시":{"rich_text":[{"text":{"content":txt(qt.repliedAt)}}]},
     "샘플IDs":{"rich_text":[{"text":{"content":j(qt.sampleIds)}}]},
-    "품목JSON":{"rich_text":[{"text":{"content":JSON.stringify(cleanRows).slice(0,2000)}}]},
-    "이미지JSON":{"rich_text":[{"text":{"content":jFilesOnly(qt.imgs).slice(0,2000)}}]},
-    "파일JSON":{"rich_text":[{"text":{"content":jFilesOnly(qt.files).slice(0,2000)}}]},
+    "품목JSON":{"rich_text":chunkRichText(JSON.stringify(cleanRows))},
+    "이미지JSON":{"rich_text":chunkRichText(jFilesOnly(qt.imgs))},
+    "파일JSON":{"rich_text":chunkRichText(jFilesOnly(qt.files))},
   };
   if(qt.issuedAt)   p["발행일"]={"date":{"start":qt.issuedAt}};
   if(qt.validUntil) p["유효기한"]={"date":{"start":qt.validUntil}};
@@ -21077,6 +21143,8 @@ function openOrdModal(idOrNull){
   sv('o_factShip',o?o.factShip||'':'');
   sv('o_manager',o?o.manager:'');sv('o_no',o?o.no||'':'');sv('o_memo',o?o.memo:'');
   sv('o_status', o ? normalizeOrderStatus(o.status) : '의뢰');
+  // 📌 견적서 기반 발주의 선금 % (없으면 빈 문자열)
+  sv('o_prepayPct', (o && o.prepayPct != null && o.prepayPct > 0) ? String(o.prepayPct) : '');
   // 출고완료일 — completedAt이 ISO 형식이면 YYYY-MM-DD로 자르기
   let completedDateOnly = '';
   if(o && o.completedAt){
@@ -21167,6 +21235,11 @@ function openOrdModal(idOrNull){
   // 충돌 감지: 수정 모드면 현재 노션 last_edited_time 스냅샷 기록
   if(o && o._notionId) recordEditStart(o._notionId);
   renderOrdRows();openM('mOrd');
+  // 📌 결제 추적 영역 렌더 (견적 기반 발주만)
+  const prepayBlockEl = document.getElementById('o_prepayBlock');
+  if(prepayBlockEl && typeof _renderOrderPrepayBlock === 'function'){
+    prepayBlockEl.innerHTML = _renderOrderPrepayBlock(o);
+  }
 
   // 발주 모달 전용 paste 리스너 등록 (이전 리스너가 있으면 제거)
   if(_ordPasteHandler){
@@ -22404,6 +22477,12 @@ async function saveOrd(forceOverwrite){
     ordNoVal = genOrderNo(vendor, gv('o_date')||todayStr);
   }
   const obj={vendor,date:gv('o_date'),ship:gv('o_ship'),factShip:gv('o_factShip'),manager:gv('o_manager'),no:ordNoVal,memo:memoText,memoList,rows:cleanRows,files:filesToSave};
+  // 📌 선금 % (견적 기반 발주에만 채워짐. 0/빈값이면 저장 안 함)
+  const prepayPctVal = gv('o_prepayPct');
+  if(prepayPctVal !== '' && prepayPctVal != null){
+    const n = +prepayPctVal;
+    if(isFinite(n) && n > 0 && n <= 100) obj.prepayPct = n;
+  }
   // 진행 상태 + 출고완료일 (5단계: 의뢰/제작중/수정중/확정/취소보류)
   const newStatus = normalizeOrderStatus(gv('o_status') || '의뢰');
   obj.status = newStatus;
@@ -25586,6 +25665,8 @@ function transferQuoteToOrder(quoteId){
         : null;
       return auto || '';
     })(),
+    // 📌 발주에서 선금 추적할 수 있도록 prepayPct 자체도 전달
+    prepayPct: (q.prepayPct != null && q.prepayPct > 0) ? +q.prepayPct : null,
     issuedAt: q.issuedAt || ''
   };
   // 견적서 모달 닫고 발주서 모달 열기
@@ -25602,6 +25683,18 @@ function transferQuoteToOrder(quoteId){
         const refMemo = `견적서 ${q.no} 기반`;
         if(!existingMemo.includes(refMemo)){
           memoEl.value = existingMemo ? existingMemo + '\n' + refMemo : refMemo;
+        }
+      }
+      // 📌 prepayPct 채우기 + 결제추적 영역 렌더 (신규 발주라도 견적 기반이면 약속 표시)
+      const pctEl = document.getElementById('o_prepayPct');
+      if(pctEl && q.prepayPct != null && q.prepayPct > 0){
+        pctEl.value = String(q.prepayPct);
+        // 결제추적 영역을 임시 발주 객체로 렌더 (저장 전이지만 약속 표시 가능)
+        const blockEl = document.getElementById('o_prepayBlock');
+        if(blockEl && typeof _renderOrderPrepayBlock === 'function'){
+          // 가짜 발주 객체 — id/명세서 없음, prepayPct + rows만 있음 → 약속만 표시됨
+          const tempOrd = { prepayPct: +q.prepayPct, rows: ordRowsBuf };
+          blockEl.innerHTML = _renderOrderPrepayBlock(tempOrd);
         }
       }
       // 발주서 행 재렌더링 (ordRowsBuf 반영)
@@ -27562,6 +27655,157 @@ function getInvoicesForOrder(o){
     return false;
   });
 }
+
+// ─────────────────────────────────────────────────
+// 📌 선금 추적 (견적 → 발주 → 명세서)
+// ─────────────────────────────────────────────────
+// 견적서 기반 발주에 한해 'prepayPct'(약속한 선금 %)가 저장됨.
+// 실제 입금은 명세서의 payments 배열에 기록되며,
+// 첫 입금부터 약속 선금 금액에 도달할 때까지를 '선금', 그 이후를 '잔금'으로 분류 (시간순).
+//
+// 반환값:
+//   {
+//     hasPrepay: bool,         // 선금 약속이 있는지 (prepayPct > 0)
+//     prepayPct: number,       // 약속한 선금 %
+//     orderTotal: number,      // 발주 총액 (VAT 포함) — 명세서 합계가 있으면 그것, 없으면 발주 rows 추정
+//     orderTotalSource: 'invoices' | 'rows-estimate',
+//     prepayAmount: number,    // 약속한 선금 금액 = orderTotal * prepayPct/100
+//     finalAmount: number,     // 약속한 잔금 금액 = orderTotal - prepayAmount
+//     totalPaid: number,       // 실제 입금된 총액 (묶인 모든 명세서의 payments 합)
+//     prepayPaid: number,      // 선금에 해당하는 입금 (시간순으로 prepayAmount까지)
+//     finalPaid: number,       // 잔금에 해당하는 입금 (그 이후)
+//     prepayDone: bool,        // 선금 100% 입금됐는지
+//     finalDone: bool,         // 잔금까지 100% 입금됐는지
+//     status: 'no-prepay' | 'prepay-pending' | 'prepay-done' | 'all-paid',
+//   }
+function getOrderPaymentTracking(o){
+  const result = {
+    hasPrepay: false,
+    prepayPct: 0,
+    orderTotal: 0,
+    orderTotalSource: 'rows-estimate',
+    prepayAmount: 0,
+    finalAmount: 0,
+    totalPaid: 0,
+    prepayPaid: 0,
+    finalPaid: 0,
+    prepayDone: false,
+    finalDone: false,
+    status: 'no-prepay',
+  };
+  if(!o) return result;
+  const pct = +o.prepayPct || 0;
+  if(!(pct > 0 && pct <= 100)){
+    // 선금 약속 없음 — 그래도 입금 합계는 채워서 반환 (UI 일관성)
+    const invs = getInvoicesForOrder(o);
+    const allPayments = [];
+    invs.forEach(v => (v.payments||[]).forEach(pm => allPayments.push(pm)));
+    result.totalPaid = allPayments.reduce((s,pm)=>s+(+pm.amount||0), 0);
+    return result;
+  }
+  result.hasPrepay = true;
+  result.prepayPct = pct;
+  // 발주 총액 산출
+  const invs = getInvoicesForOrder(o);
+  if(invs.length > 0){
+    // 명세서 합계 (VAT 포함) 우선
+    result.orderTotal = invs.reduce((s,v)=>s+(+v.total||0), 0);
+    result.orderTotalSource = 'invoices';
+  } else {
+    // 발주 rows에서 추정 (VAT 10% 가산)
+    const supply = (o.rows||[]).reduce((s,r)=>s+(+r.qty||0)*(+r.unitPrice||0), 0);
+    result.orderTotal = Math.round(supply * 1.1);
+    result.orderTotalSource = 'rows-estimate';
+  }
+  result.prepayAmount = Math.round(result.orderTotal * pct / 100);
+  result.finalAmount  = result.orderTotal - result.prepayAmount;
+
+  // 모든 명세서의 payments를 시간순으로 합치기
+  const allPayments = [];
+  invs.forEach(v => (v.payments||[]).forEach(pm => allPayments.push(pm)));
+  allPayments.sort((a,b)=>{
+    const da = a.date||''; const db = b.date||'';
+    if(da !== db) return da < db ? -1 : 1;
+    return (+a.id||0) - (+b.id||0); // 같은 날짜면 id로 안정 정렬
+  });
+  result.totalPaid = allPayments.reduce((s,pm)=>s+(+pm.amount||0), 0);
+
+  // 시간순으로 prepayAmount까지를 선금으로, 나머지를 잔금으로 분류
+  let cumulative = 0;
+  allPayments.forEach(pm => {
+    const amt = +pm.amount || 0;
+    if(cumulative + amt <= result.prepayAmount){
+      result.prepayPaid += amt;
+    } else if(cumulative >= result.prepayAmount){
+      result.finalPaid += amt;
+    } else {
+      // 이 입금이 선금 경계를 걸쳐서 들어옴 — 분할
+      const toPrepay = result.prepayAmount - cumulative;
+      result.prepayPaid += toPrepay;
+      result.finalPaid  += (amt - toPrepay);
+    }
+    cumulative += amt;
+  });
+
+  result.prepayDone = result.prepayPaid >= result.prepayAmount && result.prepayAmount > 0;
+  result.finalDone  = result.finalPaid  >= result.finalAmount && result.totalPaid >= result.orderTotal;
+
+  if(result.totalPaid <= 0) result.status = 'prepay-pending';
+  else if(!result.prepayDone) result.status = 'prepay-pending';   // 선금 일부만
+  else if(!result.finalDone)  result.status = 'prepay-done';      // 선금만 완료
+  else                        result.status = 'all-paid';
+
+  return result;
+}
+
+// 발주 모달용: 선금 추적을 HTML로 렌더
+function _renderOrderPrepayBlock(o){
+  if(!o){
+    return ''; // 신규 발주는 명세서/입금 없음 — 표시 안 함
+  }
+  const t = getOrderPaymentTracking(o);
+  if(!t.hasPrepay) return ''; // 선금 약속 없으면 영역 숨김
+  const fmt = (n)=>'₩'+Number(n||0).toLocaleString();
+  const sourceTag = t.orderTotalSource==='invoices'
+    ? '<span style="font-size:9.5px;color:var(--t3)">(명세서 합계)</span>'
+    : '<span style="font-size:9.5px;color:var(--org)">(발주 추정)</span>';
+  let statusChip = '';
+  if(t.status === 'prepay-pending'){
+    statusChip = `<span style="display:inline-block;padding:2px 8px;font-size:11px;background:rgba(192,48,48,.10);color:var(--red);border:1px solid rgba(192,48,48,.3);border-radius:10px;font-weight:600">🔴 선금 미입금</span>`;
+  } else if(t.status === 'prepay-done'){
+    statusChip = `<span style="display:inline-block;padding:2px 8px;font-size:11px;background:rgba(168,90,16,.10);color:var(--org);border:1px solid rgba(168,90,16,.3);border-radius:10px;font-weight:600">🟡 선금 받음 (잔금 대기)</span>`;
+  } else if(t.status === 'all-paid'){
+    statusChip = `<span style="display:inline-block;padding:2px 8px;font-size:11px;background:rgba(46,139,44,.10);color:var(--grn);border:1px solid rgba(46,139,44,.3);border-radius:10px;font-weight:600">🟢 전액 입금 완료</span>`;
+  }
+  return `
+    <div class="form-sec">💰 결제 추적 (견적 기반)</div>
+    <div style="border:1px solid var(--gold-line);border-radius:6px;padding:10px 12px;background:var(--gold-bg);font-size:11.5px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div><b style="color:var(--gold-lt)">약속한 결제 조건:</b> 선금 ${t.prepayPct}% / 잔금 ${100-t.prepayPct}%</div>
+        ${statusChip}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:6px">
+        <div style="padding:6px 8px;background:var(--s1);border-radius:4px">
+          <div style="font-size:10px;color:var(--t3);margin-bottom:2px">선금 ${t.prepayPct}%</div>
+          <div style="font-weight:600">${fmt(t.prepayPaid)} <span style="font-size:10px;color:var(--t3)">/ ${fmt(t.prepayAmount)}</span></div>
+          <div style="margin-top:2px;height:4px;background:var(--s2);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${t.prepayAmount>0?Math.min(100, Math.round(t.prepayPaid/t.prepayAmount*100)):0}%;background:${t.prepayDone?'var(--grn)':'var(--org)'}"></div>
+          </div>
+        </div>
+        <div style="padding:6px 8px;background:var(--s1);border-radius:4px">
+          <div style="font-size:10px;color:var(--t3);margin-bottom:2px">잔금 ${100-t.prepayPct}%</div>
+          <div style="font-weight:600">${fmt(t.finalPaid)} <span style="font-size:10px;color:var(--t3)">/ ${fmt(t.finalAmount)}</span></div>
+          <div style="margin-top:2px;height:4px;background:var(--s2);border-radius:2px;overflow:hidden">
+            <div style="height:100%;width:${t.finalAmount>0?Math.min(100, Math.round(t.finalPaid/t.finalAmount*100)):0}%;background:${t.finalDone?'var(--grn)':'var(--t3)'}"></div>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:10.5px;color:var(--t3);text-align:right">
+        발주 총액 ${fmt(t.orderTotal)} ${sourceTag} · 입금 누계 ${fmt(t.totalPaid)}
+      </div>
+    </div>`;
+}
+
 
 // 발주서의 모든 거래명세서가 100% 입금됐는지 체크
 // - 명세서 0장: false (출고완료 자동 트리거 X)
