@@ -8798,6 +8798,7 @@ function _renderIoCommerce(){
             <div style="font-size:11px;color:var(--t3);margin-top:2px">주문 엑셀·스크린샷·PDF 드래그 · 클릭 · <b>Ctrl+V</b> 붙여넣기 → 자동으로 수령인·주소·품목 추출</div>
           </div>
           <button onclick="event.stopPropagation();openCommerceUpload()" style="padding:6px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;color:var(--t2);cursor:pointer;font-family:inherit">📥 엑셀 직접 업로드</button>
+          <button onclick="event.stopPropagation();openCommerceManual()" style="padding:6px 12px;font-size:11.5px;background:var(--gold);border:1px solid var(--gold);border-radius:5px;color:#fff;cursor:pointer;font-family:inherit;font-weight:600">✏️ 수동 입력</button>
         </div>
       </div>
       <div id="commerceAiResult" style="margin-top:8px"></div>
@@ -9427,6 +9428,42 @@ function saveCommerceBrands(brands){
   try{ localStorage.setItem(COMMERCE_BRANDS_KEY, JSON.stringify(brands)); }catch(e){}
 }
 
+// 📌 커머스 수동 입력 — 빈 행 1개로 모달 열기 (이후 행 추가 가능)
+//    openCommerceUpload와 같은 미리보기 UI 사용 — _commerceUploadRows 에 빈 행 1개 미리 세팅
+function openCommerceManual(){
+  // openCommerceUpload를 먼저 호출해서 모달 만들기 + 빈 행 1개 추가
+  openCommerceUpload();
+  // 모달 그려진 후에 빈 행 1개 추가
+  setTimeout(()=>{
+    _commerceUploadRows = [{
+      recipient: '',
+      phone: '',
+      address: '',
+      deliveryMemo: '',
+      itemText: '',
+      matched: null,
+      matchedName: '',
+      matchStatus: '미매칭',
+      score: 0,
+    }];
+    // 드롭존 안내문구 살짝 변경 (수동 모드임을 표시)
+    const dz = document.getElementById('cu_dropzone');
+    if(dz){
+      dz.style.padding = '12px 16px';
+      dz.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:20px">✏️</span>
+          <div style="flex:1;text-align:left">
+            <div style="font-size:12.5px;font-weight:700;color:var(--gold-lt)">수동 입력 모드</div>
+            <div style="font-size:10.5px;color:var(--t3);margin-top:2px">아래 표에서 직접 입력 · 행 추가는 우측 [+ 행 추가] 버튼</div>
+          </div>
+          <button onclick="event.stopPropagation();document.getElementById('cu_fileInput').click()" style="padding:5px 10px;font-size:10.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:4px;color:var(--t3);cursor:pointer;font-family:inherit">📂 또는 엑셀</button>
+        </div>`;
+    }
+    _renderCommercePreview();
+  }, 50);
+}
+
 function openCommerceUpload(){
   _commerceUploadRows = [];
   const brands = loadCommerceBrands();
@@ -9501,30 +9538,45 @@ function _addCommerceBrand(){
 
 async function _handleCommerceFile(file){
   if(!file) return;
-  // 파일명에서 날짜 추출 시도 (예: 비비케이트주문_0511 → 05-11)
-  const dateMatch = file.name.match(/(\d{2,4})[-_]?(\d{1,2})[-_]?(\d{1,2})|(\d{2})(\d{2})/);
-  if(dateMatch){
-    const dateInput = document.getElementById('cu_date');
-    if(dateInput){
-      const today = new Date();
-      let mm, dd;
-      if(dateMatch[5]){
-        // _0511 형식
-        mm = dateMatch[4].padStart(2,'0');
-        dd = dateMatch[5].padStart(2,'0');
-      } else if(dateMatch[1] && dateMatch[1].length === 4){
-        // 2026-05-11
-        dateInput.value = `${dateMatch[1]}-${dateMatch[2].padStart(2,'0')}-${dateMatch[3].padStart(2,'0')}`;
-      } else if(dateMatch[2]){
-        // YYMMDD 추정
-        mm = dateMatch[2].padStart(2,'0');
-        dd = (dateMatch[3]||'').padStart(2,'0');
-      }
-      if(mm && dd){
-        // 현재 연도 기준
-        dateInput.value = `${today.getFullYear()}-${mm}-${dd}`;
+  // 📌 파일명에서 날짜 추출 (우선순위 순서로 시도)
+  //   ① YYYY-MM-DD 또는 YYYY.MM.DD 또는 YYYYMMDD (8자리)
+  //   ② MMDD (4자리, 올해 가정)
+  //   매치된 적이 없으면 default(오늘) 유지
+  const dateInput = document.getElementById('cu_date');
+  if(dateInput){
+    const today = new Date();
+    const fname = file.name;
+    let extracted = null;
+    // ① YYYY-MM-DD / YYYY.MM.DD / YYYY_MM_DD
+    let m = fname.match(/(20\d{2})[-._](\d{1,2})[-._](\d{1,2})/);
+    if(m){
+      const y = m[1], mm = m[2].padStart(2,'0'), dd = m[3].padStart(2,'0');
+      // 유효성 체크
+      const test = new Date(`${y}-${mm}-${dd}`);
+      if(!isNaN(test.getTime())) extracted = `${y}-${mm}-${dd}`;
+    }
+    // ② YYYYMMDD (8자리 연속)
+    if(!extracted){
+      m = fname.match(/(20\d{2})(\d{2})(\d{2})/);
+      if(m){
+        const y = m[1], mm = m[2], dd = m[3];
+        const test = new Date(`${y}-${mm}-${dd}`);
+        if(!isNaN(test.getTime()) && +mm>=1 && +mm<=12 && +dd>=1 && +dd<=31){
+          extracted = `${y}-${mm}-${dd}`;
+        }
       }
     }
+    // ③ MMDD (4자리, 올해 가정) — 단, 다른 숫자 4자리(연도 등)랑 헷갈리지 않도록 _0511 형태만
+    if(!extracted){
+      m = fname.match(/[_\-\s](\d{2})(\d{2})(?:\D|$)/);
+      if(m){
+        const mm = m[1], dd = m[2];
+        if(+mm>=1 && +mm<=12 && +dd>=1 && +dd<=31){
+          extracted = `${today.getFullYear()}-${mm}-${dd}`;
+        }
+      }
+    }
+    if(extracted) dateInput.value = extracted;
   }
 
   try {
@@ -9674,7 +9726,10 @@ function _renderCommercePreview(){
   document.getElementById('cu_registerBtn').style.opacity = '1';
 
   el.innerHTML = `
-    <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--t1)">미리보기 <span style="color:var(--t3);font-weight:500">(${rows.length}건)</span></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="font-size:12px;font-weight:700;color:var(--t1)">미리보기 <span style="color:var(--t3);font-weight:500">(${rows.length}건)</span></div>
+      <button onclick="_addManualCommerceRow()" style="padding:4px 10px;font-size:11px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;color:var(--gold-lt);cursor:pointer;font-family:inherit;font-weight:600">+ 빈 행 추가</button>
+    </div>
     <div style="background:var(--s1);border:1px solid var(--bdr);border-radius:6px;overflow:hidden;max-height:50vh;overflow-y:auto">
       <table style="width:100%;border-collapse:collapse;font-size:11.5px">
         <thead style="position:sticky;top:0;background:var(--s2);z-index:1">
@@ -9683,7 +9738,8 @@ function _renderCommercePreview(){
             <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:80px">수령인</th>
             <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:115px">연락처</th>
             <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr)">엑셀 품목</th>
-            <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:220px">매칭된 제품DB</th>
+            <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:180px">주소</th>
+            <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:200px">매칭된 제품DB</th>
             <th style="padding:7px 8px;text-align:center;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:90px">재고</th>
             <th style="padding:7px 8px;text-align:center;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:75px">상태</th>
             <th style="padding:7px 8px;text-align:center;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:60px">동작</th>
@@ -9707,9 +9763,10 @@ function _renderCommercePreview(){
             }
             return `<tr style="${cls};border-bottom:1px solid var(--bdr-lt)">
               <td style="padding:6px 8px;color:var(--t3);font-family:monospace">${i+1}</td>
-              <td style="padding:6px 8px;font-weight:600">${escHtml(r.recipient||'-')}</td>
-              <td style="padding:6px 8px;font-family:monospace;color:var(--t2)">${escHtml(r.phone||'-')}</td>
-              <td style="padding:6px 8px;color:var(--t2)" title="${escHtml(r.itemText||'')}">${escHtml(r.itemText||'-')}</td>
+              <td style="padding:4px 6px"><input type="text" value="${escHtml(r.recipient||'')}" oninput="_updateCommerceRow(${i},'recipient',this.value)" placeholder="수령인" style="width:100%;padding:4px 6px;font-size:11.5px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);font-weight:600"></td>
+              <td style="padding:4px 6px"><input type="text" value="${escHtml(r.phone||'')}" oninput="_updateCommerceRow(${i},'phone',this.value)" placeholder="010-0000-0000" style="width:100%;padding:4px 6px;font-size:11.5px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);font-family:monospace"></td>
+              <td style="padding:4px 6px"><input type="text" value="${escHtml(r.itemText||'')}" oninput="_updateCommerceRowItemText(${i},this.value)" placeholder="품명 입력 → 자동 매칭" style="width:100%;padding:4px 6px;font-size:11.5px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1)" title="${escHtml(r.itemText||'')}"></td>
+              <td style="padding:4px 6px"><input type="text" value="${escHtml(r.address||'')}" oninput="_updateCommerceRow(${i},'address',this.value)" placeholder="주소 (선택)" style="width:100%;padding:4px 6px;font-size:11px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);color:var(--t3)" title="${escHtml(r.address||'')}"></td>
               <td style="padding:6px 8px;color:${r.matched?'var(--grn)':'var(--t3)'};font-weight:${r.matched?'600':'400'}">${r.matched ? escHtml(r.matchedName) + (r.matched.code?`<span style="font-family:monospace;color:var(--gold-lt);font-size:10px;margin-left:5px">${escHtml(r.matched.code)}</span>`:'') + (r.score?`<span style="font-size:10px;color:var(--t3);margin-left:4px">(${Math.round(r.score)}점)</span>`:'') : '<span style="color:var(--org)">매칭 안 됨</span>'}</td>
               <td style="padding:6px 8px;text-align:center">${stockCell}</td>
               <td style="padding:6px 8px;text-align:center">${badge}</td>
@@ -9727,6 +9784,52 @@ function _renderCommercePreview(){
       ${stockShortageCount > 0 ? `<br>⚠ <b style="color:var(--red)">${stockShortageCount}건의 재고 부족</b> — 그대로 등록하면 음수 재고가 됩니다.` : ''}
     </div>
   `;
+}
+
+// 📌 빈 행 1개 추가 (수동 입력용)
+function _addManualCommerceRow(){
+  _commerceUploadRows.push({
+    recipient: '',
+    phone: '',
+    address: '',
+    deliveryMemo: '',
+    itemText: '',
+    matched: null,
+    matchedName: '',
+    matchStatus: '미매칭',
+    score: 0,
+  });
+  _renderCommercePreview();
+}
+
+// 📌 단순 필드 업데이트 (수령인/연락처/주소 등)
+function _updateCommerceRow(idx, field, value){
+  if(!_commerceUploadRows[idx]) return;
+  _commerceUploadRows[idx][field] = value;
+  // 재렌더하지 않음 (input focus 유지) — 통계만 갱신
+  // 상태 칩이 영향받지 않는 필드라 재렌더 불필요
+}
+
+// 📌 품명 변경 시 자동 매칭 시도
+function _updateCommerceRowItemText(idx, value){
+  if(!_commerceUploadRows[idx]) return;
+  const row = _commerceUploadRows[idx];
+  row.itemText = value;
+  // 빈 값이면 매칭 해제
+  if(!value.trim()){
+    row.matched = null;
+    row.matchedName = '';
+    row.matchStatus = '미매칭';
+    row.score = 0;
+  } else {
+    // 자동 매칭 시도
+    const match = _matchProductByText(value);
+    row.matched = match.product;
+    row.matchedName = match.product ? (match.product.name || '') : '';
+    row.matchStatus = match.product ? '자동매칭' : '미매칭';
+    row.score = match.score;
+  }
+  _renderCommercePreview();
 }
 
 function _removeCommerceRow(idx){
