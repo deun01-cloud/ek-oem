@@ -5181,6 +5181,26 @@ function _invStatusOrder(s){ return _INV_STATUS_PRIORITY[s] || 99; }
 
 function renderInvoiceHistory(){
   slLoad();
+  // 📌 0-A단계: 최근 삭제된 합본이 Realtime/Notion pull로 부활했으면 자동 재제거
+  if(typeof _recentlyDeletedConsolidationIds !== 'undefined' && _recentlyDeletedConsolidationIds.size > 0){
+    let _zombiesRemoved = 0;
+    for(let i = invoiceHistory.length - 1; i >= 0; i--){
+      const v = invoiceHistory[i];
+      if(v && _recentlyDeletedConsolidationIds.has(String(v.id))){
+        console.warn('[invoice] 최근 삭제된 합본이 다시 추가됨 — 재제거:', v.id, v.vendor, v.consolidationMonth);
+        invoiceHistory.splice(i, 1);
+        _zombiesRemoved++;
+        // 노션에서도 다시 archive 시도
+        if(v._notionId && typeof nDelete === 'function'){
+          nDelete(v._notionId).catch(e=>console.warn('좀비 합본 노션 재삭제 실패:',e));
+        }
+      }
+    }
+    if(_zombiesRemoved > 0){
+      console.log('[invoice] ✓', _zombiesRemoved, '건 좀비 합본 재제거됨');
+      if(typeof save === 'function') save();
+    }
+  }
   // 📌 0단계: 중복 id 자동 정리 — invoiceHistory에 같은 id의 객체가 2개 이상이면 1개만 유지
   //    (Realtime 수신/Notion pull/외부 동기화 등으로 중복이 들어올 수 있음 — UI에서 같은 행이 두 개 보이고 같이 선택되는 증상)
   //    중복이 있으면 더 풍부한 데이터를 가진 쪽을 유지 (notion_id 있는 쪽 우선, 그것도 같으면 더 큰 객체)
@@ -6333,6 +6353,53 @@ function _isNotionIdDeleted(notionId){
 }
 // 외부 디버그용
 window.tombstones = ()=>{ const t=_loadTombstones(); console.table(t); return t; };
+
+// 📌 합본 중복 진단 — 콘솔에서 호출
+window.diagnoseConsolidations = function(){
+  const allCons = invoiceHistory.filter(v => v._isConsolidated);
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('합본 청구서 진단 — 총', allCons.length, '건');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  // 같은 vendor+month로 그룹화
+  const groups = {};
+  allCons.forEach(c => {
+    const key = (c.vendor||'?') + '|' + (c.consolidationMonth||'?');
+    if(!groups[key]) groups[key] = [];
+    groups[key].push(c);
+  });
+  Object.keys(groups).forEach(key => {
+    const grp = groups[key];
+    const label = grp.length > 1 ? `⚠ 중복 (${grp.length}건)` : '✓ 단일';
+    console.log(`\n${label}: ${key}`);
+    console.table(grp.map(c => ({
+      id: c.id,
+      _notionId: c._notionId || '(없음)',
+      청구액: '₩' + ((+c.chargeAmount||0)).toLocaleString(),
+      finalCharge: c.finalChargeAmount ? '₩' + c.finalChargeAmount.toLocaleString() : '-',
+      묶인명세서수: (c.includedInvoiceIds||[]).length,
+      묶인_notion_ids: (c.includedInvoiceIds||[]).join(','),
+      status: c.status,
+      _invStage: c._invStage,
+      발행일: c.issuedAt,
+    })));
+  });
+  // 묘비 상태
+  const ts = (typeof _loadTombstones === 'function') ? _loadTombstones() : {};
+  const tsCount = Object.keys(ts).length;
+  console.log(`\n묘비(tombstone) ${tsCount}건 등록됨`);
+  if(tsCount > 0){
+    console.log('확인하려면: tombstones()');
+  }
+  // 최근 삭제 ID
+  if(typeof _recentlyDeletedConsolidationIds !== 'undefined' && _recentlyDeletedConsolidationIds.size > 0){
+    console.log(`\n최근 삭제된 합본 ID (좀비 차단용): ${[..._recentlyDeletedConsolidationIds].join(', ')}`);
+  }
+  console.log('\n💡 해결법:');
+  console.log('  - 같은 vendor+month로 묶인 ⚠ 그룹이 있으면 각각 따로 🗑 해제 필요');
+  console.log('  - 또는 콘솔에서: unwindConsolidatedInvoice(합본_id)');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  return groups;
+};
 window.clearTombstones = ()=>{ localStorage.removeItem(_TOMBSTONE_KEY); console.log('묘비 정리됨'); };
 
 // ── 노션 archive 실패 재시도 큐 ──
@@ -27855,15 +27922,23 @@ function confirmUnwindConsolidation(consolidatedId){
 
 // 합본 청구서 해제 (잘못 발행한 경우)
 // 묶인 명세서들의 _consolidatedInvoiceId 제거 + 합본 자체 삭제
+// 📌 최근 삭제된 합본 ID 기록 — 노션 pull/Realtime이 같은 ID를 다시 추가하는 것 방지
+//    페이지 새로고침까지만 메모리에 유지 (Notion 좀비 정리 후엔 리셋)
+const _recentlyDeletedConsolidationIds = new Set();
+
 function unwindConsolidatedInvoice(consolidatedId){
   const cons = invoiceHistory.find(v => String(v.id)===String(consolidatedId) && v._isConsolidated);
-  if(!cons) return false;
+  if(!cons){
+    console.warn('[합본 해제] 합본을 찾을 수 없음:', consolidatedId);
+    return false;
+  }
+  console.log('[합본 해제 시작]', cons.vendor, cons.consolidationMonth, 'id:', consolidatedId, '_notionId:', cons._notionId || '(없음)');
   // 묶인 명세서들의 역참조 제거
   (cons.includedInvoiceIds||[]).forEach(invId => {
     const v = invoiceHistory.find(x => String(x.id)===String(invId));
     if(v){
+      // 📌 _consolidatedInvoiceId 완전 제거 (이전엔 delete 후 ''로 재설정하는 버그가 있었음)
       delete v._consolidatedInvoiceId;
-      v._consolidatedInvoiceId = '';
       // 노션 갱신
       if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
         syncInvoiceToNotion(v, true).catch(e=>console.warn('합본 해제 명세서 갱신 실패:',e));
@@ -27872,12 +27947,34 @@ function unwindConsolidatedInvoice(consolidatedId){
   });
   // 합본 자체 제거
   const idx = invoiceHistory.findIndex(v => String(v.id)===String(consolidatedId));
-  if(idx >= 0) invoiceHistory.splice(idx, 1);
-  // 노션에서도 삭제
-  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && cons._notionId && typeof nDelete==='function'){
-    nDelete(cons._notionId).catch(e=>console.warn('합본 노션 삭제 실패:',e));
+  if(idx >= 0){
+    invoiceHistory.splice(idx, 1);
+    console.log('[합본 해제] ✓ 로컬 invoiceHistory에서 제거됨');
   }
+  // 노션에서도 삭제 — _notionId 있을 때만
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && cons._notionId){
+    if(typeof nDelete === 'function'){
+      console.log('[합본 해제] 노션 삭제 시도:', cons._notionId);
+      nDelete(cons._notionId)
+        .then(()=>console.log('[합본 해제] ✓ 노션 archive 완료:', cons._notionId))
+        .catch(e=>{
+          console.error('[합본 해제] ❌ 노션 archive 실패:', e.message, '— 노션에 그대로 남아있을 수 있습니다');
+        });
+    } else {
+      console.warn('[합본 해제] nDelete 함수 없음 — 노션 삭제 안 됨');
+    }
+  } else if(!cons._notionId){
+    console.warn('[합본 해제] _notionId 없음 — 노션 동기화된 적 없는 합본이거나 이미 노션에서 삭제됨. 로컬만 정리');
+  }
+  // 📌 삭제된 ID 기록 — 다음 pull/Realtime에서 같은 합본이 다시 추가되는 것을 차단
+  _recentlyDeletedConsolidationIds.add(String(consolidatedId));
   if(typeof save==='function') save();
+  // Realtime publish — 다른 클라이언트도 삭제 알림
+  if(typeof realtimePublish === 'function'){
+    try {
+      realtimePublish('invoice-delete', { id: consolidatedId, _isConsolidated: true });
+    } catch(e){ console.warn('합본 삭제 Realtime publish 실패:', e); }
+  }
   return true;
 }
 
@@ -28200,6 +28297,21 @@ function confirmConsolidation(){
 // ════════════════════════════════════════════════
 // 📌 합본 명세서 추가 행 (extraItems) 편집 헬퍼
 // ════════════════════════════════════════════════
+// 📌 묶인 명세서 행을 합본 PDF에서 제외 (원본 명세서는 그대로)
+function _excludeConsItem(consId, invId, itemIdx){
+  const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
+  if(!cons) return;
+  if(!confirm('이 행을 합본 PDF에서 제외하시겠습니까?\n\n원본 명세서는 그대로 남고, 이 합본의 품목 리스트에서만 보이지 않게 됩니다.\n(↩ 버튼으로 되돌릴 수 있습니다)')) return;
+  if(!cons.itemOverrides || typeof cons.itemOverrides !== 'object') cons.itemOverrides = {};
+  if(!cons.itemOverrides[invId]) cons.itemOverrides[invId] = {};
+  if(!cons.itemOverrides[invId][itemIdx]) cons.itemOverrides[invId][itemIdx] = {};
+  cons.itemOverrides[invId][itemIdx]._excluded = true;
+  cons._extraItemsDirty = true;
+  if(typeof _rawCloseM === 'function') _rawCloseM('mConsDetail');
+  else closeM('mConsDetail');
+  openConsDetail(consId);
+}
+
 function _updateConsExtra(consId, ridx, field, value){
   const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
   if(!cons || !Array.isArray(cons.extraItems) || !cons.extraItems[ridx]) return;
@@ -28385,6 +28497,8 @@ function openConsDetail(consId){
     items.forEach((it, idx) => {
       // 합본 내 override가 있으면 그것 우선
       const ov = (cons.itemOverrides[inv.id] || {})[idx] || {};
+      // 📌 제외된 행은 allRows에 안 넣음 (모달에도, PDF에도 안 보임)
+      if(ov._excluded) return;
       const qty = ov.qty != null ? +ov.qty : (+it.qty || 0);
       const unitPrice = ov.unit != null ? +ov.unit : (+it.unit || +it.unitPrice || 0);
       const amt = ov.amt != null ? +ov.amt : ((it.amt != null && +it.amt !== 0) ? +it.amt : qty * unitPrice);
@@ -28487,15 +28601,22 @@ function openConsDetail(consId){
     const srcLabel = isExtra ? '<span style="color:#8B6914;font-weight:600;font-size:9.5px">추가/할인</span>' : (r.ordNo ? '<span style="color:#7A4DB5;font-family:monospace;font-size:9.5px">'+r.ordNo+'</span>' : '<span style="color:var(--t3)">—</span>');
     body += '<td style="padding:5px 4px;text-align:center">'+srcLabel+'</td>';
     if(!consEditLocked){
-      // 삭제 버튼 — 추가/할인만 삭제 가능 (묶인 명세서 행은 해제 후 처리)
+      // 액션 셀
+      let actionHtml = '';
       if(isExtra){
-        body += '<td style="padding:3px 2px;text-align:center"><button onclick="_removeConsExtra('+consId+','+r.extraIdx+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">✕</button></td>';
-      } else if(r.hasOverride){
-        // override 있음 → 원본으로 되돌리기 버튼
-        body += '<td style="padding:3px 2px;text-align:center"><button onclick="_resetConsItemOverride('+consId+','+r.invId+','+r.itemIdx+')" title="이 행의 합본 내 수정을 취소하고 원본 명세서 값으로 복원" style="background:none;border:none;color:#7A4DB5;cursor:pointer;font-size:11px;padding:2px 4px" onmouseover="this.style.opacity=\'.7\'" onmouseout="this.style.opacity=\'1\'">↩</button></td>';
+        // 추가/할인 행 — ✕ 완전 삭제
+        actionHtml = '<button onclick="_removeConsExtra('+consId+','+r.extraIdx+')" title="이 추가/할인 행 삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">✕</button>';
+      } else if(isSummary){
+        // items 없는 옛 명세서 — 삭제 불가 (합본 해제만 가능)
+        actionHtml = '';
       } else {
-        body += '<td></td>';
+        // 묶인 명세서의 일반 품목 행 — ✕로 합본 PDF에서 제외 + override 있으면 ↩도 표시
+        actionHtml = '<button onclick="_excludeConsItem('+consId+','+r.invId+','+r.itemIdx+')" title="이 행을 합본 PDF에서 제외 (원본 명세서는 그대로)" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">✕</button>';
+        if(r.hasOverride){
+          actionHtml += '<br><button onclick="_resetConsItemOverride('+consId+','+r.invId+','+r.itemIdx+')" title="합본 내 수정 취소 → 원본 명세서 값으로 복원" style="background:none;border:none;color:#7A4DB5;cursor:pointer;font-size:10px;padding:0 4px" onmouseover="this.style.opacity=\'.7\'" onmouseout="this.style.opacity=\'1\'">↩</button>';
+        }
       }
+      body += '<td style="padding:3px 2px;text-align:center">'+actionHtml+'</td>';
     }
     body += '</tr>';
   });
@@ -28507,8 +28628,9 @@ function openConsDetail(consId){
   // 안내
   if(!consEditLocked){
     body += '<div style="font-size:10px;color:var(--t3);margin-bottom:10px;padding:6px 10px;background:rgba(122,77,181,.04);border-radius:4px;line-height:1.6">';
-    body += '💡 <b>편집 안내</b>: 묶인 명세서의 품목도 수정 가능합니다 (합본 안에서만 적용 — 원본 명세서는 그대로). 수정된 행은 보라색으로 표시되며 ↩ 버튼으로 되돌릴 수 있습니다. ';
-    body += '추가 행 (배송비·할인)은 [+ 행 추가]로 입력 → 단가에 음수 입력 시 할인 처리됩니다.';
+    body += '💡 <b>편집 안내</b>: 묶인 명세서의 품목도 수정 가능합니다 (합본 안에서만 적용 — 원본 명세서는 그대로). 수정된 행은 보라색으로 표시됩니다. ';
+    body += '<br><b style="color:var(--red)">✕</b>로 합본 PDF에서 행을 제외 (↩로 복원), <b style="color:#7A4DB5">↩</b>로 수정 취소. ';
+    body += '추가 행 (배송비·할인)은 [+ 행 추가]로 입력 → 단가에 음수 입력 시 할인.';
     body += '</div>';
   }
   // 추가 행이 있고 dirty면 저장 버튼
@@ -28724,6 +28846,8 @@ function printConsolidatedInvoice(consId){
     if(items.length){
       items.forEach((it, idx) => {
         const ov = invOverrides[idx] || {};
+        // 📌 제외된 행은 PDF에서도 안 보임
+        if(ov._excluded) return;
         const qty = ov.qty != null ? +ov.qty : (+it.qty || 0);
         const unitPrice = ov.unit != null ? +ov.unit : (+it.unit || +it.unitPrice || 0);
         const amount = ov.amt != null
