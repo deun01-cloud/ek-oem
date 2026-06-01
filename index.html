@@ -5180,6 +5180,63 @@ function _invStatusOrder(s){ return _INV_STATUS_PRIORITY[s] || 99; }
 
 function renderInvoiceHistory(){
   slLoad();
+  // 📌 0단계: 중복 id 자동 정리 — invoiceHistory에 같은 id의 객체가 2개 이상이면 1개만 유지
+  //    (Realtime 수신/Notion pull/외부 동기화 등으로 중복이 들어올 수 있음 — UI에서 같은 행이 두 개 보이고 같이 선택되는 증상)
+  //    중복이 있으면 더 풍부한 데이터를 가진 쪽을 유지 (notion_id 있는 쪽 우선, 그것도 같으면 더 큰 객체)
+  let _dupsRemoved = 0;
+  const _seenIds = new Map();
+  const _toRemove = new Set();
+  invoiceHistory.forEach((v, idx) => {
+    if(!v || v.id == null) return;
+    const key = String(v.id);
+    if(_seenIds.has(key)){
+      // 중복 발견 — 어느 쪽을 유지할지 판단
+      const prevIdx = _seenIds.get(key);
+      const prev = invoiceHistory[prevIdx];
+      // 우선순위: notion_id 있는 것 → 더 많은 필드 → 나중에 들어온 것 (idx 큰 것)
+      const score = (x) => (x._notionId?100:0) + Object.keys(x).length;
+      if(score(v) >= score(prev)){
+        _toRemove.add(prevIdx);
+        _seenIds.set(key, idx);
+      } else {
+        _toRemove.add(idx);
+      }
+    } else {
+      _seenIds.set(key, idx);
+    }
+  });
+  if(_toRemove.size > 0){
+    // 뒤에서부터 splice로 안전하게 제거
+    const sortedIdxs = [..._toRemove].sort((a,b) => b - a);
+    const _removedRecords = [];
+    sortedIdxs.forEach(idx => {
+      const removed = invoiceHistory[idx];
+      console.warn('[invoice] 중복 id 자동 제거:', removed.id, '(', removed.vendor, removed.consolidationMonth||removed.ordNo, ') _notionId:', removed._notionId);
+      _removedRecords.push(removed);
+      invoiceHistory.splice(idx, 1);
+      _dupsRemoved++;
+    });
+    if(typeof save === 'function') save();
+    console.log('[invoice] ✓', _dupsRemoved, '건 중복 정리됨 (로컬)');
+    // 📌 노션에서도 정리 — 제거된 객체에 _notionId가 있으면 archive 시도
+    //    (단, 유지된 쪽과 같은 _notionId면 archive 안 함 — 그 페이지가 진실의 원천이라 살아있어야 함)
+    if(typeof notionCfg !== 'undefined' && notionCfg.workerUrl && typeof notionApiRequest === 'function'){
+      _removedRecords.forEach(removed => {
+        if(!removed._notionId) return;
+        // 유지된 쪽에 같은 _notionId가 있는지 확인
+        const keepHasSame = invoiceHistory.some(v => v._notionId === removed._notionId);
+        if(keepHasSame){
+          console.log('[invoice] 노션 페이지 ID 동일 — archive 스킵:', removed._notionId);
+          return;
+        }
+        // 노션에 중복 페이지가 있다는 뜻 → archive
+        console.log('[invoice] 노션 중복 페이지 archive 시도:', removed._notionId);
+        notionApiRequest('PATCH', '/v1/pages/'+removed._notionId, { archived: true })
+          .then(()=>console.log('[invoice] ✓ 노션 페이지 archive 완료:', removed._notionId))
+          .catch(e=>console.warn('[invoice] 노션 archive 실패 (무시):', e.message));
+      });
+    }
+  }
   // 4-A: _invStage 자동 재계산 — 매 렌더링마다 모든 명세서를 재분류
   // (옛 데이터, 노션 풀로 새로 받은 데이터, 외부 수정 등으로 _invStage가 잘못/누락된 경우 자동 교정)
   // 📌 합본 청구서도 포함 (이전엔 skip해서 옛 합본의 stage가 null로 남는 버그 있었음)
