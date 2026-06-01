@@ -5503,11 +5503,12 @@ function renderInvoiceHistory(){
         }
         h+='</td>';
       }
-      // 액션 버튼 — 합본은 다르게 (📄 인쇄 / ↩ 해제 / 일반: 카피/삭제)
+      // 액션 버튼 — 합본은 다르게 (🖨 인쇄 / 📑 상세 / 🗑 해제 / 일반: 카피/삭제)
       h+='<td onclick="event.stopPropagation()" style="padding:8px 4px;text-align:center;white-space:nowrap">';
       if(isCons){
         h+='<button onclick="printConsolidatedInvoice('+v.id+')" title="합본 청구서 인쇄" style="background:none;border:none;color:#7A4DB5;cursor:pointer;font-size:14px;padding:2px 4px">🖨</button>';
         h+='<button onclick="openConsDetail('+v.id+')" title="합본 상세" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'#7A4DB5\'" onmouseout="this.style.color=\'var(--t3)\'">📑</button>';
+        h+='<button onclick="confirmUnwindConsolidation('+v.id+')" title="합본 해제 — 합본만 삭제하고 묶인 명세서들은 개별로 되돌립니다" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button>';
       } else {
         h+='<button onclick="showInvoiceCopy('+v.id+')" title="명세서 카피 보기" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--gold-lt)\'" onmouseout="this.style.color=\'var(--t3)\'">📄</button>';
         h+='<button onclick="deleteInvRecord('+v.id+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button>';
@@ -27549,6 +27550,32 @@ function createConsolidatedInvoice(vendor, month, options){
   return invRec;
 }
 
+// 합본 해제 확인 다이얼로그 → unwindConsolidatedInvoice 호출
+// 사용자가 거래명세서 행의 🗑 버튼을 누르면 호출됨
+function confirmUnwindConsolidation(consolidatedId){
+  const cons = invoiceHistory.find(v => String(v.id)===String(consolidatedId) && v._isConsolidated);
+  if(!cons){ showToast('⚠ 합본 청구서를 찾을 수 없습니다','var(--red)'); return; }
+  const childCount = (cons.includedInvoiceIds||[]).length;
+  const totalPaid = +cons.totalPaid || 0;
+  let msg = `합본 청구서를 해제하시겠습니까?\n\n` +
+            `📑 ${cons.vendor} — ${cons.consolidationMonth} 합본 (${childCount}건)\n` +
+            `청구액: ₩${(+cons.chargeAmount||0).toLocaleString()}\n\n` +
+            `※ 합본 자체만 삭제됩니다.\n` +
+            `※ 묶여 있던 ${childCount}건의 개별 거래명세서는 그대로 남습니다.\n` +
+            `※ 다시 다른 조합으로 합본을 만들 수 있습니다.`;
+  if(totalPaid > 0){
+    msg += `\n\n⚠ 이 합본에 ₩${totalPaid.toLocaleString()} 입금 기록이 있습니다.\n해제하면 입금 기록도 함께 사라집니다.`;
+  }
+  if(!confirm(msg)) return;
+  const ok = unwindConsolidatedInvoice(consolidatedId);
+  if(ok){
+    showToast(`✓ 합본 해제됨 — ${childCount}건의 개별 명세서로 되돌아감`,'var(--grn)', 3500);
+    if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+  } else {
+    showToast('❌ 합본 해제 실패','var(--red)');
+  }
+}
+
 // 합본 청구서 해제 (잘못 발행한 경우)
 // 묶인 명세서들의 _consolidatedInvoiceId 제거 + 합본 자체 삭제
 function unwindConsolidatedInvoice(consolidatedId){
@@ -28121,14 +28148,17 @@ function printConsolidatedInvoice(consId){
     const items = Array.isArray(inv.items) ? inv.items : [];
     if(items.length){
       items.forEach(it => {
+        // 📌 items 필드명: qty/unit(단가)/amt(금액) — name, code, unit_label(EA 등)
         const qty = +it.qty || 0;
-        const unitPrice = +it.unitPrice || 0;
-        // 행 공급가액 — 명시값 있으면 그것, 없으면 qty×unitPrice
-        const amount = (it.amount != null && +it.amount > 0) ? +it.amount : qty * unitPrice;
+        const unitPrice = +it.unit || +it.unitPrice || 0;  // 호환: unit 또는 unitPrice
+        // 행 금액 — 명시값(amt) 있으면 그것, 없으면 qty×unitPrice
+        const amount = (it.amt != null && +it.amt > 0)
+          ? +it.amt
+          : ((it.amount != null && +it.amount > 0) ? +it.amount : qty * unitPrice);
         flatItems.push({
           name: it.name || it.itemName || '—',
           qty: qty,
-          unit: it.unit || 'EA',
+          unit: it.unit_label || it.unitLabel || 'EA',  // 단위 표시 (EA 등)
           unitPrice: unitPrice,
           amount: amount,
           ordNo: inv.ordNo || (inv._fromSample?'샘플':'')
