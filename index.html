@@ -27969,11 +27969,17 @@ function unwindConsolidatedInvoice(consolidatedId){
   // 📌 삭제된 ID 기록 — 다음 pull/Realtime에서 같은 합본이 다시 추가되는 것을 차단
   _recentlyDeletedConsolidationIds.add(String(consolidatedId));
   if(typeof save==='function') save();
-  // Realtime publish — 다른 클라이언트도 삭제 알림
-  if(typeof realtimePublish === 'function'){
+  // 📌 Realtime KV에서도 삭제 — 다른 클라이언트가 새로고침 시 부활 방지
+  //    ⚠ 이전엔 realtimePublish(upsert)로 잘못 호출되어 → KV에 데이터를 더 저장하던 버그
+  //    realtimeDelete(op:'delete')로 진짜 삭제 신호 보냄
+  if(typeof realtimeDelete === 'function'){
     try {
-      realtimePublish('invoice-delete', { id: consolidatedId, _isConsolidated: true });
-    } catch(e){ console.warn('합본 삭제 Realtime publish 실패:', e); }
+      // 합본 자체 삭제 (id 기준)
+      realtimeDelete('invoice', consolidatedId);
+      // _notionId 있으면 그것도 삭제 (서버에 _notionId 키로 저장된 경우 대비)
+      if(cons._notionId) realtimeDelete('invoice', cons._notionId);
+      console.log('[합본 해제] ✓ Realtime KV 삭제 신호 전송');
+    } catch(e){ console.warn('[합본 해제] Realtime 삭제 실패:', e); }
   }
   return true;
 }
