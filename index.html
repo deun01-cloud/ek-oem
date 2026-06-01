@@ -4962,7 +4962,12 @@ function doPrint(){
 // ════════════════════════════════
 // 초기값: 페이지 진입 시 항상 'draft' (미청구) 탭부터 시작
 var invFilter = (function(){
-  let subTab = 'draft'; // 페이지 진입 시 기본값: 미청구 탭 고정
+  // 📌 페이지 새로고침 후에도 마지막 본 서브탭 유지 (메인 탭 패턴과 동일)
+  let subTab = 'draft';
+  try {
+    const saved = localStorage.getItem('ek3_invSubTab');
+    if(saved && ['draft','billing','done','all'].includes(saved)) subTab = saved;
+  } catch(e){}
   return {month:'', vendor:'', status:'전체', subTab, sort:'default', kind:'all'};
 })();
 
@@ -4974,7 +4979,8 @@ function setInvSubTab(t){
   // 📌 합본 탭 제거됨 — 'consolidated'로 시도하면 '모든 명세서'로 redirect
   if(t === 'consolidated') t = 'all';
   invFilter.subTab=t;
-  // 페이지 새로고침 시 항상 '미청구'(draft) 탭으로 시작하도록 localStorage 저장은 안 함
+  // 📌 마지막 본 탭 영속화 (새로고침 후 복원)
+  try { localStorage.setItem('ek3_invSubTab', t); } catch(e){}
   // 서브탭 변경 시 status 필터 리셋 (충돌 방지)
   invFilter.status='전체';
   // 📌 탭 바뀌면 합본 선택 초기화 (다른 탭의 명세서가 잘못 묶이는 것 방지)
@@ -5463,25 +5469,18 @@ function renderInvoiceHistory(){
         h+='</td>';
       } else if(subTab === 'billing' || subTab === 'billed'){
         // 청구 탭 — 입금 체크박스 + 계산서 체크박스 (둘 다 체크 시 자동 완료 탭으로)
+        // 📌 합본 청구서도 동일하게 토글 가능 (합본 전체에 일괄 적용)
         var paid = (v._paid === true) || v.status === '입금완료';
         var taxIssued = (v._taxInvoiceIssued === true);
         h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center">';
-        if(isCons){
-          h+='<span style="color:var(--t3);font-size:11px">—</span>';
-        } else {
-          h+='<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11.5px;color:'+(paid?'var(--grn)':'var(--t3)')+';font-weight:'+(paid?'700':'500')+'" title="입금 받았는지">'
-            +'<input type="checkbox" '+(paid?'checked':'')+' onchange="toggleInvPaid('+v.id+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--grn)">'
-            +(paid?'완료':'대기')+'</label>';
-        }
+        h+='<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11.5px;color:'+(paid?'var(--grn)':'var(--t3)')+';font-weight:'+(paid?'700':'500')+'" title="'+(isCons?'합본 입금 완료 — 묶인 명세서 전체에 적용':'입금 받았는지')+'">'
+          +'<input type="checkbox" '+(paid?'checked':'')+' onchange="toggleInvPaid('+v.id+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--grn)">'
+          +(paid?'완료':'대기')+'</label>';
         h+='</td>';
         h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center">';
-        if(isCons){
-          h+='<span style="color:var(--t3);font-size:11px">—</span>';
-        } else {
-          h+='<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11.5px;color:'+(taxIssued?'var(--blu)':'var(--t3)')+';font-weight:'+(taxIssued?'700':'500')+'" title="세금계산서 발행 여부">'
-            +'<input type="checkbox" '+(taxIssued?'checked':'')+' onchange="toggleInvTaxIssued('+v.id+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blu)">'
-            +(taxIssued?'발행':'대기')+'</label>';
-        }
+        h+='<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11.5px;color:'+(taxIssued?'var(--blu)':'var(--t3)')+';font-weight:'+(taxIssued?'700':'500')+'" title="'+(isCons?'합본 세금계산서 발행 — 묶인 명세서 전체에 적용':'세금계산서 발행 여부')+'">'
+          +'<input type="checkbox" '+(taxIssued?'checked':'')+' onchange="toggleInvTaxIssued('+v.id+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blu)">'
+          +(taxIssued?'발행':'대기')+'</label>';
         h+='</td>';
       } else {
         // 완료/전체/합본 탭 — 상태 표시 (읽기 전용 라벨)
@@ -8725,7 +8724,14 @@ function _ioInitial(name){
 // IO 리스트 렌더링 (PC 테이블 스타일) — 일반 / 커머스 서브탭
 let _ioFilter = 'all'; // 'all' | '입고' | '출고' | '검수' | '반품'
 let _ioVendorFilter = 'all';
-let _ioSubTab = 'general'; // 'general' | 'commerce'
+// 📌 페이지 새로고침 후에도 마지막 본 서브탭 유지
+let _ioSubTab = (function(){
+  try {
+    const saved = localStorage.getItem('ek3_ioSubTab');
+    if(saved === 'commerce' || saved === 'general') return saved;
+  } catch(e){}
+  return 'general';
+})();
 let _ioCommerceBrand = 'all'; // 'all' | '비비케이트' | ...
 let _ioCommerceShipStatus = 'all'; // (deprecated, 호환용)
 let _ioCommerceReturnFilter = 'all'; // 'all' | '정상' | '교환요청' | '환불요청' | '교환완료' | '환불완료'
@@ -8750,6 +8756,8 @@ function renderIo(){
 
 function _setIoSubTab(t){
   _ioSubTab = t;
+  // 📌 마지막 본 탭 영속화
+  try { localStorage.setItem('ek3_ioSubTab', t); } catch(e){}
   renderIo();
 }
 
@@ -26642,7 +26650,14 @@ function removeInvoicePayment(invId, paymentIdx){
 // 명세서의 _invStage를 자동 추론 (마이그레이션용 + 신규 명세서 기본값)
 function inferInvStage(v){
   if(!v) return 'draft';
-  if(v._isConsolidated) return null; // 합본은 stage 없음
+  // 📌 합본 청구서도 stage 계산 (이전엔 null 반환 → 청구 탭에 안 보이는 버그)
+  //    합본은 발행 = 청구 시작. 입금+계산서 둘 다 완료되면 done.
+  if(v._isConsolidated){
+    const consPaid = (v._paid === true) || (v.status === '입금완료') || ((+v.paymentRatio || 0) >= 100);
+    const consTaxIssued = (v._taxInvoiceIssued === true);
+    if(consPaid && consTaxIssued) return 'done';
+    return 'billing'; // 합본은 draft 단계 없음 (발행 = 청구 시작)
+  }
   // 📌 done(완료) 판정 원칙: "입금 + 계산서" 둘 다 완료된 경우만 done.
   //    출고 여부는 stage 분류에 영향 없음 (출고는 별도 트래킹).
   //    선금 100% 받았어도 계산서가 미발행이면 billing(청구중) 유지.
@@ -26780,6 +26795,20 @@ function toggleInvPaid(invId, checked){
   if(!v) return false;
   v._paid = !!checked;
   _syncInvStatusFromFlags(v);
+  // 📌 합본 청구서면 묶인 명세서들에도 동일하게 적용 (회계 일관성)
+  if(v._isConsolidated && Array.isArray(v.includedInvoiceIds)){
+    v.includedInvoiceIds.forEach(childId => {
+      const child = invoiceHistory.find(x => String(x.id)===String(childId));
+      if(child){
+        child._paid = !!checked;
+        _syncInvStatusFromFlags(child);
+        if(typeof realtimePublish === 'function') realtimePublish('invoice', child);
+        if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && child._notionId && typeof syncInvoiceToNotion==='function'){
+          syncInvoiceToNotion(child, true).catch(e=>console.warn('합본 묶인 명세서 입금 동기화 실패:',e));
+        }
+      }
+    });
+  }
   if(typeof save === 'function') save();
   // 🌐 실시간 동기화
   if(typeof realtimePublish === 'function') realtimePublish('invoice', v);
@@ -26790,7 +26819,7 @@ function toggleInvPaid(invId, checked){
   if(v._invStage === 'done'){
     showToast('✓ 입금 + 계산서 모두 완료 — 완료 탭으로 이동','#7A4DB5', 3000);
   } else {
-    showToast(checked ? '✓ 입금 체크' : '↩ 입금 해제', checked?'var(--grn)':'var(--t3)', 2000);
+    showToast(checked ? '✓ 입금 체크'+(v._isConsolidated?' (묶인 명세서 '+(v.includedInvoiceIds||[]).length+'건 일괄)':'') : '↩ 입금 해제', checked?'var(--grn)':'var(--t3)', 2000);
   }
   return true;
 }
@@ -26799,6 +26828,20 @@ function toggleInvTaxIssued(invId, checked){
   if(!v) return false;
   v._taxInvoiceIssued = !!checked;
   _syncInvStatusFromFlags(v);
+  // 📌 합본 청구서면 묶인 명세서들에도 동일하게 적용
+  if(v._isConsolidated && Array.isArray(v.includedInvoiceIds)){
+    v.includedInvoiceIds.forEach(childId => {
+      const child = invoiceHistory.find(x => String(x.id)===String(childId));
+      if(child){
+        child._taxInvoiceIssued = !!checked;
+        _syncInvStatusFromFlags(child);
+        if(typeof realtimePublish === 'function') realtimePublish('invoice', child);
+        if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && child._notionId && typeof syncInvoiceToNotion==='function'){
+          syncInvoiceToNotion(child, true).catch(e=>console.warn('합본 묶인 명세서 계산서 동기화 실패:',e));
+        }
+      }
+    });
+  }
   if(typeof save === 'function') save();
   // 🌐 실시간 동기화
   if(typeof realtimePublish === 'function') realtimePublish('invoice', v);
@@ -26809,7 +26852,7 @@ function toggleInvTaxIssued(invId, checked){
   if(v._invStage === 'done'){
     showToast('✓ 입금 + 계산서 모두 완료 — 완료 탭으로 이동','#7A4DB5', 3000);
   } else {
-    showToast(checked ? '✓ 계산서 발행 체크' : '↩ 계산서 해제', checked?'var(--blu)':'var(--t3)', 2000);
+    showToast(checked ? '✓ 계산서 발행 체크'+(v._isConsolidated?' (묶인 명세서 '+(v.includedInvoiceIds||[]).length+'건 일괄)':'') : '↩ 계산서 해제', checked?'var(--blu)':'var(--t3)', 2000);
   }
   return true;
 }
