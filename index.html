@@ -1347,6 +1347,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--bdr);position:sticky;top:0;background:var(--s1);z-index:1">
     <div id="printPreviewTitle" style="font-size:14px;font-weight:700">미리보기</div>
     <div style="display:flex;gap:8px">
+      <button id="printPreviewEditBtn" onclick="_editFromPrintPreview()" style="padding:7px 14px;background:none;border:1px solid #7A4DB5;color:#7A4DB5;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:none" title="추가/할인 행 입력, 비고 작성">✏️ 수정</button>
       <button onclick="doPrint()" style="padding:7px 18px;background:var(--gold-lt);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">🖨 인쇄</button>
       <button onclick="closeM('mPrintPreview')" style="padding:7px 14px;background:none;border:1px solid var(--bdr);border-radius:6px;font-size:13px;cursor:pointer;font-family:inherit;color:var(--t2)">닫기</button>
     </div>
@@ -5633,11 +5634,11 @@ function renderInvoiceHistory(){
         }
         h+='</td>';
       }
-      // 액션 버튼 — 합본은 다르게 (🖨 인쇄 / 📑 상세 / 🗑 해제 / 일반: 카피/삭제)
+      // 액션 버튼 — 합본은 다르게 (🖨 인쇄 / ✏️ 수정 / 🗑 해제 / 일반: 카피/삭제)
       h+='<td onclick="event.stopPropagation()" style="padding:8px 4px;text-align:center;white-space:nowrap">';
       if(isCons){
-        h+='<button onclick="printConsolidatedInvoice('+v.id+')" title="합본 청구서 인쇄" style="background:none;border:none;color:#7A4DB5;cursor:pointer;font-size:14px;padding:2px 4px">🖨</button>';
-        h+='<button onclick="openConsDetail('+v.id+')" title="합본 상세" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'#7A4DB5\'" onmouseout="this.style.color=\'var(--t3)\'">📑</button>';
+        h+='<button onclick="printConsolidatedInvoice('+v.id+')" title="합본 청구서 인쇄/PDF" style="background:none;border:none;color:#7A4DB5;cursor:pointer;font-size:14px;padding:2px 4px">🖨</button>';
+        h+='<button onclick="openConsDetail('+v.id+')" title="합본 수정 — 추가/할인 행 입력, 비고 작성" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'#7A4DB5\'" onmouseout="this.style.color=\'var(--t3)\'">✏️</button>';
         h+='<button onclick="confirmUnwindConsolidation('+v.id+')" title="합본 해제 — 합본만 삭제하고 묶인 명세서들은 개별로 되돌립니다" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button>';
       } else {
         h+='<button onclick="showInvoiceCopy('+v.id+')" title="명세서 카피 보기" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--gold-lt)\'" onmouseout="this.style.color=\'var(--t3)\'">📄</button>';
@@ -28212,13 +28213,58 @@ function _updateConsExtra(consId, ridx, field, value){
     cons.extraItems[ridx][field] = value;
   }
   cons._extraItemsDirty = true;
-  // 금액 셀 즉시 갱신
-  const amtEl = document.getElementById('_consExtraAmt_'+consId+'_'+ridx);
-  if(amtEl){
-    const amt = +cons.extraItems[ridx].amt || 0;
-    amtEl.textContent = amt ? amt.toLocaleString() : '-';
-    amtEl.style.color = amt < 0 ? 'var(--red)' : 'var(--t1)';
+  // 모달 다시 그려서 합계/저장 버튼 갱신 (이 행의 amt 셀만 갱신하기 어려운 통합 테이블이라)
+  // 단, 텍스트 필드(name/note)는 그대로 두고 dirty만 마킹 → 화면 다시 그리지 않음 (focus 유지)
+  if(field === 'name' || field === 'note') return;
+  // 숫자 변경 → 모달 새로고침
+  if(typeof _rawCloseM === 'function') _rawCloseM('mConsDetail');
+  else closeM('mConsDetail');
+  openConsDetail(consId);
+}
+
+// 📌 묶인 명세서 items의 행 단위 override (합본 안에서만 적용)
+function _updateConsItemOverride(consId, invId, itemIdx, field, value){
+  const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
+  if(!cons) return;
+  if(!cons.itemOverrides || typeof cons.itemOverrides !== 'object') cons.itemOverrides = {};
+  if(!cons.itemOverrides[invId]) cons.itemOverrides[invId] = {};
+  if(!cons.itemOverrides[invId][itemIdx]) cons.itemOverrides[invId][itemIdx] = {};
+  if(field === 'qty' || field === 'unit' || field === 'amt'){
+    cons.itemOverrides[invId][itemIdx][field] = +value || 0;
+    if(field === 'qty' || field === 'unit'){
+      const ov = cons.itemOverrides[invId][itemIdx];
+      const q = ov.qty != null ? +ov.qty : 0;
+      const u = ov.unit != null ? +ov.unit : 0;
+      // qty 또는 unit 중 하나만 override됐어도 amt 재계산하려면 원본 값도 봐야 함
+      const origInv = invoiceHistory.find(x => String(x.id)===String(invId));
+      const origItem = origInv && origInv.items ? origInv.items[itemIdx] : null;
+      const finalQ = ov.qty != null ? q : (origItem ? +origItem.qty || 0 : 0);
+      const finalU = ov.unit != null ? u : (origItem ? (+origItem.unit || +origItem.unitPrice || 0) : 0);
+      ov.amt = finalQ * finalU;
+    }
+  } else {
+    cons.itemOverrides[invId][itemIdx][field] = value;
   }
+  cons._extraItemsDirty = true;
+  if(field === 'name' || field === 'note') return;
+  // 숫자 변경 → 모달 새로고침
+  if(typeof _rawCloseM === 'function') _rawCloseM('mConsDetail');
+  else closeM('mConsDetail');
+  openConsDetail(consId);
+}
+
+// 📌 override 되돌리기 (원본 명세서 값으로 복원)
+function _resetConsItemOverride(consId, invId, itemIdx){
+  const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
+  if(!cons || !cons.itemOverrides || !cons.itemOverrides[invId]) return;
+  if(!confirm('이 행의 합본 내 수정을 취소하고 원본 명세서 값으로 되돌리시겠습니까?')) return;
+  delete cons.itemOverrides[invId][itemIdx];
+  // 빈 객체면 정리
+  if(Object.keys(cons.itemOverrides[invId]).length === 0) delete cons.itemOverrides[invId];
+  cons._extraItemsDirty = true;
+  if(typeof _rawCloseM === 'function') _rawCloseM('mConsDetail');
+  else closeM('mConsDetail');
+  openConsDetail(consId);
 }
 
 function _addConsExtraRow(consId){
@@ -28313,68 +28359,181 @@ function openConsDetail(consId){
   body += '<div style="background:var(--s2);padding:8px 12px;border-radius:6px;border:1px solid var(--bdr)"><div style="color:var(--t3);font-size:10.5px;margin-bottom:2px">묶인 명세서</div><div style="font-weight:700">'+includedInvs.length+'건</div></div>';
   body += '</div>';
 
-  body += '<div style="font-size:11.5px;color:var(--t2);font-weight:700;margin-bottom:6px">📋 묶인 거래명세서 <span style="font-size:10px;color:var(--t3);font-weight:400">(클릭하여 개별 명세서 보기)</span></div>';
-  body += '<div style="border:1px solid var(--bdr);border-radius:6px;overflow:hidden;margin-bottom:14px">';
-  body += '<div style="padding:7px 10px;background:var(--s2);font-size:10.5px;font-weight:700;display:grid;grid-template-columns:90px 1fr 110px 110px;gap:8px"><span>발행일</span><span>발주/구분</span><span style="text-align:right">합계</span><span style="text-align:right;color:#7A4DB5">선금</span></div>';
-  body += rowsHtml;
+  // 📌 묶인 명세서 — 요약 박스 (한 줄씩 작게 — 메인 편집은 아래 통합 품목 테이블에서)
+  body += '<div style="font-size:10.5px;color:var(--t3);margin-bottom:6px">📑 묶인 거래명세서 (참고용 — 클릭하여 개별 명세서 보기)</div>';
+  body += '<div style="background:#FAFAFA;border:1px solid var(--bdr);border-radius:5px;padding:8px 12px;margin-bottom:14px;font-size:10.5px;color:var(--t3)">';
+  body += includedInvs.length ? includedInvs.map(v => {
+    const isSample = v._fromSample;
+    const ordLabel = isSample ? '🧪 샘플' : (v.ordNo || '—');
+    return `<span style="display:inline-block;margin:2px 6px 2px 0;padding:3px 8px;background:#F0E6FA;border-radius:9px;cursor:pointer;font-family:monospace;font-size:10px" onclick="if(typeof _rawCloseM===\\'function\\')_rawCloseM(\\'mConsDetail\\');else closeM(\\'mConsDetail\\');openInvDetail(${v.id})" title="개별 명세서 보기">${ordLabel} · ₩${(+v.total||0).toLocaleString()}${v.issuedAt?' · '+v.issuedAt:''}</span>`;
+  }).join('') : '<span style="color:var(--red)">묶인 명세서가 없습니다 (이미 삭제됨?)</span>';
   body += '</div>';
 
-  // 📌 추가 행 (할인/추가비용/배송비 등) — 합본 자체에 저장
+  // 📌 통합 품목 테이블 — 묶인 명세서들의 모든 items + 합본의 extraItems를 한 줄씩 (PDF와 동일 구조)
+  //    각 행 인라인 편집 가능 (출처 행도 단가/비고 수정 가능 — 합본 안에서만 적용, 원본 명세서 안 건드림)
   if(!Array.isArray(cons.extraItems)) cons.extraItems = [];
+  // cons.itemOverrides: 묶인 명세서의 items를 수정한 값을 합본 내부에 저장
+  //   { [invoiceId]: { [itemIndex]: { name?, qty?, unit?, amt?, note? } } }
+  if(!cons.itemOverrides || typeof cons.itemOverrides !== 'object') cons.itemOverrides = {};
   const consEditLocked = cons.status === '입금완료';
+
+  // 통합 품목 리스트 구축
+  //   각 행: { src: 'invoice'|'extra', invId?, itemIdx?, extraIdx?, name, qty, unit, amt, note, ordNo }
+  const allRows = [];
+  includedInvs.forEach(inv => {
+    const items = Array.isArray(inv.items) ? inv.items : [];
+    items.forEach((it, idx) => {
+      // 합본 내 override가 있으면 그것 우선
+      const ov = (cons.itemOverrides[inv.id] || {})[idx] || {};
+      const qty = ov.qty != null ? +ov.qty : (+it.qty || 0);
+      const unitPrice = ov.unit != null ? +ov.unit : (+it.unit || +it.unitPrice || 0);
+      const amt = ov.amt != null ? +ov.amt : ((it.amt != null && +it.amt !== 0) ? +it.amt : qty * unitPrice);
+      allRows.push({
+        src: 'invoice',
+        invId: inv.id,
+        itemIdx: idx,
+        name: ov.name != null ? ov.name : (it.name || it.itemName || ''),
+        code: it.code || '',
+        qty: qty,
+        unit: unitPrice,
+        amt: amt,
+        note: ov.note != null ? ov.note : (it.note || ''),
+        ordNo: inv.ordNo || (inv._fromSample?'샘플':''),
+        hasOverride: !!cons.itemOverrides[inv.id] && cons.itemOverrides[inv.id][idx] != null,
+      });
+    });
+    if(!items.length){
+      // items 없는 옛 명세서 — itemSummary 한 줄로
+      allRows.push({
+        src: 'invoice_summary',
+        invId: inv.id,
+        itemIdx: -1,
+        name: inv.itemSummary || '품목 미상',
+        code: '',
+        qty: 0,
+        unit: 0,
+        amt: +inv.supplyAmt || 0,
+        note: '',
+        ordNo: inv.ordNo || (inv._fromSample?'샘플':''),
+        hasOverride: false,
+      });
+    }
+  });
+  // 합본 자체의 추가 행
+  cons.extraItems.forEach((it, idx) => {
+    const qty = +it.qty || 0;
+    const unitPrice = +it.unit || 0;
+    const amt = (it.amt != null && +it.amt !== 0) ? +it.amt : qty * unitPrice;
+    allRows.push({
+      src: 'extra',
+      extraIdx: idx,
+      name: it.name || '',
+      code: '',
+      qty: qty,
+      unit: unitPrice,
+      amt: amt,
+      note: it.note || '',
+      ordNo: '추가/할인',
+      hasOverride: false,
+    });
+  });
+
   body += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
-  body += '<div style="font-size:11.5px;color:var(--t2);font-weight:700">➕ 추가 비용 / 할인 <span style="font-size:10px;color:var(--t3);font-weight:400">(배송비, 단골 할인 등 — 양수/음수 모두 가능)</span></div>';
+  body += '<div style="font-size:11.5px;color:var(--t2);font-weight:700">📋 품목 내역 <span style="font-size:10px;color:var(--t3);font-weight:400">(총 '+allRows.length+'개 — PDF에 그대로 표시됨)</span></div>';
   if(!consEditLocked){
     body += '<button onclick="_addConsExtraRow('+consId+')" style="padding:3px 10px;font-size:10.5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;color:var(--gold-lt);cursor:pointer;font-family:inherit;font-weight:600">+ 행 추가</button>';
   }
   body += '</div>';
-  body += '<div style="border:1px solid var(--bdr);border-radius:6px;overflow:hidden;margin-bottom:14px">';
-  body += '<table style="width:100%;border-collapse:collapse;font-size:11.5px">';
+  body += '<div style="border:1px solid var(--bdr);border-radius:6px;overflow:hidden;margin-bottom:14px;overflow-x:auto">';
+  body += '<table style="width:100%;border-collapse:collapse;font-size:11px;min-width:760px">';
   body += '<thead><tr style="background:var(--s2)">';
-  body += '<th style="padding:6px 10px;text-align:left;font-weight:600;border-bottom:1px solid var(--bdr)">항목명</th>';
-  body += '<th style="padding:6px 8px;text-align:right;font-weight:600;border-bottom:1px solid var(--bdr);width:65px">수량</th>';
-  body += '<th style="padding:6px 8px;text-align:right;font-weight:600;border-bottom:1px solid var(--bdr);width:100px">단가</th>';
-  body += '<th style="padding:6px 8px;text-align:right;font-weight:600;border-bottom:1px solid var(--bdr);width:110px">금액</th>';
-  body += '<th style="padding:6px 8px;text-align:left;font-weight:600;border-bottom:1px solid var(--bdr);width:160px">비고</th>';
-  if(!consEditLocked) body += '<th style="padding:6px 4px;border-bottom:1px solid var(--bdr);width:30px"></th>';
+  body += '<th style="padding:6px 4px;text-align:center;font-weight:600;border-bottom:1px solid var(--bdr);width:30px">#</th>';
+  body += '<th style="padding:6px 8px;text-align:left;font-weight:600;border-bottom:1px solid var(--bdr)">품목명</th>';
+  body += '<th style="padding:6px 6px;text-align:right;font-weight:600;border-bottom:1px solid var(--bdr);width:55px">수량</th>';
+  body += '<th style="padding:6px 6px;text-align:right;font-weight:600;border-bottom:1px solid var(--bdr);width:80px">단가</th>';
+  body += '<th style="padding:6px 6px;text-align:right;font-weight:600;border-bottom:1px solid var(--bdr);width:90px">금액</th>';
+  body += '<th style="padding:6px 6px;text-align:left;font-weight:600;border-bottom:1px solid var(--bdr);width:130px">비고</th>';
+  body += '<th style="padding:6px 4px;text-align:center;font-weight:600;border-bottom:1px solid var(--bdr);width:80px">출처</th>';
+  if(!consEditLocked) body += '<th style="padding:6px 2px;border-bottom:1px solid var(--bdr);width:28px"></th>';
   body += '</tr></thead><tbody>';
-  if(cons.extraItems.length){
-    cons.extraItems.forEach((r, ridx) => {
-      const amt = (r.amt != null && +r.amt !== 0) ? (+r.amt) : ((+r.qty||0) * (+r.unit||0));
-      const amtColor = amt < 0 ? 'var(--red)' : 'var(--t1)';
-      body += '<tr style="border-bottom:1px solid var(--bdr-lt)">';
-      if(consEditLocked){
-        body += '<td style="padding:5px 10px;font-weight:600">'+(r.name||'').replace(/</g,'&lt;')+'</td>';
-        body += '<td style="padding:5px 6px;text-align:right">'+(r.qty?(+r.qty).toLocaleString():'')+'</td>';
-        body += '<td style="padding:5px 6px;text-align:right;color:var(--t3)">'+(r.unit?(+r.unit).toLocaleString():'')+'</td>';
-        body += '<td style="padding:5px 6px;text-align:right;font-weight:600;color:'+amtColor+'">'+(amt?amt.toLocaleString():'')+'</td>';
-        body += '<td style="padding:5px 6px;font-size:10.5px;color:var(--t3)">'+((r.note||'').replace(/</g,'&lt;'))+'</td>';
+
+  allRows.forEach((r, gIdx) => {
+    const amtColor = r.amt < 0 ? 'var(--red)' : 'var(--t1)';
+    const isExtra = r.src === 'extra';
+    const isSummary = r.src === 'invoice_summary';
+    const rowBg = isExtra ? 'background:#FFF8E8' : (r.hasOverride ? 'background:#F0E6FA' : '');
+    // updateFn — 어느 source인지에 따라 다른 헬퍼 호출
+    const updFn = isExtra
+      ? '_updateConsExtra('+consId+','+r.extraIdx+',\\\'$F\\\',this.value)'
+      : ('_updateConsItemOverride('+consId+','+r.invId+','+r.itemIdx+',\\\'$F\\\',this.value)');
+    body += '<tr style="'+rowBg+';border-bottom:1px solid var(--bdr-lt)">';
+    body += '<td style="padding:5px 4px;text-align:center;color:var(--t3);font-family:monospace;font-size:10px">'+(gIdx+1)+'</td>';
+    if(consEditLocked || isSummary){
+      // 잠금 / 옛 데이터 (items 없음) — 표시만
+      body += '<td style="padding:5px 8px"><div style="font-weight:600">'+(r.name||'').replace(/</g,'&lt;')+'</div>'+(r.code?'<div style="font-size:9.5px;color:var(--t3);font-family:monospace">'+r.code+'</div>':'')+(isSummary?'<div style="font-size:9.5px;color:var(--org)">⚠ 품목 상세 없음 — 합계만</div>':'')+'</td>';
+      body += '<td style="padding:5px 6px;text-align:right">'+(r.qty?r.qty.toLocaleString():'-')+'</td>';
+      body += '<td style="padding:5px 6px;text-align:right;color:var(--t3)">'+(r.unit?r.unit.toLocaleString():'-')+'</td>';
+      body += '<td style="padding:5px 6px;text-align:right;font-weight:600;color:'+amtColor+'">'+(r.amt?r.amt.toLocaleString():'-')+'</td>';
+      body += '<td style="padding:5px 6px;font-size:10.5px;color:var(--t3)">'+((r.note||'').replace(/</g,'&lt;'))+'</td>';
+    } else {
+      // 편집 가능 행
+      body += '<td style="padding:3px 4px"><input type="text" value="'+(r.name||'').replace(/"/g,'&quot;')+'" oninput="'+updFn.replace('$F','name')+'" style="width:100%;padding:4px 6px;font-size:11px;font-weight:600;border:1px solid var(--bdr);border-radius:3px;background:var(--s1)">'+(r.code?'<div style="font-size:9.5px;color:var(--t3);font-family:monospace;padding-left:6px;margin-top:2px">'+r.code+'</div>':'')+'</td>';
+      body += '<td style="padding:3px 4px"><input type="number" value="'+(r.qty||0)+'" oninput="'+updFn.replace('$F','qty')+'" style="width:100%;padding:4px 5px;font-size:11px;text-align:right;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);font-family:inherit"></td>';
+      body += '<td style="padding:3px 4px"><input type="number" value="'+(r.unit||0)+'" oninput="'+updFn.replace('$F','unit')+'" placeholder="0" style="width:100%;padding:4px 5px;font-size:11px;text-align:right;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);font-family:inherit"></td>';
+      body += '<td style="padding:5px 6px;text-align:right;font-weight:600;color:'+amtColor+'" id="_consRowAmt_'+consId+'_'+gIdx+'">'+(r.amt?r.amt.toLocaleString():'-')+'</td>';
+      body += '<td style="padding:3px 4px"><input type="text" placeholder="비고" value="'+(r.note||'').replace(/"/g,'&quot;')+'" oninput="'+updFn.replace('$F','note')+'" style="width:100%;padding:4px 6px;font-size:10.5px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);color:var(--t2)"></td>';
+    }
+    // 출처 표시
+    const srcLabel = isExtra ? '<span style="color:#8B6914;font-weight:600;font-size:9.5px">추가/할인</span>' : (r.ordNo ? '<span style="color:#7A4DB5;font-family:monospace;font-size:9.5px">'+r.ordNo+'</span>' : '<span style="color:var(--t3)">—</span>');
+    body += '<td style="padding:5px 4px;text-align:center">'+srcLabel+'</td>';
+    if(!consEditLocked){
+      // 삭제 버튼 — 추가/할인만 삭제 가능 (묶인 명세서 행은 해제 후 처리)
+      if(isExtra){
+        body += '<td style="padding:3px 2px;text-align:center"><button onclick="_removeConsExtra('+consId+','+r.extraIdx+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">✕</button></td>';
+      } else if(r.hasOverride){
+        // override 있음 → 원본으로 되돌리기 버튼
+        body += '<td style="padding:3px 2px;text-align:center"><button onclick="_resetConsItemOverride('+consId+','+r.invId+','+r.itemIdx+')" title="이 행의 합본 내 수정을 취소하고 원본 명세서 값으로 복원" style="background:none;border:none;color:#7A4DB5;cursor:pointer;font-size:11px;padding:2px 4px" onmouseover="this.style.opacity=\'.7\'" onmouseout="this.style.opacity=\'1\'">↩</button></td>';
       } else {
-        body += '<td style="padding:3px 4px"><input type="text" placeholder="예: 배송비 / 단골 할인" value="'+(r.name||'').replace(/"/g,'&quot;')+'" oninput="_updateConsExtra('+consId+','+ridx+',\'name\',this.value)" style="width:100%;padding:4px 7px;font-size:11.5px;font-weight:600;border:1px solid var(--bdr);border-radius:3px;background:var(--s1)"></td>';
-        body += '<td style="padding:3px 4px"><input type="number" value="'+(r.qty||1)+'" oninput="_updateConsExtra('+consId+','+ridx+',\'qty\',this.value)" style="width:100%;padding:4px 6px;font-size:11.5px;text-align:right;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);font-family:inherit"></td>';
-        body += '<td style="padding:3px 4px"><input type="number" value="'+(r.unit||0)+'" oninput="_updateConsExtra('+consId+','+ridx+',\'unit\',this.value)" placeholder="음수도 가능" style="width:100%;padding:4px 6px;font-size:11.5px;text-align:right;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);font-family:inherit"></td>';
-        body += '<td style="padding:5px 6px;text-align:right;font-weight:600;color:'+amtColor+'" id="_consExtraAmt_'+consId+'_'+ridx+'">'+(amt?amt.toLocaleString():'-')+'</td>';
-        body += '<td style="padding:3px 4px"><input type="text" placeholder="비고 (선택)" value="'+(r.note||'').replace(/"/g,'&quot;')+'" oninput="_updateConsExtra('+consId+','+ridx+',\'note\',this.value)" style="width:100%;padding:4px 7px;font-size:10.5px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);color:var(--t2)"></td>';
-        body += '<td style="padding:3px 2px;text-align:center"><button onclick="_removeConsExtra('+consId+','+ridx+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:2px 4px">✕</button></td>';
+        body += '<td></td>';
       }
-      body += '</tr>';
-    });
-  } else {
-    const emptyColspan = consEditLocked ? 5 : 6;
-    body += '<tr><td colspan="'+emptyColspan+'" style="padding:12px;text-align:center;color:var(--t3);font-size:10.5px">추가 행 없음. 배송비·할인 등이 있으면 [+ 행 추가]로 입력하세요.</td></tr>';
+    }
+    body += '</tr>';
+  });
+  if(!allRows.length){
+    const emptyColspan = consEditLocked ? 7 : 8;
+    body += '<tr><td colspan="'+emptyColspan+'" style="padding:14px;text-align:center;color:var(--t3);font-size:11px">묶인 명세서에 품목이 없습니다.</td></tr>';
   }
   body += '</tbody></table></div>';
+  // 안내
+  if(!consEditLocked){
+    body += '<div style="font-size:10px;color:var(--t3);margin-bottom:10px;padding:6px 10px;background:rgba(122,77,181,.04);border-radius:4px;line-height:1.6">';
+    body += '💡 <b>편집 안내</b>: 묶인 명세서의 품목도 수정 가능합니다 (합본 안에서만 적용 — 원본 명세서는 그대로). 수정된 행은 보라색으로 표시되며 ↩ 버튼으로 되돌릴 수 있습니다. ';
+    body += '추가 행 (배송비·할인)은 [+ 행 추가]로 입력 → 단가에 음수 입력 시 할인 처리됩니다.';
+    body += '</div>';
+  }
   // 추가 행이 있고 dirty면 저장 버튼
   if(!consEditLocked && cons._extraItemsDirty){
     body += '<div style="display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px">';
-    body += '<button onclick="_saveConsExtraChanges('+consId+')" style="padding:5px 14px;font-size:11px;background:var(--gold);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit;font-weight:600">💾 추가 행 변경사항 저장</button>';
+    body += '<button onclick="_saveConsExtraChanges('+consId+')" style="padding:5px 14px;font-size:11px;background:var(--gold);color:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit;font-weight:600">💾 변경사항 저장</button>';
     body += '</div>';
   }
 
-  // 추가 행 합 계산 (표시용)
-  const extraTotal = (cons.extraItems||[]).reduce((s,r)=>{
-    const amt = (r.amt != null && +r.amt !== 0) ? (+r.amt) : ((+r.qty||0) * (+r.unit||0));
-    return s + amt;
+  // 추가 행 합 + override 합 (extraTotal — 합계에 반영)
+  const extraTotal = allRows.reduce((s, r) => {
+    if(r.src === 'extra') return s + r.amt;
+    // override가 있는 invoice 행 — 원본 대비 차이를 별도 반영해야 함
+    if(r.src === 'invoice' && r.hasOverride){
+      // 원본 amt 찾기
+      const origInv = invoiceHistory.find(x => String(x.id)===String(r.invId));
+      if(origInv && origInv.items && origInv.items[r.itemIdx]){
+        const origItem = origInv.items[r.itemIdx];
+        const origAmt = (origItem.amt != null && +origItem.amt !== 0)
+          ? +origItem.amt
+          : (+origItem.qty || 0) * (+origItem.unit || 0);
+        return s + (r.amt - origAmt);  // 차이만 반영 (원본은 이미 chargeAmount에 포함)
+      }
+    }
+    return s;
   }, 0);
 
   // 합계 박스
@@ -28557,30 +28716,31 @@ function printConsolidatedInvoice(consId){
   // 📌 모든 명세서의 품목들을 평탄화 — 제품마다 한 줄
   //    각 행: { name, qty, unit, unitPrice, supplyAmt, sourceInvoice }
   const flatItems = [];
+  // 📌 itemOverrides가 있으면 우선 적용 (합본 안에서 수정된 값)
+  const overrides = (cons.itemOverrides && typeof cons.itemOverrides === 'object') ? cons.itemOverrides : {};
   includedInvs.forEach(inv => {
     const items = Array.isArray(inv.items) ? inv.items : [];
+    const invOverrides = overrides[inv.id] || {};
     if(items.length){
-      items.forEach(it => {
-        // 📌 items 필드명: qty/unit(단가)/amt(금액) — name, code, unit_label(EA 등)
-        const qty = +it.qty || 0;
-        const unitPrice = +it.unit || +it.unitPrice || 0;  // 호환: unit 또는 unitPrice
-        // 행 금액 — 명시값(amt) 있으면 그것, 없으면 qty×unitPrice
-        const amount = (it.amt != null && +it.amt > 0)
-          ? +it.amt
-          : ((it.amount != null && +it.amount > 0) ? +it.amount : qty * unitPrice);
+      items.forEach((it, idx) => {
+        const ov = invOverrides[idx] || {};
+        const qty = ov.qty != null ? +ov.qty : (+it.qty || 0);
+        const unitPrice = ov.unit != null ? +ov.unit : (+it.unit || +it.unitPrice || 0);
+        const amount = ov.amt != null
+          ? +ov.amt
+          : ((it.amt != null && +it.amt !== 0) ? +it.amt : qty * unitPrice);
         flatItems.push({
-          name: it.name || it.itemName || '—',
+          name: ov.name != null ? ov.name : (it.name || it.itemName || '—'),
           qty: qty,
-          unit: it.unit_label || it.unitLabel || 'EA',  // 단위 표시 (EA 등)
+          unit: it.unit_label || it.unitLabel || 'EA',
           unitPrice: unitPrice,
           amount: amount,
-          note: it.note || '',  // 📌 비고
+          note: ov.note != null ? ov.note : (it.note || ''),
           ordNo: inv.ordNo || (inv._fromSample?'샘플':''),
           isExtra: false,
         });
       });
     } else {
-      // items 배열 없으면 itemSummary 한 줄로
       flatItems.push({
         name: inv.itemSummary || (inv.ordNo || '품목 미상'),
         qty: 0,
@@ -28689,23 +28849,20 @@ function printConsolidatedInvoice(consId){
           <tr><td style="padding:6px 14px;border:1px solid #ddd;background:#F8F7F4;font-weight:700">합계금액</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;font-weight:700">₩${(+cons.total||0).toLocaleString()}</td></tr>
           ${(+cons.prepaidDeducted||0) > 0 ? `<tr><td style="padding:6px 14px;border:1px solid #ddd;background:#F5EBFF;color:#7A4DB5;font-weight:600">선금 차감</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;color:#7A4DB5;font-weight:700">−₩${(+cons.prepaidDeducted).toLocaleString()}</td></tr>` : ''}
           ${(function(){
-            // 📌 추가 행 합 계산
-            const extraT = (cons.extraItems||[]).reduce((s,r)=>{
-              const a = (r.amt != null && +r.amt !== 0) ? (+r.amt) : ((+r.qty||0) * (+r.unit||0));
-              return s + a;
-            }, 0);
-            if(extraT === 0) return '';
-            const sign = extraT >= 0 ? '+' : '−';
-            const color = extraT >= 0 ? '#8B6914' : '#C03030';
-            const bg = extraT >= 0 ? '#FFF8E8' : '#FCEAEA';
-            return `<tr><td style="padding:6px 14px;border:1px solid #ddd;background:${bg};color:${color};font-weight:600">추가/할인 (${(cons.extraItems||[]).length}건)</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;color:${color};font-weight:700">${sign}₩${Math.abs(extraT).toLocaleString()}</td></tr>`;
+            // 📌 수정 차이 (override + 추가/할인 행) 계산
+            //    flatItems 전체 합과 원본 합본의 supplyAmt 차이가 "수정분"
+            const flatTotal = flatItems.reduce((s,r)=>s + (+r.amount||0), 0);
+            const diff = flatTotal - (+cons.supplyAmt||0);
+            if(diff === 0) return '';
+            const sign = diff >= 0 ? '+' : '−';
+            const color = diff >= 0 ? '#8B6914' : '#C03030';
+            const bg = diff >= 0 ? '#FFF8E8' : '#FCEAEA';
+            return `<tr><td style="padding:6px 14px;border:1px solid #ddd;background:${bg};color:${color};font-weight:600">수정/추가 분</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;color:${color};font-weight:700">${sign}₩${Math.abs(diff).toLocaleString()}</td></tr>`;
           })()}
           <tr style="background:#7A4DB5;color:#fff"><td style="padding:9px 14px;border:1.5px solid #5C3994;font-size:13pt;font-weight:700">실제 청구액</td><td style="padding:9px 14px;border:1.5px solid #5C3994;text-align:right;font-size:14pt;font-weight:700">₩${(function(){
-            const extraT = (cons.extraItems||[]).reduce((s,r)=>{
-              const a = (r.amt != null && +r.amt !== 0) ? (+r.amt) : ((+r.qty||0) * (+r.unit||0));
-              return s + a;
-            }, 0);
-            return ((+cons.chargeAmount||0) + extraT).toLocaleString();
+            const flatTotal = flatItems.reduce((s,r)=>s + (+r.amount||0), 0);
+            const diff = flatTotal - (+cons.supplyAmt||0);
+            return ((+cons.chargeAmount||0) + diff).toLocaleString();
           })()}</td></tr>
         </table>
       </div>
