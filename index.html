@@ -1337,7 +1337,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div id="mConsDetail_body"></div>
   <div class="ma">
     <button class="btn bgo" onclick="closeM('mConsDetail')">닫기</button>
-    <button class="btn" id="mConsDetail_unwind" onclick="confirmUnwindConsolidation()" style="background:#FFF4E6;border:1px solid var(--org);color:var(--org);font-weight:600" title="합본을 해제하고 묶인 명세서들을 다시 개별로 돌립니다">↩ 합본 해제</button>
+    <button class="btn" id="mConsDetail_unwind" onclick="confirmUnwindConsolidationFromModal()" style="background:#FFF4E6;border:1px solid var(--org);color:var(--org);font-weight:600" title="합본을 해제하고 묶인 명세서들을 다시 개별로 돌립니다">↩ 합본 해제</button>
     <button class="btn bp" id="mConsDetail_print" style="background:#7A4DB5;border-color:#7A4DB5">🖨 합본 청구서 인쇄</button>
   </div>
 </div></div>
@@ -5033,6 +5033,50 @@ function toggleConsExpand(consId, event){
 }
 
 // 선택된 명세서들로 합본 청구서 작성 모달 열기
+// 선택된 합본들을 일괄 해제
+// 청구 탭 체크박스에서 합본을 선택한 후 "선택 합본 해제" 버튼 클릭 시
+function unwindSelectedConsolidations(){
+  const selectedConsIds = [..._invSelectedForCons].filter(id => {
+    const v = invoiceHistory.find(x => String(x.id)===String(id));
+    return v && v._isConsolidated;
+  });
+  if(!selectedConsIds.length){
+    showToast('⚠ 선택된 합본 청구서가 없습니다','var(--org)');
+    return;
+  }
+  // 선택된 합본들 정보 수집
+  const consolidations = selectedConsIds.map(id =>
+    invoiceHistory.find(x => String(x.id)===String(id))
+  ).filter(Boolean);
+  const totalChild = consolidations.reduce((s,c)=>s+(c.includedInvoiceIds||[]).length, 0);
+  const totalPaid = consolidations.reduce((s,c)=>s+(+c.totalPaid||0), 0);
+  // 확인 다이얼로그
+  let msg = `선택한 ${consolidations.length}건의 합본 청구서를 해제하시겠습니까?\n\n`;
+  consolidations.forEach((c, i) => {
+    msg += `${i+1}. ${c.vendor} — ${c.consolidationMonth} (${(c.includedInvoiceIds||[]).length}건, ₩${(+c.chargeAmount||0).toLocaleString()})\n`;
+  });
+  msg += `\n※ 합본만 삭제되고, 묶여 있던 총 ${totalChild}건의 개별 명세서는 보존됩니다.`;
+  if(totalPaid > 0){
+    msg += `\n\n⚠ 총 ₩${totalPaid.toLocaleString()}의 입금 기록이 함께 사라집니다.`;
+  }
+  if(!confirm(msg)) return;
+  // 일괄 해제
+  let okCount = 0, failCount = 0;
+  selectedConsIds.forEach(id => {
+    if(unwindConsolidatedInvoice(id)) okCount++;
+    else failCount++;
+  });
+  // 선택 초기화
+  _invSelectedForCons.clear();
+  // 새로고침
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+  if(failCount > 0){
+    showToast(`✓ 합본 ${okCount}건 해제 / ${failCount}건 실패`,'var(--org)', 4000);
+  } else {
+    showToast(`✓ 합본 ${okCount}건 해제됨 — 묶여 있던 ${totalChild}건 개별 명세서로 복원`,'var(--grn)', 4000);
+  }
+}
+
 function openConsolidationFromSelection(){
   if(_invSelectedForCons.size === 0){
     // 선택 없으면 기존 흐름 (고객사/월 선택 후 자동 합치기)
@@ -5045,10 +5089,16 @@ function openConsolidationFromSelection(){
     showToast('⚠ 선택된 명세서를 찾을 수 없습니다','var(--red)');
     return;
   }
-  // 검증 1: 이미 합본된 명세서 포함 여부
-  const alreadyConsolidated = selectedInvs.filter(v => v._isConsolidated || v._consolidatedInvoiceId);
-  if(alreadyConsolidated.length){
-    showToast('⚠ 이미 합본된 명세서가 '+alreadyConsolidated.length+'건 포함됨 — 선택에서 제외해주세요','var(--org)',3500);
+  // 검증 1: 합본 자체가 포함됐는지 — 합본 만들기 의미 없음
+  const consoInSelection = selectedInvs.filter(v => v._isConsolidated);
+  if(consoInSelection.length){
+    showToast('⚠ 합본 청구서는 다시 합칠 수 없습니다 — 합본만 선택했으면 [선택 합본 해제] 버튼을 사용하세요','var(--org)',4500);
+    return;
+  }
+  // 검증 2: 이미 다른 합본에 묶여있는 명세서
+  const alreadyInConso = selectedInvs.filter(v => v._consolidatedInvoiceId);
+  if(alreadyInConso.length){
+    showToast('⚠ 이미 다른 합본에 묶여있는 명세서가 '+alreadyInConso.length+'건 — 합본 해제 후 다시 선택하세요','var(--org)',3500);
     return;
   }
   // 검증 2: 고객사가 모두 동일해야 함
@@ -5273,7 +5323,7 @@ function renderInvoiceHistory(){
   if(subTab==='draft'){
     h+='<div style="margin-bottom:10px;padding:8px 14px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;font-size:11px;color:var(--t2);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">📋</span><span>이 탭의 명세서들은 <b>발주가 아직 출고 전</b>입니다. <b style="color:#7A4DB5">원자재 선금</b>은 여기서 청구하세요. 발주가 출고완료되면 자동으로 <b style="color:var(--blu)">청구</b> 탭으로 이동합니다.</span></div>';
   } else if(subTab==='billing'){
-    h+='<div style="margin-bottom:10px;padding:8px 14px;background:rgba(26,109,181,.06);border:1px solid rgba(26,109,181,.2);border-radius:6px;font-size:11px;color:var(--blu);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">🧾</span><span>출고완료 명세서들 — <b>월말 합본 청구 대상</b>입니다. 왼쪽 <b>체크박스로 묶을 명세서를 직접 선택</b>한 후 <b>📑 합본 청구서 작성</b> 버튼을 누르세요. (체크 없이 누르면 고객사+월 자동 선택 모드)</span></div>';
+    h+='<div style="margin-bottom:10px;padding:8px 14px;background:rgba(26,109,181,.06);border:1px solid rgba(26,109,181,.2);border-radius:6px;font-size:11px;color:var(--blu);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">🧾</span><span>출고완료 명세서들 — <b>월말 합본 청구 대상</b>입니다. 체크박스로 선택해서 <b>📑 합본 청구서 작성</b> 또는 <b style="color:var(--red)">🗑 선택 합본 해제</b> 가능. (체크 없이 합본 작성 누르면 고객사+월 자동 선택)</span></div>';
   } else if(subTab==='done'){
     h+='<div style="margin-bottom:10px;padding:8px 14px;background:rgba(46,139,44,.06);border:1px solid rgba(46,139,44,.2);border-radius:6px;font-size:11px;color:var(--grn);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">✓</span><span>입금까지 끝난 보관용 명세서들입니다 (<b style="color:#7A4DB5">합본 포함</b> — ▶ 클릭해서 펼침). 회계 안정성을 위해 편집은 권장하지 않습니다.</span></div>';
   }
@@ -5323,13 +5373,31 @@ function renderInvoiceHistory(){
   if(invFilter.month||invFilter.vendor||(st&&st!=='전체')||(invFilter.kind&&invFilter.kind!=='all')){
     h+='<button onclick="resetInvFilter()" style="padding:4px 10px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--bdr);color:var(--t3)">× 초기화</button>';
   }
+  // 📌 선택된 항목 중 합본 vs 일반 분류
+  var _selIds = [..._invSelectedForCons];
+  var _selConsCount = _selIds.filter(function(id){
+    var x = invoiceHistory.find(function(v){return String(v.id)===String(id);});
+    return x && x._isConsolidated;
+  }).length;
+  var _selOrdinaryCount = _selIds.length - _selConsCount;
+
   // 엑셀 다운로드 버튼 (현재 필터된 결과 기준) + Notion 좀비 정리
   h+='<div style="margin-left:auto;display:flex;gap:6px">';
   if(notionCfg.workerUrl && notionCfg.invDb){
     h+='<button onclick="cleanupNotionInvoiceZombies()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);font-weight:600" title="Notion에만 남아있는 좀비 페이지를 모두 archive — 로컬에 없는 페이지만 정리">🧹 Notion 좀비 정리</button>';
   }
+  // 📌 합본이 선택돼있으면 "선택된 합본 해제" 버튼 표시 (빨강)
+  if(_selConsCount > 0){
+    h+='<button onclick="unwindSelectedConsolidations()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--red);background:rgba(192,48,48,.10);color:var(--red);font-weight:700" title="선택한 합본 청구서를 모두 해제 — 묶인 개별 명세서는 보존됩니다">🗑 선택 합본 해제 ('+_selConsCount+'건)</button>';
+  }
   h+='<button onclick="openSalesExcelExport()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--grn);background:var(--grn-bg);color:var(--grn);font-weight:600">📊 매출내역 엑셀 다운로드</button>';
-  h+='<button onclick="openConsolidationFromSelection()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid #7A4DB5;background:rgba(122,77,181,.10);color:#7A4DB5;font-weight:600" title="체크박스로 선택한 명세서가 있으면 그 명세서들을, 없으면 고객사+월 선택해서 자동으로 묶습니다">📑 합본 청구서 작성'+(_invSelectedForCons.size>0?' ('+_invSelectedForCons.size+'건 선택)':'')+'</button>';
+  // 📌 합본 청구서 작성 — 선택된 게 일반 명세서만일 때 강조, 합본이 섞이면 비활성
+  if(_selConsCount > 0 && _selOrdinaryCount === 0){
+    // 합본만 선택됨 → 합본 만들기 버튼 회색 처리 (의미 없음)
+    h+='<button disabled style="padding:5px 12px;border-radius:14px;font-size:11px;font-family:inherit;border:1px solid var(--bdr);background:var(--s2);color:var(--t3);font-weight:500;opacity:.6;cursor:not-allowed" title="합본만 선택된 상태 — 합본 해제 버튼을 사용하세요">📑 합본 청구서 작성</button>';
+  } else {
+    h+='<button onclick="openConsolidationFromSelection()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid #7A4DB5;background:rgba(122,77,181,.10);color:#7A4DB5;font-weight:600" title="체크박스로 선택한 명세서가 있으면 그 명세서들을, 없으면 고객사+월 선택해서 자동으로 묶습니다">📑 합본 청구서 작성'+(_selOrdinaryCount>0?' ('+_selOrdinaryCount+'건 선택)':'')+'</button>';
+  }
   h+='<button onclick="openStandaloneInvoiceModal(null)" style="padding:5px 14px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--gold-line);background:var(--gold);color:#fff;font-weight:700" title="발주서 없이 재고 판매용 거래명세서 작성">+ 거래명세서 작성</button></div>';
   h+='</div>';
 
@@ -5400,14 +5468,19 @@ function renderInvoiceHistory(){
         }
       }
       h+='<tr style="'+rowBg+'border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background=\'var(--s2)\'" onmouseout="this.style.background=\''+(isCons?'rgba(122,77,181,.05)':'')+'\'">';
-      // 📌 billing 탭: 첫 컬럼에 체크박스 (합본되지 않은 명세서만)
+      // 📌 billing 탭: 첫 컬럼에 체크박스
+      //    - 일반 명세서 (합본 안 됨): 합본 만들기용
+      //    - 합본 자체: 합본 해제용 (별도 색)
+      //    - 합본에 묶인 개별 명세서: 체크 불가
       if(canConsolidate){
-        if(!isCons && !v._consolidatedInvoiceId){
-          var isChecked = _invSelectedForCons.has(String(v.id));
-          h+='<td onclick="toggleInvSelect(\''+v.id+'\', event)" style="padding:8px 4px;text-align:center"><input type="checkbox" '+(isChecked?'checked':'')+' onclick="toggleInvSelect(\''+v.id+'\', event)" style="width:16px;height:16px;cursor:pointer;margin:0"></td>';
-        } else {
-          // 합본 자체 또는 이미 묶인 명세서는 체크박스 없음 (빈 셀)
+        if(v._consolidatedInvoiceId){
+          // 합본에 묶인 명세서 — 체크박스 없음
           h+='<td style="padding:8px 4px"></td>';
+        } else {
+          var isChecked = _invSelectedForCons.has(String(v.id));
+          // 합본이면 보라색 accent, 일반은 기본
+          var accentColor = isCons ? '#7A4DB5' : 'var(--blu)';
+          h+='<td onclick="toggleInvSelect(\''+v.id+'\', event)" style="padding:8px 4px;text-align:center"><input type="checkbox" '+(isChecked?'checked':'')+' onclick="toggleInvSelect(\''+v.id+'\', event)" style="width:16px;height:16px;cursor:pointer;margin:0;accent-color:'+accentColor+'" title="'+(isCons?'합본 선택 → 일괄 삭제':'명세서 선택 → 합본 만들기')+'"></td>';
         }
       }
       h+='<td onclick="'+clickFn+'" style="padding:8px 10px;white-space:nowrap;color:var(--t3)"><div>'+v.issuedAt+'</div>'+stageChip+'</td>';
@@ -5816,10 +5889,14 @@ function openInvDetail(id){
   // 품목 테이블
   b+='<div style="border:1px solid var(--bdr);border-radius:6px;overflow:hidden;margin-bottom:12px">';
   b+='<table style="width:100%;border-collapse:collapse;font-size:12px">';
-  b+='<thead><tr style="background:var(--s2)"><th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--bdr);font-weight:600">품목명</th><th style="padding:7px 8px;text-align:right;border-bottom:1px solid var(--bdr);font-weight:600;white-space:nowrap">수량</th><th style="padding:7px 8px;text-align:right;border-bottom:1px solid var(--bdr);font-weight:600;white-space:nowrap">단가</th><th style="padding:7px 8px;text-align:right;border-bottom:1px solid var(--bdr);font-weight:600;white-space:nowrap">금액</th></tr></thead><tbody>';
+  b+='<thead><tr style="background:var(--s2)"><th style="padding:7px 8px;text-align:left;border-bottom:1px solid var(--bdr);font-weight:600;white-space:nowrap;width:85px">출고일</th><th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--bdr);font-weight:600">품목명</th><th style="padding:7px 8px;text-align:right;border-bottom:1px solid var(--bdr);font-weight:600;white-space:nowrap">수량</th><th style="padding:7px 8px;text-align:right;border-bottom:1px solid var(--bdr);font-weight:600;white-space:nowrap">단가</th><th style="padding:7px 8px;text-align:right;border-bottom:1px solid var(--bdr);font-weight:600;white-space:nowrap">금액</th></tr></thead><tbody>';
   var items=v.items||[];
+  var shipDateStr = v.shipDate || v.issuedAt || '—';
   items.forEach(function(r){
+    // 📌 출고일 — 행별 r.shipDate 있으면 그것, 없으면 명세서 단위 shipDate
+    var rowShipDate = r.shipDate || shipDateStr;
     b+='<tr style="border-bottom:1px solid var(--bdr)">';
+    b+='<td style="padding:7px 8px;color:var(--t3);font-size:11px;white-space:nowrap;font-family:monospace">'+rowShipDate+'</td>';
     b+='<td style="padding:7px 10px"><div style="font-weight:600">'+(r.name||'')+'</div>'+(r.code?'<div style="font-size:10px;color:var(--t3);font-family:monospace">'+r.code+'</div>':'')+'</td>';
     b+='<td style="padding:7px 8px;text-align:right">'+(r.qty?r.qty.toLocaleString():'')+'</td>';
     b+='<td style="padding:7px 8px;text-align:right;color:var(--t3)">'+(r.unit?r.unit.toLocaleString():'')+'</td>';
@@ -28026,18 +28103,12 @@ function openConsDetail(consId){
   openM('mConsDetail');
 }
 
-// 합본 해제 (확인 후)
-function confirmUnwindConsolidation(){
+// 합본 해제 (확인 후) — 합본 상세 모달에서 호출 (id 없이)
+// 행에서 호출하려면 confirmUnwindConsolidation(consolidatedId) 사용 (위 함수)
+function confirmUnwindConsolidationFromModal(){
   if(!_currentConsId) return;
-  const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(_currentConsId));
-  if(!cons) return;
-  const count = (cons.includedInvoiceIds||[]).length;
-  if(!confirm(`이 합본 청구서를 해제하시겠습니까?\n\n묶인 ${count}건의 명세서가 다시 개별 상태로 돌아가며, 합본 청구서는 삭제됩니다.\n\n(이 작업은 취소할 수 없습니다)`)) return;
-  unwindConsolidatedInvoice(_currentConsId);
-  _currentConsId = null;
+  confirmUnwindConsolidation(_currentConsId);
   closeM('mConsDetail');
-  showToast('✓ 합본 청구서 해제됨','var(--grn)', 2500);
-  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
 }
 
 // 합본에 입금 추가 (간단한 prompt 입력)
