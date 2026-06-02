@@ -7490,6 +7490,16 @@ function _applyRemoteItem(type, item, ts, fromClient){
   // 매칭 키: _notionId가 있으면 그것으로, 없으면 id로
   const remoteKey = item._notionId || (item.id !== undefined ? String(item.id) : null);
   if(!remoteKey) return;
+  // 🪦 묘비 검사 — 내가 삭제한 항목을 다른 기기가 realtime upsert로 다시 밀어넣는 것 차단.
+  //    (이게 없으면 동료 PC가 가진 좀비 합본이 주기적으로 부활했다가 사라지는 깜빡임 발생)
+  //    묘비된 _notionId면 무시하고, delete 신호를 다시 쏴서 상대 기기에서도 지워지게 유도.
+  if(typeof _isNotionIdDeleted === 'function' && item._notionId && _isNotionIdDeleted(item._notionId)){
+    console.log(RT_LOG_PREFIX, '🪦 묘비된 항목 realtime upsert 무시:', type, item._notionId);
+    if(typeof realtimeDelete === 'function'){
+      try{ realtimeDelete(type, item._notionId); }catch(_){}
+    }
+    return;
+  }
   const idx = arr.findIndex(x => {
     const k = x._notionId || (x.id !== undefined ? String(x.id) : null);
     return k === remoteKey;
@@ -27953,15 +27963,26 @@ function unwindConsolidatedInvoice(consolidatedId){
   }
   // 노션에서도 삭제 — _notionId 있을 때만
   if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && cons._notionId){
+    // 🪦 묘비 먼저 등록 — 노션 archive 성공 여부와 무관하게 localStorage에 "삭제 의도" 기록.
+    //    새로고침/다른 기기 pull 시 이 _notionId 페이지를 다시 가져오지 않도록 차단 (좀비 합본 부활 방지).
+    //    (이전엔 in-memory _recentlyDeletedConsolidationIds만 기록해서 새로고침하면 다시 살아나는 버그가 있었음)
+    if(typeof _markNotionIdDeleted === 'function'){
+      _markNotionIdDeleted(cons._notionId, 'invoice');
+      console.log('[합본 해제] 🪦 묘비 등록:', cons._notionId);
+    }
     if(typeof nDelete === 'function'){
       console.log('[합본 해제] 노션 삭제 시도:', cons._notionId);
       nDelete(cons._notionId)
-        .then(()=>console.log('[합본 해제] ✓ 노션 archive 완료:', cons._notionId))
+        .then(()=>{
+          console.log('[합본 해제] ✓ 노션 archive 완료:', cons._notionId);
+          if(typeof _markNotionArchiveConfirmed === 'function') _markNotionArchiveConfirmed(cons._notionId);
+        })
         .catch(e=>{
-          console.error('[합본 해제] ❌ 노션 archive 실패:', e.message, '— 노션에 그대로 남아있을 수 있습니다');
+          console.error('[합본 해제] ❌ 노션 archive 실패:', e.message, '— 묘비로 차단되어 pull 시 부활하지 않음. 재시도 큐에 등록');
+          if(typeof _enqueueNotionArchiveRetry === 'function') _enqueueNotionArchiveRetry(cons._notionId, '청구이력');
         });
     } else {
-      console.warn('[합본 해제] nDelete 함수 없음 — 노션 삭제 안 됨');
+      console.warn('[합본 해제] nDelete 함수 없음 — 노션 삭제 안 됨 (묘비는 등록됨)');
     }
   } else if(!cons._notionId){
     console.warn('[합본 해제] _notionId 없음 — 노션 동기화된 적 없는 합본이거나 이미 노션에서 삭제됨. 로컬만 정리');
