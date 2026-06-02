@@ -5644,6 +5644,11 @@ function renderInvoiceHistory(){
         h+='<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11.5px;color:'+(taxIssued?'var(--blu)':'var(--t3)')+';font-weight:'+(taxIssued?'700':'500')+'" title="'+(isCons?'합본 세금계산서 발행 — 묶인 명세서 전체에 적용':'세금계산서 발행 여부')+'">'
           +'<input type="checkbox" '+(taxIssued?'checked':'')+' onchange="toggleInvTaxIssued('+v.id+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blu)">'
           +(taxIssued?'발행':'대기')+'</label>';
+        // 📌 미청구로 되돌리기 — 출고가 아직 안 된 건을 청구→미청구(draft)로 복귀.
+        //    합본/합본묶임 건은 제외 (출고완료 토글 자체가 막혀있음).
+        if(!isCons && !v._consolidatedInvoiceId){
+          h+='<button onclick="if(confirm(\'이 명세서를 미청구(출고 전)로 되돌립니다.\\n출고완료 표시가 해제되고, 연결된 발주도 출고완료였다면 진행중으로 돌아갑니다.\\n\\n계속할까요?\')){markInvoiceShipped('+v.id+',false);renderInvoiceHistory();}" title="아직 출고 전이면 미청구로 되돌립니다" style="margin-left:8px;padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">↩ 미청구로</button>';
+        }
         h+='</td>';
       } else {
         // 완료/전체/합본 탭 — 상태 표시 (읽기 전용 라벨)
