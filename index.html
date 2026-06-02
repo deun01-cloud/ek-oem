@@ -1020,6 +1020,14 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <!-- 📌 견적서 기반 발주의 선금 % (없으면 빈값) -->
   <input type="hidden" id="o_prepayPct">
 
+  <!-- 💰 받은 선금 (금액) — 견적에서 이관되거나 직접 입력. 청구 시 자동 차감 -->
+  <div class="fg" style="margin-top:8px">
+    <label style="display:flex;align-items:center;gap:6px"><span style="color:#7A4DB5">💰 받은 선금</span><span style="font-size:10px;color:var(--t3);font-weight:400">— 이 발주에 대해 실제로 받은 선금 총액. 청구 시 자동 차감됩니다.</span></label>
+    <input class="fi" id="o_prepaidAmount" inputmode="numeric" placeholder="0 (없으면 비워두세요)"
+      oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',');if(typeof _updateOrdPrepaidHint==='function')_updateOrdPrepaidHint();">
+    <div id="o_prepaidHint" style="margin-top:3px;font-size:10.5px;color:#7A4DB5;min-height:13px"></div>
+  </div>
+
   <!-- 💰 결제 추적 (견적 기반 발주만 표시됨) -->
   <div id="o_prepayBlock"></div>
 
@@ -5606,11 +5614,18 @@ function renderInvoiceHistory(){
           : '';
         h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:#7A4DB5">'+charge.toLocaleString()+'</div>'+deductedNote+'<div style="font-size:9px;color:var(--t3);margin-top:1px">합계 ₩'+(+v.total||0).toLocaleString()+'</div></td>';
       } else {
-        var prepaid = getInvoicePrepaid(v);
-        var prepaidChip = prepaid > 0
-          ? '<div style="margin-top:2px;font-size:9.5px;color:#7A4DB5;font-weight:600" title="원자재 선금 — 월말 합본 청구서 작성 시 청구액에서 자동 차감됩니다">💰 선금 ₩'+prepaid.toLocaleString()+'</div>'
-          : '';
-        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:var(--gold-lt)">'+(v.total?v.total.toLocaleString():'-')+'</div>'+prepaidChip+'</td>';
+        // 📌 발주 선금이 차감된 명세서면 청구액(차감 후) 강조
+        var _od = +v.prepaidDeducted||0;
+        if(_od > 0){
+          var _oc = (v.chargeAmount!=null) ? +v.chargeAmount : ((+v.total||0) - _od);
+          h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:#7A4DB5">'+_oc.toLocaleString()+'</div><div style="margin-top:2px;font-size:9.5px;color:#7A4DB5;font-weight:600" title="발주 선금 차감됨">선금 −₩'+_od.toLocaleString()+'</div><div style="font-size:9px;color:var(--t3);margin-top:1px">합계 ₩'+(+v.total||0).toLocaleString()+'</div></td>';
+        } else {
+          var prepaid = getInvoicePrepaid(v);
+          var prepaidChip = prepaid > 0
+            ? '<div style="margin-top:2px;font-size:9.5px;color:#7A4DB5;font-weight:600" title="원자재 선금 — 월말 합본 청구서 작성 시 청구액에서 자동 차감됩니다">💰 선금 ₩'+prepaid.toLocaleString()+'</div>'
+            : '';
+          h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:var(--gold-lt)">'+(v.total?v.total.toLocaleString():'-')+'</div>'+prepaidChip+'</td>';
+        }
       }
       // 탭별 액션 셀
       if(subTab === 'draft' || subTab === 'unbilled'){
@@ -8285,6 +8300,9 @@ function mapNotionOrder(row){
     completedAt: np.date(p['출고완료일']) || '',
     status:  normalizeOrderStatus(np.select(p['상태']) || '의뢰'),
     factoryNotice: np.text(p['공장주의사항']) || '',
+    // 📌 선금 정보 복원
+    prepaidAmount: np.number(p['받은선금']) || 0,
+    prepayPct: (np.number(p['선금율']) || 0) || null,
     rows,
     files,
     shipHistory,
@@ -8945,7 +8963,7 @@ async function pullFromNotion(opts){
 
     // 각 테이블 매핑
     samples       = mergeRows(smpRows,  samples,        mapNotionSample,    ['imgs','sourceDoc','cadFiles','refs','aiParsed','dueHistory'], '샘플',     notionCfg.smpDb);
-    orders        = mergeRows(ordRows,  orders,         mapNotionOrder,     ['files','rows','aiParsed','memoList','shipHistory'], '발주',     notionCfg.ordDb);
+    orders        = mergeRows(ordRows,  orders,         mapNotionOrder,     ['files','rows','aiParsed','memoList','shipHistory','prepaidAmount','prepayPct'], '발주',     notionCfg.ordDb);
     procItems     = mergeRows(procRows, procItems,      mapNotionProc,      ['orderId'], '공정',     notionCfg.procDb);
     proposals     = mergeRows(propRows, proposals,      mapNotionProposal,  ['images','productId'], '영업제안', notionCfg.propDb);
     clients       = mergeRows(cliRows,  clients,        mapNotionClient,    ['files'], '고객사',   notionCfg.clientDb);
@@ -12087,6 +12105,9 @@ async function syncOrderToNotion(o, update){
   } else {
     p["출고일변경이력"] = {"rich_text":[{"text":{"content": ""}}]};
   }
+  // 📌 선금 정보 — 받은 선금 금액 + (옵션)선금%. 새로고침/다른 기기에서 유지되도록 저장.
+  p["받은선금"] = {"number": +o.prepaidAmount || 0};
+  p["선금율"]   = {"number": (o.prepayPct != null ? +o.prepayPct : 0) || 0};
   // ⚠ 중복 방지: _notionId가 이미 있으면 반드시 update (update 플래그 무시)
   if(o._notionId){
     await nUpdate(o._notionId,p);
@@ -22084,6 +22105,9 @@ function openOrdModal(idOrNull){
   sv('o_status', o ? normalizeOrderStatus(o.status) : '의뢰');
   // 📌 견적서 기반 발주의 선금 % (없으면 빈 문자열)
   sv('o_prepayPct', (o && o.prepayPct != null && o.prepayPct > 0) ? String(o.prepayPct) : '');
+  // 📌 받은 선금 금액 채우기 (견적 이관/직접 입력)
+  { const _pa=document.getElementById('o_prepaidAmount'); if(_pa) _pa.value=(o&&o.prepaidAmount)?Number(o.prepaidAmount).toLocaleString():''; }
+  if(typeof _updateOrdPrepaidHint==='function') setTimeout(_updateOrdPrepaidHint,0);
   // 출고완료일 — completedAt이 ISO 형식이면 YYYY-MM-DD로 자르기
   let completedDateOnly = '';
   if(o && o.completedAt){
@@ -23421,6 +23445,13 @@ async function saveOrd(forceOverwrite){
   if(prepayPctVal !== '' && prepayPctVal != null){
     const n = +prepayPctVal;
     if(isFinite(n) && n > 0 && n <= 100) obj.prepayPct = n;
+  }
+  // 📌 받은 선금 금액 (견적 이관/직접 입력). 청구 시 자동 차감의 기준이 됨.
+  //    명시적으로 0을 넣어, 수정 시 {...prev,...obj} 병합에서 옛 값이 남지 않도록 한다.
+  {
+    const _paRaw = (gv('o_prepaidAmount')||'').replace(/[^0-9]/g,'');
+    const _paN = +_paRaw;
+    obj.prepaidAmount = (isFinite(_paN) && _paN > 0) ? _paN : 0;
   }
   // 진행 상태 + 출고완료일 (5단계: 의뢰/제작중/수정중/확정/취소보류)
   const newStatus = normalizeOrderStatus(gv('o_status') || '의뢰');
@@ -25866,6 +25897,18 @@ function openQuoteModal(idOrNull){
         </div>
         <input class="fi" id="qt_payment" value="${q?q.payment||'':''}" placeholder="또는 직접 입력: 발주 시 80%, 출고 시 20%">
         <div id="qt_payPreview" style="margin-top:4px;font-size:11px;color:var(--gold-lt);min-height:14px"></div>
+        <!-- 📌 실제 받은 선금 (금액) — 이미 받았을 때만 입력. 발주 이관 시 따라가고, 청구 시 자동 차감됨 -->
+        <div style="margin-top:8px;padding:8px 10px;background:rgba(122,77,181,.06);border:1px solid rgba(122,77,181,.22);border-radius:6px">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">
+            <span style="font-size:11.5px;color:#7A4DB5;font-weight:700">💰 받은 선금 (금액)</span>
+            <span style="font-size:10px;color:var(--t3)">— 실제로 받았을 때만 입력. 발주·명세서로 따라가 청구 시 차감됩니다.</span>
+          </div>
+          <input class="fi" id="qt_prepaidAmount" inputmode="numeric"
+            value="${q&&q.prepaidAmount?Number(q.prepaidAmount).toLocaleString():''}"
+            placeholder="0 (안 받았으면 비워두세요)"
+            oninput="this.value=this.value.replace(/[^0-9]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',')"
+            style="width:100%;box-sizing:border-box">
+        </div>
       </div>
       <div class="fg"><label>납기 조건</label><input class="fi" id="qt_delivery" value="${q?q.delivery||'':''}" placeholder="예: 발주 후 영업일 기준 14일"></div>
     </div>
@@ -26739,6 +26782,14 @@ function transferQuoteToOrder(quoteId){
       }
       // 발주서 행 재렌더링 (ordRowsBuf 반영)
       if(typeof renderOrdRows === 'function') renderOrdRows();
+      // 📌 견적의 받은 선금 금액을 발주 모달에 채움
+      {
+        const paEl = document.getElementById('o_prepaidAmount');
+        if(paEl && q.prepaidAmount && +q.prepaidAmount > 0){
+          paEl.value = Number(q.prepaidAmount).toLocaleString();
+          if(typeof _updateOrdPrepaidHint === 'function') _updateOrdPrepaidHint();
+        }
+      }
     }, 100);
   }
   showToast(`✓ 견적서 ${q.no || ''}의 ${q.rows.length}개 품목을 발주서로 이관 (단가 포함) — 발주일·출고일 등 추가 입력 후 저장하세요`,'var(--blu)', 5000);
@@ -26927,6 +26978,12 @@ async function saveQuote(forceOverwrite){
       if(v === '' || v == null) return null;
       const n = +v;
       return (isFinite(n) && n >= 0 && n <= 100) ? n : null;
+    })(),
+    // 📌 실제 받은 선금 금액 (이미 받았을 때만 입력됨). 발주 이관 시 o.prepaidAmount로 복사됨.
+    prepaidAmount: (function(){
+      const raw = (gv('qt_prepaidAmount')||'').replace(/[^0-9]/g,'');
+      const n = +raw;
+      return (isFinite(n) && n > 0) ? n : 0;
     })(),
     delivery: gv('qt_delivery'),
     cliMemo: gv('qt_cliMemo'),
@@ -27435,10 +27492,18 @@ function refreshInvStagesForOrder(orderId){
   invoiceHistory.forEach(v => {
     if(v._isConsolidated) return;
     if(String(v.ordId)!==String(orderId)) return;
+    const prevStage = v._invStage;
     const newStage = inferInvStage(v);
     if(v._invStage !== newStage){
       v._invStage = newStage;
       n++;
+      // 📌 출고되어 청구 단계(billing)로 진입하는 순간 발주 선금을 차감 (방식 C: 앞에서부터 소진)
+      //    draft→billing 전환 시에만. 이미 차감된 명세서는 applyOrderPrepaidToInvoice가
+      //    자기 자신을 제외하고 잔액을 재계산하므로 중복 차감되지 않음.
+      if(prevStage !== 'billing' && newStage === 'billing' && typeof applyOrderPrepaidToInvoice==='function'){
+        const ded = applyOrderPrepaidToInvoice(v);
+        if(ded > 0) console.log('[선금] 명세서', v.ordNo||v.id, '청구 진입 — 선금 차감 ₩'+ded.toLocaleString(), '· 청구액 ₩'+(v.chargeAmount||0).toLocaleString());
+      }
       if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
         syncInvoiceToNotion(v, true).catch(e=>console.warn('명세서 단계 동기화 실패:',e));
       }
@@ -29266,6 +29331,36 @@ function getInvoicesForOrder(o){
   });
 }
 
+// 📌 발주의 "남은 선금 잔액" — 받은 선금 총액에서, 이미 명세서들이 차감한 선금을 뺀 값.
+//    부분출고로 명세서가 여러 장이어도, 선금은 발주에 1번 귀속 → 여기서 잔액만 관리.
+//    (방식 C: 청구할 때마다 이 잔액에서 명세서 금액 한도로 차감 → 앞에서부터 소진)
+//    excludeInvId: 재계산 시 특정 명세서를 제외하고 잔액 계산 (그 명세서를 다시 차감하기 전 상태)
+function getOrderRemainingPrepaid(o, excludeInvId){
+  if(!o) return 0;
+  const total = +o.prepaidAmount || 0;
+  if(total <= 0) return 0;
+  const used = getInvoicesForOrder(o).reduce((s,v)=>{
+    if(excludeInvId != null && String(v.id)===String(excludeInvId)) return s;
+    return s + (+v.prepaidDeducted || 0);
+  }, 0);
+  return Math.max(0, total - used);
+}
+
+// 📌 한 명세서를 청구할 때 발주 선금을 차감 적용 (방식 C).
+//    inv에 prepaidDeducted/chargeAmount를 설정. 발주 잔액 한도 + 명세서 합계 한도.
+function applyOrderPrepaidToInvoice(inv){
+  if(!inv) return 0;
+  // 발주 기반만 (독립/샘플/AS/합본 제외)
+  if(inv._isConsolidated || inv._isStandalone || inv._fromSample || inv._fromAS) return 0;
+  const o = orders.find(x=> (inv.ordId && String(x.id)===String(inv.ordId)) || (inv.ordNo && x.no===inv.ordNo));
+  if(!o || !(+o.prepaidAmount>0)){ inv.prepaidDeducted = 0; return 0; }
+  const remain = getOrderRemainingPrepaid(o, inv.id); // 이 명세서 제외한 잔액
+  const deduct = Math.min(remain, +inv.total||0);
+  inv.prepaidDeducted = deduct;
+  inv.chargeAmount = (+inv.total||0) - deduct;
+  return deduct;
+}
+
 // ─────────────────────────────────────────────────
 // 📌 선금 추적 (견적 → 발주 → 명세서)
 // ─────────────────────────────────────────────────
@@ -29366,6 +29461,30 @@ function getOrderPaymentTracking(o){
   else                        result.status = 'all-paid';
 
   return result;
+}
+
+// 📌 발주 모달: 받은 선금 입력 시 잔액 힌트 표시
+//    (현재 발주 id가 있으면, 이미 청구되어 차감된 선금을 빼고 남은 선금을 보여줌)
+function _updateOrdPrepaidHint(){
+  const hintEl = document.getElementById('o_prepaidHint');
+  if(!hintEl) return;
+  const raw = ((typeof gv==='function'?gv('o_prepaidAmount'):'')||'').replace(/[^0-9]/g,'');
+  const amt = +raw || 0;
+  if(amt <= 0){ hintEl.textContent=''; return; }
+  const id = (typeof gv==='function') ? gv('o_id') : '';
+  if(id){
+    const o = orders.find(x=>String(x.id)===String(id));
+    if(o){
+      const used = (typeof getInvoicesForOrder==='function')
+        ? getInvoicesForOrder(o).reduce((s,v)=>s+(+v.prepaidDeducted||0),0) : 0;
+      const remain = Math.max(0, amt - used);
+      hintEl.innerHTML = used>0
+        ? `받은 선금 ₩${amt.toLocaleString()} · 이미 차감 ₩${used.toLocaleString()} · <b>남은 선금 ₩${remain.toLocaleString()}</b> (청구 시 차감)`
+        : `받은 선금 ₩${amt.toLocaleString()} — 청구 시 명세서 금액에서 차감됩니다`;
+      return;
+    }
+  }
+  hintEl.innerHTML = `받은 선금 ₩${amt.toLocaleString()} — 청구 시 명세서 금액에서 차감됩니다`;
 }
 
 // 발주 모달용: 선금 추적을 HTML로 렌더
@@ -30283,6 +30402,12 @@ async function saveStandaloneInvoice(){
 
     // 4-A: 명세서 단계 자동 분류 (draft/billing/done)
     invRec._invStage = inferInvStage(invRec);
+    // 📌 발주 기반 + 청구 단계 진입 시 발주 선금 차감 (방식 C)
+    if((invRec._invStage === 'billing' || invRec._invStage === 'done')
+       && typeof applyOrderPrepaidToInvoice === 'function'){
+      const _ded = applyOrderPrepaidToInvoice(invRec);
+      if(_ded > 0) console.log('[선금] 명세서 발행 — 선금 차감 ₩'+_ded.toLocaleString()+' · 청구액 ₩'+(invRec.chargeAmount||0).toLocaleString());
+    }
 
     // 📦 발주 기반 + 입금 100% 도달 → 발주서 자동 출고완료 트리거
     let autoCompleteResult = { autoCompleted: false, order: null };
