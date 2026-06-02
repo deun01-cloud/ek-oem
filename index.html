@@ -5009,13 +5009,14 @@ var invFilter = (function(){
     const saved = localStorage.getItem('ek3_invSubTab');
     if(saved && ['draft','billing','done','all'].includes(saved)) subTab = saved;
   } catch(e){}
-  return {month:'', vendor:'', status:'전체', subTab, sort:'default', kind:'all'};
+  return {month:'', vendor:'', status:'전체', subTab, sort:'default', kind:'all', doneMonth:''};
 })();
 
 function setInvStatus(s){ invFilter.status=s; renderInvoiceHistory(); }
 function setInvVendor(v){ invFilter.vendor=v; renderInvoiceHistory(); }
 function setInvMonth(m){ invFilter.month=m; renderInvoiceHistory(); }
 function setInvKind(k){ invFilter.kind=k||'all'; renderInvoiceHistory(); }
+function setInvDoneMonth(m){ invFilter.doneMonth=m||''; renderInvoiceHistory(); }
 function setInvSubTab(t){
   // 📌 합본 탭 제거됨 — 'consolidated'로 시도하면 '모든 명세서'로 redirect
   if(t === 'consolidated') t = 'all';
@@ -5219,6 +5220,56 @@ const _INV_STATUS_PRIORITY = {
 };
 function _invStatusOrder(s){ return _INV_STATUS_PRIORITY[s] || 99; }
 
+// ════════════════════════════════
+// 📅 결산월 (settlementMonth) 헬퍼
+//   - 명세서가 어느 월 결산에 속하는지. 기본값은 발행일(issuedAt)의 월.
+//   - 사용자가 완료 탭에서 다른 월로 옮기면 settlementMonth가 설정됨.
+//   - 발행일과 다를 수 있음 (예: 6월 발행이지만 5월 결산 대상).
+// ════════════════════════════════
+function getSettleMonth(v){
+  if(!v) return '';
+  if(v.settlementMonth) return v.settlementMonth;
+  return (v.issuedAt||'').slice(0,7);
+}
+// 명세서를 다른 결산월로 이동 (로컬 + 노션 저장)
+function moveInvoiceToSettleMonth(invId, newMonth){
+  const v = invoiceHistory.find(x=>String(x.id)===String(invId));
+  if(!v) return;
+  const cur = getSettleMonth(v);
+  if(cur === newMonth) return;
+  // 발행일 월과 같으면 settlementMonth 제거(기본값으로), 다르면 명시 설정
+  if((v.issuedAt||'').slice(0,7) === newMonth){
+    delete v.settlementMonth;
+  } else {
+    v.settlementMonth = newMonth;
+  }
+  v._syncedAt = new Date().toISOString();
+  if(typeof save === 'function') save();
+  // 노션에도 결산월 반영
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+    syncInvoiceToNotion(v, true)
+      .then(()=>{ if(typeof showToast==='function') showToast('✓ 결산월 변경 → '+newMonth,'var(--grn)',1800); })
+      .catch(e=>{ console.warn('결산월 노션 저장 실패:',e); if(typeof showToast==='function') showToast('⚠ 노션 저장 실패 (로컬은 반영됨)','var(--org)',2500); });
+  } else {
+    if(typeof showToast==='function') showToast('✓ 결산월 변경 → '+newMonth,'var(--grn)',1800);
+  }
+  renderInvoiceHistory();
+}
+// PC 드래그앤드롭 핸들러
+var _invDragId = null;
+function invDragStart(ev, invId){
+  _invDragId = invId;
+  try{ ev.dataTransfer.effectAllowed='move'; ev.dataTransfer.setData('text/plain', String(invId)); }catch(e){}
+}
+function invDragOverMonth(ev){ ev.preventDefault(); try{ ev.dataTransfer.dropEffect='move'; }catch(e){} }
+function invDropOnMonth(ev, month){
+  ev.preventDefault();
+  let id = _invDragId;
+  try{ if(!id) id = ev.dataTransfer.getData('text/plain'); }catch(e){}
+  _invDragId = null;
+  if(id) moveInvoiceToSettleMonth(id, month);
+}
+
 function renderInvoiceHistory(){
   slLoad();
   // 📌 0-A단계: 삭제된 합본이 Realtime/Notion pull로 부활했으면 자동 재제거
@@ -5389,6 +5440,8 @@ function renderInvoiceHistory(){
       // 묶인 개별 명세서는 합본 행 아래로 → 톱레벨에서 숨김
       if(v._consolidatedInvoiceId) return false;
       if(v._invStage !== 'done') return false;
+      // 📅 월별 하위 탭 — 선택된 결산월에 속한 것만
+      if(invFilter.doneMonth && getSettleMonth(v) !== invFilter.doneMonth) return false;
     } else if(subTab==='all'){
       // 모든 명세서 탭: 합본도 포함, 묶인 개별 명세서만 톱레벨에서 숨김
       if(v._consolidatedInvoiceId) return false;
@@ -5489,7 +5542,24 @@ function renderInvoiceHistory(){
   } else if(subTab==='billing'){
     h+='<div style="margin-bottom:10px;padding:8px 14px;background:rgba(26,109,181,.06);border:1px solid rgba(26,109,181,.2);border-radius:6px;font-size:11px;color:var(--blu);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">🧾</span><span>출고완료 명세서들 — <b>월말 합본 청구 대상</b>입니다. 체크박스로 선택해서 <b>📑 합본 청구서 작성</b> 또는 <b style="color:var(--red)">🗑 선택 합본 해제</b> 가능. (체크 없이 합본 작성 누르면 고객사+월 자동 선택)</span></div>';
   } else if(subTab==='done'){
-    h+='<div style="margin-bottom:10px;padding:8px 14px;background:rgba(46,139,44,.06);border:1px solid rgba(46,139,44,.2);border-radius:6px;font-size:11px;color:var(--grn);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">✓</span><span>입금까지 끝난 보관용 명세서들입니다 (<b style="color:#7A4DB5">합본 포함</b> — ▶ 클릭해서 펼침). 회계 안정성을 위해 편집은 권장하지 않습니다.</span></div>';
+    h+='<div style="margin-bottom:10px;padding:8px 14px;background:rgba(46,139,44,.06);border:1px solid rgba(46,139,44,.2);border-radius:6px;font-size:11px;color:var(--grn);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">✓</span><span>입금까지 끝난 보관용 명세서들입니다 (<b style="color:#7A4DB5">합본 포함</b> — ▶ 클릭해서 펼침). <b>월별 탭</b>은 <b>결산월</b> 기준입니다. 다른 월 결산에 넣으려면 PC는 행을 끌어 월 탭에 놓거나, 행의 <b>결산월 ▼</b> 드롭다운으로 옮기세요.</span></div>';
+    // 📅 완료 탭 전용 — 결산월 하위 탭
+    var doneInvs = invoiceHistory.filter(function(v){
+      return !v._consolidatedInvoiceId && v._invStage === 'done';
+    });
+    var monthCounts = {};
+    doneInvs.forEach(function(v){ var m=getSettleMonth(v)||'(미지정)'; monthCounts[m]=(monthCounts[m]||0)+1; });
+    var doneMonths = Object.keys(monthCounts).sort().reverse();
+    var curDoneMonth = invFilter.doneMonth || '';
+    h+='<div style="display:flex;gap:6px;padding:6px;background:var(--s2);border-radius:8px;border:1px solid var(--bdr);margin-bottom:10px;width:max-content;flex-wrap:wrap;max-width:100%">';
+    // 전체 월
+    h+='<button onclick="setInvDoneMonth(\'\')" ondragover="invDragOverMonth(event)" style="padding:5px 12px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(curDoneMonth===''?'700':'500')+';background:'+(curDoneMonth===''?'var(--s1)':'transparent')+';color:'+(curDoneMonth===''?'var(--t1)':'var(--t3)')+';'+(curDoneMonth===''?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">전체 <span style="font-size:10px;opacity:.7">'+doneInvs.length+'</span></button>';
+    doneMonths.forEach(function(m){
+      var on = curDoneMonth === m;
+      var dropAttrs = (m !== '(미지정)') ? ' ondragover="invDragOverMonth(event)" ondrop="invDropOnMonth(event,\''+m+'\')"' : '';
+      h+='<button onclick="setInvDoneMonth(\''+m+'\')"'+dropAttrs+' title="'+(m!=='(미지정)'?'명세서를 여기로 끌어다 놓으면 이 달 결산으로 이동합니다':'')+'" style="padding:5px 12px;font-size:12px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:'+(on?'700':'500')+';background:'+(on?'var(--grn-bg)':'transparent')+';color:'+(on?'var(--grn)':'var(--t3)')+';'+(on?'box-shadow:0 1px 3px rgba(0,0,0,.08)':'')+'">📅 '+m+' <span style="font-size:10px;opacity:.7">'+monthCounts[m]+'</span></button>';
+    });
+    h+='</div>';
   }
   // KPI — 선금이 있으면 5칸, 없으면 4칸
   var kpiCols = tPrepaid > 0 ? 5 : 4;
@@ -5631,7 +5701,8 @@ function renderInvoiceHistory(){
           stageChip = '<span style="display:inline-block;margin-top:3px;padding:1px 6px;font-size:9.5px;font-weight:600;background:'+stageBg+';color:'+stageColor+';border:1px solid '+stageBd+';border-radius:8px">'+stageLabel+'</span>';
         }
       }
-      h+='<tr style="'+rowBg+'border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background=\'var(--s2)\'" onmouseout="this.style.background=\''+(isCons?'rgba(122,77,181,.05)':'')+'\'">';
+      var _dragAttrs = (subTab==='done' && !isCons) ? ' draggable="true" ondragstart="invDragStart(event,'+v.id+')" title="드래그해서 다른 결산월 탭에 놓으면 이동합니다"' : '';
+      h+='<tr'+_dragAttrs+' style="'+rowBg+'border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background=\'var(--s2)\'" onmouseout="this.style.background=\''+(isCons?'rgba(122,77,181,.05)':'')+'\'">';
       // 📌 billing 탭: 첫 컬럼에 체크박스
       //    - 일반 명세서 (합본 안 됨): 합본 만들기용
       //    - 합본 자체: 합본 해제용 (별도 색)
@@ -5749,6 +5820,27 @@ function renderInvoiceHistory(){
           else if(taxIssued2){ lbl='계산서 발행'; lblColor='var(--blu)'; }
           else { lbl='청구 대기'; lblColor='var(--t3)'; }
           h+='<span style="font-size:11px;font-weight:700;color:'+lblColor+';padding:3px 9px;border-radius:11px;background:var(--s1);border:1px solid var(--bdr)">'+lbl+'</span>';
+          // 📅 완료 탭 — 결산월 이동 드롭다운 (모바일 친화 / PC는 드래그도 가능)
+          if(subTab==='done'){
+            var _curM = getSettleMonth(v);
+            // 선택지: done 명세서들의 결산월 + 발행월 + 현재 결산월 + 인접 2개월
+            var _mset = {};
+            invoiceHistory.forEach(function(x){ if(!x._consolidatedInvoiceId && x._invStage==='done'){ var mm=getSettleMonth(x); if(mm) _mset[mm]=1; } });
+            if((v.issuedAt||'').slice(0,7)) _mset[(v.issuedAt||'').slice(0,7)]=1;
+            if(_curM) _mset[_curM]=1;
+            // 현재 결산월 기준 앞뒤 1개월도 후보로
+            if(/^\d{4}-\d{2}$/.test(_curM)){
+              var _y=+_curM.slice(0,4), _mo=+_curM.slice(5,7);
+              var _prev=new Date(_y,_mo-2,1), _next=new Date(_y,_mo,1);
+              _mset[_prev.getFullYear()+'-'+String(_prev.getMonth()+1).padStart(2,'0')]=1;
+              _mset[_next.getFullYear()+'-'+String(_next.getMonth()+1).padStart(2,'0')]=1;
+            }
+            var _opts = Object.keys(_mset).sort().reverse();
+            var _isMoved = (v.issuedAt||'').slice(0,7) !== _curM;
+            h+='<div style="margin-top:4px"><select onchange="moveInvoiceToSettleMonth('+v.id+',this.value)" title="결산월 이동 — 발행일과 다른 달 결산에 넣을 때" style="font-size:10px;padding:1px 5px;border-radius:10px;border:1px solid '+(_isMoved?'var(--org)':'var(--bdr)')+';background:'+(_isMoved?'var(--org-bg,#FFF4E6)':'var(--s1)')+';color:'+(_isMoved?'var(--org)':'var(--t3)')+';font-family:inherit;cursor:pointer">';
+            _opts.forEach(function(m){ h+='<option value="'+m+'"'+(m===_curM?' selected':'')+'>📅 '+m+(((v.issuedAt||'').slice(0,7)===m)?'':' ⤴')+'</option>'; });
+            h+='</select></div>';
+          }
         }
         h+='</td>';
       }
@@ -6668,7 +6760,11 @@ function openSalesExcelExport(){
   };
   const tabInfo = document.getElementById('sex_tabInfo');
   if(tabInfo){
-    tabInfo.innerHTML = `현재 탭: <strong>${tabLabels[subTab]||subTab}</strong> · 이 탭에 보이는 명세서만 다운로드됩니다`;
+    let extra = '';
+    if(subTab === 'done' && invFilter.doneMonth){
+      extra = ` · <strong style="color:var(--grn)">📅 ${invFilter.doneMonth} 결산</strong> (결산월 기준 — 발행일 범위 무시)`;
+    }
+    tabInfo.innerHTML = `현재 탭: <strong>${tabLabels[subTab]||subTab}</strong> · 이 탭에 보이는 명세서만 다운로드됩니다${extra}`;
   }
   // 기간 초기값: 최근 3개월
   const today = new Date();
@@ -6722,10 +6818,17 @@ function getFilteredInvoicesForExport(){
   const to   = gv('sex_to');
   const vendor = gv('sex_vendor');
   const subTab = (invFilter && invFilter.subTab) || 'all';
+  // 📅 완료 탭에서 특정 결산월을 보고 있으면, 그 결산월 기준으로 추출 (발행일 범위 무시)
+  //    → "5월 결산"에 6월 발행분이 섞여 있어도 정확히 포함됨
+  const useSettleMonth = (subTab === 'done' && invFilter.doneMonth);
   return invoiceHistory.filter(v=>{
-    const d = (v.issuedAt||'').slice(0,10);
-    if(from && d < from) return false;
-    if(to   && d > to)   return false;
+    if(useSettleMonth){
+      if(getSettleMonth(v) !== invFilter.doneMonth) return false;
+    } else {
+      const d = (v.issuedAt||'').slice(0,10);
+      if(from && d < from) return false;
+      if(to   && d > to)   return false;
+    }
     if(vendor && v.vendor !== vendor) return false;
     // 현재 탭 필터 — renderInvoiceHistory의 subTab 분기와 동일
     if(subTab === 'consolidated'){
@@ -8588,6 +8691,8 @@ function mapNotionInvoice(row){
     })(),
     // 5-A: 명세서별 출고완료 플래그 (사용자가 행에서 토글)
     _shipped: !!np.check(p['명세서출고완료']),
+    // 📅 결산월 (월별 결산 그룹핑 키) — 비었으면 undefined → 발행월로 폴백
+    settlementMonth: (np.text(p['결산월'])||'').trim() || undefined,
     // 5-B: 입금/계산서 발행 플래그 — status로부터 복원 (노션 status 인코딩으로 일관성 유지)
     //   입금완료  = 입금 ☑ + 계산서 ☑
     //   청구완료  = 입금 ☑ + 계산서 ☐
@@ -8783,7 +8888,7 @@ async function pullFromNotion(opts){
         // 출입고/반품
         'shipStatus','matchStatus','returnStatus','returnReason','returnRequestedAt','returnCompletedAt','kind','flow','deliveryMemo',
         // 견적/명세서
-        'subject','cliManager','ourManager','payment','delivery','cliMemo','intMemo','sentAt','repliedAt','vatIncluded','validUntil','issuedAt','itemSummary',
+        'subject','cliManager','ourManager','payment','delivery','cliMemo','intMemo','sentAt','repliedAt','vatIncluded','validUntil','issuedAt','itemSummary','settlementMonth',
         // AS
         'item','client','billing','defectType','shippingFee','vatIncluded','totalAmount','repairs',
         // 업무일지
@@ -12857,6 +12962,8 @@ async function syncInvoiceToNotion(inv, update){
     "합본ID":{"rich_text":[{"text":{"content":(inv._consolidatedInvoiceId||'').toString().slice(0,100)}}]},
     // 5-A: 명세서별 출고완료 플래그
     "명세서출고완료":{"checkbox":!!inv._shipped},
+    // 📅 결산월 — 월별 결산 그룹핑 키 (발행월과 다를 수 있음). 비었으면 발행월로 간주.
+    "결산월":{"rich_text":[{"text":{"content":(inv.settlementMonth||'').slice(0,10)}}]},
   };
   // 4-A: 청구단계 (작성중/청구/완료) — 합본은 stage 없음
   if(!inv._isConsolidated && inv._invStage){
