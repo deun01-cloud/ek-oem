@@ -27188,6 +27188,12 @@ function inferInvStage(v){
   const taxIssued = (v._taxInvoiceIssued === true);
   // 입금 + 계산서 모두 완료 → done
   if(paid && taxIssued) return 'done';
+  // 📌 선금만 받고 아직 출고 전인 케이스 보정:
+  //    _shipped가 명시적으로 false이고 계산서도 미발행이면,
+  //    선금 입금(paymentRatio 100)이 있더라도 미청구(draft)로 둔다.
+  //    (돈은 미리 받았지만 출고를 안 했으므로 '청구 진행'이 아니라 '선금 받은 미청구'가 맞다.)
+  //    계산서를 발행했거나 출고완료했으면 아래에서 billing으로 분류된다.
+  if(v._shipped === false && !taxIssued) return 'draft';
   // 어느 하나라도 진행됐거나 출고됐으면 billing(청구중)
   if(paid || taxIssued || v._shipped === true) return 'billing';
   // _shipped가 명시적으로 false면 발주 상태를 보지 않고 draft 유지
