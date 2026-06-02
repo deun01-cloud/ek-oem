@@ -1407,10 +1407,11 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="fg"><label>품목코드 * <button type="button" onclick="autoGenProductCode()" style="margin-left:6px;padding:1px 7px;font-size:9.5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;color:var(--gold-lt);cursor:pointer;font-family:inherit;font-weight:600">🔄 자동 생성</button></label><input class="fi" id="pd_code" placeholder="VTBB042401S" style="font-family:monospace" oninput="autoSelectTypeFromCode(this.value)"></div>
     <div class="fg"><label>품목명 *</label><input class="fi" id="pd_name" placeholder="박스 체인 팔찌"></div>
     <div class="fg"><label>유형</label>
-      <select class="fs" id="pd_type">
+      <select class="fs" id="pd_type" onchange="_onPdTypeChange()">
         <option>EARRING</option><option>RING</option><option>NECKLACE</option>
-        <option>BRACELET</option><option>BROOCH</option><option>기타</option>
+        <option>BRACELET</option><option>BROOCH</option><option value="__custom__">✏️ 직접입력</option>
       </select>
+      <input class="fi" id="pd_typeCustom" placeholder="유형 직접 입력 (예: ANKLET)" style="display:none;margin-top:5px">
     </div>
   </div>
   <div class="fr3">
@@ -4017,6 +4018,36 @@ function pdDeleteAll(){
 }
 
 // ── 제품 모달 ──
+// 📌 제품 유형 직접입력 토글
+function _onPdTypeChange(){
+  const sel=document.getElementById('pd_type');
+  const inp=document.getElementById('pd_typeCustom');
+  if(!sel||!inp) return;
+  if(sel.value==='__custom__'){ inp.style.display=''; inp.focus(); }
+  else { inp.style.display='none'; inp.value=''; }
+}
+// 유형 값 세팅 — 표준 옵션이면 select, 아니면 직접입력 모드
+function _setPdType(val){
+  const sel=document.getElementById('pd_type');
+  const inp=document.getElementById('pd_typeCustom');
+  if(!sel) return;
+  const STD=['EARRING','RING','NECKLACE','BRACELET','BROOCH'];
+  if(val && STD.includes(val)){
+    sel.value=val; if(inp){ inp.style.display='none'; inp.value=''; }
+  } else if(val){
+    // 커스텀 값 → 직접입력 모드
+    sel.value='__custom__'; if(inp){ inp.style.display=''; inp.value=val; }
+  } else {
+    sel.value='EARRING'; if(inp){ inp.style.display='none'; inp.value=''; }
+  }
+}
+// 저장 시 유형 값 읽기 — 직접입력 모드면 입력칸 값
+function _getPdType(){
+  const sel=document.getElementById('pd_type');
+  const inp=document.getElementById('pd_typeCustom');
+  if(sel && sel.value==='__custom__') return (inp && inp.value.trim()) || '';
+  return sel ? sel.value : '';
+}
 function openProductModal(idOrNull){
   const p=idOrNull?productDB.find(x=>x.id==idOrNull):null;
   pdImgBuf=p?[...(p.imgs||[])]:[];
@@ -4026,7 +4057,8 @@ function openProductModal(idOrNull){
   if(p && !pdTypeVal && p.code && typeof _codeCatToType === 'function'){
     pdTypeVal = _codeCatToType(p.code) || '';
   }
-  sv('pd_type', pdTypeVal);
+  // 📌 유형이 표준 옵션에 없는 커스텀 값이면 → 직접입력 모드로 열기
+  _setPdType(pdTypeVal);
   sv('pd_mat',p?p.mat:'브라스 (BRASS)');
   sv('pd_plating',p?p.plating:'골드');sv('pd_size',p?p.size:'');
   sv('pd_price',p?p.price||'':'');sv('pd_costPrice',p?p.costPrice||'':'');
@@ -4235,7 +4267,7 @@ function saveProduct(){
   const newStock=+gv('pd_stock')||0;
   const newSafety=+gv('pd_safetyStock')||0;
   const obj={
-    code,name,type:gv('pd_type'),mat:gv('pd_mat'),plating:gv('pd_plating'),
+    code,name,type:(typeof _getPdType==='function'?_getPdType():gv('pd_type')),mat:gv('pd_mat'),plating:gv('pd_plating'),
     size:gv('pd_size'),price:+gv('pd_price')||0,costPrice:+gv('pd_costPrice')||0,
     devCost:+gv('pd_devCost')||0,
     stock:newStock,safetyStock:newSafety,metal:gv('pd_metal'),platingSpec:gv('pd_platingSpec'),
