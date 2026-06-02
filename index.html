@@ -5259,9 +5259,16 @@ function renderInvoiceHistory(){
   let _dupsRemoved = 0;
   const _seenIds = new Map();
   const _toRemove = new Set();
+  // 🔑 중복 판정 키:
+  //   - _notionId가 있으면 그것이 진짜 unique key (서로 다른 노션 페이지는 절대 합치면 안 됨)
+  //   - _notionId가 없을 때만 로컬 숫자 id로 판정 (노션 미동기 임시 항목)
+  //   ⚠ 예전엔 String(v.id)로만 판정했는데, 노션 id→로컬 id 변환 해시가 약해서
+  //     서로 다른 명세서가 같은 숫자 id로 충돌 → 한 건이 삭제되고, 다음 pull에서 다시 살아나
+  //     "새로고침하면 16건이었다가 15건으로 줄어드는" 깜빡임의 원인이었음.
+  const _dupKeyOf = (x) => x._notionId ? ('n:'+x._notionId) : ('i:'+String(x.id));
   invoiceHistory.forEach((v, idx) => {
     if(!v || v.id == null) return;
-    const key = String(v.id);
+    const key = _dupKeyOf(v);
     if(_seenIds.has(key)){
       // 중복 발견 — 어느 쪽을 유지할지 판단
       const prevIdx = _seenIds.get(key);
@@ -5278,6 +5285,33 @@ function renderInvoiceHistory(){
       _seenIds.set(key, idx);
     }
   });
+  // 🛠 숫자 id 충돌 복구: 서로 다른 _notionId인데 같은 v.id를 가진 항목들에
+  //    고유한 id를 재부여 (충돌로 인한 선택/렌더 오작동 방지). 삭제하지 않고 id만 교정.
+  {
+    const _idOwners = new Map(); // id문자열 -> 처음 차지한 _notionId
+    let _idReassigned = 0;
+    invoiceHistory.forEach(v => {
+      if(!v || v.id == null || !v._notionId) return;
+      const k = String(v.id);
+      const owner = _idOwners.get(k);
+      if(owner === undefined){
+        _idOwners.set(k, v._notionId);
+      } else if(owner !== v._notionId){
+        // 다른 노션 페이지가 같은 숫자 id를 차지 → 결정적 새 id 부여
+        let h=0; const nid=v._notionId;
+        for(let i=0;i<nid.length;i++){ h=((h<<5)-h+nid.charCodeAt(i))|0; }
+        let newId = Math.abs(h)*1000 + 1;
+        while(_idOwners.has(String(newId))){ newId += 1; }
+        v.id = newId;
+        _idOwners.set(String(newId), v._notionId);
+        _idReassigned++;
+      }
+    });
+    if(_idReassigned > 0){
+      console.log('[invoice] 숫자 id 충돌', _idReassigned, '건 재부여 (삭제 아님)');
+      if(typeof save === 'function') save();
+    }
+  }
   if(_toRemove.size > 0){
     // 뒤에서부터 splice로 안전하게 제거
     const sortedIdxs = [..._toRemove].sort((a,b) => b - a);
@@ -8773,10 +8807,17 @@ async function pullFromNotion(opts){
         // 노션 페이지 ID(UUID)가 있으면 그것을 안정적인 unique key로 사용
         // 단 number 비교(==)와 호환되도록 hash → 정수화
         if(notionId){
-          let h = 0;
-          for(let i=0;i<notionId.length;i++){ h = ((h<<5)-h + notionId.charCodeAt(i))|0; }
-          // 음수면 양수로, ms 단위 timestamp 범위와 안 겹치게 큰 정수로
-          return Math.abs(h) * 1000 + (++_idCounter);
+          // 충돌이 적은 결정적 해시 (두 개의 31bit 해시를 조합해 폭을 넓힘)
+          // ⚠ 카운터를 더하지 않음 — 같은 _notionId는 매 pull마다 동일 id를 가져야
+          //    새로고침/재동기화에서 id가 흔들리지 않음 (깜빡임 방지)
+          let h1 = 0, h2 = 0;
+          for(let i=0;i<notionId.length;i++){
+            const c = notionId.charCodeAt(i);
+            h1 = ((h1<<5)-h1 + c)|0;
+            h2 = ((h2<<7)-h2 + c*31)|0;
+          }
+          // 안전 정수 범위 안에서 두 해시 조합 (timestamp 범위와 안 겹치게)
+          return Math.abs(h1) * 100000 + (Math.abs(h2) % 100000);
         }
         // 노션 ID 없으면 fallback: timestamp + 카운터 (Math.random 대신)
         return Date.now() * 1000 + (++_idCounter);
@@ -8905,9 +8946,14 @@ async function pullFromNotion(opts){
       let _idCounter = 0;
       const _genId = (notionId) => {
         if(notionId){
-          let h = 0;
-          for(let i=0;i<notionId.length;i++){ h = ((h<<5)-h + notionId.charCodeAt(i))|0; }
-          return Math.abs(h) * 1000 + (++_idCounter);
+          // mergeLocalAttachments와 동일한 결정적 해시 (충돌 최소화 + pull마다 동일 id)
+          let h1 = 0, h2 = 0;
+          for(let i=0;i<notionId.length;i++){
+            const c = notionId.charCodeAt(i);
+            h1 = ((h1<<5)-h1 + c)|0;
+            h2 = ((h2<<7)-h2 + c*31)|0;
+          }
+          return Math.abs(h1) * 100000 + (Math.abs(h2) % 100000);
         }
         return Date.now() * 1000 + (++_idCounter);
       };
@@ -13041,7 +13087,7 @@ function load(){try{const s=localStorage.getItem(SK.s);if(s)samples=JSON.parse(s
   //    → _notionId 기반 결정적 정수 id로 바꿔서 모든 기기/새로고침에서 동일하게 매칭되도록 한다.
   //    id를 바꾸면 합본의 역참조(_consolidatedInvoiceId)도 같이 갱신.
   if(Array.isArray(invoiceHistory) && invoiceHistory.length){
-    const _detIdFromNotion = (nid)=>{ let h=0; for(let i=0;i<nid.length;i++){ h=((h<<5)-h+nid.charCodeAt(i))|0; } return Math.abs(h)*1000 + 1; };
+    const _detIdFromNotion = (nid)=>{ let h1=0,h2=0; for(let i=0;i<nid.length;i++){ const c=nid.charCodeAt(i); h1=((h1<<5)-h1+c)|0; h2=((h2<<7)-h2+c*31)|0; } return Math.abs(h1)*100000 + (Math.abs(h2)%100000); };
     const _idRemap = {}; // oldIdStr -> newId
     let _fixed = 0;
     invoiceHistory.forEach(v => {
