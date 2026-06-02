@@ -17026,15 +17026,19 @@ function renderTab(){
   {const sm=document.getElementById('salesModalArea');if(sm)sm.style.display='none';const dp=document.getElementById('slDp');if(dp)dp.style.display='none';}
 }
 function updateBadges(){
-  // 진행중 샘플: 확정·완료·취소·보류가 아닌 모든 의뢰
-  // ('완료'는 '확정'과 동의어 — 옛 데이터 호환)
-  const DONE_SMP=['확정','완료','취소','보류'];
-  const activeSmp=samples.filter(s=>!DONE_SMP.includes((s.status||'').trim())).length;
+  // 진행중 샘플: 완료(확정)·취소가 아닌 의뢰만
+  //   샘플 상태 정규화: '완료'='확정'(완료), '보류'→'취소' 취급
+  const _normSmp=(st)=>{ const s=(st||'').trim(); return s==='완료'?'확정':(s==='보류'?'취소':s); };
+  const activeSmp=samples.filter(s=>{
+    const ns=_normSmp(s.status);
+    return ns!=='확정' && ns!=='취소';
+  }).length;
   setBdg('bdgS',activeSmp);
-  // 진행중 발주: 출고완료·취소가 아닌 모든 발주 (기본값 '진행중'은 진행중으로 간주)
+  // 진행중 발주: 완료(확정)·취소보류가 아닌 모든 발주
+  //   normalizeOrderStatus로 옛 값까지 정규화 후 판정 (취소='취소보류', 완료='확정')
   const activeOrd=orders.filter(o=>{
-    const st=o.status||'의뢰';
-    return st!=='확정' && st!=='취소';
+    const st=(typeof normalizeOrderStatus==='function') ? normalizeOrderStatus(o.status) : (o.status||'의뢰');
+    return st!=='확정' && st!=='취소보류';
   }).length;
   setBdg('bdgO',activeOrd);
   // 공정 배지는 사용 안 함 (발주 배지로 통합 표시)
@@ -17052,11 +17056,11 @@ function renderDash(){
   const c=document.getElementById('content');
   const todayShip=procItems.filter(p=>!p.shipped&&p.due===todayStr).length;
   const urgP=procItems.filter(p=>!p.shipped&&dday(p.due)!==null&&dday(p.due)<=3&&dday(p.due)>=0).length;
-  const activeSmp=samples.filter(s=>!['확정','완료','취소','보류'].includes((s.status||'').trim())).length;
-  // 진행중 발주: status가 '확정' 또는 '취소'가 아닌 모든 발주 (기본값은 '진행중')
+  const activeSmp=samples.filter(s=>{ const ns=(s.status||'').trim()==='완료'?'확정':((s.status||'').trim()==='보류'?'취소':(s.status||'').trim()); return ns!=='확정'&&ns!=='취소'; }).length;
+  // 진행중 발주: 완료(확정)·취소보류 제외 (정규화 기준)
   const activeOrd=orders.filter(o=>{
-    const st=o.status||'의뢰';
-    return st!=='확정' && st!=='취소';
+    const st=(typeof normalizeOrderStatus==='function') ? normalizeOrderStatus(o.status) : (o.status||'의뢰');
+    return st!=='확정' && st!=='취소보류';
   }).length;
   const todayT=tasks.filter(t=>t.date===todayStr&&!t.done).length;
 
