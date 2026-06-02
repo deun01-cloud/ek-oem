@@ -7686,6 +7686,8 @@ function _rtHandleSnapshot(msg){
   _rtSnapshotReceived.add(msg.type);
   // 각 타입별로 로컬 배열에 머지 (Last-Write-Wins by _ts)
   msg.items.forEach(item => _applyRemoteItem(msg.type, item, msg.ts || Date.now(), null));
+  // 📌 invoice 스냅샷이면 소수점 id 정규화 (다른 기기가 소수점 id를 밀어넣어 깜빡이는 것 방지)
+  if(msg.type === 'invoice'){ try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); }catch(_){} }
   // 화면 갱신
   if(typeof save === 'function') save();
   if(typeof renderTab === 'function'){ try{ renderTab(); updateBadges(); }catch(_){} }
@@ -7700,6 +7702,7 @@ function _rtHandleChange(msg){
   } else if(msg.action === 'delete'){
     _applyRemoteDelete(msg.type, msg.item?.id || msg.id, msg.ts);
   }
+  if(msg.type === 'invoice'){ try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); }catch(_){} }
   if(typeof save === 'function') save();
   if(typeof renderTab === 'function'){ try{ renderTab(); updateBadges(); }catch(_){} }
 }
@@ -9154,6 +9157,8 @@ async function pullFromNotion(opts){
     asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        ['repairs','files'], 'AS',       notionCfg.asDb);
     productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['imgs','importSource','createdAt'], '제품DB',   notionCfg.productDb);
     invoiceHistory= mergeRows(invRows,  invoiceHistory, mapNotionInvoice,   ['items','ordId'], '청구이력', notionCfg.invDb);
+    // 📌 pull 직후 소수점 id 정규화 (다른 기기/옛 데이터가 소수점 id를 다시 들여올 수 있음 — 깜빡임 방지)
+    try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); }catch(_){}
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
     ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files'], '입출고',   notionCfg.ioDb);
@@ -13187,49 +13192,56 @@ function load(){try{const s=localStorage.getItem(SK.s);if(s)samples=JSON.parse(s
   if(Array.isArray(orders) && typeof normalizeOrderStatus === 'function'){
     orders.forEach(o => { if(o) o.status = normalizeOrderStatus(o.status); });
   }
-  // 📌 거래명세서 부동소수점 id 정규화 (옛 데이터 버그 복구)
-  //    옛날 id 생성기가 Date.now()+Math.random() 류로 소수점 id를 만든 잔재가 있다.
-  //    소수점 id는 Realtime/Notion 직렬화 과정에서 문자열 비교가 어긋나 같은 명세서가
-  //    "새로고침하면 보였다 몇 초 뒤 사라지는" 깜빡임을 일으킨다.
-  //    → _notionId 기반 결정적 정수 id로 바꿔서 모든 기기/새로고침에서 동일하게 매칭되도록 한다.
-  //    id를 바꾸면 합본의 역참조(_consolidatedInvoiceId)도 같이 갱신.
-  if(Array.isArray(invoiceHistory) && invoiceHistory.length){
-    const _detIdFromNotion = (nid)=>{ let h1=0,h2=0; for(let i=0;i<nid.length;i++){ const c=nid.charCodeAt(i); h1=((h1<<5)-h1+c)|0; h2=((h2<<7)-h2+c*31)|0; } return Math.abs(h1)*100000 + (Math.abs(h2)%100000); };
-    const _idRemap = {}; // oldIdStr -> newId
-    let _fixed = 0;
+  // 📌 거래명세서 부동소수점 id 정규화 (옛 데이터 버그 복구) — 공용 함수 호출
+  normalizeInvoiceIds();
+}catch(e){}}
+
+// ════════════════════════════════
+// 📌 거래명세서 id 정규화 (공용)
+//   옛 id 생성기가 Date.now()+Math.random()류로 만든 소수점 id가
+//   localStorage / 노션 pull / Realtime 수신 어디로든 다시 흘러들어올 수 있다.
+//   소수점 id는 문자열 비교가 어긋나 같은 명세서가 "보였다 사라지는" 깜빡임을 만든다.
+//   → load() 한 번이 아니라, 모든 데이터 유입 직후(pull/realtime)에도 호출해서
+//     항상 _notionId 기반 결정적 정수 id로 고정한다.
+//   반환값: 고친 건수 (0이면 변화 없음)
+function normalizeInvoiceIds(){
+  if(!Array.isArray(invoiceHistory) || !invoiceHistory.length) return 0;
+  const _detIdFromNotion = (nid)=>{ let h1=0,h2=0; for(let i=0;i<nid.length;i++){ const c=nid.charCodeAt(i); h1=((h1<<5)-h1+c)|0; h2=((h2<<7)-h2+c*31)|0; } return Math.abs(h1)*100000 + (Math.abs(h2)%100000); };
+  const _idRemap = {}; // oldIdStr -> newId
+  let _fixed = 0;
+  invoiceHistory.forEach(v => {
+    if(!v || v.id == null) return;
+    const isFloat = (typeof v.id === 'number' && !Number.isInteger(v.id));
+    // 소수점 id이고 _notionId가 있으면 결정적 정수 id로 교정
+    if(isFloat && v._notionId){
+      const oldKey = String(v.id);
+      const newId = _detIdFromNotion(v._notionId);
+      if(oldKey !== String(newId)){
+        _idRemap[oldKey] = newId;
+        v.id = newId;
+        _fixed++;
+      }
+    }
+  });
+  if(_fixed > 0){
+    // 합본 역참조 갱신
     invoiceHistory.forEach(v => {
-      if(!v || v.id == null) return;
-      const isFloat = (typeof v.id === 'number' && !Number.isInteger(v.id));
-      if(isFloat && v._notionId){
-        const oldKey = String(v.id);
-        const newId = _detIdFromNotion(v._notionId);
-        if(oldKey !== String(newId)){
-          _idRemap[oldKey] = newId;
-          v.id = newId;
-          _fixed++;
-        }
+      if(v && v._consolidatedInvoiceId != null){
+        const k = String(v._consolidatedInvoiceId);
+        if(_idRemap[k] != null) v._consolidatedInvoiceId = _idRemap[k];
+      }
+      if(v && Array.isArray(v.includedInvoiceIds)){
+        v.includedInvoiceIds = v.includedInvoiceIds.map(iid => {
+          const k = String(iid);
+          return (_idRemap[k] != null) ? _idRemap[k] : iid;
+        });
       }
     });
-    if(_fixed > 0){
-      // 합본 역참조 갱신
-      invoiceHistory.forEach(v => {
-        if(v && v._consolidatedInvoiceId != null){
-          const k = String(v._consolidatedInvoiceId);
-          if(_idRemap[k] != null) v._consolidatedInvoiceId = _idRemap[k];
-        }
-        // 합본의 포함 명세서 ID 목록도 갱신
-        if(v && Array.isArray(v.includedInvoiceIds)){
-          v.includedInvoiceIds = v.includedInvoiceIds.map(iid => {
-            const k = String(iid);
-            return (_idRemap[k] != null) ? _idRemap[k] : iid;
-          });
-        }
-      });
-      console.log('[invoice] 부동소수점 id', _fixed, '건 정규화됨 — 깜빡임/중복 방지');
-      try{ localStorage.setItem(SK.iv, JSON.stringify(invoiceHistory)); }catch(e){}
-    }
+    console.log('[invoice] 부동소수점 id', _fixed, '건 정규화됨 — 깜빡임/중복 방지');
+    try{ localStorage.setItem(SK.iv, JSON.stringify(invoiceHistory)); }catch(e){}
   }
-}catch(e){}}
+  return _fixed;
+}
 
 // ════════════════════════════════
 // 데모/테스트 데이터 — 콘솔에서 호출
