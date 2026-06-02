@@ -12891,6 +12891,48 @@ function load(){try{const s=localStorage.getItem(SK.s);if(s)samples=JSON.parse(s
   if(Array.isArray(orders) && typeof normalizeOrderStatus === 'function'){
     orders.forEach(o => { if(o) o.status = normalizeOrderStatus(o.status); });
   }
+  // 📌 거래명세서 부동소수점 id 정규화 (옛 데이터 버그 복구)
+  //    옛날 id 생성기가 Date.now()+Math.random() 류로 소수점 id를 만든 잔재가 있다.
+  //    소수점 id는 Realtime/Notion 직렬화 과정에서 문자열 비교가 어긋나 같은 명세서가
+  //    "새로고침하면 보였다 몇 초 뒤 사라지는" 깜빡임을 일으킨다.
+  //    → _notionId 기반 결정적 정수 id로 바꿔서 모든 기기/새로고침에서 동일하게 매칭되도록 한다.
+  //    id를 바꾸면 합본의 역참조(_consolidatedInvoiceId)도 같이 갱신.
+  if(Array.isArray(invoiceHistory) && invoiceHistory.length){
+    const _detIdFromNotion = (nid)=>{ let h=0; for(let i=0;i<nid.length;i++){ h=((h<<5)-h+nid.charCodeAt(i))|0; } return Math.abs(h)*1000 + 1; };
+    const _idRemap = {}; // oldIdStr -> newId
+    let _fixed = 0;
+    invoiceHistory.forEach(v => {
+      if(!v || v.id == null) return;
+      const isFloat = (typeof v.id === 'number' && !Number.isInteger(v.id));
+      if(isFloat && v._notionId){
+        const oldKey = String(v.id);
+        const newId = _detIdFromNotion(v._notionId);
+        if(oldKey !== String(newId)){
+          _idRemap[oldKey] = newId;
+          v.id = newId;
+          _fixed++;
+        }
+      }
+    });
+    if(_fixed > 0){
+      // 합본 역참조 갱신
+      invoiceHistory.forEach(v => {
+        if(v && v._consolidatedInvoiceId != null){
+          const k = String(v._consolidatedInvoiceId);
+          if(_idRemap[k] != null) v._consolidatedInvoiceId = _idRemap[k];
+        }
+        // 합본의 포함 명세서 ID 목록도 갱신
+        if(v && Array.isArray(v.includedInvoiceIds)){
+          v.includedInvoiceIds = v.includedInvoiceIds.map(iid => {
+            const k = String(iid);
+            return (_idRemap[k] != null) ? _idRemap[k] : iid;
+          });
+        }
+      });
+      console.log('[invoice] 부동소수점 id', _fixed, '건 정규화됨 — 깜빡임/중복 방지');
+      try{ localStorage.setItem(SK.iv, JSON.stringify(invoiceHistory)); }catch(e){}
+    }
+  }
 }catch(e){}}
 
 // ════════════════════════════════
