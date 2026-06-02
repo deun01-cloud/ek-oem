@@ -9838,10 +9838,94 @@ function _applyIoToStockPC(io){
   return applied;
 }
 
+// 입출고 삭제 시 재고 복원 — 등록 때 반영된 효과를 반대 부호로 되돌림
+// 반환: 복원된 품목 수 (0이면 복원할 재고 효과가 없었던 것)
+function _revertIoStock(io){
+  if(!io) return 0;
+  let reverted = 0;
+  // 케이스 A: 커머스(B2C) — _matchedProductId로 직접 매칭, 보통 1개 차감(출고)
+  const matchedId = io._matchedProductId || io.matchedProductId;
+  if(matchedId){
+    const prod = (typeof _resolveIoMatchedProduct === 'function')
+      ? _resolveIoMatchedProduct(io)
+      : productDB.find(p => p.id === matchedId);
+    if(prod){
+      // 커머스는 출고(판매)이므로 삭제 시 +qty 복원
+      const qty = (+io.qty || 1);
+      const sign = (io.kind === '입고') ? -1 : 1; // 출고 삭제→+, 입고 삭제→-
+      if(typeof applyStockChange === 'function'){
+        applyStockChange({
+          productId: prod.id,
+          delta: sign * qty,
+          type: 'adjust',
+          refId: io.id,
+          refLabel: io.brand || io.recipient || '',
+          note: `[입출고 삭제 복원] ${io.items||''}`
+        });
+      } else {
+        prod.stock = (+prod.stock||0) + (sign * qty);
+      }
+      if(prod._notionId && notionCfg && notionCfg.workerUrl && typeof syncProductToNotion === 'function'){
+        syncProductToNotion(prod, true).catch(()=>{});
+      }
+      return 1;
+    }
+  }
+  // 케이스 B: 일반(B2B) — items 텍스트 매칭, 등록 함수의 반대 부호
+  if(io.items && Array.isArray(productDB) && productDB.length){
+    const parts = String(io.items).split(/[,\n;]+/).map(s=>s.trim()).filter(Boolean);
+    const sign = io.kind === '입고' ? -1 : (io.kind === '출고' ? 1 : 0); // 반대로
+    if(!sign) return 0;
+    parts.forEach(part => {
+      const m = part.match(/^(.+?)\s*(\d+)\s*(?:개|EA|ea|pcs)?$/);
+      const name = m ? m[1].trim() : part;
+      const qty = m ? parseInt(m[2],10) : (+io.qty||0);
+      if(!qty) return;
+      const prod = productDB.find(p =>
+        (p.name||'').toLowerCase() === name.toLowerCase() ||
+        (p.code||'').toLowerCase() === name.toLowerCase()
+      );
+      if(prod){
+        if(typeof applyStockChange === 'function'){
+          applyStockChange({
+            productId: prod.id,
+            delta: sign * qty,
+            type: 'adjust',
+            refId: io.id,
+            refLabel: io.title || io.vendor || '',
+            note: `[입출고 삭제 복원] ${io.title||''}`
+          });
+        } else {
+          prod.stock = (+prod.stock||0) + (sign * qty);
+        }
+        if(prod._notionId && notionCfg && notionCfg.workerUrl && typeof syncProductToNotion === 'function'){
+          syncProductToNotion(prod, true).catch(()=>{});
+        }
+        reverted++;
+      }
+    });
+  }
+  return reverted;
+}
+
 async function deleteIo(idOrNull){
-  if(!confirm('이 입출고 기록을 삭제하시겠습니까?')) return;
   const io = ioItems.find(x=>x.id==idOrNull);
   if(!io) return;
+  // 재고 복원 여부 판단 — 매칭된 제품이 있어 등록 시 재고가 반영됐을 경우에만 물어봄
+  const hasStockEffect = !!(io._matchedProductId || io.matchedProductId) ||
+                         (io.items && Array.isArray(productDB) && productDB.length &&
+                          (io.kind === '입고' || io.kind === '출고'));
+  let restoreStock = false;
+  if(hasStockEffect){
+    const kindTxt = io.kind === '입고' ? '입고' : '출고';
+    const effectTxt = io.kind === '입고' ? '늘어났던 재고가 줄어듭니다' : '줄어들었던 재고가 다시 늘어납니다';
+    // 3-state: 확인=복원, 취소=삭제 안 함 → 별도 처리 위해 두 단계로
+    const proceed = confirm(`이 ${kindTxt} 기록을 삭제하시겠습니까?`);
+    if(!proceed) return;
+    restoreStock = confirm(`📦 재고도 함께 복원할까요?\n\n확인 → 매칭된 제품 재고를 되돌립니다 (${effectTxt})\n취소 → 기록만 삭제하고 재고는 그대로 둡니다\n\n※ 이미 수동으로 재고를 조정하셨다면 [취소]하세요 (이중 복원 방지)`);
+  } else {
+    if(!confirm('이 입출고 기록을 삭제하시겠습니까?')) return;
+  }
   // 1) 노션에서 먼저 archive (실패하면 사용자에게 알림 — 안 그러면 풀에서 다시 받아옴)
   let notionOk = true;
   if(io._notionId && notionCfg.workerUrl){
@@ -9864,10 +9948,16 @@ async function deleteIo(idOrNull){
   }
   // 2) 로컬에서 제거
   ioItems = ioItems.filter(x=>x.id!=idOrNull);
+  // 2.5) 재고 복원 (사용자가 선택한 경우)
+  let restoredMsg = '';
+  if(restoreStock){
+    const n = _revertIoStock(io);
+    if(n > 0) restoredMsg = ` · 📦 재고 ${n}건 복원`;
+  }
   if(typeof realtimeDelete === 'function') try{ realtimeDelete('io', io); }catch(_){}
   save();
   closeM('mIo');
-  showToast(notionOk ? '✓ 삭제 완료' : '⚠ 로컬만 삭제 — 노션 실패','var(--grn)',2500);
+  showToast((notionOk ? '✓ 삭제 완료' : '⚠ 로컬만 삭제 — 노션 실패') + restoredMsg,'var(--grn)',2800);
   renderIo();
 }
 
@@ -9956,7 +10046,7 @@ function _showCommerceDetail(io){
       ${returnSection}
     </div>
     <div class="mb" style="display:flex;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px">
-      <button class="btn br bs" onclick="if(confirm('이 커머스 출고를 삭제하시겠습니까?\\n매칭된 제품 재고는 자동으로 복원되지 않습니다.')){deleteIo(${io.id});closeM('mIoDetail')}">🗑 삭제</button>
+      <button class="btn br bs" onclick="deleteIo(${io.id});closeM('mIoDetail')">🗑 삭제</button>
       <button class="btn bg bs" onclick="closeM('mIoDetail')">닫기</button>
     </div>
   </div>`;
