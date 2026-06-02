@@ -10470,6 +10470,7 @@ function openReturnModal(ioId){
     return;
   }
   const today = new Date().toISOString().slice(0,10);
+  const _mp = (typeof _resolveIoMatchedProduct === 'function') ? _resolveIoMatchedProduct(io) : (io._matchedProductId != null ? productDB.find(x=>x.id==io._matchedProductId) : null);
   let mR = document.getElementById('mReturn');
   if(!mR){
     mR = document.createElement('div');
@@ -10484,7 +10485,7 @@ function openReturnModal(ioId){
         <div style="color:var(--t3);font-size:10.5px;margin-bottom:3px">대상 출고</div>
         <div style="font-weight:600">${escHtml(io.brand||'-')} · ${escHtml(io.recipient||'-')} · <span style="font-family:monospace;color:var(--t2)">${escHtml(io.phone||'-')}</span></div>
         <div style="color:var(--t2);font-size:11.5px;margin-top:3px">${escHtml(io.items||'-')}</div>
-        ${io._matchedProductId ? `<div style="color:var(--gold-lt);font-size:11px;margin-top:3px;font-weight:600">✓ 매칭된 제품: ${escHtml(io.memo?.replace('매칭: ','')||io.items)}</div>` : '<div style="color:var(--org);font-size:11px;margin-top:3px">⚠ 미매칭 — 재고 복원 안 됨</div>'}
+        ${_mp ? `<div style="color:var(--gold-lt);font-size:11px;margin-top:3px;font-weight:600">✓ 매칭된 제품: ${escHtml(_mp.name||io.items)}${_mp.code?` (${escHtml(_mp.code)})`:''}</div>` : '<div style="color:var(--org);font-size:11px;margin-top:3px">⚠ 미매칭 — 재고 복원 안 됨</div>'}
       </div>
       <div class="fg" style="margin-bottom:10px">
         <label>구분 *</label>
@@ -10565,6 +10566,42 @@ async function saveReturn(ioId){
   }
 }
 
+// 📌 커머스 반품 입고 시 매칭 제품 id 복원
+//    _matchedProductId는 '_' 로컬 필드라 노션 라운드트립(다른 PC pull/새로고침 후 pull) 시 사라짐.
+//    그러면 입고확인해도 재고가 안 늘어나는 버그가 생김.
+//    → id가 없으면 persisted 필드(_matchedProductCode, memo의 코드/품명, items)로 productDB에서 재탐색.
+//    찾으면 io._matchedProductId를 채워넣어 이후엔 정상 동작하도록 보정.
+function _resolveIoMatchedProduct(io){
+  if(!io) return null;
+  // 1) 이미 id가 있고 productDB에 살아있으면 그대로
+  if(io._matchedProductId != null){
+    const p0 = productDB.find(x => x.id == io._matchedProductId);
+    if(p0) return p0;
+  }
+  // 2) 코드로 매칭 — _matchedProductCode 또는 memo "매칭: 이름 (코드)" 에서 추출
+  let code = io._matchedProductCode || '';
+  if(!code && io.memo){
+    const m = io.memo.match(/\(([^()]+)\)\s*$/); // memo 끝 괄호 안 = 코드
+    if(m) code = m[1].trim();
+  }
+  if(code){
+    const pc = productDB.find(x => x.code && String(x.code).trim() === String(code).trim());
+    if(pc){ io._matchedProductId = pc.id; io._matchedProductCode = pc.code; return pc; }
+  }
+  // 3) 품명으로 매칭 — memo "매칭: 이름 (코드)" 에서 이름 추출, 없으면 items
+  let name = '';
+  if(io.memo){
+    const mn = io.memo.replace(/^매칭:\s*/, '').replace(/\s*\([^()]*\)\s*$/, '').trim();
+    if(mn && mn !== io.memo) name = mn;
+  }
+  if(!name && io.items) name = String(io.items).trim();
+  if(name){
+    const pn = productDB.find(x => x.name && String(x.name).trim() === name);
+    if(pn){ io._matchedProductId = pn.id; io._matchedProductCode = pn.code; return pn; }
+  }
+  return null;
+}
+
 // 입고 확인 → 교환/환불 완료 처리 + 재고 복원
 async function confirmReturnComplete(ioId){
   const io = ioItems.find(x => x.id == ioId);
@@ -10574,8 +10611,10 @@ async function confirmReturnComplete(ioId){
     return;
   }
   const type = io.returnType || (io.returnStatus === '교환요청' ? '교환' : '환불');
-  const willRestockMsg = io._matchedProductId
-    ? `\n\n📦 제품 재고가 +1 자동 복원됩니다.`
+  // 📌 매칭 제품 복원 — _matchedProductId가 노션 라운드트립으로 사라졌으면 코드/품명으로 재탐색
+  const matchedProduct = _resolveIoMatchedProduct(io);
+  const willRestockMsg = matchedProduct
+    ? `\n\n📦 제품 재고가 +1 자동 복원됩니다. (${matchedProduct.name||''}${matchedProduct.code?` / ${matchedProduct.code}`:''})`
     : `\n\n⚠ 매칭된 제품이 없어 재고 복원은 안 됩니다.`;
   if(!confirm(`${type} 입고가 도착했습니까?\n수령인: ${io.recipient||'-'}\n품목: ${io.items||'-'}${willRestockMsg}`)) return;
 
@@ -10585,9 +10624,9 @@ async function confirmReturnComplete(ioId){
 
   // 재고 복원
   let stockMsg = '';
-  if(io._matchedProductId != null){
+  if(matchedProduct){
     const ok = applyStockChange({
-      productId: io._matchedProductId,
+      productId: matchedProduct.id,
       delta: +1,
       type: 'commerce_return',
       refId: io.id,
@@ -10598,10 +10637,7 @@ async function confirmReturnComplete(ioId){
       stockMsg = ' · 재고 +1 복원';
       // 노션 제품DB 재고도 동기화
       if(notionCfg.workerUrl && notionCfg.productDb){
-        const p = productDB.find(x => x.id == io._matchedProductId);
-        if(p){
-          syncProductToNotion(p, true).catch(e => console.warn('제품 재고 sync 실패:', e));
-        }
+        syncProductToNotion(matchedProduct, true).catch(e => console.warn('제품 재고 sync 실패:', e));
       }
     }
   }
@@ -10625,9 +10661,10 @@ async function undoReturnComplete(ioId){
   io.returnStatus = type === '교환' ? '교환요청' : '환불요청';
   io.returnCompletedAt = '';
   // 재고 다시 차감
-  if(io._matchedProductId != null){
+  const matchedProduct = _resolveIoMatchedProduct(io);
+  if(matchedProduct){
     applyStockChange({
-      productId: io._matchedProductId,
+      productId: matchedProduct.id,
       delta: -1,
       type: 'commerce_return_undo',
       refId: io.id,
@@ -10635,8 +10672,7 @@ async function undoReturnComplete(ioId){
       note: `되돌리기 — 다시 입고 대기`
     });
     if(notionCfg.workerUrl && notionCfg.productDb){
-      const p = productDB.find(x => x.id == io._matchedProductId);
-      if(p) syncProductToNotion(p, true).catch(e => console.warn('제품 재고 sync 실패:', e));
+      syncProductToNotion(matchedProduct, true).catch(e => console.warn('제품 재고 sync 실패:', e));
     }
   }
   save();
@@ -10894,8 +10930,8 @@ async function callAIParseForCommerce(payloads, resultEl){
 - 주문 품목 (한 명이 여러 개면 줄바꿈으로 구분된 경우가 많음)
 
 **중요한 규칙**:
-1. 한 명이 여러 품목을 주문하면 → "items" 배열에 각각 별도 객체로 분리해서 넣어주세요. 같은 사람의 이름·전화·주소는 그대로 복사합니다.
-2. 품목명은 엑셀에 적힌 그대로 보존 (예: "TOCA ONE TOUCH EARRINGS (SILVER)", "BOLD PAVE RING 13호" 등).
+1. 한 명이 여러 품목을 주문하면 → "items" 배열에 각각 별도 객체로 분리해서 넣어주세요. 같은 사람의 이름·전화·주소는 그대로 복사합니다. **특히 품목 칸 안에 줄바꿈(여러 줄)으로 여러 품목이 적혀 있으면, 반드시 각 줄을 별도의 객체로 나누세요. 한 객체의 itemText에 여러 줄을 합치지 마세요.** 한 사람이 같은 품목을 2개 주문해서 똑같은 줄이 2번 나오면, 객체도 2개 만드세요.
+2. 품목명은 엑셀에 적힌 그대로 보존 (예: "TOCA ONE TOUCH EARRINGS (SILVER)", "BOLD PAVE RING 13호" 등). itemText 1개에는 품목 1건만 담습니다.
 3. 헤더 행이나 빈 행은 무시.
 4. 파일명이 "비비케이트주문_0511" 같이 브랜드/날짜를 포함하면 추출해주세요.
 
@@ -10969,20 +11005,31 @@ function showCommerceParseResult(parsed, resultEl){
   </div>`;
 
   // AI가 추출한 데이터 → _commerceUploadRows 형식으로 변환 + 제품 매칭
-  _commerceUploadRows = items.map(it => {
-    const itemText = String(it.itemText || it.item || '').trim();
-    const match = itemText ? _matchProductByText(itemText) : {product:null, score:0};
-    return {
-      recipient: String(it.recipient || '').trim(),
-      phone: String(it.phone || '').trim(),
-      address: String(it.address || '').trim(),
-      deliveryMemo: String(it.deliveryMemo || it.memo || '').trim(),
-      itemText,
-      matched: match.product,
-      matchedName: match.product ? (match.product.name || '') : '',
-      matchStatus: match.product ? '자동매칭' : '미매칭',
-      score: match.score
-    };
+  // 📌 AI가 한 칸의 여러 품목(줄바꿈 구분)을 1건으로 합쳐서 돌려주는 경우가 있음.
+  //    itemText에 줄바꿈이 남아있으면 각 줄을 별도 행으로 분리 (수령인·전화·주소는 복사).
+  _commerceUploadRows = items.flatMap(it => {
+    const baseRecipient = String(it.recipient || '').trim();
+    const basePhone = String(it.phone || '').trim();
+    const baseAddress = String(it.address || '').trim();
+    const baseMemo = String(it.deliveryMemo || it.memo || '').trim();
+    const rawItem = String(it.itemText || it.item || '');
+    // 줄바꿈으로 분리 — 빈 줄 제거. 줄바꿈이 없으면 그대로 1건.
+    const lines = rawItem.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const itemTexts = lines.length ? lines : [''];
+    return itemTexts.map(itemText => {
+      const match = itemText ? _matchProductByText(itemText) : {product:null, score:0};
+      return {
+        recipient: baseRecipient,
+        phone: basePhone,
+        address: baseAddress,
+        deliveryMemo: baseMemo,
+        itemText,
+        matched: match.product,
+        matchedName: match.product ? (match.product.name || '') : '',
+        matchStatus: match.product ? '자동매칭' : '미매칭',
+        score: match.score
+      };
+    });
   });
 
   // 미리보기 모달 자동 표시 (브랜드/날짜는 AI가 추출한 값으로 기본 채움)
@@ -13987,6 +14034,13 @@ function _safeCloseM(id){
     '입력한 내용을 저장하시겠습니까?'
   );
   if(choice === 'save'){
+    // 📌 save 함수 호출 전에 스냅샷을 먼저 정리한다.
+    //    save 함수(saveOrd 등)는 내부에서 closeM()을 다시 호출하는데,
+    //    스냅샷이 남아있으면 _isModalDirty가 또 true → 확인창이 무한 반복되고,
+    //    그때마다 신규 저장이 재실행되어 발주가 중복 생성됐다.
+    //    스냅샷을 지우면 재진입 시 _isModalDirty가 false라 그냥 조용히 닫힌다.
+    delete ov._initialSnapshot;
+    delete ov._snapshotTakenAt;
     // save 함수 호출 — 함수 자체가 모달을 닫음 (저장 성공 시)
     // 저장 실패해도 (validation 등) 모달은 열린 상태로 유지됨
     try { saveFn(); } catch(e){ console.error('save 실패:', e); showToast('⚠ 저장 실패: '+e.message,'var(--red)',3500); }
@@ -23317,6 +23371,9 @@ async function saveOrd(forceOverwrite){
     // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
     const ok = await createWithNotion(orders, newOrd, syncOrderToNotion, '발주서');
     if(!ok) return; // 실패 — 모달 유지
+    // 📌 신규 저장 성공 → 모달의 숨은 id 필드를 채워서, 같은 모달에서 다시 저장하면
+    //    isNew=false(수정)로 처리되도록 한다. (이게 없으면 저장을 또 누를 때마다 발주가 중복 생성됨)
+    { const _oidEl = document.getElementById('o_id'); if(_oidEl) _oidEl.value = ordId; }
     // Auto-create proc for each row, all linked to this order (성공 후에만)
     if(gchk('o_toProc')&&obj.ship){
       ordRowsBuf.forEach((r,i)=>{
