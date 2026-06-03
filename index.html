@@ -14,7 +14,7 @@
   --bdr:#E0D8C6;--bdr2:#D0C4A8;
   --t1:#1A1612;--t2:#6B6054;--t3:#A09488;
   --grn:#2E8B2C;--grn-bg:rgba(46,139,44,.1);
-  --red:#C03030;--red-bg:rgba(192,48,48,.1);
+  --red:#A11A1A;--red-bg:rgba(161,26,26,.1);
   --blu:#1A6DB5;--blu-bg:rgba(26,109,181,.1);
   --org:#A85A10;--org-bg:rgba(168,90,16,.1);
   --prp:#5040A0;--prp-bg:rgba(80,64,160,.1);
@@ -57,20 +57,28 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--t1);
 .ch{padding:10px 14px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;gap:8px}
 
 /* ── Table ── */
-tr.row-u td{background:rgba(192,48,48,.04)!important}
-tr.row-u:hover td{background:rgba(192,48,48,.09)!important}
+tr.row-u td{background:rgba(161,26,26,.05)!important}
+tr.row-u:hover td{background:rgba(161,26,26,.10)!important}
 tr.row-w td{background:rgba(168,90,16,.04)!important}
 tr.row-w:hover td{background:rgba(168,90,16,.08)!important}
-/* ── Missing factShip (공장출고일 미입력) — 진행중 건만 빨간 테두리 ── */
-tr.row-miss-fs > td:first-child{box-shadow:inset 4px 0 0 var(--red)}
-tr.row-miss-fs td{background:rgba(192,48,48,.06)!important;border-top:1px solid rgba(192,48,48,.35);border-bottom:1px solid rgba(192,48,48,.35)}
-tr.row-miss-fs:hover td{background:rgba(192,48,48,.11)!important}
-.card-miss-fs{box-shadow:inset 4px 0 0 var(--red), 0 0 0 1px rgba(192,48,48,.35);border-radius:var(--r)}
-.card-miss-fs::before{content:'⚠ 공장출고일 미입력';position:absolute;top:6px;right:8px;font-size:9.5px;color:var(--red);font-weight:700;background:rgba(192,48,48,.08);padding:1px 6px;border-radius:8px;pointer-events:none;z-index:2}
+/* ── 고객납기일 7일 이내 (진행중) — 진한 빨간색 강조 ── */
+tr.row-due7 > td:first-child{box-shadow:inset 4px 0 0 #8B0000}
+tr.row-due7 td{background:rgba(161,26,26,.13)!important;border-top:1px solid rgba(161,26,26,.5);border-bottom:1px solid rgba(161,26,26,.5)}
+tr.row-due7:hover td{background:rgba(161,26,26,.20)!important}
+tr.ord-row-top.row-due7 td{border-bottom:none!important}
+tr.ord-row-bottom.row-due7 td{border-top:none!important}
+/* ── Missing factShip (공장출고일 미입력) — 진행중 건만 노란색 강조 ── */
+tr.row-miss-fs > td:first-child{box-shadow:inset 4px 0 0 #E0A800}
+tr.row-miss-fs td{background:rgba(224,168,0,.10)!important;border-top:1px solid rgba(224,168,0,.45);border-bottom:1px solid rgba(224,168,0,.45)}
+tr.row-miss-fs:hover td{background:rgba(224,168,0,.18)!important}
+/* 두 조건 동시: 납기 임박(빨강)이 배경 우선, 미입력 노란 좌측 바는 유지하되 빨강 배경 위 */
+tr.row-due7.row-miss-fs td{background:rgba(161,26,26,.13)!important}
+.card-miss-fs{box-shadow:inset 4px 0 0 #E0A800, 0 0 0 1px rgba(224,168,0,.45);border-radius:var(--r)}
+.card-miss-fs::before{content:'⚠ 공장출고일 미입력';position:absolute;top:6px;right:8px;font-size:9.5px;color:#9a7b00;font-weight:700;background:rgba(224,168,0,.12);padding:1px 6px;border-radius:8px;pointer-events:none;z-index:2}
 /* ── 발주 2행 묶음: 1행(메타) + 2행(품목) 시각적 그루핑 ── */
 tr.ord-row-top td{padding-bottom:4px}
 tr.ord-row-bottom td{padding-top:0;border-top:none}
-/* row-miss-fs가 적용될 때, 묶음의 위/아래 빨간 테두리만 살리고 가운데는 제거 */
+/* row-miss-fs가 적용될 때, 묶음의 위/아래 테두리만 살리고 가운데는 제거 */
 tr.ord-row-top.row-miss-fs td{border-bottom:none!important}
 tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 
@@ -17921,13 +17929,15 @@ function renderSample(){
             const dl=dday(s.due);
             const urg=s.status!=='확정'&&s.status!=='취소'&&dl!==null&&dl<=1;
             const warn=s.status!=='확정'&&s.status!=='취소'&&dl!==null&&dl<=3&&dl>1;
-            // 공장출고일 미입력 (진행중인 건만) — 빨간 테두리로 강조
+            // 고객납기일 7일 이내 (진행중) — 진한 빨간색
+            const due7=s.status!=='확정'&&s.status!=='취소'&&dl!==null&&dl<=7;
+            // 공장출고일 미입력 (진행중인 건만) — 노란색으로 강조
             // 공백·null·Date객체·ISO 문자열 모두 안전하게 검사
             const fsRaw=s.factShip;
             const fsStr=fsRaw==null?'':String(fsRaw).trim();
             const hasFs=fsStr!=='' && fsStr!=='null' && fsStr!=='undefined';
             const missFs=s.status!=='확정'&&s.status!=='취소'&&!hasFs;
-            const rc=[urg?'row-u':warn?'row-w':'', missFs?'row-miss-fs':''].filter(Boolean).join(' ');
+            const rc=[due7?'row-due7':(urg?'row-u':warn?'row-w':''), missFs?'row-miss-fs':''].filter(Boolean).join(' ');
             const imgs=s.imgs||[];
             const sourceDocs=s.sourceDoc||[];
             const created=s.createdAt?new Date(s.createdAt):s.id?new Date(s.id):null;
@@ -20089,14 +20099,16 @@ function renderOrder(){
             const dl=dday(o.ship);
             const urg=dl!==null&&dl<=1;
             const warn=dl!==null&&dl<=3&&dl>1;
+            const due7=dl!==null&&dl<=7;
             const rows=o.rows||[];
             const ordStatus = normalizeOrderStatus(o.status);
             const isOrdDone = isOrderShipped(ordStatus);
             const isOrdCanceled = isOrderCanceled(ordStatus);
             const isOrdChecked=window._ordChecked&&window._ordChecked.has(o.id);
             const missFs=!isOrdDone&&!isOrdCanceled&&!o.factShip;
+            const active=!isOrdDone&&!isOrdCanceled;
             const rowCls=[
-              urg&&!isOrdDone&&!isOrdCanceled?'row-u':warn&&!isOrdDone&&!isOrdCanceled?'row-w':'',
+              active&&due7?'row-due7':(urg&&active?'row-u':warn&&active?'row-w':''),
               missFs?'row-miss-fs':'',
               isOrdChecked?'checked-row':''
             ].filter(Boolean).join(' ');
@@ -25013,6 +25025,7 @@ function renderSalesTab(){
   <div style="display:flex;border-bottom:1px solid var(--bdr);background:var(--s1);margin:-14px -16px 14px;padding:0 16px;overflow-x:auto">
     <button class="sl-subtab ${_salesSubTab==='inquiry'?'on':''}" onclick="setSalesSubTab('inquiry')">📬 고객사 문의</button>
     <button class="sl-subtab ${_salesSubTab==='proposals'?'on':''}" onclick="setSalesSubTab('proposals')">💡 신규 제안</button>
+    <button class="sl-subtab ${_salesSubTab==='pgen'?'on':''}" onclick="setSalesSubTab('pgen')">📑 제안서 생성기</button>
     <button class="sl-subtab ${_salesSubTab==='quotes'?'on':''}" onclick="setSalesSubTab('quotes')">📋 견적서</button>
     <button class="sl-subtab ${_salesSubTab==='monthly'?'on':''}" onclick="setSalesSubTab('monthly')">📊 월별 실적</button>
     <button class="sl-subtab ${_salesSubTab==='clients'?'on':''}" onclick="setSalesSubTab('clients')">🏢 고객사</button>
@@ -25038,6 +25051,7 @@ function renderSalesSubTab(){
   c.innerHTML='';
   if(_salesSubTab==='inquiry') vInquiry(c);
   else if(_salesSubTab==='proposals') vNewProposals(c);
+  else if(_salesSubTab==='pgen') vProposalGen(c);
   else if(_salesSubTab==='quotes') vQuotes(c);
   else if(_salesSubTab==='monthly') vMonthly(c);
   else if(_salesSubTab==='clients') vClients(c);
@@ -31615,6 +31629,339 @@ function vNewProposals(c){
       등록된 제안이 없습니다
     </div>`}
   </div>`;
+}
+
+// ════════════════════════════════════════════════
+// 📑 제안서 생성기 (Proposal Generator)
+//   고객사 입력 → AI 분석(callClaudeAPI + 웹검색) → 이미지 검색(/imgsearch)
+//   → 카테고리별 이미지 격자 PPTX 출력
+// ════════════════════════════════════════════════
+var _pg = { step:1, input:{}, diag:'', trend:[], cats:[], aiBusy:false };
+
+function vProposalGen(c){
+  const step=_pg.step;
+  let h='<div style="max-width:980px;margin:0 auto">';
+  // 스텝 인디케이터
+  const steps=[['1','정보 입력'],['2','AI 생성'],['3','이미지 선택'],['4','미리보기·출력']];
+  h+='<div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">';
+  steps.forEach(s=>{
+    const n=+s[0], on=(n===step), done=(n<step);
+    h+=`<div style="flex:1;min-width:130px;display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:9px;background:${on?'var(--s1)':'var(--s2)'};border:1px solid ${on?'var(--grn)':'var(--bdr)'};opacity:${on||done?1:.55}">
+      <span style="width:24px;height:24px;border-radius:50%;background:${on?'var(--grn)':done?'var(--gold)':'var(--bdr)'};color:${on||done?'#fff':'var(--t2)'};display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px">${done?'✓':s[0]}</span>
+      <span style="font-size:12px;font-weight:700">${s[1]}</span></div>`;
+  });
+  h+='</div>';
+
+  if(step===1) h+=pgStep1();
+  else if(step===2) h+=pgStep2();
+  else if(step===3) h+=pgStep3();
+  else if(step===4) h+=pgStep4();
+  h+='</div>';
+  c.innerHTML=h;
+
+  if(step===2 && !_pg.aiBusy && !_pg.cats.length) pgRunAI();
+  if(step===3) pgLoadImages();
+}
+
+function pgStep1(){
+  const i=_pg.input;
+  const clientOpts=clients.map(cl=>`<option value="${(cl.name||'').replace(/"/g,'&quot;')}">`).join('');
+  return `<div class="card"><div class="ch"><div class="ch-t">📑 신규 제안서 생성기</div></div>
+  <div style="padding:4px 2px 0">
+    <div style="font-size:12px;color:var(--t3);margin-bottom:14px">고객사명만 필수입니다. 나머지는 알수록 제안서가 정확해집니다. 비우면 AI가 온라인 분석으로 채웁니다.</div>
+    <label class="fl">고객사명 / 브랜드 *</label>
+    <input id="pg_brand" list="pg_clients" class="inp" value="${(i.brand||'').replace(/"/g,'&quot;')}" placeholder="예: 베흐트 (주식회사 제이스바이브)">
+    <datalist id="pg_clients">${clientOpts}</datalist>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:10px">
+      <div style="flex:1;min-width:200px"><label class="fl">웹사이트 / 인스타</label><input id="pg_url" class="inp" value="${(i.url||'').replace(/"/g,'&quot;')}" placeholder="verte.co.kr"></div>
+      <div style="flex:1;min-width:160px"><label class="fl">대상 시즌</label>
+        <select id="pg_season" class="inp">
+          ${['FW 2026 (가을·겨울)','SS 2027 (봄·여름)','프리폴 2026','홀리데이·연말'].map(s=>`<option ${i.season===s?'selected':''}>${s}</option>`).join('')}
+        </select></div>
+    </div>
+    <label class="fl" style="margin-top:10px">벤치마킹 브랜드 <span style="color:var(--t3);font-weight:400">(쉼표 구분, 2~4개)</span></label>
+    <input id="pg_bench" class="inp" value="${(i.bench||'').replace(/"/g,'&quot;')}" placeholder="예: 디디에두보, 누데이크, 모이사">
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:10px">
+      <div style="flex:1;min-width:200px"><label class="fl">타깃 고객</label><input id="pg_target" class="inp" value="${(i.target||'').replace(/"/g,'&quot;')}" placeholder="예: 25–34 / 자가구매 7:선물 3"></div>
+      <div style="flex:1;min-width:160px"><label class="fl">판매 일정</label><input id="pg_sched" class="inp" value="${(i.sched||'').replace(/"/g,'&quot;')}" placeholder="예: 8월 1차, 10월 2차"></div>
+    </div>
+    <label class="fl" style="margin-top:10px">추가 메모 <span style="color:var(--t3);font-weight:400">(강조하고 싶은 방향)</span></label>
+    <textarea id="pg_memo" class="inp" style="min-height:56px" placeholder="예: 객단가 상승 목표. 실버 위주, 키링·백참 신규 카테고리 검토.">${(i.memo||'')}</textarea>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px">
+      <button class="btn bp bs" onclick="pgGoGenerate()">제안서 생성 →</button>
+    </div>
+  </div></div>`;
+}
+
+function pgGoGenerate(){
+  _pg.input={
+    brand:(document.getElementById('pg_brand').value||'').trim(),
+    url:(document.getElementById('pg_url').value||'').trim(),
+    season:document.getElementById('pg_season').value,
+    bench:(document.getElementById('pg_bench').value||'').trim(),
+    target:(document.getElementById('pg_target').value||'').trim(),
+    sched:(document.getElementById('pg_sched').value||'').trim(),
+    memo:(document.getElementById('pg_memo').value||'').trim()
+  };
+  if(!_pg.input.brand){ showToast('고객사명을 입력해 주세요','var(--red)'); return; }
+  _pg.cats=[]; _pg.diag=''; _pg.trend=[]; _pg.aiBusy=false;
+  _pg.step=2; renderSalesSubTab();
+}
+
+function pgStep2(){
+  if(_pg.cats.length){
+    // 결과 표시
+    let h=`<div class="card"><div class="ch"><div class="ch-t">2. AI 생성 결과 <span style="font-size:11px;color:var(--t3);font-weight:400">— 클릭해 직접 수정 가능</span></div></div><div style="padding:2px">`;
+    h+=`<div style="border:1px solid var(--bdr);border-radius:9px;margin-bottom:10px;overflow:hidden">
+      <div style="background:var(--grn-bg);padding:9px 13px;font-size:12px;font-weight:800;color:var(--grn)">🏷 브랜드 진단</div>
+      <div style="padding:12px"><div contenteditable="true" class="pg-edit" data-k="diag" style="font-size:12px;line-height:1.7">${_pg.diag||''}</div></div></div>`;
+    h+=`<div style="border:1px solid var(--bdr);border-radius:9px;margin-bottom:10px;overflow:hidden">
+      <div style="background:var(--grn-bg);padding:9px 13px;font-size:12px;font-weight:800;color:var(--grn)">📈 시즌 트렌드</div><div style="padding:12px">`;
+    _pg.trend.forEach((t,idx)=>{ h+=`<div contenteditable="true" class="pg-edit" data-k="trend" data-i="${idx}" style="font-size:12px;line-height:1.7;${idx>0?'margin-top:6px':''}">${t}</div>`; });
+    h+=`</div></div>`;
+    h+=`<div style="border:1px solid var(--bdr);border-radius:9px;overflow:hidden">
+      <div style="background:var(--grn-bg);padding:9px 13px;font-size:12px;font-weight:800;color:var(--grn)">🗂 카테고리 (슬라이드별 한 줄 논리)</div><div style="padding:10px">`;
+    _pg.cats.forEach((cat,idx)=>{
+      h+=`<div style="display:flex;gap:10px;padding:9px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:7px;background:#fff">
+        <div contenteditable="true" class="pg-edit" data-k="catname" data-i="${idx}" style="font-weight:800;color:var(--grn);min-width:120px;font-size:12px">${cat.name}</div>
+        <div style="flex:1"><div contenteditable="true" class="pg-edit" data-k="catlogic" data-i="${idx}" style="font-size:12px;color:var(--t2)">${cat.logic}</div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:3px">🔑 <span contenteditable="true" class="pg-edit" data-k="catkw" data-i="${idx}">${cat.kw}</span></div></div></div>`;
+    });
+    h+=`</div></div>`;
+    h+=`<div style="display:flex;justify-content:space-between;margin-top:16px">
+      <button class="btn bg bs" onclick="_pg.step=1;renderSalesSubTab()">← 입력 수정</button>
+      <button class="btn bp bs" onclick="pgSaveEdits();_pg.step=3;renderSalesSubTab()">이미지 선택 →</button></div>`;
+    h+=`</div></div>`;
+    return h;
+  }
+  // 생성 중
+  return `<div class="card"><div style="text-align:center;padding:40px 20px">
+    <div class="pg-spin" style="width:42px;height:42px;border:4px solid var(--bdr);border-top-color:var(--grn);border-radius:50%;margin:0 auto 18px;animation:pgspin 1s linear infinite"></div>
+    <div style="font-weight:800;color:var(--grn);margin-bottom:8px">AI가 제안서를 생성하고 있습니다…</div>
+    <div style="font-size:12px;color:var(--t3)" id="pgGenMsg">브랜드 분석 · 트렌드 리서치 · 카테고리 구성 중 (웹 검색 포함, 30초~1분 소요)</div>
+  </div></div><style>@keyframes pgspin{to{transform:rotate(360deg)}}</style>`;
+}
+
+function pgSaveEdits(){
+  document.querySelectorAll('.pg-edit').forEach(el=>{
+    const k=el.dataset.k, i=el.dataset.i!=null?+el.dataset.i:null, v=el.innerText.trim();
+    if(k==='diag') _pg.diag=v;
+    else if(k==='trend') _pg.trend[i]=v;
+    else if(k==='catname') _pg.cats[i].name=v;
+    else if(k==='catlogic') _pg.cats[i].logic=v;
+    else if(k==='catkw') _pg.cats[i].kw=v;
+  });
+}
+
+function pgBuildPrompt(input){
+  return [
+    "당신은 한국 주얼리 OEM 제조사 EK의 시즌 신제품 제안 전문가입니다.",
+    "아래 고객사를 위해 신제품 제안서의 '분석·트렌드·카테고리'를 설계하세요.",
+    "웹 검색으로 해당 브랜드의 온라인 정보(포지셔닝·가격대·베스트·시그니처)와 해당 시즌의 한국·글로벌 주얼리 트렌드를 조사한 뒤 작성하세요.",
+    "",
+    "[고객사 정보]",
+    "- 브랜드: "+input.brand,
+    "- 웹/인스타: "+(input.url||'(없음)'),
+    "- 대상 시즌: "+input.season,
+    "- 벤치마킹: "+(input.bench||'(추론)'),
+    "- 타깃 고객: "+(input.target||'(추론)'),
+    "- 판매 일정: "+(input.sched||'(미입력)'),
+    "- 추가 메모: "+(input.memo||'(없음)'),
+    "",
+    "[출력 형식] 반드시 아래 JSON만 출력. 설명·마크다운·백틱 금지.",
+    '{"diagnosis":"브랜드 진단 3~4문장","trend":["트렌드축1","축2","축3"],"categories":[{"name":"카테고리명(예: 실버 — 볼드/심플)","logic":"이 카테고리가 왜 이 브랜드에 맞고 어떻게 추가매출이 되는지 한 줄","kw":"영문 이미지 검색어"}]}',
+    "카테고리는 6~8개. 고객사 특성에 맞게(실버/진주/파베/가죽/비즈/키링/헤어 등). logic은 트렌드 근거+매출 논리 한 줄."
+  ].join("\n");
+}
+
+async function pgRunAI(){
+  _pg.aiBusy=true;
+  try{
+    const body={ model:'claude-sonnet-4-5', max_tokens:4000,
+      messages:[{role:'user', content:pgBuildPrompt(_pg.input)}],
+      tools:[{type:'web_search_20250305', name:'web_search', max_uses:6}] };
+    const data=await callClaudeAPI(body);
+    if(data && data.error){ throw new Error(data.error.message||'API 오류'); }
+    let txt='';
+    if(Array.isArray(data.content)) txt=data.content.filter(b=>b.type==='text').map(b=>b.text).join('\n');
+    else if(typeof data.content==='string') txt=data.content;
+    let t=txt.replace(/```json/gi,'').replace(/```/g,'').trim();
+    const a=t.indexOf('{'), b=t.lastIndexOf('}'); if(a>=0&&b>a) t=t.slice(a,b+1);
+    const parsed=JSON.parse(t);
+    _pg.diag=parsed.diagnosis||'';
+    _pg.trend=Array.isArray(parsed.trend)?parsed.trend:[];
+    _pg.cats=(Array.isArray(parsed.categories)?parsed.categories:[]).map(x=>({name:x.name||'',logic:x.logic||'',kw:x.kw||'',imgs:[]}));
+    if(!_pg.cats.length) throw new Error('카테고리 생성 실패');
+  }catch(e){
+    showToast('AI 생성 실패: '+e.message,'var(--red)',4000);
+    _pg.step=1;
+  }
+  _pg.aiBusy=false;
+  if(currentTab==='sales' && _salesSubTab==='pgen') renderSalesSubTab();
+}
+
+function pgStep3(){
+  let h=`<div class="card"><div class="ch"><div class="ch-t">3. 이미지 선택</div></div>
+  <div style="padding:2px">
+    <div style="font-size:11.5px;color:#7a612e;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px;padding:10px 12px;margin-bottom:14px">⚠️ 검색 이미지는 디자인 방향 확인용입니다. 고객사 전달 최종본에는 자사 제품 사진이나 자체 제작 이미지로 교체를 권장합니다.</div>
+    <div id="pgImgCats"></div>
+    <div style="display:flex;justify-content:space-between;margin-top:16px">
+      <button class="btn bg bs" onclick="_pg.step=2;renderSalesSubTab()">← 생성 결과</button>
+      <button class="btn bp bs" onclick="_pg.step=4;renderSalesSubTab()">미리보기 →</button></div>
+  </div></div>`;
+  return h;
+}
+
+function pgWorkerUrl(){
+  try{ if(notionCfg && notionCfg.workerUrl) return notionCfg.workerUrl.replace(/\/$/,''); }catch(e){}
+  try{ return (JSON.parse(localStorage.getItem('ek_notion_cfg')||'{}').workerUrl||'').replace(/\/$/,''); }catch(e){ return ''; }
+}
+
+function pgLoadImages(){
+  const host=document.getElementById('pgImgCats'); if(!host) return;
+  host.innerHTML='';
+  _pg.cats.forEach((cat,ci)=>{
+    const block=document.createElement('div'); block.style.marginBottom='20px';
+    block.innerHTML=`<div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name}</div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:9px">🔑 "${cat.kw}" · 넣을 이미지를 클릭하세요</div>
+      <div id="pgGrid${ci}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px"><div style="grid-column:1/-1;color:var(--t3);font-size:12px;padding:6px">불러오는 중…</div></div>
+      <div id="pgSel${ci}" style="font-size:11px;color:var(--grn);font-weight:700;margin-top:6px">선택: ${(cat.imgs||[]).length}장</div>`;
+    host.appendChild(block);
+    pgFetchImages(ci, cat.kw);
+  });
+}
+
+function pgFetchImages(ci, kw){
+  const grid=document.getElementById('pgGrid'+ci); if(!grid) return;
+  const wu=pgWorkerUrl();
+  if(!wu){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--red);font-size:12px;padding:6px">Worker 주소가 설정되지 않았습니다 (⚙ 설정에서 확인).</div>'; return; }
+  fetch(wu+'/imgsearch?q='+encodeURIComponent(kw)+'&n=10')
+    .then(r=>r.json())
+    .then(d=>{
+      if(d.error || !d.images || !d.images.length){
+        grid.innerHTML='<div style="grid-column:1/-1;color:var(--org);font-size:11.5px;padding:6px">이미지 검색 결과 없음'+(d.error?(' — '+d.error):'')+'</div>'; return;
+      }
+      grid.innerHTML='';
+      const sel=new Set((_pg.cats[ci].imgs||[]).map(x=>x.url));
+      d.images.forEach(img=>{
+        const t=document.createElement('div');
+        const isSel=sel.has(img.url);
+        t.style.cssText='position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;border:2px solid '+(isSel?'var(--grn)':'var(--bdr)')+';cursor:pointer;background:#fff';
+        t.innerHTML=`<img src="${img.thumb||img.url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover" onerror="this.style.opacity=.2">
+          <div style="position:absolute;top:4px;right:4px;width:19px;height:19px;border-radius:50%;background:var(--grn);color:#fff;display:${isSel?'flex':'none'};align-items:center;justify-content:center;font-size:11px;font-weight:900">✓</div>`;
+        t.onclick=function(){
+          const arr=_pg.cats[ci].imgs||(_pg.cats[ci].imgs=[]);
+          const idx=arr.findIndex(x=>x.url===img.url);
+          if(idx>=0){ arr.splice(idx,1); t.style.borderColor='var(--bdr)'; t.lastElementChild.style.display='none'; }
+          else { arr.push({url:img.url, thumb:img.thumb}); t.style.borderColor='var(--grn)'; t.lastElementChild.style.display='flex'; }
+          document.getElementById('pgSel'+ci).textContent='선택: '+arr.length+'장';
+        };
+        grid.appendChild(t);
+      });
+    })
+    .catch(e=>{ grid.innerHTML='<div style="grid-column:1/-1;color:var(--red);font-size:11.5px;padding:6px">검색 실패: '+e.message+'</div>'; });
+}
+
+function pgStep4(){
+  const brand=(_pg.input.brand||'').split('(')[0].trim();
+  let h=`<div class="card"><div class="ch"><div class="ch-t">4. 미리보기 · 출력</div></div><div style="padding:2px">
+    <div style="font-size:12px;color:var(--t3);margin-bottom:14px">표지 + 트렌드 슬라이드 + 카테고리별 이미지 격자로 PPTX가 생성됩니다.</div>`;
+  // 표지
+  h+=`<div style="background:linear-gradient(160deg,#24433a,#3c7059);color:#eef3ee;padding:30px;border-radius:10px;margin-bottom:12px">
+    <div style="letter-spacing:3px;font-size:10px;color:#bcd3c4">EK · OEM JEWELRY PARTNER</div>
+    <div style="font-size:24px;font-weight:900;margin:8px 0">${brand} 신제품 제안서</div>
+    <div style="font-size:12px;color:#dce8df">${_pg.input.season} · 시즌 트렌드 기반 신규 라인 제안</div></div>`;
+  // 카테고리 미리보기
+  _pg.cats.forEach(cat=>{
+    const n=(cat.imgs||[]).length || 0;
+    let cells='';
+    const showN = n>0?n:9;
+    for(let k=0;k<showN;k++){
+      const im=(cat.imgs||[])[k];
+      cells+=`<div style="aspect-ratio:1;border-radius:5px;overflow:hidden;background:var(--s2);display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:9px">${im?`<img src="${im.thumb||im.url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover">`:'img'}</div>`;
+    }
+    h+=`<div style="border:1px solid var(--bdr);border-radius:10px;padding:14px;margin-bottom:10px">
+      <div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name}</div>
+      <div style="font-size:11px;color:var(--gold-lt);margin-bottom:10px">${cat.logic}</div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">${cells}</div></div>`;
+  });
+  h+=`<div style="display:flex;justify-content:space-between;margin-top:16px">
+    <button class="btn bg bs" onclick="_pg.step=3;renderSalesSubTab()">← 이미지 선택</button>
+    <button class="btn bp bs" onclick="pgExportPPTX(this)">📥 PPTX 다운로드</button></div>`;
+  h+=`</div></div>`;
+  return h;
+}
+
+function pgEnsurePptx(){
+  return new Promise((resolve,reject)=>{
+    if(window.PptxGenJS){ resolve(); return; }
+    const s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.js';
+    s.onload=()=>resolve(); s.onerror=()=>reject(new Error('PPTX 라이브러리 로드 실패'));
+    document.head.appendChild(s);
+  });
+}
+
+// 이미지 URL → base64 dataURL (PPTX 삽입용). Worker 프록시로 CORS 우회.
+async function pgImgToDataURL(url){
+  try{
+    const wu=pgWorkerUrl();
+    // 외부 이미지는 CORS 때문에 직접 못 읽을 수 있어 시도 후 실패하면 스킵
+    const resp=await fetch(url, {mode:'cors'});
+    const blob=await resp.blob();
+    return await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(blob); });
+  }catch(e){ return null; }
+}
+
+async function pgExportPPTX(btn){
+  if(btn){ btn.disabled=true; btn.textContent='생성 중…'; }
+  try{
+    await pgEnsurePptx();
+    const brand=(_pg.input.brand||'고객사').split('(')[0].trim();
+    const fullName=((_pg.input.brand||'').match(/\(([^)]+)\)/)||[])[1]||'';
+    const season=_pg.input.season||'';
+    const GREEN_D='24433A',GREEN='2F5D4F',GOLD='9A7B3F',INK='1F2A24',INK3='8C978F',FONT='맑은 고딕';
+    const pptx=new PptxGenJS();
+    pptx.defineLayout({name:'W16x9',width:13.333,height:7.5}); pptx.layout='W16x9';
+    const W=13.333;
+    // 표지
+    let s=pptx.addSlide(); s.background={color:GREEN_D};
+    s.addText('EK · OEM JEWELRY PARTNER',{x:0.9,y:2.4,w:11,h:0.4,fontSize:13,color:'BCD3C4',charSpacing:3,fontFace:FONT});
+    s.addText(brand+' 신제품 제안서',{x:0.9,y:2.9,w:11.5,h:1.2,fontSize:40,bold:true,color:'FFFFFF',fontFace:FONT});
+    s.addText(season+' · 시즌 트렌드 기반 신규 라인 제안',{x:0.9,y:4.1,w:11,h:0.5,fontSize:16,color:'DCE8DF',fontFace:FONT});
+    if(fullName) s.addText(fullName,{x:0.9,y:6.6,w:11,h:0.4,fontSize:12,color:'AEC3B3',fontFace:FONT});
+    // 트렌드
+    s=pptx.addSlide(); s.background={color:'FFFFFF'};
+    s.addText('SEASON TREND',{x:0.7,y:0.5,w:11,h:0.35,fontSize:12,bold:true,color:GOLD,charSpacing:2,fontFace:FONT});
+    s.addText(season+' — 왜 지금 이 방향인가',{x:0.7,y:0.92,w:12,h:0.7,fontSize:24,bold:true,color:GREEN_D,fontFace:FONT});
+    let ty=2.0; (_pg.trend.length?_pg.trend:['']).forEach(t=>{ s.addText(t,{x:0.9,y:ty,w:11.5,h:0.9,fontSize:14,color:INK,fontFace:FONT,valign:'top',lineSpacingMultiple:1.2}); ty+=1.1; });
+    if(_pg.diag){ s.addText(_pg.diag,{x:0.9,y:5.6,w:11.5,h:1.3,fontSize:11,color:INK3,fontFace:FONT,valign:'top',italic:true,lineSpacingMultiple:1.2}); }
+    // 카테고리 슬라이드
+    for(const cat of _pg.cats){
+      const sl=pptx.addSlide(); sl.background={color:'FFFFFF'};
+      sl.addText(cat.name,{x:0.6,y:0.4,w:12,h:0.5,fontSize:20,bold:true,color:GREEN_D,fontFace:FONT});
+      sl.addText(cat.logic,{x:0.6,y:0.95,w:12,h:0.45,fontSize:13,color:GOLD,fontFace:FONT});
+      const imgs=cat.imgs||[]; const count=imgs.length||0;
+      const cols=5,gap=0.2,startX=0.6,startY=1.7;
+      const cellW=(W-startX*2-gap*(cols-1))/cols, cellH=cellW;
+      const drawN = count>0?count:9;
+      for(let k=0;k<drawN;k++){
+        const r=Math.floor(k/cols), cc=k%cols;
+        const x=startX+cc*(cellW+gap), y=startY+r*(cellH+gap);
+        const im=imgs[k];
+        let dataUrl=null;
+        if(im){ dataUrl=await pgImgToDataURL(im.url||im.thumb); }
+        if(dataUrl){ sl.addImage({data:dataUrl, x, y, w:cellW, h:cellH, sizing:{type:'cover',w:cellW,h:cellH}}); }
+        else { sl.addShape(pptx.ShapeType.roundRect,{x,y,w:cellW,h:cellH,fill:{color:'EEF2EE'},line:{color:'DDE6DD',width:1},rectRadius:0.05});
+               sl.addText('이미지',{x,y,w:cellW,h:cellH,align:'center',valign:'middle',fontSize:10,color:INK3,fontFace:FONT}); }
+      }
+    }
+    await pptx.writeFile({fileName: brand+'_'+(season.split(' ')[0]||'')+'_제안서.pptx'});
+    showToast('PPTX 생성 완료','var(--grn)');
+  }catch(e){
+    showToast('PPTX 생성 실패: '+e.message,'var(--red)',4000);
+  }
+  if(btn){ btn.disabled=false; btn.textContent='📥 PPTX 다운로드'; }
 }
 
 // 셀 상세 패널 — 특정 고객사×월 조합의 제안 리스트
