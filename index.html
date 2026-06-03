@@ -13131,7 +13131,7 @@ async function deleteQuoteFromNotion(qt){
 
 // ── Sales data (declared early to avoid TDZ) ──
 let clients=[], proposals=[], projects=[], quotes=[];
-let _salesInited=false, _salesSubTab='inquiry';
+let _salesInited=false, _salesSubTab=(function(){try{return localStorage.getItem('ek3_salesSubTab')||'inquiry';}catch(e){return 'inquiry';}})();
 const SL_K={cli:'ek_v9_cli',prop:'ek_v9_prop',prj:'ek_v9_prj',inq:'ek_inquiries',nd:'ek_newdesigns',qt:'ek_quotes'};
 function slSave(){try{
   localStorage.setItem(SL_K.cli,JSON.stringify(clients));
@@ -15869,7 +15869,7 @@ function renderSmpComposeView(){
   <!-- 서브탭 헤더 -->
   <div class="card" style="padding:0;margin-bottom:10px">
     <div style="display:flex;border-bottom:1px solid var(--bdr)">
-      <div onclick="window._smpSubTab='list';renderSample()" style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--t3);border-bottom:3px solid transparent">📋 샘플 목록 <span style="font-size:11px;color:var(--t3);font-weight:400;margin-left:4px">${samples.length}건</span></div>
+      <div onclick="setSmpSubTab('list')" style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--t3);border-bottom:3px solid transparent">📋 샘플 목록 <span style="font-size:11px;color:var(--t3);font-weight:400;margin-left:4px">${samples.length}건</span></div>
       <div style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--gold);border-bottom:3px solid var(--gold);background:linear-gradient(180deg,transparent,rgba(167,131,57,.04))">✨ AI 의뢰서 작성</div>
     </div>
   </div>
@@ -17696,11 +17696,16 @@ function calClick(ds){schedView='week';const d=new Date(ds);schedWOff=Math.round
 // ════════════════════════════════
 // SAMPLE TAB — LIST VIEW
 // ════════════════════════════════
+function setSmpSubTab(t){
+  window._smpSubTab=t;
+  try{ localStorage.setItem('ek3_smpSubTab', t); }catch(e){}
+  renderSample();
+}
 function renderSample(){
   const c=document.getElementById('content');
 
-  // 서브탭 상태 (기본: list)
-  if(typeof window._smpSubTab==='undefined') window._smpSubTab='list';
+  // 서브탭 상태 (기본: list) — 새로고침 후 복원
+  if(typeof window._smpSubTab==='undefined'){ try{ window._smpSubTab=localStorage.getItem('ek3_smpSubTab')||'list'; }catch(e){ window._smpSubTab='list'; } }
 
   // 서브탭이 'compose'(AI 의뢰서 작성)이면 별도 화면 렌더
   if(window._smpSubTab==='compose'){
@@ -17720,8 +17725,8 @@ function renderSample(){
   <!-- 서브탭 헤더 -->
   <div class="card" style="padding:0;margin-bottom:10px">
     <div style="display:flex;border-bottom:1px solid var(--bdr)">
-      <div onclick="window._smpSubTab='list';renderSample()" style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--gold);border-bottom:3px solid var(--gold);background:linear-gradient(180deg,transparent,rgba(167,131,57,.04))">📋 샘플 목록 <span style="font-size:11px;color:var(--t3);font-weight:400;margin-left:4px">${samples.length}건</span></div>
-      <div onclick="window._smpSubTab='compose';renderSample()" style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--t3);border-bottom:3px solid transparent">✨ AI 의뢰서 작성</div>
+      <div onclick="setSmpSubTab('list')" style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--gold);border-bottom:3px solid var(--gold);background:linear-gradient(180deg,transparent,rgba(167,131,57,.04))">📋 샘플 목록 <span style="font-size:11px;color:var(--t3);font-weight:400;margin-left:4px">${samples.length}건</span></div>
+      <div onclick="setSmpSubTab('compose')" style="padding:12px 20px;cursor:pointer;font-weight:600;font-size:13px;color:var(--t3);border-bottom:3px solid transparent">✨ AI 의뢰서 작성</div>
     </div>
   </div>
 
@@ -19581,9 +19586,10 @@ function showToast(msg, bg, duration){
 // ORDER + PROCESS COMBINED TAB
 // ════════════════════════════════
 // 발주 서브탭: 'inprogress' (기본) / 'done' / 'all'
-let ordSubTab = 'all';
+let ordSubTab = (function(){try{return localStorage.getItem('ek3_ordSubTab')||'all';}catch(e){return 'all';}})();
 function setOrdSubTab(v){
   ordSubTab=v;
+  try{ localStorage.setItem('ek3_ordSubTab', v); }catch(e){}
   // 서브탭(진행중/출고완료/전체)과 ordAdvFilter.status는 같은 역할이라 중복.
   // 서브탭 전환 시 status 필터를 리셋해 충돌 방지 (출고완료 탭인데 status=inprogress 등)
   ordAdvFilter.status='';
@@ -25037,9 +25043,10 @@ function renderSalesTab(){
 
 function setSalesSubTab(tab){
   _salesSubTab=tab;
+  try{ localStorage.setItem('ek3_salesSubTab', tab); }catch(e){}
   // update tab buttons
   document.querySelectorAll('.sl-subtab').forEach(b=>{
-    const label = {inquiry:'문의',proposals:'제안',quotes:'견적',monthly:'월별',clients:'고객사'}[tab];
+    const label = {inquiry:'문의',proposals:'신규 제안',pgen:'제안서 생성기',quotes:'견적',monthly:'월별',clients:'고객사'}[tab];
     b.classList.toggle('on', label && b.textContent.includes(label));
   });
   renderSalesSubTab();
