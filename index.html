@@ -31834,21 +31834,36 @@ function pgLoadImages(){
   const host=document.getElementById('pgImgCats'); if(!host) return;
   host.innerHTML='';
   _pg.cats.forEach((cat,ci)=>{
+    if(cat._start==null) cat._start=1; // 검색 시작 위치 (1, 11, 21 …)
     const block=document.createElement('div'); block.style.marginBottom='20px';
-    block.innerHTML=`<div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name}</div>
-      <div style="font-size:11px;color:var(--t3);margin-bottom:9px">🔑 "${cat.kw}" · 넣을 이미지를 클릭하세요</div>
+    block.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name}</div>
+        <button class="btn bg" style="font-size:11px;padding:5px 10px" onclick="pgMoreImages(${ci})">🔄 다른 이미지</button>
+      </div>
+      <div style="font-size:11px;color:var(--t3);margin:3px 0 9px">🔑 "${cat.kw}" · 넣을 이미지를 클릭하세요</div>
       <div id="pgGrid${ci}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px"><div style="grid-column:1/-1;color:var(--t3);font-size:12px;padding:6px">불러오는 중…</div></div>
       <div id="pgSel${ci}" style="font-size:11px;color:var(--grn);font-weight:700;margin-top:6px">선택: ${(cat.imgs||[]).length}장</div>`;
     host.appendChild(block);
-    pgFetchImages(ci, cat.kw);
+    pgFetchImages(ci, cat.kw, cat._start);
   });
 }
 
-function pgFetchImages(ci, kw){
+// "🔄 다른 이미지" — 다음 10장 불러오기 (이미 고른 이미지는 유지)
+function pgMoreImages(ci){
+  const cat=_pg.cats[ci]; if(!cat) return;
+  cat._start=(cat._start||1)+10;
+  if(cat._start>91) cat._start=1; // 구글 CSE는 최대 100장(start<=91), 넘으면 처음으로 순환
+  const grid=document.getElementById('pgGrid'+ci);
+  if(grid) grid.innerHTML='<div style="grid-column:1/-1;color:var(--t3);font-size:12px;padding:6px">다른 이미지 불러오는 중…</div>';
+  pgFetchImages(ci, cat.kw, cat._start);
+}
+
+function pgFetchImages(ci, kw, start){
   const grid=document.getElementById('pgGrid'+ci); if(!grid) return;
   const wu=pgWorkerUrl();
   if(!wu){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--red);font-size:12px;padding:6px">Worker 주소가 설정되지 않았습니다 (⚙ 설정에서 확인).</div>'; return; }
-  fetch(wu+'/imgsearch?q='+encodeURIComponent(kw)+'&n=10')
+  const startParam = start && start>1 ? ('&start='+start) : '';
+  fetch(wu+'/imgsearch?q='+encodeURIComponent(kw)+'&n=10'+startParam)
     .then(r=>r.json())
     .then(d=>{
       if(d.error || !d.images || !d.images.length){
