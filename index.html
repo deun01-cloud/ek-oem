@@ -17691,7 +17691,16 @@ function calGoTask(ds){
   schedWOff=Math.round((d-TODAY)/86400000);
   switchTab('schedule',getTabBtn('schedule'));
 }
-function calClick(ds){schedView='week';const d=new Date(ds);schedWOff=Math.round((d-TODAY)/86400000);switchTab('schedule',getTabBtn('schedule'));}
+function calClick(ds){
+  schedView='week';
+  const d=new Date(ds);
+  // 클릭한 날짜가 속한 주의 월요일과, 오늘이 속한 주의 월요일 사이의 주(week) 차이 계산
+  const mondayOf=(x)=>{ const t=new Date(x); t.setHours(0,0,0,0); const dow=t.getDay(); t.setDate(t.getDate()-(dow===0?6:dow-1)); return t; };
+  const clickedMon=mondayOf(d);
+  const todayMon=mondayOf(TODAY);
+  schedWOff=Math.round((clickedMon-todayMon)/(86400000*7));
+  switchTab('schedule',getTabBtn('schedule'));
+}
 
 // ════════════════════════════════
 // SAMPLE TAB — LIST VIEW
