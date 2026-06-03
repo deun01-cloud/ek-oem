@@ -1,23 +1,30 @@
 /**
  * EK OEM — Unified Cloudflare Worker
  * ─────────────────────────────────────
- * 역할 1: Notion API CORS 프록시  → /notion/*
- * 역할 2: R2 파일 업로드/조회/삭제 → /r2/*
+ * 역할 1: Notion API CORS 프록시   → /notion/*
+ * 역할 2: R2 파일 업로드/조회/삭제  → /r2/*
+ * 역할 3: Claude API 프록시        → /claude       ★추가
+ * 역할 4: 이미지 검색 프록시        → /imgsearch    ★추가
  *
  * 환경변수 (Worker Settings → Variables & Secrets):
- *   NOTION_TOKEN  : Notion Integration Token (secret_xxx)
+ *   NOTION_TOKEN     : Notion Integration Token (secret_xxx)
+ *   GOOGLE_CSE_KEY   : Google Custom Search API 키 (AIza...)        ★추가
+ *   GOOGLE_CSE_CX    : Google 검색엔진 ID (Programmable Search)     ★추가
  *
  * R2 바인딩 (Worker Settings → Bindings → R2 bucket):
- *   변수명: EK_FILES  / 버킷명: ek-files (직접 생성)
+ *   변수명: EK_FILES  / 버킷명: ek-files
  */
 
 const NOTION_VERSION = "2022-06-28";
 const NOTION_BASE    = "https://api.notion.com/v1";
+const ANTHROPIC_BASE = "https://api.anthropic.com/v1/messages";   // ★추가
+const ANTHROPIC_VERSION = "2023-06-01";                            // ★추가
 
 const CORS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, Notion-Version, X-File-Name, X-File-Type, X-Encoding",
+  // x-anthropic-key 추가 (앱이 Claude 호출 시 보내는 헤더)
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, Notion-Version, X-File-Name, X-File-Type, X-Encoding, x-anthropic-key",
 };
 
 export default {
@@ -29,10 +36,12 @@ export default {
       return new Response(null, { status: 204, headers: CORS });
     }
 
-    if (path.startsWith("/notion")) return handleNotion(request, env, url, path);
-    if (path.startsWith("/r2"))     return handleR2(request, env, url, path);
+    if (path.startsWith("/notion"))    return handleNotion(request, env, url, path);
+    if (path.startsWith("/r2"))        return handleR2(request, env, url, path);
+    if (path === "/claude")            return handleClaude(request, env);      // ★추가
+    if (path === "/imgsearch")         return handleImageSearch(request, env, url); // ★추가
 
-    return json({ ok: true, routes: ["/notion/*", "/r2/upload", "/r2/list", "/r2/file/:key"] });
+    return json({ ok: true, routes: ["/notion/*", "/r2/upload", "/r2/list", "/r2/file/:key", "/claude", "/imgsearch"] });
   },
 };
 
@@ -63,6 +72,87 @@ async function handleNotion(request, env, url, path) {
 
   const data = await res.json();
   return json(data, res.status);
+}
+
+// ══════════════════════════════════════
+// Claude API 프록시  ★추가
+// ──────────────────────────────────────
+// 앱(callClaudeAPI)이 보내는 요청:
+//   POST /claude
+//   headers: { x-anthropic-key: <키> }
+//   body:    { model, max_tokens, messages, tools? }  ← 그대로 Anthropic에 전달
+// 웹 검색을 쓰면 body.tools에 web_search 도구가 들어옵니다.
+// ══════════════════════════════════════
+async function handleClaude(request, env) {
+  if (request.method !== "POST") return json({ error: "POST only" }, 405);
+
+  // 키는 앱이 헤더로 보냄(우선) → 없으면 Worker 환경변수(ANTHROPIC_KEY) 폴백
+  const key = request.headers.get("x-anthropic-key") || env.ANTHROPIC_KEY;
+  if (!key) return json({ error: "Anthropic API 키가 없습니다 (헤더 x-anthropic-key 또는 환경변수 ANTHROPIC_KEY)" }, 400);
+
+  let body;
+  try { body = await request.text(); }
+  catch (e) { return json({ error: "본문 읽기 실패: " + e.message }, 400); }
+
+  const res = await fetch(ANTHROPIC_BASE, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": ANTHROPIC_VERSION,
+    },
+    body,
+  });
+
+  const data = await res.json();
+  return json(data, res.status);
+}
+
+// ══════════════════════════════════════
+// 이미지 검색 프록시 (Google Custom Search)  ★추가
+// ──────────────────────────────────────
+//  GET /imgsearch?q=검색어&n=10&start=1
+//  → { images: [ {url, thumb, title, source, w, h}, ... ], query }
+// ══════════════════════════════════════
+async function handleImageSearch(request, env, url) {
+  const q     = (url.searchParams.get("q") || "").trim();
+  const n     = Math.min(parseInt(url.searchParams.get("n") || "10", 10) || 10, 10); // CSE 1회 최대 10
+  const start = parseInt(url.searchParams.get("start") || "1", 10) || 1;
+
+  if (!q) return json({ error: "검색어(q)가 없습니다." }, 400);
+  if (!env.GOOGLE_CSE_KEY || !env.GOOGLE_CSE_CX) {
+    return json({ error: "이미지 검색 키 미설정 — Worker 환경변수 GOOGLE_CSE_KEY / GOOGLE_CSE_CX를 등록하세요." }, 500);
+  }
+
+  const api = new URL("https://www.googleapis.com/customsearch/v1");
+  api.searchParams.set("key", env.GOOGLE_CSE_KEY);
+  api.searchParams.set("cx",  env.GOOGLE_CSE_CX);
+  api.searchParams.set("q",   q);
+  api.searchParams.set("searchType", "image");
+  api.searchParams.set("num", String(n));
+  api.searchParams.set("start", String(start));
+  api.searchParams.set("safe", "active");
+  api.searchParams.set("imgSize", "medium");
+
+  let data;
+  try {
+    const r = await fetch(api.toString());
+    data = await r.json();
+    if (data.error) return json({ error: "Google 검색 오류: " + (data.error.message || "unknown") }, 502);
+  } catch (e) {
+    return json({ error: "검색 요청 실패: " + e.message }, 502);
+  }
+
+  const images = (data.items || []).map(it => ({
+    url:    it.link,
+    thumb:  (it.image && it.image.thumbnailLink) || it.link,
+    title:  it.title || "",
+    source: (it.image && it.image.contextLink) || "",
+    w:      (it.image && it.image.width)  || 0,
+    h:      (it.image && it.image.height) || 0,
+  }));
+
+  return json({ images, query: q }, 200);
 }
 
 // ══════════════════════════════════════
