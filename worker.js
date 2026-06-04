@@ -8,8 +8,9 @@
  *
  * 환경변수 (Worker Settings → Variables & Secrets):
  *   NOTION_TOKEN     : Notion Integration Token (secret_xxx)
- *   GOOGLE_CSE_KEY   : Google Custom Search API 키 (AIza...)        ★추가
- *   GOOGLE_CSE_CX    : Google 검색엔진 ID (Programmable Search)     ★추가
+ *   PEXELS_KEY       : Pexels API 키 (이미지 검색 — 무료, pexels.com/api)   ★변경
+ *   GOOGLE_CSE_KEY   : (선택) Pexels 미설정 시 폴백용 Google 키            ★선택
+ *   GOOGLE_CSE_CX    : (선택) 폴백용 Google 검색엔진 ID                    ★선택
  *
  * R2 바인딩 (Worker Settings → Bindings → R2 bucket):
  *   변수명: EK_FILES  / 버킷명: ek-files
@@ -109,50 +110,80 @@ async function handleClaude(request, env) {
 }
 
 // ══════════════════════════════════════
-// 이미지 검색 프록시 (Google Custom Search)  ★추가
+// 이미지 검색 프록시  ★Pexels 우선 + Google CSE 폴백
 // ──────────────────────────────────────
-//  GET /imgsearch?q=검색어&n=10&start=1
-//  → { images: [ {url, thumb, title, source, w, h}, ... ], query }
+//  GET /imgsearch?q=검색어&n=12&page=1
+//  → { images: [ {url, thumb, title, source, w, h}, ... ], query, provider }
+//
+//  환경변수:
+//   PEXELS_KEY     : Pexels API 키 (우선 사용) — pexels.com/api 에서 무료 발급
+//   GOOGLE_CSE_KEY : (선택) Pexels 키 없을 때 폴백
+//   GOOGLE_CSE_CX  : (선택) 폴백용 검색엔진 ID
 // ══════════════════════════════════════
 async function handleImageSearch(request, env, url) {
-  const q     = (url.searchParams.get("q") || "").trim();
-  const n     = Math.min(parseInt(url.searchParams.get("n") || "10", 10) || 10, 10); // CSE 1회 최대 10
-  const start = parseInt(url.searchParams.get("start") || "1", 10) || 1;
+  const q    = (url.searchParams.get("q") || "").trim();
+  const n    = Math.min(parseInt(url.searchParams.get("n") || "12", 10) || 12, 30);
+  const page = Math.max(parseInt(url.searchParams.get("page") || "1", 10) || 1, 1);
 
   if (!q) return json({ error: "검색어(q)가 없습니다." }, 400);
-  if (!env.GOOGLE_CSE_KEY || !env.GOOGLE_CSE_CX) {
-    return json({ error: "이미지 검색 키 미설정 — Worker 환경변수 GOOGLE_CSE_KEY / GOOGLE_CSE_CX를 등록하세요." }, 500);
+
+  // ── 1순위: Pexels ──────────────────────────
+  if (env.PEXELS_KEY) {
+    const api = new URL("https://api.pexels.com/v1/search");
+    api.searchParams.set("query", q);
+    api.searchParams.set("per_page", String(n));
+    api.searchParams.set("page", String(page));
+    api.searchParams.set("orientation", "portrait"); // 제안서 카드용 세로 컷 우선
+
+    try {
+      const r = await fetch(api.toString(), { headers: { Authorization: env.PEXELS_KEY } });
+      const data = await r.json();
+      if (data.error) return json({ error: "Pexels 오류: " + data.error }, 502);
+      const images = (data.photos || []).map(p => ({
+        url:    (p.src && (p.src.large || p.src.original)) || "",
+        thumb:  (p.src && (p.src.medium || p.src.small)) || "",
+        title:  p.alt || "",
+        source: p.url || "",
+        w:      p.width  || 0,
+        h:      p.height || 0,
+      }));
+      return json({ images, query: q, provider: "pexels", page }, 200);
+    } catch (e) {
+      return json({ error: "Pexels 요청 실패: " + e.message }, 502);
+    }
   }
 
-  const api = new URL("https://www.googleapis.com/customsearch/v1");
-  api.searchParams.set("key", env.GOOGLE_CSE_KEY);
-  api.searchParams.set("cx",  env.GOOGLE_CSE_CX);
-  api.searchParams.set("q",   q);
-  api.searchParams.set("searchType", "image");
-  api.searchParams.set("num", String(n));
-  api.searchParams.set("start", String(start));
-  api.searchParams.set("safe", "active");
-  api.searchParams.set("imgSize", "medium");
-
-  let data;
-  try {
-    const r = await fetch(api.toString());
-    data = await r.json();
-    if (data.error) return json({ error: "Google 검색 오류: " + (data.error.message || "unknown") }, 502);
-  } catch (e) {
-    return json({ error: "검색 요청 실패: " + e.message }, 502);
+  // ── 폴백: Google Custom Search ──────────────
+  if (env.GOOGLE_CSE_KEY && env.GOOGLE_CSE_CX) {
+    const start = (page - 1) * 10 + 1;
+    const api = new URL("https://www.googleapis.com/customsearch/v1");
+    api.searchParams.set("key", env.GOOGLE_CSE_KEY);
+    api.searchParams.set("cx",  env.GOOGLE_CSE_CX);
+    api.searchParams.set("q",   q);
+    api.searchParams.set("searchType", "image");
+    api.searchParams.set("num", String(Math.min(n, 10)));
+    api.searchParams.set("start", String(start));
+    api.searchParams.set("safe", "active");
+    api.searchParams.set("imgSize", "medium");
+    try {
+      const r = await fetch(api.toString());
+      const data = await r.json();
+      if (data.error) return json({ error: "Google 검색 오류: " + (data.error.message || "unknown") }, 502);
+      const images = (data.items || []).map(it => ({
+        url:    it.link,
+        thumb:  (it.image && it.image.thumbnailLink) || it.link,
+        title:  it.title || "",
+        source: (it.image && it.image.contextLink) || "",
+        w:      (it.image && it.image.width)  || 0,
+        h:      (it.image && it.image.height) || 0,
+      }));
+      return json({ images, query: q, provider: "google", page }, 200);
+    } catch (e) {
+      return json({ error: "검색 요청 실패: " + e.message }, 502);
+    }
   }
 
-  const images = (data.items || []).map(it => ({
-    url:    it.link,
-    thumb:  (it.image && it.image.thumbnailLink) || it.link,
-    title:  it.title || "",
-    source: (it.image && it.image.contextLink) || "",
-    w:      (it.image && it.image.width)  || 0,
-    h:      (it.image && it.image.height) || 0,
-  }));
-
-  return json({ images, query: q }, 200);
+  return json({ error: "이미지 검색 키 미설정 — Worker 환경변수 PEXELS_KEY(권장) 또는 GOOGLE_CSE_KEY/CX를 등록하세요." }, 500);
 }
 
 // ══════════════════════════════════════

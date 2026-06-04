@@ -32074,8 +32074,19 @@ function pgBuildPrompt(input){
     "- 추가 메모: "+(input.memo||'(없음)'),
     "",
     "[출력 형식] 반드시 아래 JSON만 출력. 설명·마크다운·백틱 금지.",
-    '{"diagnosis":"브랜드 진단 3~4문장","trend":["트렌드축1","축2","축3"],"categories":[{"name":"카테고리명(예: 실버 — 볼드/심플)","logic":"이 카테고리가 왜 이 브랜드에 맞고 어떻게 추가매출이 되는지 한 줄","kw":"영문 이미지 검색어"}]}',
-    "카테고리는 6~8개. 고객사 특성에 맞게(실버/진주/파베/가죽/비즈/키링/헤어 등). logic은 트렌드 근거+매출 논리 한 줄."
+    '{"diagnosis":"브랜드 진단 3~4문장","trend":["트렌드축1","축2","축3"],"categories":[{"name":"카테고리명(예: 실버 — 볼드/심플)","logic":"이 카테고리가 왜 이 브랜드에 맞고 어떻게 추가매출이 되는지 한 줄","kw":"영문 무드 검색어","aiPrompt":"AI 이미지 생성용 영문 프롬프트"}]}',
+    "카테고리는 6~8개. 고객사 특성에 맞게(실버/진주/파베/가죽/비즈/키링/헤어 등). logic은 트렌드 근거+매출 논리 한 줄.",
+    "",
+    "[kw 작성 규칙] kw는 스톡 사진 검색(Pexels)에 넣을 2~5단어 영문 검색어입니다.",
+    "- 무드·스타일링·소재 톤 위주로 작성 (예: 'minimalist jewelry editorial', 'gold necklace neutral tone', 'pearl jewelry styling').",
+    "- 브랜드 무드(미니멀/모던이면 minimalist·editorial·neutral 등)를 반영할 것.",
+    "- 너무 구체적인 제품명·복합 수식어는 피하고, 결과가 풍부하게 나오는 일반적이되 톤이 분명한 단어 조합으로.",
+    "",
+    "[aiPrompt 작성 규칙] 각 카테고리의 aiPrompt는 제미나이(Imagen) 등 AI 이미지 생성 툴에 바로 붙여넣을 영문 프롬프트입니다.",
+    "- 해당 고객사의 브랜드 포지셔닝/무드에 맞춘 톤을 명시할 것 (예: 미니멀·모던 브랜드면 minimalist, editorial, muted neutral 톤).",
+    "- 반드시 포함: 제품 형태/소재 묘사 + 촬영 스타일(editorial product photography) + 배경/조명 + 'no model' + 화면비(4:5 ratio).",
+    "- 6~8개 카테고리의 배경·조명 톤을 통일해 한 무드보드처럼 보이게 할 것.",
+    "- 실물 레퍼런스가 아닌 '디자인 방향성 시각화'용이므로 과한 디테일보다 톤·실루엣 일관성을 우선."
   ].join("\n");
 }
 
@@ -32095,7 +32106,7 @@ async function pgRunAI(){
     const parsed=JSON.parse(t);
     _pg.diag=parsed.diagnosis||'';
     _pg.trend=Array.isArray(parsed.trend)?parsed.trend:[];
-    _pg.cats=(Array.isArray(parsed.categories)?parsed.categories:[]).map(x=>({name:x.name||'',logic:x.logic||'',kw:x.kw||'',imgs:[]}));
+    _pg.cats=(Array.isArray(parsed.categories)?parsed.categories:[]).map(x=>({name:x.name||'',logic:x.logic||'',kw:x.kw||'',aiPrompt:x.aiPrompt||'',imgs:[]}));
     if(!_pg.cats.length) throw new Error('카테고리 생성 실패');
   }catch(e){
     showToast('AI 생성 실패: '+e.message,'var(--red)',4000);
@@ -32128,28 +32139,46 @@ function pgLoadImages(){
   // 안내 배너
   const info=document.createElement('div');
   info.style.cssText='background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px;padding:11px 14px;margin-bottom:16px;font-size:12px;color:var(--t2);line-height:1.6';
-  info.innerHTML='카테고리마다 <b>🔗 핀터레스트에서 보기</b>로 참고 이미지를 둘러보고, 마음에 드는 이미지를 저장한 뒤 <b>📁 이미지 추가</b>로 올리세요. 올린 이미지는 그대로 제안서 PPTX에 들어갑니다.';
+  info.innerHTML='<b>🔍 자동 검색</b>으로 브랜드 무드에 맞는 후보 이미지를 불러온 뒤, 마음에 드는 것을 클릭해 선택하세요. 특정 디자인 레퍼런스가 필요하면 <b>🔗 핀터레스트</b>·<b>📁 직접 추가</b>도 함께 쓸 수 있습니다. 선택·추가한 이미지가 그대로 제안서 PPTX에 들어갑니다.';
   host.appendChild(info);
+  // 전체 자동검색 버튼
+  const allBar=document.createElement('div');
+  allBar.style.cssText='margin-bottom:16px';
+  allBar.innerHTML='<button class="btn bp" style="font-size:12px;padding:7px 14px" onclick="pgFetchAll(this)">🔍 모든 카테고리 자동 검색</button> <span style="font-size:11px;color:var(--t3)">— 카테고리별로 따로 검색할 수도 있어요</span>';
+  host.appendChild(allBar);
   _pg.cats.forEach((cat,ci)=>{
     if(!Array.isArray(cat.imgs)) cat.imgs=[];
     const pin='https://www.pinterest.com/search/pins/?q='+encodeURIComponent(cat.kw);
-    const block=document.createElement('div'); block.style.marginBottom='22px';
+    const block=document.createElement('div'); block.style.marginBottom='24px'; block.style.paddingBottom='18px'; block.style.borderBottom='1px solid var(--bdr)';
     block.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <a href="${pin}" target="_blank" rel="noopener" class="btn bg" style="font-size:11px;padding:5px 11px;text-decoration:none">🔗 핀터레스트에서 보기</a>
-          <button class="btn bp bs" style="font-size:11px;padding:5px 11px" onclick="document.getElementById('pgUp${ci}').click()">📁 이미지 추가</button>
+          <button class="btn bp" style="font-size:11px;padding:5px 11px" onclick="pgFetchImages(${ci})">🔍 자동 검색</button>
+          ${cat.aiPrompt?`<button class="btn bg" style="font-size:11px;padding:5px 11px" onclick="pgCopyAiPrompt(${ci})">📋 AI 프롬프트</button>`:''}
+          <a href="${pin}" target="_blank" rel="noopener" class="btn bg" style="font-size:11px;padding:5px 11px;text-decoration:none">🔗 핀터레스트</a>
+          <button class="btn bg" style="font-size:11px;padding:5px 11px" onclick="document.getElementById('pgUp${ci}').click()">📁 직접 추가</button>
           <input type="file" id="pgUp${ci}" accept="image/*" multiple style="display:none" onchange="pgUploadImages(event, ${ci})">
         </div>
       </div>
-      <div style="font-size:11px;color:var(--t3);margin:3px 0 9px">🔑 핀터레스트 검색어: "${cat.kw}"</div>
-      <div id="pgGrid${ci}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px"></div>
-      <div id="pgSel${ci}" style="font-size:11px;color:var(--grn);font-weight:700;margin-top:6px">선택: ${cat.imgs.length}장</div>`;
+      <div style="font-size:11px;color:var(--t3);margin:3px 0 4px">🔑 검색어: "${cat.kw}" <span class="pg-edit" contenteditable="true" data-rekw="${ci}" style="color:var(--gold-lt);cursor:text;border-bottom:1px dotted var(--gold-line);padding:0 3px" title="검색어를 수정하고 다시 검색하세요"></span></div>
+      ${cat.aiPrompt?`<details style="margin:0 0 9px"><summary style="font-size:11px;color:var(--gold-lt);cursor:pointer">✨ AI 생성 프롬프트 보기 (제미나이용)</summary><div style="font-size:11px;color:var(--t2);background:var(--s2);border-radius:7px;padding:8px 10px;margin-top:5px;line-height:1.5;white-space:pre-wrap">${cat.aiPrompt.replace(/</g,'&lt;')}</div></details>`:''}
+      <div id="pgRes${ci}"></div>
+      <div style="font-size:10.5px;color:var(--t3);font-weight:700;margin:10px 0 5px">✅ 선택된 이미지 <span id="pgSel${ci}">${cat.imgs.length}</span>장</div>
+      <div id="pgGrid${ci}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(95px,1fr));gap:8px"></div>`;
     host.appendChild(block);
-    // 이미 추가된 이미지 렌더
-    const grid=block.querySelector('#pgGrid'+ci);
     pgRenderCatGrid(ci);
   });
+}
+
+// 모든 카테고리 순차 자동 검색
+function pgFetchAll(btn){
+  if(btn){ btn.disabled=true; btn.textContent='🔍 검색 중…'; }
+  let i=0;
+  const next=()=>{
+    if(i>=_pg.cats.length){ if(btn){ btn.disabled=false; btn.textContent='🔍 모든 카테고리 자동 검색'; } return; }
+    pgFetchImages(i, ()=>{ i++; next(); });
+  };
+  next();
 }
 
 // 카테고리 그리드 다시 그리기 (업로드된 이미지 표시)
@@ -32170,10 +32199,25 @@ function pgRenderCatGrid(ci){
       e.stopPropagation();
       cat.imgs.splice(idx,1);
       pgRenderCatGrid(ci);
-      const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent='선택: '+cat.imgs.length+'장';
+      const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent=cat.imgs.length;
     };
     grid.appendChild(t);
   });
+}
+
+// 📋 AI 프롬프트 복사 — 제미나이 등에 붙여넣을 영문 프롬프트를 클립보드로
+function pgCopyAiPrompt(ci){
+  const cat=_pg.cats[ci]; if(!cat||!cat.aiPrompt) return;
+  const done=()=>showToast('AI 프롬프트 복사됨 — 제미나이에 붙여넣으세요','var(--grn)',2500);
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(cat.aiPrompt).then(done).catch(()=>pgCopyFallback(cat.aiPrompt,done));
+  } else pgCopyFallback(cat.aiPrompt,done);
+}
+function pgCopyFallback(text,cb){
+  const ta=document.createElement('textarea'); ta.value=text;
+  ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta);
+  ta.select(); try{ document.execCommand('copy'); cb&&cb(); }catch(e){ showToast('복사 실패 — 프롬프트 보기에서 수동 복사하세요','var(--org)',3000); }
+  document.body.removeChild(ta);
 }
 
 // 📁 이미지 추가 — 사용자가 고른 이미지 파일을 base64로 읽어 카테고리에 추가
@@ -32190,7 +32234,7 @@ function pgUploadImages(e, ci){
       cat.imgs.push({url:r.result, thumb:r.result, _local:true});
       if(--pending<=0){
         pgRenderCatGrid(ci);
-        const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent='선택: '+cat.imgs.length+'장';
+        const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent=cat.imgs.length;
       }
     };
     r.onerror=()=>{ if(--pending<=0) pgRenderCatGrid(ci); };
@@ -32198,50 +32242,60 @@ function pgUploadImages(e, ci){
   });
 }
 
-// ── (보존) 구글 이미지 검색 함수 — 구글 권한이 풀리면 다시 쓸 수 있도록 남겨둠 ──
-// "🔄 다른 이미지" — 다음 10장 불러오기
-function pgMoreImages(ci){
-  const cat=_pg.cats[ci]; if(!cat) return;
-  cat._start=(cat._start||1)+10;
-  if(cat._start>91) cat._start=1;
-  const grid=document.getElementById('pgGrid'+ci);
-  if(grid) grid.innerHTML='<div style="grid-column:1/-1;color:var(--t3);font-size:12px;padding:6px">다른 이미지 불러오는 중…</div>';
-  pgFetchImages(ci, cat.kw, cat._start);
-}
-
-function pgAddTile(grid, ci, img){
-  const sel=new Set((_pg.cats[ci].imgs||[]).map(x=>x.url));
-  const t=document.createElement('div');
-  const isSel=sel.has(img.url);
-  t.style.cssText='position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;border:2px solid '+(isSel?'var(--grn)':'var(--bdr)')+';cursor:pointer;background:#fff';
-  t.innerHTML=`<img src="${img.thumb||img.url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.style.display='none'">
-    <div style="position:absolute;top:4px;right:4px;width:19px;height:19px;border-radius:50%;background:var(--grn);color:#fff;display:${isSel?'flex':'none'};align-items:center;justify-content:center;font-size:11px;font-weight:900">✓</div>`;
-  t.onclick=function(){
-    const arr=_pg.cats[ci].imgs||(_pg.cats[ci].imgs=[]);
-    const idx=arr.findIndex(x=>x.url===img.url);
-    if(idx>=0){ arr.splice(idx,1); t.style.borderColor='var(--bdr)'; t.lastElementChild.style.display='none'; }
-    else { arr.push({url:img.url, thumb:img.thumb}); t.style.borderColor='var(--grn)'; t.lastElementChild.style.display='flex'; }
-    document.getElementById('pgSel'+ci).textContent='선택: '+arr.length+'장';
-  };
-  grid.appendChild(t);
-}
-
-function pgFetchImages(ci, kw, start){
-  const grid=document.getElementById('pgGrid'+ci); if(!grid) return;
+// ── 자동 검색: 결과를 pgRes{ci}에 후보로 띄움 (선택 시 아래 selected 그리드에 반영) ──
+function pgFetchImages(ci, done){
+  const cat=_pg.cats[ci]; if(!cat){ done&&done(); return; }
+  const res=document.getElementById('pgRes'+ci); if(!res){ done&&done(); return; }
   const wu=pgWorkerUrl();
-  if(!wu){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--red);font-size:12px;padding:6px">Worker 주소가 설정되지 않았습니다 (⚙ 설정에서 확인).</div>'; return; }
-  const startParam = start && start>1 ? ('&start='+start) : '';
-  fetch(wu+'/imgsearch?q='+encodeURIComponent(kw)+'&n=10'+startParam)
+  if(!wu){ res.innerHTML=pgMsg('Worker 주소가 설정되지 않았습니다 (⚙ 설정에서 확인).','var(--red)'); done&&done(); return; }
+  // 사용자가 검색어란을 수정했으면 그 값을 사용
+  const editEl=document.querySelector('[data-rekw="'+ci+'"]');
+  const typed=editEl && editEl.textContent.trim();
+  const kw=typed || cat.kw;
+  cat._page=(cat._page||1);
+  res.innerHTML='<div style="color:var(--t3);font-size:11.5px;padding:8px">🔍 후보 이미지 불러오는 중…</div>';
+  fetch(wu+'/imgsearch?q='+encodeURIComponent(kw)+'&n=12&page='+cat._page)
     .then(r=>r.json())
     .then(d=>{
       if(d.error || !d.images || !d.images.length){
-        grid.innerHTML='<div style="grid-column:1/-1;color:var(--org);font-size:11.5px;padding:6px">이미지 검색 결과 없음'+(d.error?(' — '+(d.error.message||d.error)):'')+'</div>';
-        return;
+        res.innerHTML=pgMsg('검색 결과 없음'+(d.error?(' — '+(d.error.message||d.error)):'')+' · 핀터레스트나 📁 직접 추가를 이용하세요','var(--org)');
+        done&&done(); return;
       }
-      grid.innerHTML='';
+      const wrap=document.createElement('div');
+      wrap.style.cssText='border:1px solid var(--bdr);border-radius:9px;padding:10px;background:var(--s2)';
+      const head=document.createElement('div');
+      head.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px';
+      head.innerHTML='<span style="font-size:10.5px;color:var(--t3)">후보 클릭 → 아래 선택에 추가 <span style="color:var(--t4)">('+(d.provider||'')+')</span></span>';
+      const more=document.createElement('button'); more.className='btn bg'; more.style.cssText='font-size:10.5px;padding:3px 9px';
+      more.textContent='🔄 다른 후보'; more.onclick=()=>{ cat._page=(cat._page||1)+1; if(cat._page>15) cat._page=1; pgFetchImages(ci); };
+      head.appendChild(more); wrap.appendChild(head);
+      const grid=document.createElement('div');
+      grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:7px';
       d.images.forEach(img=>pgAddTile(grid, ci, img));
+      wrap.appendChild(grid); res.innerHTML=''; res.appendChild(wrap);
+      done&&done();
     })
-    .catch(e=>{ grid.innerHTML='<div style="grid-column:1/-1;color:var(--red);font-size:11.5px;padding:6px">이미지 검색 실패: '+e.message+'</div>'; });
+    .catch(e=>{ res.innerHTML=pgMsg('검색 실패: '+e.message,'var(--red)'); done&&done(); });
+}
+function pgMsg(t,c){ return '<div style="color:'+c+';font-size:11.5px;padding:8px">'+t+'</div>'; }
+
+// 후보 타일: 클릭하면 선택 토글 + 아래 selected 그리드 갱신
+function pgAddTile(grid, ci, img){
+  const arr=_pg.cats[ci].imgs||(_pg.cats[ci].imgs=[]);
+  const isSel=arr.some(x=>x.url===img.url);
+  const t=document.createElement('div');
+  t.style.cssText='position:relative;aspect-ratio:1;border-radius:7px;overflow:hidden;border:2px solid '+(isSel?'var(--grn)':'var(--bdr)')+';cursor:pointer;background:#fff';
+  t.innerHTML=`<img src="${img.thumb||img.url}" referrerpolicy="no-referrer" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.style.display='none'">
+    <div class="pgChk" style="position:absolute;top:3px;right:3px;width:18px;height:18px;border-radius:50%;background:var(--grn);color:#fff;display:${isSel?'flex':'none'};align-items:center;justify-content:center;font-size:10px;font-weight:900">✓</div>`;
+  t.onclick=function(){
+    const a=_pg.cats[ci].imgs||(_pg.cats[ci].imgs=[]);
+    const idx=a.findIndex(x=>x.url===img.url);
+    if(idx>=0){ a.splice(idx,1); t.style.borderColor='var(--bdr)'; t.querySelector('.pgChk').style.display='none'; }
+    else { a.push({url:img.url, thumb:img.thumb||img.url}); t.style.borderColor='var(--grn)'; t.querySelector('.pgChk').style.display='flex'; }
+    const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent=a.length;
+    pgRenderCatGrid(ci);
+  };
+  grid.appendChild(t);
 }
 
 function pgStep4(){
