@@ -32074,11 +32074,11 @@ function pgBuildPrompt(input){
     "- 추가 메모: "+(input.memo||'(없음)'),
     "",
     "[출력 형식] 반드시 아래 JSON만 출력. 설명·마크다운·백틱 금지.",
-    '{"diagnosis":"브랜드 진단 3~4문장","trend":["트렌드축1","축2","축3"],"categories":[{"name":"카테고리명(예: 실버 — 볼드/심플)","logic":"이 카테고리가 왜 이 브랜드에 맞고 어떻게 추가매출이 되는지 한 줄","kw":"영문 키워드","aiPrompts":["변형1 영문 프롬프트","변형2","변형3","변형4"]}]}',
+    '{"diagnosis":"브랜드 진단 3~4문장","trend":["트렌드축1","축2","축3"],"categories":[{"name":"카테고리명(예: 실버 — 볼드/심플)","logic":"이 카테고리가 왜 이 브랜드에 맞고 어떻게 추가매출이 되는지 한 줄","kw":"영문 키워드","aiPrompts":["변형1 영문 프롬프트","변형2","변형3","변형4","변형5"]}]}',
     "카테고리는 6~8개. 고객사 특성에 맞게(실버/진주/파베/가죽/비즈/키링/헤어 등). logic은 트렌드 근거+매출 논리 한 줄. kw는 영문 키워드 한두 단어(내부 참고용).",
     "",
     "[aiPrompts 작성 규칙 — 매우 중요] 각 카테고리의 aiPrompts는 제미나이(Imagen) 등 AI 이미지 생성 툴에 붙여넣어 '주얼리 브랜드 룩북 수준' 이미지를 뽑기 위한 영문 프롬프트 배열입니다.",
-    "★ 카테고리마다 정확히 4개의 프롬프트를 생성하세요. 4개는 '같은 제품의 다른 앵글'이 아니라 '같은 카테고리 안의 서로 다른 디자인 변형(서로 다른 실제 제품)'이어야 합니다.",
+    "★ 카테고리마다 정확히 5개의 프롬프트를 생성하세요. 5개는 '같은 제품의 다른 앵글'이 아니라 '같은 카테고리 안의 서로 다른 디자인 변형(서로 다른 실제 제품)'이어야 합니다.",
     "  예) '실버 볼드 체인' 카테고리라면 → ①굵은 인터로킹 링크 네크리스 ②가는 멀티레이어드 체인 ③조각적 펜던트 체인 ④플랫 스네이크 체인 처럼 디자인이 분명히 다른 4종.",
     "각 프롬프트는 아래를 모두 충족:",
     "1) 제품 묘사: 그 변형 고유의 형태·소재·디테일을 구체적으로 (변형마다 분명히 다르게).",
@@ -32089,7 +32089,7 @@ function pgBuildPrompt(input){
     "6) 컬러/톤: 브랜드 무드 반영 (미니멀·모던이면 muted neutral palette, warm beige/grey/ivory tones, natural skin tone).",
     "7) 품질 태그: 'high resolution, photorealistic, 8k, ultra detailed, professional color grading'.",
     "8) 화면비: 'vertical 3:4 aspect ratio'.",
-    "★ 한 카테고리 내 4개 변형은 제품 디자인만 다르고 착용 클로즈업 연출·조명·톤·화면비는 동일하게, 모든 카테고리에 걸쳐서도 통일해 하나의 캠페인 룩북처럼 보이게 할 것.",
+    "★ 한 카테고리 내 5개 변형은 제품 디자인만 다르고 착용 클로즈업 연출·조명·톤·화면비는 동일하게, 모든 카테고리에 걸쳐서도 통일해 하나의 캠페인 룩북처럼 보이게 할 것.",
     "각 프롬프트는 자연스러운 영문 한 단락(쉼표로 이어진 긴 묘사). 한국어 금지, 영문만."
   ].join("\n");
 }
@@ -32148,7 +32148,7 @@ function pgLoadImages(){
   // 안내 배너
   const info=document.createElement('div');
   info.style.cssText='background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px;padding:11px 14px;margin-bottom:18px;font-size:12px;color:var(--t2);line-height:1.6';
-  info.innerHTML='카테고리마다 디자인 변형이 4종씩 있습니다. <b>📋 변형 N 복사</b>로 프롬프트를 제미나이에 붙여넣어 이미지를 생성하세요. 생성된 이미지는 <b>복사(Ctrl+C) 후 아래 칸에 붙여넣기(Ctrl+V)</b> 하거나, 드래그해서 놓거나, <b>📁 이미지 추가</b>로 올리면 됩니다.';
+  info.innerHTML='카테고리마다 슬롯 5칸이 있습니다. 각 칸은 <b>핀터레스트 등에서 찾은 이미지</b>나 <b>제미나이 생성 이미지</b>를 자유롭게 섞어 채우세요. 칸을 클릭하고 <b>Ctrl+V</b>로 붙여넣거나, 이미지를 끌어다 놓거나, <b>📁</b>로 파일을 고르면 됩니다.';
   host.appendChild(info);
   if(!_pg.cats.length){
     const empty=document.createElement('div');
@@ -32158,112 +32158,113 @@ function pgLoadImages(){
     return;
   }
   _pg.cats.forEach((cat,ci)=>{
-    if(!Array.isArray(cat.imgs)) cat.imgs=[];
+    // slots: 길이 5 고정 (각 항목 null 또는 {url,thumb})
+    if(!Array.isArray(cat.slots)){
+      cat.slots=[null,null,null,null,null];
+      // 구버전 imgs 데이터가 있으면 슬롯으로 이전
+      if(Array.isArray(cat.imgs)) cat.imgs.slice(0,5).forEach((im,i)=>{ cat.slots[i]=im; });
+    }
     const prompts=Array.isArray(cat.aiPrompts)?cat.aiPrompts:[];
-    const block=document.createElement('div'); block.style.marginBottom='24px'; block.style.paddingBottom='18px'; block.style.borderBottom='1px solid var(--bdr)';
+    const pin='https://www.pinterest.com/search/pins/?q='+encodeURIComponent(cat.kw||cat.name||'jewelry');
+    const block=document.createElement('div'); block.style.marginBottom='26px'; block.style.paddingBottom='20px'; block.style.borderBottom='1px solid var(--bdr)';
     let variantsHtml='';
     if(prompts.length){
-      variantsHtml='<div style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px">'+
-        prompts.map((p,pi)=>`<button class="btn bg" style="font-size:11px;padding:5px 11px" onclick="pgCopyAiPrompt(${ci},${pi})">📋 변형 ${pi+1} 복사</button>`).join('')+
-        `<button class="btn bp" style="font-size:11px;padding:5px 11px" onclick="pgCopyAiPrompt(${ci},'all')">📋 전체 복사</button></div>`;
+      variantsHtml='<div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px"><span style="font-size:10.5px;color:var(--t3);align-self:center">생성 프롬프트:</span>'+
+        prompts.map((p,pi)=>`<button class="btn bg" style="font-size:11px;padding:4px 10px" onclick="pgCopyAiPrompt(${ci},${pi})">📋 변형 ${pi+1}</button>`).join('')+
+        `<button class="btn bg" style="font-size:11px;padding:4px 10px" onclick="pgCopyAiPrompt(${ci},'all')">전체</button></div>`;
     }
     block.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-        <div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name} <span style="font-size:10.5px;font-weight:600;color:var(--t3)">· 디자인 변형 ${prompts.length}종</span></div>
+        <div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn bg" style="font-size:11px;padding:5px 12px" onclick="document.getElementById('pgUp${ci}').click()">📁 이미지 추가</button>
-          <input type="file" id="pgUp${ci}" accept="image/*" multiple style="display:none" onchange="pgUploadImages(event, ${ci})">
+          <a href="${pin}" target="_blank" rel="noopener" class="btn bg" style="font-size:11px;padding:5px 11px;text-decoration:none">🔗 핀터레스트 보기</a>
           <button class="btn bg" style="font-size:11px;padding:5px 10px;color:var(--red)" title="이 카테고리 삭제" onclick="pgDeleteCat(${ci})">🗑 삭제</button>
         </div>
       </div>
       ${cat.logic?`<div style="font-size:11px;color:var(--gold-lt);margin:3px 0 2px">${cat.logic}</div>`:''}
       ${variantsHtml}
-      ${prompts.length?`<details style="margin:0 0 10px"><summary style="font-size:11px;color:var(--t3);cursor:pointer">✨ 변형별 프롬프트 보기</summary><div style="margin-top:6px;display:flex;flex-direction:column;gap:7px">${prompts.map((p,pi)=>`<div style="font-size:11px;color:var(--t2);background:var(--s2);border-radius:7px;padding:8px 10px;line-height:1.5;white-space:pre-wrap"><b style="color:var(--gold-lt)">변형 ${pi+1}</b><br>${p.replace(/</g,'&lt;')}</div>`).join('')}</div></details>`:''}
-      <div id="pgPaste${ci}" tabindex="0" style="border:1.5px dashed var(--gold-line);border-radius:9px;padding:13px;text-align:center;font-size:11.5px;color:var(--t3);background:var(--gold-bg);cursor:pointer;outline:none;margin-bottom:10px;transition:.15s">📋 여기를 클릭한 뒤 <b>Ctrl+V</b>로 붙여넣기 &nbsp;·&nbsp; 또는 이미지를 끌어다 놓기</div>
-      <div style="font-size:10.5px;color:var(--t3);font-weight:700;margin:8px 0 6px">🖼️ 추가된 이미지 <span id="pgSel${ci}">${cat.imgs.length}</span>장</div>
-      <div id="pgGrid${ci}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:9px"></div>`;
+      ${prompts.length?`<details style="margin:4px 0 10px"><summary style="font-size:11px;color:var(--t3);cursor:pointer">✨ 변형별 프롬프트 보기</summary><div style="margin-top:6px;display:flex;flex-direction:column;gap:7px">${prompts.map((p,pi)=>`<div style="font-size:11px;color:var(--t2);background:var(--s2);border-radius:7px;padding:8px 10px;line-height:1.5;white-space:pre-wrap"><b style="color:var(--gold-lt)">변형 ${pi+1}</b><br>${p.replace(/</g,'&lt;')}</div>`).join('')}</div></details>`:''}
+      <div id="pgSlots${ci}" style="display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin-top:8px"></div>`;
     host.appendChild(block);
-    pgBindPaste(ci);
-    pgRenderCatGrid(ci);
+    pgRenderSlots(ci);
   });
+}
+
+// 슬롯 5칸 렌더
+function pgRenderSlots(ci){
+  const wrap=document.getElementById('pgSlots'+ci); if(!wrap) return;
+  const cat=_pg.cats[ci]; if(!cat) return;
+  if(!Array.isArray(cat.slots)) cat.slots=[null,null,null,null,null];
+  wrap.innerHTML='';
+  cat.slots.forEach((slot, si)=>{
+    const cell=document.createElement('div');
+    cell.style.cssText='position:relative;aspect-ratio:3/4;border-radius:8px;overflow:hidden';
+    if(slot && (slot.url||slot.thumb)){
+      cell.style.border='2px solid var(--grn)'; cell.style.background='#fff';
+      cell.innerHTML=`<img src="${slot.thumb||slot.url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover">
+        <button title="삭제" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:var(--red);color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:900;line-height:1;display:flex;align-items:center;justify-content:center">×</button>
+        <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.45);color:#fff;font-size:9px;text-align:center;padding:2px">${si+1}</div>`;
+      cell.querySelector('button').onclick=(e)=>{ e.stopPropagation(); cat.slots[si]=null; pgRenderSlots(ci); };
+    } else {
+      cell.setAttribute('tabindex','0');
+      cell.style.border='1.5px dashed var(--gold-line)'; cell.style.background='var(--gold-bg)';
+      cell.style.cursor='pointer'; cell.style.outline='none';
+      cell.innerHTML=`<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:6px;text-align:center">
+          <div style="font-size:18px;color:var(--gold-lt)">＋</div>
+          <div style="font-size:9.5px;color:var(--t3);line-height:1.35">클릭 후 Ctrl+V<br>또는 드래그</div>
+          <button class="btn bg" style="font-size:9.5px;padding:3px 7px" data-pick="1">📁 파일</button>
+          <input type="file" accept="image/*" style="display:none">
+        </div>`;
+      const fileInput=cell.querySelector('input[type=file]');
+      cell.querySelector('[data-pick]').onclick=(e)=>{ e.stopPropagation(); fileInput.click(); };
+      fileInput.onchange=(e)=>{ const f=(e.target.files||[])[0]; if(f) pgFillSlot(ci, si, f); e.target.value=''; };
+      pgBindSlot(cell, ci, si);
+    }
+    wrap.appendChild(cell);
+  });
+}
+
+// 빈 슬롯에 붙여넣기/드래그 바인딩
+function pgBindSlot(cell, ci, si){
+  const on=()=>{ cell.style.borderColor='var(--grn)'; cell.style.background='var(--s2)'; };
+  const off=()=>{ cell.style.borderColor='var(--gold-line)'; cell.style.background='var(--gold-bg)'; };
+  cell.addEventListener('focus', on);
+  cell.addEventListener('blur', off);
+  cell.addEventListener('click', ()=>cell.focus());
+  cell.addEventListener('paste', (e)=>{
+    const items=(e.clipboardData||window.clipboardData)?.items||[];
+    for(const it of items){
+      if(it.type && it.type.startsWith('image/')){ const f=it.getAsFile(); if(f){ e.preventDefault(); pgFillSlot(ci, si, f); return; } }
+    }
+    showToast('클립보드에 이미지가 없습니다 — 이미지를 복사한 뒤 다시 시도하세요','var(--org)',3000);
+  });
+  cell.addEventListener('dragover', (e)=>{ e.preventDefault(); on(); });
+  cell.addEventListener('dragleave', off);
+  cell.addEventListener('drop', (e)=>{
+    e.preventDefault(); off();
+    const f=Array.from(e.dataTransfer?.files||[]).filter(x=>x.type.startsWith('image/'))[0];
+    if(f) pgFillSlot(ci, si, f);
+    else showToast('이미지 파일을 끌어다 놓으세요','var(--org)',2500);
+  });
+}
+
+// 파일 → 슬롯 채우기
+function pgFillSlot(ci, si, file){
+  const cat=_pg.cats[ci]; if(!cat) return;
+  if(!Array.isArray(cat.slots)) cat.slots=[null,null,null,null,null];
+  const r=new FileReader();
+  r.onload=()=>{ cat.slots[si]={url:r.result, thumb:r.result, _local:true}; pgRenderSlots(ci); };
+  r.readAsDataURL(file);
 }
 
 // 카테고리 삭제
 function pgDeleteCat(ci){
   const cat=_pg.cats[ci]; if(!cat) return;
   const nm=cat.name||'이 카테고리';
-  const hasImgs=(cat.imgs||[]).length>0;
-  if(!confirm(nm+' 카테고리를 삭제할까요?'+(hasImgs?'\n추가한 이미지 '+cat.imgs.length+'장도 함께 삭제됩니다.':''))) return;
+  const n=(cat.slots||[]).filter(Boolean).length;
+  if(!confirm(nm+' 카테고리를 삭제할까요?'+(n?'\n채운 이미지 '+n+'장도 함께 삭제됩니다.':''))) return;
   _pg.cats.splice(ci,1);
   pgLoadImages();
   showToast('카테고리 삭제됨','var(--grn)',2000);
-}
-
-// 붙여넣기/드롭 영역 바인딩
-function pgBindPaste(ci){
-  const zone=document.getElementById('pgPaste'+ci); if(!zone) return;
-  const focusOn=()=>{ zone.style.borderColor='var(--grn)'; zone.style.background='var(--s2)'; };
-  const focusOff=()=>{ zone.style.borderColor='var(--gold-line)'; zone.style.background='var(--gold-bg)'; };
-  zone.addEventListener('focus', focusOn);
-  zone.addEventListener('blur', focusOff);
-  zone.addEventListener('click', ()=>zone.focus());
-  // 붙여넣기
-  zone.addEventListener('paste', (e)=>{
-    const items=(e.clipboardData||window.clipboardData)?.items||[];
-    let found=0;
-    for(const it of items){
-      if(it.type && it.type.startsWith('image/')){
-        const f=it.getAsFile(); if(f){ found++; pgAddImageFile(f, ci); }
-      }
-    }
-    if(found){ e.preventDefault(); }
-    else { showToast('클립보드에 이미지가 없습니다 — 제미나이에서 이미지를 복사한 뒤 다시 시도하세요','var(--org)',3000); }
-  });
-  // 드래그앤드롭
-  zone.addEventListener('dragover', (e)=>{ e.preventDefault(); focusOn(); });
-  zone.addEventListener('dragleave', focusOff);
-  zone.addEventListener('drop', (e)=>{
-    e.preventDefault(); focusOff();
-    const files=Array.from(e.dataTransfer?.files||[]).filter(f=>f.type.startsWith('image/'));
-    if(files.length){ files.forEach(f=>pgAddImageFile(f, ci)); }
-    else { showToast('이미지 파일을 끌어다 놓으세요','var(--org)',2500); }
-  });
-}
-
-// 단일 이미지 파일 → base64로 카테고리에 추가
-function pgAddImageFile(file, ci){
-  const cat=_pg.cats[ci]; if(!cat) return;
-  if(!Array.isArray(cat.imgs)) cat.imgs=[];
-  const r=new FileReader();
-  r.onload=()=>{
-    cat.imgs.push({url:r.result, thumb:r.result, _local:true});
-    pgRenderCatGrid(ci);
-    const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent=cat.imgs.length;
-  };
-  r.readAsDataURL(file);
-}
-
-// 카테고리 그리드 다시 그리기 (업로드된 이미지 표시)
-function pgRenderCatGrid(ci){
-  const grid=document.getElementById('pgGrid'+ci); if(!grid) return;
-  const cat=_pg.cats[ci]; if(!cat) return;
-  grid.innerHTML='';
-  if(!cat.imgs || !cat.imgs.length){
-    grid.innerHTML='<div style="grid-column:1/-1;color:var(--t3);font-size:11.5px;padding:10px;border:1.5px dashed var(--bdr);border-radius:8px;text-align:center">아직 추가된 이미지가 없습니다 — 📁 이미지 추가로 올리세요</div>';
-    return;
-  }
-  cat.imgs.forEach((img, idx)=>{
-    const t=document.createElement('div');
-    t.style.cssText='position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;border:2px solid var(--grn);background:#fff';
-    t.innerHTML=`<img src="${img.thumb||img.url}" style="width:100%;height:100%;object-fit:cover">
-      <button title="삭제" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:var(--red);color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:900;line-height:1;display:flex;align-items:center;justify-content:center">×</button>`;
-    t.querySelector('button').onclick=function(e){
-      e.stopPropagation();
-      cat.imgs.splice(idx,1);
-      pgRenderCatGrid(ci);
-      const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent=cat.imgs.length;
-    };
-    grid.appendChild(t);
-  });
 }
 
 // 📋 AI 프롬프트 복사 — 변형 인덱스(pi) 또는 'all'
@@ -32291,49 +32292,28 @@ function pgCopyFallback(text,cb){
   document.body.removeChild(ta);
 }
 
-// 📁 이미지 추가 — 사용자가 고른 이미지 파일을 base64로 읽어 카테고리에 추가
-function pgUploadImages(e, ci){
-  const files=Array.from(e.target.files||[]); e.target.value='';
-  if(!files.length) return;
-  const cat=_pg.cats[ci]; if(!cat) return;
-  if(!Array.isArray(cat.imgs)) cat.imgs=[];
-  let pending=files.length;
-  files.forEach(f=>{
-    if(!f.type.startsWith('image/')){ pending--; return; }
-    const r=new FileReader();
-    r.onload=()=>{
-      cat.imgs.push({url:r.result, thumb:r.result, _local:true});
-      if(--pending<=0){
-        pgRenderCatGrid(ci);
-        const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent=cat.imgs.length;
-      }
-    };
-    r.onerror=()=>{ if(--pending<=0) pgRenderCatGrid(ci); };
-    r.readAsDataURL(f);
-  });
-}
-
 function pgStep4(){
   const brand=(_pg.input.brand||'').split('(')[0].trim();
   let h=`<div class="card"><div class="ch"><div class="ch-t">4. 미리보기 · 출력</div></div><div style="padding:2px">
-    <div style="font-size:12px;color:var(--t3);margin-bottom:14px">표지 + 시즌 트렌드 + 카테고리별 변형 4종 격자로 PPTX가 생성됩니다.</div>`;
+    <div style="font-size:12px;color:var(--t3);margin-bottom:14px">표지 + 시즌 트렌드 + 카테고리별 이미지 5칸으로 PPTX가 생성됩니다.</div>`;
   // 표지 (다크 모던)
   h+=`<div style="background:#111315;color:#fff;padding:30px;border-radius:10px;margin-bottom:12px">
     <div style="letter-spacing:3px;font-size:10px;color:#C9A227;font-weight:700">EK · OEM JEWELRY PARTNER</div>
     <div style="font-size:24px;font-weight:900;margin:10px 0 6px;font-family:Georgia,serif">${brand} 신제품 제안서</div>
     <div style="width:54px;height:2px;background:#C9A227;margin:8px 0"></div>
     <div style="font-size:12px;color:#c9c7c2">${_pg.input.season} · 시즌 트렌드 기반 신규 라인 제안</div></div>`;
-  // 카테고리 미리보기 (변형 4종 2x2)
+  // 카테고리 미리보기 (5칸)
   _pg.cats.forEach(cat=>{
+    const slots=Array.isArray(cat.slots)?cat.slots:[];
     let cells='';
-    for(let k=0;k<4;k++){
-      const im=(cat.imgs||[])[k];
-      cells+=`<div style="aspect-ratio:1.4;border-radius:5px;overflow:hidden;background:var(--s2);display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:10px">${im?`<img src="${im.thumb||im.url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover">`:'변형 '+(k+1)}</div>`;
+    for(let k=0;k<5;k++){
+      const im=slots[k];
+      cells+=`<div style="aspect-ratio:3/4;border-radius:5px;overflow:hidden;background:var(--s2);display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:10px">${im?`<img src="${im.thumb||im.url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover">`:(k+1)}</div>`;
     }
     h+=`<div style="border:1px solid var(--bdr);border-radius:10px;padding:14px;margin-bottom:10px">
       <div style="font-size:13px;font-weight:800;color:var(--ink)">${cat.name}</div>
       <div style="font-size:11px;color:var(--t3);margin-bottom:10px">${cat.logic||''}</div>
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">${cells}</div></div>`;
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">${cells}</div></div>`;
   });
   h+=`<div style="display:flex;justify-content:space-between;margin-top:16px">
     <button class="btn bg bs" onclick="_pg.step=3;renderSalesSubTab()">← 이미지 선택</button>
@@ -32400,28 +32380,27 @@ async function pgExportPPTX(btn){
       s.addText(t||'트렌드 축 '+(i+1),{x:cx+0.35,y:3.2,w:3.1,h:1.4,fontFace:BODY,fontSize:14,color:INK,bold:true,valign:'top',lineSpacingMultiple:1.25});
     });
 
-    // ── 카테고리 슬라이드 (변형 4종 2x2) ──
+    // ── 카테고리 슬라이드 (이미지 5칸) ──
     let idx=2;
     for(const cat of _pg.cats){
       const sl=pptx.addSlide(); sl.background={color:PAPER};
       const nn=(idx<10?'0':'')+idx; idx++;
       sl.addText(nn,{x:0.9,y:0.6,w:1.3,h:0.5,fontFace:HEAD,fontSize:18,color:ACC,bold:true});
       sl.addText(cat.name||'',{x:1.6,y:0.58,w:8,h:0.6,fontFace:HEAD,fontSize:24,color:INK,bold:true});
-      if(cat.logic) sl.addText(cat.logic,{x:0.92,y:1.22,w:8.5,h:0.5,fontFace:BODY,fontSize:13,color:MUTE});
-      sl.addText('DESIGN VARIATIONS',{x:9.6,y:0.62,w:3,h:0.4,fontFace:BODY,fontSize:10,color:ACC,charSpacing:2,bold:true,align:'right'});
-      const imgs=cat.imgs||[];
-      // 2x2 격자
-      const gx=0.9, gy=1.95, iw=5.75, ih=2.45, gap=0.28;
-      const pos=[[gx,gy],[gx+iw+gap,gy],[gx,gy+ih+gap],[gx+iw+gap,gy+ih+gap]];
-      for(let k=0;k<4;k++){
-        const x=pos[k][0], y=pos[k][1];
-        const im=imgs[k];
+      if(cat.logic) sl.addText(cat.logic,{x:0.92,y:1.22,w:11.5,h:0.5,fontFace:BODY,fontSize:13,color:MUTE});
+      const slots=Array.isArray(cat.slots)?cat.slots:[];
+      // 5칸 가로 배치 (세로형 카드)
+      const n=5, gap=0.25, startX=0.9, startY=2.0;
+      const iw=(W-startX*2-gap*(n-1))/n, ih=iw*4/3;
+      for(let k=0;k<n;k++){
+        const x=startX+k*(iw+gap), y=startY;
+        const im=slots[k];
         let dataUrl=null;
         if(im){ dataUrl=await pgImgToDataURL(im.url||im.thumb); }
         if(dataUrl){ sl.addImage({data:dataUrl,x,y,w:iw,h:ih,sizing:{type:'cover',w:iw,h:ih}}); }
         else {
           sl.addShape(pptx.ShapeType.rect,{x,y,w:iw,h:ih,fill:{color:SOFT},line:{color:LINE,width:1}});
-          sl.addText('변형 '+(k+1)+' 이미지',{x,y:y+ih/2-0.2,w:iw,h:0.5,align:'center',fontFace:BODY,fontSize:13,color:MUTE});
+          sl.addText(String(k+1),{x,y:y+ih/2-0.25,w:iw,h:0.5,align:'center',fontFace:BODY,fontSize:14,color:MUTE});
         }
       }
     }
