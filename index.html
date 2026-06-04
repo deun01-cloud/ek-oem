@@ -8006,11 +8006,12 @@ async function notionCall(method, path, body, opts){
 
       // 🩹 자동 복구: 노션이 모르는 컬럼이라고 400 거부 시, 그 컬럼만 빼고 1회 재시도
       // 메시지 예: "개발비 is not a property that exists." 또는 "X-Y is not a property that exists"
-      if(res.status === 400 && bodyText && body && body.properties && !opts._retryNoSchema){
+      const _stripCount = opts._stripCount || 0;
+      if(res.status === 400 && bodyText && body && body.properties && _stripCount < 15){
         const m = bodyText.match(/([^\s"']+)\s+is not a property that exists/);
         if(m && m[1] && body.properties[m[1]]){
           const missingProp = m[1];
-          console.warn(`[Notion 자동복구] 노션 DB에 "${missingProp}" 컬럼이 없음 → 이 필드 빼고 재시도`);
+          console.warn(`[Notion 자동복구] 노션 DB에 "${missingProp}" 컬럼이 없음 → 이 필드 빼고 재시도 (${_stripCount+1})`);
           const newBody = {...body, properties: {...body.properties}};
           delete newBody.properties[missingProp];
           // 누락 컬럼 누적 기록 (사용자 알림용)
@@ -8027,8 +8028,8 @@ async function notionCall(method, path, body, opts){
               );
             }
           }
-          // 한 번만 재귀 재시도 (무한루프 방지)
-          return notionCall(method, path, newBody, {...opts, _retryNoSchema: true});
+          // 누락 컬럼을 하나씩 제거하며 최대 15회까지 재시도 (여러 컬럼 누락 대응)
+          return notionCall(method, path, newBody, {...opts, _stripCount: _stripCount+1});
         }
       }
 
@@ -12553,7 +12554,10 @@ async function syncOrderToNotion(o, update){
     await nUpdate(o._notionId,p);
   } else {
     const r=await nCreate(notionCfg.ordDb,p);
-    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (발주서)');
+    if(!r || !r.id){
+      const detail = (_notionLastError && _notionLastError.message) ? (' — '+String(_notionLastError.message).slice(0,300)) : '';
+      throw new Error('Notion 생성 실패: 응답에 ID 없음 (발주서)'+detail);
+    }
     saveNotionId(orders,o.id,r.id,SK.o);
     o._notionId = r.id;
   }
@@ -22069,6 +22073,7 @@ function renderSmMultiVendorDropdown(val){
 
 // 저장: 각 행을 별도 sample 객체로 변환해 노션에 순차 push
 async function saveSmpMulti(){
+  if(window._savingSmpMulti){ return; }
   const vendor = gv('sm_vendor').trim();
   if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
   const due = gv('sm_due');
@@ -22077,6 +22082,12 @@ async function saveSmpMulti(){
   const validRows = _smRowsBuf.filter(r => (r.name||'').trim());
   if(!validRows.length){ showToast('⚠ 최소 1개 품목에 샘플명을 입력해 주세요','var(--red)'); return; }
   if(!requireNotion('smpDb', '샘플의뢰')) return;
+  // 🔒 중복 등록 방지 (배치 전체가 두 번 들어가는 것 차단)
+  window._savingSmpMulti = true;
+  const _smBtn = document.querySelector('[onclick="saveSmpMulti()"]');
+  if(_smBtn){ _smBtn.style.opacity='.6'; _smBtn.style.pointerEvents='none'; }
+  const _releaseSmMulti = ()=>{ window._savingSmpMulti=false; const b=document.querySelector('[onclick="saveSmpMulti()"]'); if(b){ b.style.opacity=''; b.style.pointerEvents=''; } };
+  try{
 
   const reqDate = gv('sm_reqDate') || toLocalDateStr(new Date());
   const factShip = gv('sm_factShip');
@@ -22170,6 +22181,9 @@ async function saveSmpMulti(){
   } else {
     showToast(`✓ 샘플 의뢰서 등록 완료 — ${success}개 품목 (${vendor})`, 'var(--grn)', 4500);
   }
+  } finally {
+    _releaseSmMulti();
+  }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -22244,10 +22258,16 @@ async function autoSyncSampleToProductDB(smp){
 // toggleSmpComplete는 아래(명세서 자동생성 포함 버전)에 정의됨 — 중복 제거됨
 function saveSmp(){
   if(!_validateRequired([{id:'s_name',label:'샘플명'}])) return;
+  // 🔒 중복 등록 방지 — 저장(비동기 R2업로드+노션) 진행 중 재클릭/중복 호출 차단
+  if(window._savingSmp){ return; }
+  window._savingSmp = true;
+  const _saveBtn = document.getElementById('s_saveBtn');
+  if(_saveBtn){ _saveBtn.disabled = true; _saveBtn.style.opacity = '.6'; _saveBtn.style.pointerEvents = 'none'; }
+  const _releaseSmpLock = ()=>{ window._savingSmp = false; const b=document.getElementById('s_saveBtn'); if(b){ b.disabled=false; b.style.opacity=''; b.style.pointerEvents=''; } };
   const name=gv('s_name');
   const id=gv('s_id');
   // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
-  if(!id && !requireNotion('smpDb', '샘플의뢰')) return;
+  if(!id && !requireNotion('smpDb', '샘플의뢰')){ _releaseSmpLock(); return; }
   const now=new Date().toISOString();
   const isAi=document.getElementById('s_aiParsed')?.value==='1';
   const obj={
@@ -22289,9 +22309,10 @@ function saveSmp(){
       // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
       const newSmp = {id:Date.now(),createdAt:now,aiParsed:isAi,...finalObj};
       const ok = await createWithNotion(samples, newSmp, syncSampleToNotion, '샘플의뢰');
-      if(!ok) return; // 실패 — 모달 유지, 사용자가 다시 시도하거나 닫음
+      if(!ok){ _releaseSmpLock(); return; } // 실패 — 모달 유지, 사용자가 다시 시도하거나 닫음
     }
     save();closeM('mSmp');renderTab();updateBadges();
+    _releaseSmpLock();
     if(!id){
       showRegToast(finalObj.name,'sample');
     } else {
@@ -22320,7 +22341,7 @@ function saveSmp(){
       uploadImagesToR2([...smpImgBuf]),
       uploadImagesToR2([...(smpSrcBuf||[])]),
       uploadImagesToR2([...smpCadBuf]),
-    ]).then(([up1,up2,up3])=>doSaveSmp(up1,up2,up3));
+    ]).then(([up1,up2,up3])=>doSaveSmp(up1,up2,up3)).catch(e=>{ console.warn('샘플 파일 업로드 실패:',e); _releaseSmpLock(); showToast('⚠ 파일 업로드 실패 — 다시 시도해주세요','var(--red)',3000); });
   } else {
     doSaveSmp(obj.imgs, obj.sourceDoc, obj.cadFiles);
   }
