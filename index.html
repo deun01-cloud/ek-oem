@@ -31844,10 +31844,15 @@ function pgLoadImages(){
   host.innerHTML='';
   _pg.cats.forEach((cat,ci)=>{
     if(cat._start==null) cat._start=1; // 검색 시작 위치 (1, 11, 21 …)
+    const pin='https://www.pinterest.com/search/pins/?q='+encodeURIComponent(cat.kw);
     const block=document.createElement('div'); block.style.marginBottom='20px';
-    block.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+    block.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name}</div>
-        <button class="btn bg" style="font-size:11px;padding:5px 10px" onclick="pgMoreImages(${ci})">🔄 다른 이미지</button>
+        <div style="display:flex;gap:6px">
+          <a href="${pin}" target="_blank" rel="noopener" class="btn bg" style="font-size:11px;padding:5px 10px;text-decoration:none">🔗 핀터레스트에서 보기</a>
+          <button class="btn bg" style="font-size:11px;padding:5px 10px" onclick="pgClaudeImages(${ci})">🤖 AI로 찾기</button>
+          <button class="btn bg" style="font-size:11px;padding:5px 10px" onclick="pgMoreImages(${ci})">🔄 다른 이미지</button>
+        </div>
       </div>
       <div style="font-size:11px;color:var(--t3);margin:3px 0 9px">🔑 "${cat.kw}" · 넣을 이미지를 클릭하세요</div>
       <div id="pgGrid${ci}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px"><div style="grid-column:1/-1;color:var(--t3);font-size:12px;padding:6px">불러오는 중…</div></div>
@@ -31867,6 +31872,24 @@ function pgMoreImages(ci){
   pgFetchImages(ci, cat.kw, cat._start);
 }
 
+// 이미지 타일 하나를 그리드에 추가 (구글·AI 공용)
+function pgAddTile(grid, ci, img){
+  const sel=new Set((_pg.cats[ci].imgs||[]).map(x=>x.url));
+  const t=document.createElement('div');
+  const isSel=sel.has(img.url);
+  t.style.cssText='position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;border:2px solid '+(isSel?'var(--grn)':'var(--bdr)')+';cursor:pointer;background:#fff';
+  t.innerHTML=`<img src="${img.thumb||img.url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.style.display='none'">
+    <div style="position:absolute;top:4px;right:4px;width:19px;height:19px;border-radius:50%;background:var(--grn);color:#fff;display:${isSel?'flex':'none'};align-items:center;justify-content:center;font-size:11px;font-weight:900">✓</div>`;
+  t.onclick=function(){
+    const arr=_pg.cats[ci].imgs||(_pg.cats[ci].imgs=[]);
+    const idx=arr.findIndex(x=>x.url===img.url);
+    if(idx>=0){ arr.splice(idx,1); t.style.borderColor='var(--bdr)'; t.lastElementChild.style.display='none'; }
+    else { arr.push({url:img.url, thumb:img.thumb}); t.style.borderColor='var(--grn)'; t.lastElementChild.style.display='flex'; }
+    document.getElementById('pgSel'+ci).textContent='선택: '+arr.length+'장';
+  };
+  grid.appendChild(t);
+}
+
 function pgFetchImages(ci, kw, start){
   const grid=document.getElementById('pgGrid'+ci); if(!grid) return;
   const wu=pgWorkerUrl();
@@ -31876,27 +31899,52 @@ function pgFetchImages(ci, kw, start){
     .then(r=>r.json())
     .then(d=>{
       if(d.error || !d.images || !d.images.length){
-        grid.innerHTML='<div style="grid-column:1/-1;color:var(--org);font-size:11.5px;padding:6px">이미지 검색 결과 없음'+(d.error?(' — '+d.error):'')+'</div>'; return;
+        // 구글 실패 → AI 검색으로 자동 폴백
+        grid.innerHTML='<div style="grid-column:1/-1;color:var(--t3);font-size:11.5px;padding:6px">구글 검색 사용 불가 — AI로 이미지를 찾는 중…</div>';
+        pgClaudeImages(ci);
+        return;
       }
       grid.innerHTML='';
-      const sel=new Set((_pg.cats[ci].imgs||[]).map(x=>x.url));
-      d.images.forEach(img=>{
-        const t=document.createElement('div');
-        const isSel=sel.has(img.url);
-        t.style.cssText='position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;border:2px solid '+(isSel?'var(--grn)':'var(--bdr)')+';cursor:pointer;background:#fff';
-        t.innerHTML=`<img src="${img.thumb||img.url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover" onerror="this.style.opacity=.2">
-          <div style="position:absolute;top:4px;right:4px;width:19px;height:19px;border-radius:50%;background:var(--grn);color:#fff;display:${isSel?'flex':'none'};align-items:center;justify-content:center;font-size:11px;font-weight:900">✓</div>`;
-        t.onclick=function(){
-          const arr=_pg.cats[ci].imgs||(_pg.cats[ci].imgs=[]);
-          const idx=arr.findIndex(x=>x.url===img.url);
-          if(idx>=0){ arr.splice(idx,1); t.style.borderColor='var(--bdr)'; t.lastElementChild.style.display='none'; }
-          else { arr.push({url:img.url, thumb:img.thumb}); t.style.borderColor='var(--grn)'; t.lastElementChild.style.display='flex'; }
-          document.getElementById('pgSel'+ci).textContent='선택: '+arr.length+'장';
-        };
-        grid.appendChild(t);
-      });
+      d.images.forEach(img=>pgAddTile(grid, ci, img));
     })
-    .catch(e=>{ grid.innerHTML='<div style="grid-column:1/-1;color:var(--red);font-size:11.5px;padding:6px">검색 실패: '+e.message+'</div>'; });
+    .catch(e=>{
+      grid.innerHTML='<div style="grid-column:1/-1;color:var(--t3);font-size:11.5px;padding:6px">구글 검색 실패 — AI로 이미지를 찾는 중…</div>';
+      pgClaudeImages(ci);
+    });
+}
+
+// 🤖 Claude(웹검색)로 참고 이미지 URL 찾기 — 구글 API 불필요
+async function pgClaudeImages(ci){
+  const cat=_pg.cats[ci]; if(!cat) return;
+  const grid=document.getElementById('pgGrid'+ci); if(!grid) return;
+  grid.innerHTML='<div style="grid-column:1/-1;color:var(--t3);font-size:11.5px;padding:6px">🤖 AI가 이미지를 찾는 중… (10~20초)</div>';
+  try{
+    const prompt='주얼리 제품 "'+cat.kw+'"에 해당하는 실제 상품 이미지를 웹에서 찾아주세요. '+
+      '핀터레스트, 쇼핑몰, 브랜드 사이트 등에서 직접 표시 가능한 이미지 파일 URL(.jpg/.jpeg/.png/.webp로 끝나는 직접 링크)을 8개 찾아 '+
+      'JSON 배열로만 출력하세요. 설명·마크다운 금지. 예: ["https://...jpg","https://...png"]. '+
+      '반드시 이미지 직접 URL이어야 하며, 페이지 URL이 아니라 이미지 파일 URL이어야 합니다.';
+    const body={ model:'claude-sonnet-4-5', max_tokens:1500,
+      messages:[{role:'user', content:prompt}],
+      tools:[{type:'web_search_20250305', name:'web_search', max_uses:4}] };
+    const data=await callClaudeAPI(body);
+    if(data && data.error) throw new Error(data.error.message||'API 오류');
+    let txt='';
+    if(Array.isArray(data.content)) txt=data.content.filter(b=>b.type==='text').map(b=>b.text).join('\n');
+    else if(typeof data.content==='string') txt=data.content;
+    let t=txt.replace(/```json/gi,'').replace(/```/g,'').trim();
+    const a=t.indexOf('['), b=t.lastIndexOf(']'); if(a>=0&&b>a) t=t.slice(a,b+1);
+    let urls=[];
+    try{ urls=JSON.parse(t); }catch(e){
+      // JSON 파싱 실패 시 URL 정규식으로 추출
+      urls=(txt.match(/https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)/gi)||[]);
+    }
+    urls=Array.from(new Set(urls)).filter(u=>/^https?:\/\//.test(u)).slice(0,12);
+    if(!urls.length){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--org);font-size:11.5px;padding:6px">AI가 이미지를 찾지 못했습니다. 핀터레스트 링크를 이용하거나 다시 시도하세요.</div>'; return; }
+    grid.innerHTML='';
+    urls.forEach(u=>pgAddTile(grid, ci, {url:u, thumb:u}));
+  }catch(e){
+    grid.innerHTML='<div style="grid-column:1/-1;color:var(--red);font-size:11.5px;padding:6px">AI 이미지 검색 실패: '+e.message+'</div>';
+  }
 }
 
 function pgStep4(){
