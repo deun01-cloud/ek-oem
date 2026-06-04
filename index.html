@@ -3786,6 +3786,7 @@ function renderProducts(){
   const totalPages=Math.max(1,Math.ceil(list.length/PD_PAGE_SIZE));
   if(pdPage>totalPages) pdPage=totalPages;
   const pageList=list.slice((pdPage-1)*PD_PAGE_SIZE, pdPage*PD_PAGE_SIZE);
+  window._pdPageList = pageList; // 인덱스로 정확히 참조 (id float 오류 방지)
 
   // ── 목록형 뷰 ──
   const listView = pageList.length ? `
@@ -3831,7 +3832,7 @@ function renderProducts(){
         </tr>
       </thead>
       <tbody>
-        ${pageList.map(p=>{
+        ${pageList.map((p,_i)=>{
           const stock=+p.stock||0;
           const safety=+p.safetyStock||0;
           const isLow=safety>0&&stock<=safety;
@@ -3850,34 +3851,34 @@ function renderProducts(){
           window[_imgsKey] = normImgs;
           const thumbCell=thumbUrl
             ? `<img src="${thumbUrl}" loading="lazy" onclick="event.stopPropagation();openPrevList(window['${_imgsKey}'],0,false)" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--bdr);cursor:zoom-in;display:block" title="클릭하면 확대 (${normImgs.length}장)">`
-            : `<div onclick="openProductModal(${p.id})" style="width:38px;height:38px;background:var(--s2);border:1px dashed var(--bdr);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--t3);cursor:pointer" title="사진 없음 — 클릭해서 추가">📷</div>`;
+            : `<div onclick="openProductModalByIdx(${_i})" style="width:38px;height:38px;background:var(--s2);border:1px dashed var(--bdr);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--t3);cursor:pointer" title="사진 없음 — 클릭해서 추가">📷</div>`;
           return `
         <tr style="border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
           <td style="padding:7px 10px" onclick="event.stopPropagation()">
             <input type="checkbox" class="pd-chk" value="${p.id}" onchange="pdUpdateBulkBar()">
           </td>
           <td style="padding:5px 6px" onclick="event.stopPropagation()">${thumbCell}</td>
-          <td style="padding:7px 10px;font-family:monospace;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.code||'—'}</td>
-          <td style="padding:7px 10px;font-weight:600;color:var(--t1)" onclick="openProductModal(${p.id})">${p.name}</td>
-          <td style="padding:7px 10px;text-align:center" onclick="openProductModal(${p.id})">
+          <td style="padding:7px 10px;font-family:monospace;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModalByIdx(${_i})">${p.code||'—'}</td>
+          <td style="padding:7px 10px;font-weight:600;color:var(--t1)" onclick="openProductModalByIdx(${_i})">${p.name}</td>
+          <td style="padding:7px 10px;text-align:center" onclick="openProductModalByIdx(${_i})">
             <span style="font-size:10px;padding:2px 7px;border-radius:10px;background:var(--s2);border:1px solid var(--bdr);white-space:nowrap">${p.type||'기타'}</span>
           </td>
-          <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);white-space:nowrap" onclick="openProductModal(${p.id})">${p.mat||'—'}</td>
-          <td style="padding:7px 10px" onclick="openProductModal(${p.id})">
+          <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);white-space:nowrap" onclick="openProductModalByIdx(${_i})">${p.mat||'—'}</td>
+          <td style="padding:7px 10px" onclick="openProductModalByIdx(${_i})">
             ${p.plating?`<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt)">${p.plating}</span>`:'—'}
           </td>
           <td style="padding:7px 10px;text-align:center;white-space:nowrap" onclick="event.stopPropagation()">
             <div style="display:inline-flex;align-items:center;gap:3px">
-              <button onclick="quickStockChange(${p.id},-1)" title="−1" style="width:22px;height:22px;border:1px solid var(--bdr);border-radius:4px;background:var(--s1);color:var(--t2);cursor:pointer;font-size:12px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center">−</button>
-              <span style="display:inline-block;min-width:36px;padding:3px 8px;font-size:12px;font-weight:700;background:${stkBg};color:${stkColor};border-radius:4px;text-align:center;cursor:pointer" onclick="openStockModal(${p.id})" title="재고 조정/이력">${stock.toLocaleString()}${safety>0?`<span style="font-size:9px;color:var(--t3);font-weight:500">/${safety}</span>`:''}</span>
-              <button onclick="quickStockChange(${p.id},+1)" title="+1" style="width:22px;height:22px;border:1px solid var(--bdr);border-radius:4px;background:var(--s1);color:var(--t2);cursor:pointer;font-size:12px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center">＋</button>
+              <button onclick="quickStockChangeByIdx(${_i},-1)" title="−1" style="width:22px;height:22px;border:1px solid var(--bdr);border-radius:4px;background:var(--s1);color:var(--t2);cursor:pointer;font-size:12px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center">−</button>
+              <span style="display:inline-block;min-width:36px;padding:3px 8px;font-size:12px;font-weight:700;background:${stkBg};color:${stkColor};border-radius:4px;text-align:center;cursor:pointer" onclick="openStockModalByIdx(${_i})" title="재고 조정/이력">${stock.toLocaleString()}${safety>0?`<span style="font-size:9px;color:var(--t3);font-weight:500">/${safety}</span>`:''}</span>
+              <button onclick="quickStockChangeByIdx(${_i},+1)" title="+1" style="width:22px;height:22px;border:1px solid var(--bdr);border-radius:4px;background:var(--s1);color:var(--t2);cursor:pointer;font-size:12px;font-weight:700;line-height:1;display:flex;align-items:center;justify-content:center">＋</button>
             </div>
           </td>
-          <td style="padding:7px 10px;text-align:right;font-weight:700;color:var(--gold-lt);white-space:nowrap" onclick="openProductModal(${p.id})">${p.price?p.price.toLocaleString()+'원':'—'}</td>
-          <td style="padding:7px 10px;text-align:right;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.costPrice?p.costPrice.toLocaleString()+'원':'—'}</td>
-          <td style="padding:7px 10px;text-align:center;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModal(${p.id})">${p.lastModified||'—'}</td>
+          <td style="padding:7px 10px;text-align:right;font-weight:700;color:var(--gold-lt);white-space:nowrap" onclick="openProductModalByIdx(${_i})">${p.price?p.price.toLocaleString()+'원':'—'}</td>
+          <td style="padding:7px 10px;text-align:right;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModalByIdx(${_i})">${p.costPrice?p.costPrice.toLocaleString()+'원':'—'}</td>
+          <td style="padding:7px 10px;text-align:center;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModalByIdx(${_i})">${p.lastModified||'—'}</td>
           <td style="padding:7px 10px;text-align:center" onclick="event.stopPropagation()">
-            <button onclick="pdDeleteOne(${p.id})" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 5px;border-radius:4px" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--t3)'" title="삭제">🗑</button>
+            <button onclick="pdDeleteOneByIdx(${_i})" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 5px;border-radius:4px" onmouseover="this.style.color='var(--red)'" onmouseout="this.style.color='var(--t3)'" title="삭제">🗑</button>
           </td>
         </tr>`;
         }).join('')}
@@ -3925,7 +3926,7 @@ function renderProducts(){
 
 // ── 제품DB 삭제 함수들 ──
 function pdDeleteOne(id){
-  const p=productDB.find(x=>x.id==id);
+  const p=(id && typeof id==='object') ? id : productDB.find(x=>x.id==id);
   showConfirm(`"${p?.name||'제품'}"을 삭제합니다.`,()=>{
     if(p) deleteProductFromNotion(p);
     productDB=productDB.filter(x=>x.id!=id);
@@ -4059,8 +4060,14 @@ function _getPdType(){
   if(sel && sel.value==='__custom__') return (inp && inp.value.trim()) || '';
   return sel ? sel.value : '';
 }
+// 인덱스로 정확히 참조 (id float 변환 오류 방지) — 제품DB 목록 행
+function openProductModalByIdx(idx){ const p=(window._pdPageList||[])[idx]; if(!p){ showToast('⚠ 제품을 찾을 수 없습니다','var(--red)'); return; } openProductModal(p); }
+function quickStockChangeByIdx(idx, delta){ const p=(window._pdPageList||[])[idx]; if(!p) return; quickStockChange(p, delta); }
+function openStockModalByIdx(idx){ const p=(window._pdPageList||[])[idx]; if(!p) return; openStockModal(p); }
+function pdDeleteOneByIdx(idx){ const p=(window._pdPageList||[])[idx]; if(!p) return; pdDeleteOne(p); }
+
 function openProductModal(idOrNull){
-  const p=idOrNull?productDB.find(x=>x.id==idOrNull):null;
+  const p=(idOrNull && typeof idOrNull==='object') ? idOrNull : (idOrNull?productDB.find(x=>x.id==idOrNull):null);
   pdImgBuf=p?[...(p.imgs||[])]:[];
   sv('pd_id',p?p.id:'');sv('pd_code',p?p.code:'');sv('pd_name',p?p.name:'');
   // 유형: 기존 제품에 유형이 있으면 그대로, 비어있으면 품번 3번째 글자로 자동 추론
@@ -9452,15 +9459,33 @@ function _renderIoGeneral(){
   }
   list.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 
-  // 고객사 이니셜 그룹화
+  // 고객사 이니셜 그룹화 — 현재 선택된 구분(입고/출고/수리) 필터를 반영해야
+  // 배지 숫자와 실제 목록이 일치한다 (검색어는 제외하고 구분 필터만 적용)
+  const vendorBase = (_ioFilter !== 'all') ? allItems.filter(io => io.kind === _ioFilter) : allItems;
   const vendorGroups = {};
-  allItems.forEach(io=>{
+  vendorBase.forEach(io=>{
     const init = _ioInitial(io.vendor);
     if(!init) return;
     if(!vendorGroups[init]) vendorGroups[init] = {count:0, names:new Set()};
     vendorGroups[init].count++;
     vendorGroups[init].names.add(io.vendor);
   });
+  // 현재 구분 필터에서 선택된 고객사가 0건이면 고객사 필터 자동 해제 (빈 화면 방지)
+  if(_ioVendorFilter !== 'all' && !vendorGroups[_ioVendorFilter]){
+    _ioVendorFilter = 'all';
+    list = allItems.slice();
+    if(_ioFilter !== 'all') list = list.filter(io => io.kind === _ioFilter);
+    if(q){
+      list = list.filter(io =>
+        (io.title||'').toLowerCase().includes(q) ||
+        (io.vendor||'').toLowerCase().includes(q) ||
+        (io.items||'').toLowerCase().includes(q) ||
+        (io.invoice||'').toLowerCase().includes(q) ||
+        (io.memo||'').toLowerCase().includes(q)
+      );
+    }
+    list.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  }
   const sortedVendors = Object.entries(vendorGroups).sort((a,b)=>b[1].count-a[1].count).slice(0,20);
 
   sub.innerHTML = `
@@ -13994,7 +14019,7 @@ function getStockHistory(productId, limit){
 
 // 빠른 재고 변경 (+1/-1)
 function quickStockChange(productId, delta){
-  const p=productDB.find(x=>x.id==productId);
+  const p=(productId && typeof productId==='object') ? productId : productDB.find(x=>x.id==productId);
   if(!p) return;
   const newStock=(+p.stock||0)+delta;
   if(newStock<0){showToast('⚠ 재고가 부족합니다','var(--red)');return}
@@ -14016,7 +14041,7 @@ function quickStockChange(productId, delta){
 // 재고 조정 모달 열기 (현재 재고 + 안전재고 + 변동 + 이력)
 let _stockModalProdId=null;
 function openStockModal(productId){
-  const p=productDB.find(x=>x.id==productId);
+  const p=(productId && typeof productId==='object') ? productId : productDB.find(x=>x.id==productId);
   if(!p) return;
   _stockModalProdId=productId;
   const stock=+p.stock||0;
@@ -21708,8 +21733,9 @@ function _renderSmProductPickerList(){
       return;
     }
     const shown = pdList.slice(0, 50);
+    window._smPickPdShown = shown; // 인덱스 참조 (id float 오류 방지)
     const total = pdList.length;
-    el.innerHTML = shown.map(p=>{
+    el.innerHTML = shown.map((p,_i)=>{
       const wt = p.weight || 0;
       const cn = p.costPrice || 0;
       const pr = p.price || 0;
@@ -21719,7 +21745,7 @@ function _renderSmProductPickerList(){
       const thumb = (Array.isArray(p.imgs) && p.imgs[0]?.url)
         ? `<img src="${p.imgs[0].url}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0">`
         : `<div style="width:36px;height:36px;background:var(--s2);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:14px;flex-shrink:0">📦</div>`;
-      return `<div onclick="pickSmProduct('pd',${p.id})" style="padding:9px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;display:flex;align-items:center;gap:10px;transition:.15s" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='transparent'">
+      return `<div onclick="pickSmProductByIdx('pd',${_i})" style="padding:9px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;display:flex;align-items:center;gap:10px;transition:.15s" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='transparent'">
         ${thumb}
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:var(--t1)">
@@ -21751,15 +21777,16 @@ function _renderSmProductPickerList(){
       return;
     }
     const shown = smpList.slice(0, 50);
+    window._smPickSmpShown = shown; // 인덱스 참조 (id float 오류 방지)
     const total = smpList.length;
-    el.innerHTML = shown.map(s=>{
+    el.innerHTML = shown.map((s,_i)=>{
       const thumb = (Array.isArray(s.imgs) && s.imgs[0]?.url)
         ? `<img src="${s.imgs[0].url}" style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0">`
         : `<div style="width:36px;height:36px;background:var(--s2);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:14px;flex-shrink:0">🔬</div>`;
       const platBadge = s.plating ? `<span style="background:var(--gold-bg);color:var(--gold-lt);padding:2px 6px;border-radius:3px;font-size:10px;margin-left:4px">${s.plating}</span>` : '';
       const matBadge = s.mat ? `<span style="background:rgba(60,108,170,.08);color:var(--blu);padding:2px 6px;border-radius:3px;font-size:10px;margin-left:4px">${s.mat}</span>` : '';
       const statusBadge = `<span style="background:var(--s2);color:var(--t2);padding:2px 6px;border-radius:3px;font-size:10px;margin-left:4px">${s.status||'의뢰'}</span>`;
-      return `<div onclick="pickSmProduct('smp',${s.id})" style="padding:9px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;display:flex;align-items:center;gap:10px;transition:.15s" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='transparent'">
+      return `<div onclick="pickSmProductByIdx('smp',${_i})" style="padding:9px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;display:flex;align-items:center;gap:10px;transition:.15s" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='transparent'">
         ${thumb}
         <div style="flex:1;min-width:0">
           <div style="font-size:12px;font-weight:600;color:var(--t1)">
@@ -21777,6 +21804,13 @@ function _renderSmProductPickerList(){
 }
 
 // 검색 결과에서 클릭 — 행에 채우기
+// 인덱스로 정확히 참조 (id float 변환 오류 방지)
+function pickSmProductByIdx(kind, idx){
+  const obj = kind==='pd' ? (window._smPickPdShown||[])[idx] : (window._smPickSmpShown||[])[idx];
+  if(!obj){ showToast('⚠ 항목을 찾을 수 없습니다','var(--red)'); return; }
+  pickSmProduct(kind, obj);
+}
+
 function pickSmProduct(kind, id){
   const rowIdx = _smPickRowIdx;
   const row = _smRowsBuf[rowIdx];
@@ -21786,7 +21820,7 @@ function pickSmProduct(kind, id){
   }
 
   if(kind === 'pd'){
-    const p = productDB.find(x => String(x.id) === String(id));
+    const p = (id && typeof id==='object') ? id : productDB.find(x => String(x.id) === String(id));
     if(!p) return;
     // 제품DB → 행 채우기
     row.name = p.name || '';
@@ -21809,7 +21843,7 @@ function pickSmProduct(kind, id){
     }
     showToast(`✓ "${p.code||p.name}" 정보로 행 ${rowIdx+1} 채움`,'var(--grn)', 3000);
   } else if(kind === 'smp'){
-    const s = samples.find(x => String(x.id) === String(id));
+    const s = (id && typeof id==='object') ? id : samples.find(x => String(x.id) === String(id));
     if(!s) return;
     // 샘플의뢰 → 행 채우기 (재의뢰)
     row.name = s.name || '';
@@ -23711,6 +23745,9 @@ function renderItemSearchResults(){
 
   const pdPool=pdAll.slice((_itemSearchPdPage-1)*ISEARCH_PAGE_SIZE,_itemSearchPdPage*ISEARCH_PAGE_SIZE);
   const smpPool=smpAll.slice((_itemSearchSmpPage-1)*ISEARCH_PAGE_SIZE,_itemSearchSmpPage*ISEARCH_PAGE_SIZE);
+  // 인덱스로 정확히 참조 (id float 변환으로 엉뚱한 품목이 선택되던 문제 방지)
+  window._itemSearchPdPool = pdPool;
+  window._itemSearchSmpPool = smpPool;
 
   if(!pdTotal&&!smpTotal){el.innerHTML='<div style="padding:20px;text-align:center;color:var(--t3);font-size:12px">검색 결과 없음</div>';return;}
 
@@ -23720,7 +23757,7 @@ function renderItemSearchResults(){
     <button onclick="${next}" ${cur===total?'disabled':''} style="padding:4px 12px;border:1px solid var(--bdr);border-radius:4px;background:var(--s1);cursor:pointer;font-size:12px;font-family:inherit;color:var(--t2)">다음 ›</button>
   </div>`;
 
-  const mkPd=p=>{
+  const mkPd=(p,_i)=>{
     const img=p.imgs&&p.imgs.length?`<img src="${p.imgs[0].url}" style="width:48px;height:48px;object-fit:cover;border-radius:5px;flex-shrink:0;border:1px solid var(--bdr)">`:`<div style="width:48px;height:48px;border-radius:5px;background:var(--s3);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">📦</div>`;
     // 등록일 / 최종수정일
     const regDate = p.createdDate || (p.createdAt ? p.createdAt.slice(0,10) : '');
@@ -23728,9 +23765,9 @@ function renderItemSearchResults(){
     const dateLine = (regDate || modDate)
       ? `<div style="font-size:9.5px;color:var(--t3);margin-top:2px">${regDate?`📅 등록 ${regDate}`:''}${regDate&&modDate?' · ':''}${modDate?`✎ 수정 ${modDate}`:''}</div>`
       : '';
-    return`<div onclick="applyProductToRow(${p.id})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:5px;margin-bottom:3px"><span style="font-size:9.5px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);font-weight:700">📦 제품DB</span>${p.code?`<span style="font-size:10px;font-family:monospace;color:var(--t3)">${p.code}</span>`:''}</div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div><div style="font-size:10.5px;color:var(--t2)">${p.type||''} · ${p.mat||''} / ${p.plating||''}${p.size?' · '+p.size:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${p.price?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${p.price.toLocaleString()}원</div>`:''}</div></div>`;
+    return`<div onclick="applyProductToRowByIdx(${_i})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:5px;margin-bottom:3px"><span style="font-size:9.5px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);font-weight:700">📦 제품DB</span>${p.code?`<span style="font-size:10px;font-family:monospace;color:var(--t3)">${p.code}</span>`:''}</div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div><div style="font-size:10.5px;color:var(--t2)">${p.type||''} · ${p.mat||''} / ${p.plating||''}${p.size?' · '+p.size:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${p.price?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${p.price.toLocaleString()}원</div>`:''}</div></div>`;
   };
-  const mkSmp=s=>{
+  const mkSmp=(s,_i)=>{
     const hasCode=!!s.itemCode;
     const stCls={의뢰:'chip',제작중:'cb',수정중:'co',확정:'cg',취소:'chip'}[s.status]||'chip';
     const img=s.imgs&&s.imgs.length?`<img src="${s.imgs[0].url||s.imgs[0]}" style="width:48px;height:48px;object-fit:cover;border-radius:5px;flex-shrink:0;border:1px solid var(--bdr)">`:`<div style="width:48px;height:48px;border-radius:5px;background:var(--s3);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">◎</div>`;
@@ -23740,7 +23777,7 @@ function renderItemSearchResults(){
     const dateLine = (reqDate || dueDate)
       ? `<div style="font-size:9.5px;color:var(--t3);margin-top:2px">${reqDate?`📅 의뢰 ${reqDate}`:''}${reqDate&&dueDate?' → ':''}${dueDate?`납기 <b style="color:var(--t2)">${dueDate}</b>`:''}</div>`
       : '';
-    return`<div onclick="applyItemToRow(${s.id})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:6px;margin-bottom:3px">${hasCode?`<span style="font-size:10px;font-weight:700;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 6px;border-radius:4px">📌 ${s.itemCode}</span>`:'<span style="font-size:10px;color:var(--t3);background:var(--s2);padding:1px 6px;border-radius:4px">품번없음</span>'}<span class="chip ${stCls}" style="font-size:9.5px">${s.status}</span></div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div><div style="font-size:10.5px;color:var(--t2)">${s.type||''} · ${s.mat||''} / ${s.plating||''}${s.sz1?' · '+s.sz1:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${s.unitPrice?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${s.unitPrice.toLocaleString()}원</div>`:''}</div></div>`;
+    return`<div onclick="applyItemToRowByIdx(${_i})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:6px;margin-bottom:3px">${hasCode?`<span style="font-size:10px;font-weight:700;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 6px;border-radius:4px">📌 ${s.itemCode}</span>`:'<span style="font-size:10px;color:var(--t3);background:var(--s2);padding:1px 6px;border-radius:4px">품번없음</span>'}<span class="chip ${stCls}" style="font-size:9.5px">${s.status}</span></div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div><div style="font-size:10.5px;color:var(--t2)">${s.type||''} · ${s.mat||''} / ${s.plating||''}${s.sz1?' · '+s.sz1:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${s.unitPrice?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${s.unitPrice.toLocaleString()}원</div>`:''}</div></div>`;
   };
 
   let html='';
@@ -23760,8 +23797,20 @@ function renderItemSearchResults(){
   el.innerHTML=`<div style="display:flex;flex-direction:column">${html}</div>`;
 }
 
+// 인덱스로 정확히 해당 품목을 발주 행에 적용 (id float 변환 오류 방지)
+function applyProductToRowByIdx(idx){
+  const p=(window._itemSearchPdPool||[])[idx];
+  if(!p){ showToast('⚠ 품목을 찾을 수 없습니다','var(--red)'); return; }
+  applyProductToRow(p);
+}
+function applyItemToRowByIdx(idx){
+  const s=(window._itemSearchSmpPool||[])[idx];
+  if(!s){ showToast('⚠ 샘플을 찾을 수 없습니다','var(--red)'); return; }
+  applyItemToRow(s);
+}
+
 function applyProductToRow(pdId){
-  const p=productDB.find(x=>x.id==pdId); if(!p)return;
+  const p=(pdId && typeof pdId==='object') ? pdId : productDB.find(x=>x.id==pdId); if(!p)return;
   const i=_itemSearchRowIdx;
   if(i<0||i>=ordRowsBuf.length)return;
   ordRowsBuf[i].name=p.code?`${p.name} [${p.code}]`:p.name;
@@ -23785,7 +23834,7 @@ function applyProductToRow(pdId){
 }
 
 function applyItemToRow(smpId){
-  const s = samples.find(x=>x.id==smpId);
+  const s = (smpId && typeof smpId==='object') ? smpId : samples.find(x=>x.id==smpId);
   if(!s) return;
   const i = _itemSearchRowIdx;
   if(i < 0 || i >= ordRowsBuf.length) return;
@@ -26948,8 +26997,9 @@ function _renderQtProductPickerList(){
       return;
     }
     const pdShown = pdList.slice(0, 50);
+    window._qtPickerShown = pdShown; // 인덱스로 정확히 참조 (id float 변환 오류 방지)
     const total = pdList.length;
-    el.innerHTML = pdShown.map(p=>{
+    el.innerHTML = pdShown.map((p, _idx)=>{
       // ID 기준 중복 체크 (같은 품목코드가 도금별로 여러 개 있는 경우 — 따로 처리)
       const linked = _qtRowsBuf.some(r=>r._pdId != null && String(r._pdId)===String(p.id));
       const wt = p.weight || 0;
@@ -26971,7 +27021,7 @@ function _renderQtProductPickerList(){
             입고단가 ${cn||'-'} · 시세 ${mr||'-'} · 생산원가 ₩${pc.toLocaleString()} · 판매단가 ₩${pr.toLocaleString()}
           </div>
         </div>
-        <button ${linked?'disabled':''} onclick="addProductToQuote(${p.id})" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--blu)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
+        <button ${linked?'disabled':''} onclick="addProductToQuoteByIdx(${_idx})" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--blu)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
       </div>`;
     }).join('') + (total>50?`<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1)">상위 50건만 표시 (총 ${total.toLocaleString()}건) — 검색어를 좁혀주세요</div>`:'');
     return;
@@ -27032,10 +27082,20 @@ function _renderQtProductPickerList(){
   }).join('') + (total>50?`<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1)">상위 50건만 표시 (총 ${total.toLocaleString()}건) — 검색어를 좁혀주세요</div>`:'');
 }
 
+// 인덱스로 정확히 해당 품목을 견적에 추가 (id float 변환으로 엉뚱한 품목이 선택되던 문제 방지)
+function addProductToQuoteByIdx(idx){
+  const shown = window._qtPickerShown || [];
+  const p = shown[idx];
+  if(!p){ showToast('⚠ 품번을 찾을 수 없습니다','var(--red)'); return; }
+  addProductToQuote(p);
+}
+
 function addProductToQuote(idOrCode){
-  // id (숫자) 또는 code (문자열) 모두 받음
+  // 품목 객체를 직접 받거나, id(숫자)/code(문자열)로 조회
   let p = null;
-  if(idOrCode != null){
+  if(idOrCode && typeof idOrCode === 'object'){
+    p = idOrCode; // 객체를 직접 전달받은 경우 (인덱스 경로) — 가장 정확
+  } else if(idOrCode != null){
     p = productDB.find(x => String(x.id) === String(idOrCode));
     if(!p) p = productDB.find(x => x.code === idOrCode);
   }
@@ -30753,8 +30813,9 @@ function _renderInvProductPickerList(){
     return;
   }
   const shown = list.slice(0,50);
+  window._invPickerShown = shown; // 인덱스로 정확히 참조 (id float 변환 오류 방지)
   const total = list.length;
-  el.innerHTML = shown.map(p=>{
+  el.innerHTML = shown.map((p, _idx)=>{
     // ID 기준으로 중복 체크 (같은 품목코드의 다른 제품 — 예: GD/SV — 별개로 처리)
     const linked = _invRowsBuf.some(r=>r._pdId != null && String(r._pdId)===String(p.id));
     return `
@@ -30771,15 +30832,25 @@ function _renderInvProductPickerList(){
           판매단가 ₩${(+p.price||0).toLocaleString()}
         </div>
       </div>
-      <button ${linked?'disabled':''} onclick="addProductToInv(${p.id})" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--blu)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
+      <button ${linked?'disabled':''} onclick="addProductToInvByIdx(${_idx})" style="padding:5px 12px;font-size:11px;background:${linked?'var(--s2)':'var(--blu)'};color:${linked?'var(--t3)':'#fff'};border:none;border-radius:4px;cursor:${linked?'default':'pointer'};font-family:inherit;flex-shrink:0">${linked?'추가됨':'+ 추가'}</button>
     </div>`;
   }).join('') + (total>50?`<div style="padding:10px;text-align:center;color:var(--t3);font-size:11px;background:var(--s1)">상위 50건만 표시 (총 ${total.toLocaleString()}건)</div>`:'');
 }
 
+// 인덱스로 정확히 해당 품목을 거래명세서에 추가 (id float 변환 오류 방지)
+function addProductToInvByIdx(idx){
+  const shown = window._invPickerShown || [];
+  const p = shown[idx];
+  if(!p){ showToast('⚠ 품번을 찾을 수 없습니다','var(--red)'); return; }
+  addProductToInv(p);
+}
+
 function addProductToInv(idOrCode){
-  // id (숫자) 또는 code (문자열) 모두 받음 — 우선순위: id 먼저, 그 다음 code
+  // 품목 객체를 직접 받거나, id(숫자)/code(문자열)로 조회
   let p = null;
-  if(idOrCode != null){
+  if(idOrCode && typeof idOrCode === 'object'){
+    p = idOrCode; // 객체 직접 전달 (인덱스 경로) — 가장 정확
+  } else if(idOrCode != null){
     // 숫자형 id로 먼저 찾기 (정확한 매칭)
     p = productDB.find(x => String(x.id) === String(idOrCode));
     // 못 찾으면 code로도 시도 (옛 호출 호환)
@@ -32054,37 +32125,90 @@ function pgWorkerUrl(){
 function pgLoadImages(){
   const host=document.getElementById('pgImgCats'); if(!host) return;
   host.innerHTML='';
+  // 안내 배너
+  const info=document.createElement('div');
+  info.style.cssText='background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px;padding:11px 14px;margin-bottom:16px;font-size:12px;color:var(--t2);line-height:1.6';
+  info.innerHTML='카테고리마다 <b>🔗 핀터레스트에서 보기</b>로 참고 이미지를 둘러보고, 마음에 드는 이미지를 저장한 뒤 <b>📁 이미지 추가</b>로 올리세요. 올린 이미지는 그대로 제안서 PPTX에 들어갑니다.';
+  host.appendChild(info);
   _pg.cats.forEach((cat,ci)=>{
-    if(cat._start==null) cat._start=1; // 검색 시작 위치 (1, 11, 21 …)
+    if(!Array.isArray(cat.imgs)) cat.imgs=[];
     const pin='https://www.pinterest.com/search/pins/?q='+encodeURIComponent(cat.kw);
-    const block=document.createElement('div'); block.style.marginBottom='20px';
+    const block=document.createElement('div'); block.style.marginBottom='22px';
     block.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name}</div>
-        <div style="display:flex;gap:6px">
-          <a href="${pin}" target="_blank" rel="noopener" class="btn bg" style="font-size:11px;padding:5px 10px;text-decoration:none">🔗 핀터레스트에서 보기</a>
-          <button class="btn bg" style="font-size:11px;padding:5px 10px" onclick="pgClaudeImages(${ci})">🤖 AI로 찾기</button>
-          <button class="btn bg" style="font-size:11px;padding:5px 10px" onclick="pgMoreImages(${ci})">🔄 다른 이미지</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <a href="${pin}" target="_blank" rel="noopener" class="btn bg" style="font-size:11px;padding:5px 11px;text-decoration:none">🔗 핀터레스트에서 보기</a>
+          <button class="btn bp bs" style="font-size:11px;padding:5px 11px" onclick="document.getElementById('pgUp${ci}').click()">📁 이미지 추가</button>
+          <input type="file" id="pgUp${ci}" accept="image/*" multiple style="display:none" onchange="pgUploadImages(event, ${ci})">
         </div>
       </div>
-      <div style="font-size:11px;color:var(--t3);margin:3px 0 9px">🔑 "${cat.kw}" · 넣을 이미지를 클릭하세요</div>
-      <div id="pgGrid${ci}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px"><div style="grid-column:1/-1;color:var(--t3);font-size:12px;padding:6px">불러오는 중…</div></div>
-      <div id="pgSel${ci}" style="font-size:11px;color:var(--grn);font-weight:700;margin-top:6px">선택: ${(cat.imgs||[]).length}장</div>`;
+      <div style="font-size:11px;color:var(--t3);margin:3px 0 9px">🔑 핀터레스트 검색어: "${cat.kw}"</div>
+      <div id="pgGrid${ci}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px"></div>
+      <div id="pgSel${ci}" style="font-size:11px;color:var(--grn);font-weight:700;margin-top:6px">선택: ${cat.imgs.length}장</div>`;
     host.appendChild(block);
-    pgFetchImages(ci, cat.kw, cat._start);
+    // 이미 추가된 이미지 렌더
+    const grid=block.querySelector('#pgGrid'+ci);
+    pgRenderCatGrid(ci);
   });
 }
 
-// "🔄 다른 이미지" — 다음 10장 불러오기 (이미 고른 이미지는 유지)
+// 카테고리 그리드 다시 그리기 (업로드된 이미지 표시)
+function pgRenderCatGrid(ci){
+  const grid=document.getElementById('pgGrid'+ci); if(!grid) return;
+  const cat=_pg.cats[ci]; if(!cat) return;
+  grid.innerHTML='';
+  if(!cat.imgs || !cat.imgs.length){
+    grid.innerHTML='<div style="grid-column:1/-1;color:var(--t3);font-size:11.5px;padding:10px;border:1.5px dashed var(--bdr);border-radius:8px;text-align:center">아직 추가된 이미지가 없습니다 — 📁 이미지 추가로 올리세요</div>';
+    return;
+  }
+  cat.imgs.forEach((img, idx)=>{
+    const t=document.createElement('div');
+    t.style.cssText='position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden;border:2px solid var(--grn);background:#fff';
+    t.innerHTML=`<img src="${img.thumb||img.url}" style="width:100%;height:100%;object-fit:cover">
+      <button title="삭제" style="position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:var(--red);color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:900;line-height:1;display:flex;align-items:center;justify-content:center">×</button>`;
+    t.querySelector('button').onclick=function(e){
+      e.stopPropagation();
+      cat.imgs.splice(idx,1);
+      pgRenderCatGrid(ci);
+      const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent='선택: '+cat.imgs.length+'장';
+    };
+    grid.appendChild(t);
+  });
+}
+
+// 📁 이미지 추가 — 사용자가 고른 이미지 파일을 base64로 읽어 카테고리에 추가
+function pgUploadImages(e, ci){
+  const files=Array.from(e.target.files||[]); e.target.value='';
+  if(!files.length) return;
+  const cat=_pg.cats[ci]; if(!cat) return;
+  if(!Array.isArray(cat.imgs)) cat.imgs=[];
+  let pending=files.length;
+  files.forEach(f=>{
+    if(!f.type.startsWith('image/')){ pending--; return; }
+    const r=new FileReader();
+    r.onload=()=>{
+      cat.imgs.push({url:r.result, thumb:r.result, _local:true});
+      if(--pending<=0){
+        pgRenderCatGrid(ci);
+        const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent='선택: '+cat.imgs.length+'장';
+      }
+    };
+    r.onerror=()=>{ if(--pending<=0) pgRenderCatGrid(ci); };
+    r.readAsDataURL(f);
+  });
+}
+
+// ── (보존) 구글 이미지 검색 함수 — 구글 권한이 풀리면 다시 쓸 수 있도록 남겨둠 ──
+// "🔄 다른 이미지" — 다음 10장 불러오기
 function pgMoreImages(ci){
   const cat=_pg.cats[ci]; if(!cat) return;
   cat._start=(cat._start||1)+10;
-  if(cat._start>91) cat._start=1; // 구글 CSE는 최대 100장(start<=91), 넘으면 처음으로 순환
+  if(cat._start>91) cat._start=1;
   const grid=document.getElementById('pgGrid'+ci);
   if(grid) grid.innerHTML='<div style="grid-column:1/-1;color:var(--t3);font-size:12px;padding:6px">다른 이미지 불러오는 중…</div>';
   pgFetchImages(ci, cat.kw, cat._start);
 }
 
-// 이미지 타일 하나를 그리드에 추가 (구글·AI 공용)
 function pgAddTile(grid, ci, img){
   const sel=new Set((_pg.cats[ci].imgs||[]).map(x=>x.url));
   const t=document.createElement('div');
@@ -32111,52 +32235,13 @@ function pgFetchImages(ci, kw, start){
     .then(r=>r.json())
     .then(d=>{
       if(d.error || !d.images || !d.images.length){
-        // 구글 실패 → AI 검색으로 자동 폴백
-        grid.innerHTML='<div style="grid-column:1/-1;color:var(--t3);font-size:11.5px;padding:6px">구글 검색 사용 불가 — AI로 이미지를 찾는 중…</div>';
-        pgClaudeImages(ci);
+        grid.innerHTML='<div style="grid-column:1/-1;color:var(--org);font-size:11.5px;padding:6px">이미지 검색 결과 없음'+(d.error?(' — '+(d.error.message||d.error)):'')+'</div>';
         return;
       }
       grid.innerHTML='';
       d.images.forEach(img=>pgAddTile(grid, ci, img));
     })
-    .catch(e=>{
-      grid.innerHTML='<div style="grid-column:1/-1;color:var(--t3);font-size:11.5px;padding:6px">구글 검색 실패 — AI로 이미지를 찾는 중…</div>';
-      pgClaudeImages(ci);
-    });
-}
-
-// 🤖 Claude(웹검색)로 참고 이미지 URL 찾기 — 구글 API 불필요
-async function pgClaudeImages(ci){
-  const cat=_pg.cats[ci]; if(!cat) return;
-  const grid=document.getElementById('pgGrid'+ci); if(!grid) return;
-  grid.innerHTML='<div style="grid-column:1/-1;color:var(--t3);font-size:11.5px;padding:6px">🤖 AI가 이미지를 찾는 중… (10~20초)</div>';
-  try{
-    const prompt='주얼리 제품 "'+cat.kw+'"에 해당하는 실제 상품 이미지를 웹에서 찾아주세요. '+
-      '핀터레스트, 쇼핑몰, 브랜드 사이트 등에서 직접 표시 가능한 이미지 파일 URL(.jpg/.jpeg/.png/.webp로 끝나는 직접 링크)을 8개 찾아 '+
-      'JSON 배열로만 출력하세요. 설명·마크다운 금지. 예: ["https://...jpg","https://...png"]. '+
-      '반드시 이미지 직접 URL이어야 하며, 페이지 URL이 아니라 이미지 파일 URL이어야 합니다.';
-    const body={ model:'claude-sonnet-4-5', max_tokens:1500,
-      messages:[{role:'user', content:prompt}],
-      tools:[{type:'web_search_20250305', name:'web_search', max_uses:4}] };
-    const data=await callClaudeAPI(body);
-    if(data && data.error) throw new Error(data.error.message||'API 오류');
-    let txt='';
-    if(Array.isArray(data.content)) txt=data.content.filter(b=>b.type==='text').map(b=>b.text).join('\n');
-    else if(typeof data.content==='string') txt=data.content;
-    let t=txt.replace(/```json/gi,'').replace(/```/g,'').trim();
-    const a=t.indexOf('['), b=t.lastIndexOf(']'); if(a>=0&&b>a) t=t.slice(a,b+1);
-    let urls=[];
-    try{ urls=JSON.parse(t); }catch(e){
-      // JSON 파싱 실패 시 URL 정규식으로 추출
-      urls=(txt.match(/https?:\/\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)/gi)||[]);
-    }
-    urls=Array.from(new Set(urls)).filter(u=>/^https?:\/\//.test(u)).slice(0,12);
-    if(!urls.length){ grid.innerHTML='<div style="grid-column:1/-1;color:var(--org);font-size:11.5px;padding:6px">AI가 이미지를 찾지 못했습니다. 핀터레스트 링크를 이용하거나 다시 시도하세요.</div>'; return; }
-    grid.innerHTML='';
-    urls.forEach(u=>pgAddTile(grid, ci, {url:u, thumb:u}));
-  }catch(e){
-    grid.innerHTML='<div style="grid-column:1/-1;color:var(--red);font-size:11.5px;padding:6px">AI 이미지 검색 실패: '+e.message+'</div>';
-  }
+    .catch(e=>{ grid.innerHTML='<div style="grid-column:1/-1;color:var(--red);font-size:11.5px;padding:6px">이미지 검색 실패: '+e.message+'</div>'; });
 }
 
 function pgStep4(){
@@ -32202,7 +32287,9 @@ function pgEnsurePptx(){
 // 이미지 URL → base64 dataURL (PPTX 삽입용). Worker 프록시로 CORS 우회.
 async function pgImgToDataURL(url){
   try{
-    const wu=pgWorkerUrl();
+    if(!url) return null;
+    // 직접 업로드한 이미지는 이미 base64 data URL — 그대로 사용 (CORS 무관, PPTX에 바로 들어감)
+    if(typeof url==='string' && url.startsWith('data:')) return url;
     // 외부 이미지는 CORS 때문에 직접 못 읽을 수 있어 시도 후 실패하면 스킵
     const resp=await fetch(url, {mode:'cors'});
     const blob=await resp.blob();
