@@ -32074,26 +32074,29 @@ function pgBuildPrompt(input){
     "- 추가 메모: "+(input.memo||'(없음)'),
     "",
     "[출력 형식] 반드시 아래 JSON만 출력. 설명·마크다운·백틱 금지.",
-    '{"diagnosis":"브랜드 진단 3~4문장","trend":["트렌드축1","축2","축3"],"categories":[{"name":"카테고리명(예: 실버 — 볼드/심플)","logic":"이 카테고리가 왜 이 브랜드에 맞고 어떻게 추가매출이 되는지 한 줄","kw":"영문 무드 검색어","aiPrompt":"AI 이미지 생성용 영문 프롬프트"}]}',
-    "카테고리는 6~8개. 고객사 특성에 맞게(실버/진주/파베/가죽/비즈/키링/헤어 등). logic은 트렌드 근거+매출 논리 한 줄.",
+    '{"diagnosis":"브랜드 진단 3~4문장","trend":["트렌드축1","축2","축3"],"categories":[{"name":"카테고리명(예: 실버 — 볼드/심플)","logic":"이 카테고리가 왜 이 브랜드에 맞고 어떻게 추가매출이 되는지 한 줄","kw":"영문 키워드","aiPrompts":["변형1 영문 프롬프트","변형2","변형3","변형4"]}]}',
+    "카테고리는 6~8개. 고객사 특성에 맞게(실버/진주/파베/가죽/비즈/키링/헤어 등). logic은 트렌드 근거+매출 논리 한 줄. kw는 영문 키워드 한두 단어(내부 참고용).",
     "",
-    "[kw 작성 규칙] kw는 스톡 사진 검색(Pexels)에 넣을 2~5단어 영문 검색어입니다.",
-    "- 무드·스타일링·소재 톤 위주로 작성 (예: 'minimalist jewelry editorial', 'gold necklace neutral tone', 'pearl jewelry styling').",
-    "- 브랜드 무드(미니멀/모던이면 minimalist·editorial·neutral 등)를 반영할 것.",
-    "- 너무 구체적인 제품명·복합 수식어는 피하고, 결과가 풍부하게 나오는 일반적이되 톤이 분명한 단어 조합으로.",
-    "",
-    "[aiPrompt 작성 규칙] 각 카테고리의 aiPrompt는 제미나이(Imagen) 등 AI 이미지 생성 툴에 바로 붙여넣을 영문 프롬프트입니다.",
-    "- 해당 고객사의 브랜드 포지셔닝/무드에 맞춘 톤을 명시할 것 (예: 미니멀·모던 브랜드면 minimalist, editorial, muted neutral 톤).",
-    "- 반드시 포함: 제품 형태/소재 묘사 + 촬영 스타일(editorial product photography) + 배경/조명 + 'no model' + 화면비(4:5 ratio).",
-    "- 6~8개 카테고리의 배경·조명 톤을 통일해 한 무드보드처럼 보이게 할 것.",
-    "- 실물 레퍼런스가 아닌 '디자인 방향성 시각화'용이므로 과한 디테일보다 톤·실루엣 일관성을 우선."
+    "[aiPrompts 작성 규칙 — 매우 중요] 각 카테고리의 aiPrompts는 제미나이(Imagen) 등 AI 이미지 생성 툴에 붙여넣어 '주얼리 브랜드 룩북 수준' 이미지를 뽑기 위한 영문 프롬프트 배열입니다.",
+    "★ 카테고리마다 정확히 4개의 프롬프트를 생성하세요. 4개는 '같은 제품의 다른 앵글'이 아니라 '같은 카테고리 안의 서로 다른 디자인 변형(서로 다른 실제 제품)'이어야 합니다.",
+    "  예) '실버 볼드 체인' 카테고리라면 → ①굵은 인터로킹 링크 네크리스 ②가는 멀티레이어드 체인 ③조각적 펜던트 체인 ④플랫 스네이크 체인 처럼 디자인이 분명히 다른 4종.",
+    "각 프롬프트는 아래를 모두 충족:",
+    "1) 제품 묘사: 그 변형 고유의 형태·소재·디테일을 구체적으로 (변형마다 분명히 다르게).",
+    "2) 촬영/렌더 스타일: 'professional editorial product photography', 'luxury jewelry catalog', 'shot on 100mm macro lens', 'shallow depth of field', 'crisp sharp focus on the jewelry'.",
+    "3) 라이팅: 'soft diffused studio lighting', 'gentle directional highlight to show metal texture', 'subtle reflections'.",
+    "4) 배경/연출: 미니멀한 세팅 'minimalist neutral backdrop, smooth surface, lots of negative space', 'no model, product-only still life'.",
+    "5) 컬러/톤: 브랜드 무드 반영 (미니멀·모던이면 muted neutral palette, warm beige/grey/ivory tones).",
+    "6) 품질 태그: 'high resolution, photorealistic, 8k, ultra detailed, professional color grading'.",
+    "7) 화면비: 'vertical 3:4 aspect ratio'.",
+    "★ 한 카테고리 내 4개 변형은 제품 디자인만 다르고 배경·조명·톤·화면비는 동일하게, 모든 카테고리에 걸쳐서도 통일해 하나의 룩북처럼 보이게 할 것.",
+    "각 프롬프트는 자연스러운 영문 한 단락(쉼표로 이어진 긴 묘사). 한국어 금지, 영문만."
   ].join("\n");
 }
 
 async function pgRunAI(){
   _pg.aiBusy=true;
   try{
-    const body={ model:'claude-sonnet-4-5', max_tokens:4000,
+    const body={ model:'claude-sonnet-4-5', max_tokens:8000,
       messages:[{role:'user', content:pgBuildPrompt(_pg.input)}],
       tools:[{type:'web_search_20250305', name:'web_search', max_uses:6}] };
     const data=await callClaudeAPI(body);
@@ -32106,7 +32109,12 @@ async function pgRunAI(){
     const parsed=JSON.parse(t);
     _pg.diag=parsed.diagnosis||'';
     _pg.trend=Array.isArray(parsed.trend)?parsed.trend:[];
-    _pg.cats=(Array.isArray(parsed.categories)?parsed.categories:[]).map(x=>({name:x.name||'',logic:x.logic||'',kw:x.kw||'',aiPrompt:x.aiPrompt||'',imgs:[]}));
+    _pg.cats=(Array.isArray(parsed.categories)?parsed.categories:[]).map(x=>{
+      let prompts=[];
+      if(Array.isArray(x.aiPrompts)) prompts=x.aiPrompts.filter(p=>p&&p.trim());
+      else if(x.aiPrompt) prompts=[x.aiPrompt];
+      return {name:x.name||'',logic:x.logic||'',kw:x.kw||'',aiPrompts:prompts,imgs:[]};
+    });
     if(!_pg.cats.length) throw new Error('카테고리 생성 실패');
   }catch(e){
     showToast('AI 생성 실패: '+e.message,'var(--red)',4000);
@@ -32138,47 +32146,34 @@ function pgLoadImages(){
   host.innerHTML='';
   // 안내 배너
   const info=document.createElement('div');
-  info.style.cssText='background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px;padding:11px 14px;margin-bottom:16px;font-size:12px;color:var(--t2);line-height:1.6';
-  info.innerHTML='<b>🔍 자동 검색</b>으로 브랜드 무드에 맞는 후보 이미지를 불러온 뒤, 마음에 드는 것을 클릭해 선택하세요. 특정 디자인 레퍼런스가 필요하면 <b>🔗 핀터레스트</b>·<b>📁 직접 추가</b>도 함께 쓸 수 있습니다. 선택·추가한 이미지가 그대로 제안서 PPTX에 들어갑니다.';
+  info.style.cssText='background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px;padding:11px 14px;margin-bottom:18px;font-size:12px;color:var(--t2);line-height:1.6';
+  info.innerHTML='카테고리마다 디자인 변형이 4종씩 있습니다. <b>📋 변형 N 복사</b>로 프롬프트를 제미나이에 붙여넣어 이미지를 생성하세요(변형마다 따로). 생성된 이미지를 저장한 뒤 <b>📁 이미지 추가</b>로 올리면 그대로 제안서 PPTX에 들어갑니다.';
   host.appendChild(info);
-  // 전체 자동검색 버튼
-  const allBar=document.createElement('div');
-  allBar.style.cssText='margin-bottom:16px';
-  allBar.innerHTML='<button class="btn bp" style="font-size:12px;padding:7px 14px" onclick="pgFetchAll(this)">🔍 모든 카테고리 자동 검색</button> <span style="font-size:11px;color:var(--t3)">— 카테고리별로 따로 검색할 수도 있어요</span>';
-  host.appendChild(allBar);
   _pg.cats.forEach((cat,ci)=>{
     if(!Array.isArray(cat.imgs)) cat.imgs=[];
-    const pin='https://www.pinterest.com/search/pins/?q='+encodeURIComponent(cat.kw);
+    const prompts=Array.isArray(cat.aiPrompts)?cat.aiPrompts:[];
     const block=document.createElement('div'); block.style.marginBottom='24px'; block.style.paddingBottom='18px'; block.style.borderBottom='1px solid var(--bdr)';
+    let variantsHtml='';
+    if(prompts.length){
+      variantsHtml='<div style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 10px">'+
+        prompts.map((p,pi)=>`<button class="btn bg" style="font-size:11px;padding:5px 11px" onclick="pgCopyAiPrompt(${ci},${pi})">📋 변형 ${pi+1} 복사</button>`).join('')+
+        `<button class="btn bp" style="font-size:11px;padding:5px 11px" onclick="pgCopyAiPrompt(${ci},'all')">📋 전체 복사</button></div>`;
+    }
     block.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-        <div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name}</div>
+        <div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name} <span style="font-size:10.5px;font-weight:600;color:var(--t3)">· 디자인 변형 ${prompts.length}종</span></div>
         <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn bp" style="font-size:11px;padding:5px 11px" onclick="pgFetchImages(${ci})">🔍 자동 검색</button>
-          ${cat.aiPrompt?`<button class="btn bg" style="font-size:11px;padding:5px 11px" onclick="pgCopyAiPrompt(${ci})">📋 AI 프롬프트</button>`:''}
-          <a href="${pin}" target="_blank" rel="noopener" class="btn bg" style="font-size:11px;padding:5px 11px;text-decoration:none">🔗 핀터레스트</a>
-          <button class="btn bg" style="font-size:11px;padding:5px 11px" onclick="document.getElementById('pgUp${ci}').click()">📁 직접 추가</button>
+          <button class="btn bg" style="font-size:11px;padding:5px 12px" onclick="document.getElementById('pgUp${ci}').click()">📁 이미지 추가</button>
           <input type="file" id="pgUp${ci}" accept="image/*" multiple style="display:none" onchange="pgUploadImages(event, ${ci})">
         </div>
       </div>
-      <div style="font-size:11px;color:var(--t3);margin:3px 0 4px">🔑 검색어: "${cat.kw}" <span class="pg-edit" contenteditable="true" data-rekw="${ci}" style="color:var(--gold-lt);cursor:text;border-bottom:1px dotted var(--gold-line);padding:0 3px" title="검색어를 수정하고 다시 검색하세요"></span></div>
-      ${cat.aiPrompt?`<details style="margin:0 0 9px"><summary style="font-size:11px;color:var(--gold-lt);cursor:pointer">✨ AI 생성 프롬프트 보기 (제미나이용)</summary><div style="font-size:11px;color:var(--t2);background:var(--s2);border-radius:7px;padding:8px 10px;margin-top:5px;line-height:1.5;white-space:pre-wrap">${cat.aiPrompt.replace(/</g,'&lt;')}</div></details>`:''}
-      <div id="pgRes${ci}"></div>
-      <div style="font-size:10.5px;color:var(--t3);font-weight:700;margin:10px 0 5px">✅ 선택된 이미지 <span id="pgSel${ci}">${cat.imgs.length}</span>장</div>
-      <div id="pgGrid${ci}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(95px,1fr));gap:8px"></div>`;
+      ${cat.logic?`<div style="font-size:11px;color:var(--gold-lt);margin:3px 0 2px">${cat.logic}</div>`:''}
+      ${variantsHtml}
+      ${prompts.length?`<details style="margin:0 0 10px"><summary style="font-size:11px;color:var(--t3);cursor:pointer">✨ 변형별 프롬프트 보기</summary><div style="margin-top:6px;display:flex;flex-direction:column;gap:7px">${prompts.map((p,pi)=>`<div style="font-size:11px;color:var(--t2);background:var(--s2);border-radius:7px;padding:8px 10px;line-height:1.5;white-space:pre-wrap"><b style="color:var(--gold-lt)">변형 ${pi+1}</b><br>${p.replace(/</g,'&lt;')}</div>`).join('')}</div></details>`:''}
+      <div style="font-size:10.5px;color:var(--t3);font-weight:700;margin:8px 0 6px">🖼️ 추가된 이미지 <span id="pgSel${ci}">${cat.imgs.length}</span>장</div>
+      <div id="pgGrid${ci}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:9px"></div>`;
     host.appendChild(block);
     pgRenderCatGrid(ci);
   });
-}
-
-// 모든 카테고리 순차 자동 검색
-function pgFetchAll(btn){
-  if(btn){ btn.disabled=true; btn.textContent='🔍 검색 중…'; }
-  let i=0;
-  const next=()=>{
-    if(i>=_pg.cats.length){ if(btn){ btn.disabled=false; btn.textContent='🔍 모든 카테고리 자동 검색'; } return; }
-    pgFetchImages(i, ()=>{ i++; next(); });
-  };
-  next();
 }
 
 // 카테고리 그리드 다시 그리기 (업로드된 이미지 표시)
@@ -32205,13 +32200,23 @@ function pgRenderCatGrid(ci){
   });
 }
 
-// 📋 AI 프롬프트 복사 — 제미나이 등에 붙여넣을 영문 프롬프트를 클립보드로
-function pgCopyAiPrompt(ci){
-  const cat=_pg.cats[ci]; if(!cat||!cat.aiPrompt) return;
-  const done=()=>showToast('AI 프롬프트 복사됨 — 제미나이에 붙여넣으세요','var(--grn)',2500);
+// 📋 AI 프롬프트 복사 — 변형 인덱스(pi) 또는 'all'
+function pgCopyAiPrompt(ci, pi){
+  const cat=_pg.cats[ci]; if(!cat) return;
+  const prompts=Array.isArray(cat.aiPrompts)?cat.aiPrompts:[];
+  if(!prompts.length) return;
+  let text, label;
+  if(pi==='all'){
+    text=prompts.map((p,i)=>'[변형 '+(i+1)+']\n'+p).join('\n\n');
+    label='전체 프롬프트 복사됨 ('+prompts.length+'종) — 제미나이에 하나씩 붙여넣으세요';
+  } else {
+    text=prompts[pi]; if(!text) return;
+    label='변형 '+(pi+1)+' 프롬프트 복사됨 — 제미나이에 붙여넣으세요';
+  }
+  const done=()=>showToast(label,'var(--grn)',2500);
   if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(cat.aiPrompt).then(done).catch(()=>pgCopyFallback(cat.aiPrompt,done));
-  } else pgCopyFallback(cat.aiPrompt,done);
+    navigator.clipboard.writeText(text).then(done).catch(()=>pgCopyFallback(text,done));
+  } else pgCopyFallback(text,done);
 }
 function pgCopyFallback(text,cb){
   const ta=document.createElement('textarea'); ta.value=text;
@@ -32242,84 +32247,27 @@ function pgUploadImages(e, ci){
   });
 }
 
-// ── 자동 검색: 결과를 pgRes{ci}에 후보로 띄움 (선택 시 아래 selected 그리드에 반영) ──
-function pgFetchImages(ci, done){
-  const cat=_pg.cats[ci]; if(!cat){ done&&done(); return; }
-  const res=document.getElementById('pgRes'+ci); if(!res){ done&&done(); return; }
-  const wu=pgWorkerUrl();
-  if(!wu){ res.innerHTML=pgMsg('Worker 주소가 설정되지 않았습니다 (⚙ 설정에서 확인).','var(--red)'); done&&done(); return; }
-  // 사용자가 검색어란을 수정했으면 그 값을 사용
-  const editEl=document.querySelector('[data-rekw="'+ci+'"]');
-  const typed=editEl && editEl.textContent.trim();
-  const kw=typed || cat.kw;
-  cat._page=(cat._page||1);
-  res.innerHTML='<div style="color:var(--t3);font-size:11.5px;padding:8px">🔍 후보 이미지 불러오는 중…</div>';
-  fetch(wu+'/imgsearch?q='+encodeURIComponent(kw)+'&n=12&page='+cat._page)
-    .then(r=>r.json())
-    .then(d=>{
-      if(d.error || !d.images || !d.images.length){
-        res.innerHTML=pgMsg('검색 결과 없음'+(d.error?(' — '+(d.error.message||d.error)):'')+' · 핀터레스트나 📁 직접 추가를 이용하세요','var(--org)');
-        done&&done(); return;
-      }
-      const wrap=document.createElement('div');
-      wrap.style.cssText='border:1px solid var(--bdr);border-radius:9px;padding:10px;background:var(--s2)';
-      const head=document.createElement('div');
-      head.style.cssText='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px';
-      head.innerHTML='<span style="font-size:10.5px;color:var(--t3)">후보 클릭 → 아래 선택에 추가 <span style="color:var(--t4)">('+(d.provider||'')+')</span></span>';
-      const more=document.createElement('button'); more.className='btn bg'; more.style.cssText='font-size:10.5px;padding:3px 9px';
-      more.textContent='🔄 다른 후보'; more.onclick=()=>{ cat._page=(cat._page||1)+1; if(cat._page>15) cat._page=1; pgFetchImages(ci); };
-      head.appendChild(more); wrap.appendChild(head);
-      const grid=document.createElement('div');
-      grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:7px';
-      d.images.forEach(img=>pgAddTile(grid, ci, img));
-      wrap.appendChild(grid); res.innerHTML=''; res.appendChild(wrap);
-      done&&done();
-    })
-    .catch(e=>{ res.innerHTML=pgMsg('검색 실패: '+e.message,'var(--red)'); done&&done(); });
-}
-function pgMsg(t,c){ return '<div style="color:'+c+';font-size:11.5px;padding:8px">'+t+'</div>'; }
-
-// 후보 타일: 클릭하면 선택 토글 + 아래 selected 그리드 갱신
-function pgAddTile(grid, ci, img){
-  const arr=_pg.cats[ci].imgs||(_pg.cats[ci].imgs=[]);
-  const isSel=arr.some(x=>x.url===img.url);
-  const t=document.createElement('div');
-  t.style.cssText='position:relative;aspect-ratio:1;border-radius:7px;overflow:hidden;border:2px solid '+(isSel?'var(--grn)':'var(--bdr)')+';cursor:pointer;background:#fff';
-  t.innerHTML=`<img src="${img.thumb||img.url}" referrerpolicy="no-referrer" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.parentElement.style.display='none'">
-    <div class="pgChk" style="position:absolute;top:3px;right:3px;width:18px;height:18px;border-radius:50%;background:var(--grn);color:#fff;display:${isSel?'flex':'none'};align-items:center;justify-content:center;font-size:10px;font-weight:900">✓</div>`;
-  t.onclick=function(){
-    const a=_pg.cats[ci].imgs||(_pg.cats[ci].imgs=[]);
-    const idx=a.findIndex(x=>x.url===img.url);
-    if(idx>=0){ a.splice(idx,1); t.style.borderColor='var(--bdr)'; t.querySelector('.pgChk').style.display='none'; }
-    else { a.push({url:img.url, thumb:img.thumb||img.url}); t.style.borderColor='var(--grn)'; t.querySelector('.pgChk').style.display='flex'; }
-    const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent=a.length;
-    pgRenderCatGrid(ci);
-  };
-  grid.appendChild(t);
-}
-
 function pgStep4(){
   const brand=(_pg.input.brand||'').split('(')[0].trim();
   let h=`<div class="card"><div class="ch"><div class="ch-t">4. 미리보기 · 출력</div></div><div style="padding:2px">
-    <div style="font-size:12px;color:var(--t3);margin-bottom:14px">표지 + 트렌드 슬라이드 + 카테고리별 이미지 격자로 PPTX가 생성됩니다.</div>`;
-  // 표지
-  h+=`<div style="background:linear-gradient(160deg,#24433a,#3c7059);color:#eef3ee;padding:30px;border-radius:10px;margin-bottom:12px">
-    <div style="letter-spacing:3px;font-size:10px;color:#bcd3c4">EK · OEM JEWELRY PARTNER</div>
-    <div style="font-size:24px;font-weight:900;margin:8px 0">${brand} 신제품 제안서</div>
-    <div style="font-size:12px;color:#dce8df">${_pg.input.season} · 시즌 트렌드 기반 신규 라인 제안</div></div>`;
-  // 카테고리 미리보기
+    <div style="font-size:12px;color:var(--t3);margin-bottom:14px">표지 + 시즌 트렌드 + 카테고리별 변형 4종 격자로 PPTX가 생성됩니다.</div>`;
+  // 표지 (다크 모던)
+  h+=`<div style="background:#111315;color:#fff;padding:30px;border-radius:10px;margin-bottom:12px">
+    <div style="letter-spacing:3px;font-size:10px;color:#C9A227;font-weight:700">EK · OEM JEWELRY PARTNER</div>
+    <div style="font-size:24px;font-weight:900;margin:10px 0 6px;font-family:Georgia,serif">${brand} 신제품 제안서</div>
+    <div style="width:54px;height:2px;background:#C9A227;margin:8px 0"></div>
+    <div style="font-size:12px;color:#c9c7c2">${_pg.input.season} · 시즌 트렌드 기반 신규 라인 제안</div></div>`;
+  // 카테고리 미리보기 (변형 4종 2x2)
   _pg.cats.forEach(cat=>{
-    const n=(cat.imgs||[]).length || 0;
     let cells='';
-    const showN = n>0?n:9;
-    for(let k=0;k<showN;k++){
+    for(let k=0;k<4;k++){
       const im=(cat.imgs||[])[k];
-      cells+=`<div style="aspect-ratio:1;border-radius:5px;overflow:hidden;background:var(--s2);display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:9px">${im?`<img src="${im.thumb||im.url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover">`:'img'}</div>`;
+      cells+=`<div style="aspect-ratio:1.4;border-radius:5px;overflow:hidden;background:var(--s2);display:flex;align-items:center;justify-content:center;color:var(--t3);font-size:10px">${im?`<img src="${im.thumb||im.url}" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover">`:'변형 '+(k+1)}</div>`;
     }
     h+=`<div style="border:1px solid var(--bdr);border-radius:10px;padding:14px;margin-bottom:10px">
-      <div style="font-size:13px;font-weight:800;color:var(--grn)">${cat.name}</div>
-      <div style="font-size:11px;color:var(--gold-lt);margin-bottom:10px">${cat.logic}</div>
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px">${cells}</div></div>`;
+      <div style="font-size:13px;font-weight:800;color:var(--ink)">${cat.name}</div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:10px">${cat.logic||''}</div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">${cells}</div></div>`;
   });
   h+=`<div style="display:flex;justify-content:space-between;margin-top:16px">
     <button class="btn bg bs" onclick="_pg.step=3;renderSalesSubTab()">← 이미지 선택</button>
@@ -32358,40 +32306,57 @@ async function pgExportPPTX(btn){
     const brand=(_pg.input.brand||'고객사').split('(')[0].trim();
     const fullName=((_pg.input.brand||'').match(/\(([^)]+)\)/)||[])[1]||'';
     const season=_pg.input.season||'';
-    const GREEN_D='24433A',GREEN='2F5D4F',GOLD='9A7B3F',INK='1F2A24',INK3='8C978F',FONT='맑은 고딕';
+    // 모던/트렌디 미니멀 팔레트
+    const INK='111315', PAPER='FFFFFF', SOFT='F4F2EE', MUTE='8A8A86', LINE='E4E1DA', ACC='C9A227';
+    const HEAD='Georgia', BODY='맑은 고딕';
     const pptx=new PptxGenJS();
     pptx.defineLayout({name:'W16x9',width:13.333,height:7.5}); pptx.layout='W16x9';
     const W=13.333;
-    // 표지
-    let s=pptx.addSlide(); s.background={color:GREEN_D};
-    s.addText('EK · OEM JEWELRY PARTNER',{x:0.9,y:2.4,w:11,h:0.4,fontSize:13,color:'BCD3C4',charSpacing:3,fontFace:FONT});
-    s.addText(brand+' 신제품 제안서',{x:0.9,y:2.9,w:11.5,h:1.2,fontSize:40,bold:true,color:'FFFFFF',fontFace:FONT});
-    s.addText(season+' · 시즌 트렌드 기반 신규 라인 제안',{x:0.9,y:4.1,w:11,h:0.5,fontSize:16,color:'DCE8DF',fontFace:FONT});
-    if(fullName) s.addText(fullName,{x:0.9,y:6.6,w:11,h:0.4,fontSize:12,color:'AEC3B3',fontFace:FONT});
-    // 트렌드
-    s=pptx.addSlide(); s.background={color:'FFFFFF'};
-    s.addText('SEASON TREND',{x:0.7,y:0.5,w:11,h:0.35,fontSize:12,bold:true,color:GOLD,charSpacing:2,fontFace:FONT});
-    s.addText(season+' — 왜 지금 이 방향인가',{x:0.7,y:0.92,w:12,h:0.7,fontSize:24,bold:true,color:GREEN_D,fontFace:FONT});
-    let ty=2.0; (_pg.trend.length?_pg.trend:['']).forEach(t=>{ s.addText(t,{x:0.9,y:ty,w:11.5,h:0.9,fontSize:14,color:INK,fontFace:FONT,valign:'top',lineSpacingMultiple:1.2}); ty+=1.1; });
-    if(_pg.diag){ s.addText(_pg.diag,{x:0.9,y:5.6,w:11.5,h:1.3,fontSize:11,color:INK3,fontFace:FONT,valign:'top',italic:true,lineSpacingMultiple:1.2}); }
-    // 카테고리 슬라이드
+
+    // ── 표지 (다크) ──
+    let s=pptx.addSlide(); s.background={color:INK};
+    s.addText('EK · OEM JEWELRY PARTNER',{x:0.9,y:0.8,w:9,h:0.4,fontFace:BODY,fontSize:12,color:ACC,charSpacing:4,bold:true});
+    s.addText(brand+'\n신제품 제안서',{x:0.9,y:2.4,w:11.5,h:2.0,fontFace:HEAD,fontSize:46,bold:true,color:PAPER,lineSpacingMultiple:1.05});
+    s.addShape(pptx.ShapeType.line,{x:0.95,y:4.55,w:2.2,h:0,line:{color:ACC,width:1.5}});
+    s.addText((season||'')+' · 시즌 트렌드 기반 신규 라인 제안',{x:0.92,y:4.7,w:11,h:0.5,fontFace:BODY,fontSize:16,color:'C9C7C2'});
+    const today=new Date(); const ds=today.getFullYear()+'.'+String(today.getMonth()+1).padStart(2,'0')+'.'+String(today.getDate()).padStart(2,'0');
+    s.addText('제안일 '+ds+(fullName?(' · '+fullName):''),{x:0.9,y:6.6,w:11,h:0.4,fontFace:BODY,fontSize:12,color:MUTE});
+
+    // ── 시즌 트렌드 ──
+    s=pptx.addSlide(); s.background={color:PAPER};
+    s.addText('01',{x:0.9,y:0.7,w:1.5,h:0.6,fontFace:HEAD,fontSize:22,color:ACC,bold:true});
+    s.addText('시즌 트렌드',{x:1.7,y:0.72,w:8,h:0.6,fontFace:HEAD,fontSize:30,color:INK,bold:true});
+    const trends=(_pg.trend&&_pg.trend.length)?_pg.trend.slice(0,3):['','',''];
+    trends.forEach((t,i)=>{
+      const cx=0.9+i*4.05;
+      s.addShape(pptx.ShapeType.rect,{x:cx,y:2.1,w:3.75,h:3.9,fill:{color:SOFT},line:{color:LINE,width:1}});
+      s.addText('0'+(i+1),{x:cx+0.35,y:2.4,w:2,h:0.7,fontFace:HEAD,fontSize:30,color:ACC,bold:true});
+      s.addText(t||'트렌드 축 '+(i+1),{x:cx+0.35,y:3.2,w:3.1,h:1.4,fontFace:BODY,fontSize:14,color:INK,bold:true,valign:'top',lineSpacingMultiple:1.25});
+    });
+
+    // ── 카테고리 슬라이드 (변형 4종 2x2) ──
+    let idx=2;
     for(const cat of _pg.cats){
-      const sl=pptx.addSlide(); sl.background={color:'FFFFFF'};
-      sl.addText(cat.name,{x:0.6,y:0.4,w:12,h:0.5,fontSize:20,bold:true,color:GREEN_D,fontFace:FONT});
-      sl.addText(cat.logic,{x:0.6,y:0.95,w:12,h:0.45,fontSize:13,color:GOLD,fontFace:FONT});
-      const imgs=cat.imgs||[]; const count=imgs.length||0;
-      const cols=5,gap=0.2,startX=0.6,startY=1.7;
-      const cellW=(W-startX*2-gap*(cols-1))/cols, cellH=cellW;
-      const drawN = count>0?count:9;
-      for(let k=0;k<drawN;k++){
-        const r=Math.floor(k/cols), cc=k%cols;
-        const x=startX+cc*(cellW+gap), y=startY+r*(cellH+gap);
+      const sl=pptx.addSlide(); sl.background={color:PAPER};
+      const nn=(idx<10?'0':'')+idx; idx++;
+      sl.addText(nn,{x:0.9,y:0.6,w:1.3,h:0.5,fontFace:HEAD,fontSize:18,color:ACC,bold:true});
+      sl.addText(cat.name||'',{x:1.6,y:0.58,w:8,h:0.6,fontFace:HEAD,fontSize:24,color:INK,bold:true});
+      if(cat.logic) sl.addText(cat.logic,{x:0.92,y:1.22,w:8.5,h:0.5,fontFace:BODY,fontSize:13,color:MUTE});
+      sl.addText('DESIGN VARIATIONS',{x:9.6,y:0.62,w:3,h:0.4,fontFace:BODY,fontSize:10,color:ACC,charSpacing:2,bold:true,align:'right'});
+      const imgs=cat.imgs||[];
+      // 2x2 격자
+      const gx=0.9, gy=1.95, iw=5.75, ih=2.45, gap=0.28;
+      const pos=[[gx,gy],[gx+iw+gap,gy],[gx,gy+ih+gap],[gx+iw+gap,gy+ih+gap]];
+      for(let k=0;k<4;k++){
+        const x=pos[k][0], y=pos[k][1];
         const im=imgs[k];
         let dataUrl=null;
         if(im){ dataUrl=await pgImgToDataURL(im.url||im.thumb); }
-        if(dataUrl){ sl.addImage({data:dataUrl, x, y, w:cellW, h:cellH, sizing:{type:'cover',w:cellW,h:cellH}}); }
-        else { sl.addShape(pptx.ShapeType.roundRect,{x,y,w:cellW,h:cellH,fill:{color:'EEF2EE'},line:{color:'DDE6DD',width:1},rectRadius:0.05});
-               sl.addText('이미지',{x,y,w:cellW,h:cellH,align:'center',valign:'middle',fontSize:10,color:INK3,fontFace:FONT}); }
+        if(dataUrl){ sl.addImage({data:dataUrl,x,y,w:iw,h:ih,sizing:{type:'cover',w:iw,h:ih}}); }
+        else {
+          sl.addShape(pptx.ShapeType.rect,{x,y,w:iw,h:ih,fill:{color:SOFT},line:{color:LINE,width:1}});
+          sl.addText('변형 '+(k+1)+' 이미지',{x,y:y+ih/2-0.2,w:iw,h:0.5,align:'center',fontFace:BODY,fontSize:13,color:MUTE});
+        }
       }
     }
     await pptx.writeFile({fileName: brand+'_'+(season.split(' ')[0]||'')+'_제안서.pptx'});
