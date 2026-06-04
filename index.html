@@ -32082,13 +32082,14 @@ function pgBuildPrompt(input){
     "  예) '실버 볼드 체인' 카테고리라면 → ①굵은 인터로킹 링크 네크리스 ②가는 멀티레이어드 체인 ③조각적 펜던트 체인 ④플랫 스네이크 체인 처럼 디자인이 분명히 다른 4종.",
     "각 프롬프트는 아래를 모두 충족:",
     "1) 제품 묘사: 그 변형 고유의 형태·소재·디테일을 구체적으로 (변형마다 분명히 다르게).",
-    "2) 촬영/렌더 스타일: 'professional editorial product photography', 'luxury jewelry catalog', 'shot on 100mm macro lens', 'shallow depth of field', 'crisp sharp focus on the jewelry'.",
-    "3) 라이팅: 'soft diffused studio lighting', 'gentle directional highlight to show metal texture', 'subtle reflections'.",
-    "4) 배경/연출: 미니멀한 세팅 'minimalist neutral backdrop, smooth surface, lots of negative space', 'no model, product-only still life'.",
-    "5) 컬러/톤: 브랜드 무드 반영 (미니멀·모던이면 muted neutral palette, warm beige/grey/ivory tones).",
-    "6) 품질 태그: 'high resolution, photorealistic, 8k, ultra detailed, professional color grading'.",
-    "7) 화면비: 'vertical 3:4 aspect ratio'.",
-    "★ 한 카테고리 내 4개 변형은 제품 디자인만 다르고 배경·조명·톤·화면비는 동일하게, 모든 카테고리에 걸쳐서도 통일해 하나의 룩북처럼 보이게 할 것.",
+    "2) 착용 클로즈업: 가능한 한 모델이 착용한 클로즈업 컷으로. 'close-up worn shot on a model', 'cropped framing on neckline/ear/wrist/hand showing the jewelry up close', 'natural elegant pose'. 제품이 신체에 착용된 상태가 화면을 채우도록.",
+    "3) 촬영/렌더 스타일: 'professional editorial fashion photography', 'luxury jewelry campaign', 'shot on 85mm lens', 'shallow depth of field', 'crisp sharp focus on the jewelry'.",
+    "4) 라이팅: 'soft diffused studio lighting', 'gentle directional highlight to show metal/skin texture', 'subtle reflections'.",
+    "5) 배경/연출: 미니멀하고 흐릿한 배경 'minimalist blurred neutral background', 모델 얼굴은 부분적으로만/프레임 밖 (제품에 시선 집중).",
+    "6) 컬러/톤: 브랜드 무드 반영 (미니멀·모던이면 muted neutral palette, warm beige/grey/ivory tones, natural skin tone).",
+    "7) 품질 태그: 'high resolution, photorealistic, 8k, ultra detailed, professional color grading'.",
+    "8) 화면비: 'vertical 3:4 aspect ratio'.",
+    "★ 한 카테고리 내 4개 변형은 제품 디자인만 다르고 착용 클로즈업 연출·조명·톤·화면비는 동일하게, 모든 카테고리에 걸쳐서도 통일해 하나의 캠페인 룩북처럼 보이게 할 것.",
     "각 프롬프트는 자연스러운 영문 한 단락(쉼표로 이어진 긴 묘사). 한국어 금지, 영문만."
   ].join("\n");
 }
@@ -32147,7 +32148,7 @@ function pgLoadImages(){
   // 안내 배너
   const info=document.createElement('div');
   info.style.cssText='background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px;padding:11px 14px;margin-bottom:18px;font-size:12px;color:var(--t2);line-height:1.6';
-  info.innerHTML='카테고리마다 디자인 변형이 4종씩 있습니다. <b>📋 변형 N 복사</b>로 프롬프트를 제미나이에 붙여넣어 이미지를 생성하세요(변형마다 따로). 생성된 이미지를 저장한 뒤 <b>📁 이미지 추가</b>로 올리면 그대로 제안서 PPTX에 들어갑니다.';
+  info.innerHTML='카테고리마다 디자인 변형이 4종씩 있습니다. <b>📋 변형 N 복사</b>로 프롬프트를 제미나이에 붙여넣어 이미지를 생성하세요. 생성된 이미지는 <b>복사(Ctrl+C) 후 아래 칸에 붙여넣기(Ctrl+V)</b> 하거나, 드래그해서 놓거나, <b>📁 이미지 추가</b>로 올리면 됩니다.';
   host.appendChild(info);
   _pg.cats.forEach((cat,ci)=>{
     if(!Array.isArray(cat.imgs)) cat.imgs=[];
@@ -32169,11 +32170,57 @@ function pgLoadImages(){
       ${cat.logic?`<div style="font-size:11px;color:var(--gold-lt);margin:3px 0 2px">${cat.logic}</div>`:''}
       ${variantsHtml}
       ${prompts.length?`<details style="margin:0 0 10px"><summary style="font-size:11px;color:var(--t3);cursor:pointer">✨ 변형별 프롬프트 보기</summary><div style="margin-top:6px;display:flex;flex-direction:column;gap:7px">${prompts.map((p,pi)=>`<div style="font-size:11px;color:var(--t2);background:var(--s2);border-radius:7px;padding:8px 10px;line-height:1.5;white-space:pre-wrap"><b style="color:var(--gold-lt)">변형 ${pi+1}</b><br>${p.replace(/</g,'&lt;')}</div>`).join('')}</div></details>`:''}
+      <div id="pgPaste${ci}" tabindex="0" style="border:1.5px dashed var(--gold-line);border-radius:9px;padding:13px;text-align:center;font-size:11.5px;color:var(--t3);background:var(--gold-bg);cursor:pointer;outline:none;margin-bottom:10px;transition:.15s">📋 여기를 클릭한 뒤 <b>Ctrl+V</b>로 붙여넣기 &nbsp;·&nbsp; 또는 이미지를 끌어다 놓기</div>
       <div style="font-size:10.5px;color:var(--t3);font-weight:700;margin:8px 0 6px">🖼️ 추가된 이미지 <span id="pgSel${ci}">${cat.imgs.length}</span>장</div>
       <div id="pgGrid${ci}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:9px"></div>`;
     host.appendChild(block);
+    pgBindPaste(ci);
     pgRenderCatGrid(ci);
   });
+}
+
+// 붙여넣기/드롭 영역 바인딩
+function pgBindPaste(ci){
+  const zone=document.getElementById('pgPaste'+ci); if(!zone) return;
+  const focusOn=()=>{ zone.style.borderColor='var(--grn)'; zone.style.background='var(--s2)'; };
+  const focusOff=()=>{ zone.style.borderColor='var(--gold-line)'; zone.style.background='var(--gold-bg)'; };
+  zone.addEventListener('focus', focusOn);
+  zone.addEventListener('blur', focusOff);
+  zone.addEventListener('click', ()=>zone.focus());
+  // 붙여넣기
+  zone.addEventListener('paste', (e)=>{
+    const items=(e.clipboardData||window.clipboardData)?.items||[];
+    let found=0;
+    for(const it of items){
+      if(it.type && it.type.startsWith('image/')){
+        const f=it.getAsFile(); if(f){ found++; pgAddImageFile(f, ci); }
+      }
+    }
+    if(found){ e.preventDefault(); }
+    else { showToast('클립보드에 이미지가 없습니다 — 제미나이에서 이미지를 복사한 뒤 다시 시도하세요','var(--org)',3000); }
+  });
+  // 드래그앤드롭
+  zone.addEventListener('dragover', (e)=>{ e.preventDefault(); focusOn(); });
+  zone.addEventListener('dragleave', focusOff);
+  zone.addEventListener('drop', (e)=>{
+    e.preventDefault(); focusOff();
+    const files=Array.from(e.dataTransfer?.files||[]).filter(f=>f.type.startsWith('image/'));
+    if(files.length){ files.forEach(f=>pgAddImageFile(f, ci)); }
+    else { showToast('이미지 파일을 끌어다 놓으세요','var(--org)',2500); }
+  });
+}
+
+// 단일 이미지 파일 → base64로 카테고리에 추가
+function pgAddImageFile(file, ci){
+  const cat=_pg.cats[ci]; if(!cat) return;
+  if(!Array.isArray(cat.imgs)) cat.imgs=[];
+  const r=new FileReader();
+  r.onload=()=>{
+    cat.imgs.push({url:r.result, thumb:r.result, _local:true});
+    pgRenderCatGrid(ci);
+    const sel=document.getElementById('pgSel'+ci); if(sel) sel.textContent=cat.imgs.length;
+  };
+  r.readAsDataURL(file);
 }
 
 // 카테고리 그리드 다시 그리기 (업로드된 이미지 표시)
