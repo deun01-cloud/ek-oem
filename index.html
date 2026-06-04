@@ -32150,6 +32150,13 @@ function pgLoadImages(){
   info.style.cssText='background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px;padding:11px 14px;margin-bottom:18px;font-size:12px;color:var(--t2);line-height:1.6';
   info.innerHTML='카테고리마다 디자인 변형이 4종씩 있습니다. <b>📋 변형 N 복사</b>로 프롬프트를 제미나이에 붙여넣어 이미지를 생성하세요. 생성된 이미지는 <b>복사(Ctrl+C) 후 아래 칸에 붙여넣기(Ctrl+V)</b> 하거나, 드래그해서 놓거나, <b>📁 이미지 추가</b>로 올리면 됩니다.';
   host.appendChild(info);
+  if(!_pg.cats.length){
+    const empty=document.createElement('div');
+    empty.style.cssText='padding:30px;text-align:center;color:var(--t3);font-size:12.5px;border:1.5px dashed var(--bdr);border-radius:9px';
+    empty.textContent='카테고리가 모두 삭제되었습니다 — 2단계에서 AI 생성을 다시 실행하세요.';
+    host.appendChild(empty);
+    return;
+  }
   _pg.cats.forEach((cat,ci)=>{
     if(!Array.isArray(cat.imgs)) cat.imgs=[];
     const prompts=Array.isArray(cat.aiPrompts)?cat.aiPrompts:[];
@@ -32165,6 +32172,7 @@ function pgLoadImages(){
         <div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn bg" style="font-size:11px;padding:5px 12px" onclick="document.getElementById('pgUp${ci}').click()">📁 이미지 추가</button>
           <input type="file" id="pgUp${ci}" accept="image/*" multiple style="display:none" onchange="pgUploadImages(event, ${ci})">
+          <button class="btn bg" style="font-size:11px;padding:5px 10px;color:var(--red)" title="이 카테고리 삭제" onclick="pgDeleteCat(${ci})">🗑 삭제</button>
         </div>
       </div>
       ${cat.logic?`<div style="font-size:11px;color:var(--gold-lt);margin:3px 0 2px">${cat.logic}</div>`:''}
@@ -32177,6 +32185,17 @@ function pgLoadImages(){
     pgBindPaste(ci);
     pgRenderCatGrid(ci);
   });
+}
+
+// 카테고리 삭제
+function pgDeleteCat(ci){
+  const cat=_pg.cats[ci]; if(!cat) return;
+  const nm=cat.name||'이 카테고리';
+  const hasImgs=(cat.imgs||[]).length>0;
+  if(!confirm(nm+' 카테고리를 삭제할까요?'+(hasImgs?'\n추가한 이미지 '+cat.imgs.length+'장도 함께 삭제됩니다.':''))) return;
+  _pg.cats.splice(ci,1);
+  pgLoadImages();
+  showToast('카테고리 삭제됨','var(--grn)',2000);
 }
 
 // 붙여넣기/드롭 영역 바인딩
