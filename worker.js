@@ -15,52 +15,52 @@
  * R2 바인딩 (Worker Settings → Bindings → R2 bucket):
  *   변수명: EK_FILES  / 버킷명: ek-files
  */
-
+ 
 const NOTION_VERSION = "2022-06-28";
 const NOTION_BASE    = "https://api.notion.com/v1";
 const ANTHROPIC_BASE = "https://api.anthropic.com/v1/messages";   // ★추가
 const ANTHROPIC_VERSION = "2023-06-01";                            // ★추가
-
+ 
 const CORS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   // x-anthropic-key 추가 (앱이 Claude 호출 시 보내는 헤더)
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Notion-Version, X-File-Name, X-File-Type, X-Encoding, x-anthropic-key",
 };
-
+ 
 export default {
   async fetch(request, env) {
     const url  = new URL(request.url);
     const path = url.pathname;
-
+ 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS });
     }
-
+ 
     if (path.startsWith("/notion"))    return handleNotion(request, env, url, path);
     if (path.startsWith("/r2"))        return handleR2(request, env, url, path);
     if (path === "/claude")            return handleClaude(request, env);      // ★추가
     if (path === "/imgsearch")         return handleImageSearch(request, env, url); // ★추가
-
+ 
     return json({ ok: true, routes: ["/notion/*", "/r2/upload", "/r2/list", "/r2/file/:key", "/claude", "/imgsearch"] });
   },
 };
-
+ 
 // ══════════════════════════════════════
 // Notion API 프록시
 // ══════════════════════════════════════
 async function handleNotion(request, env, url, path) {
   const token = env.NOTION_TOKEN;
   if (!token) return json({ error: "NOTION_TOKEN not configured in Worker environment" }, 500);
-
+ 
   const notionPath = path.replace(/^\/notion/, "");
   const notionUrl  = NOTION_BASE + notionPath + url.search;
-
+ 
   let body = undefined;
   if (request.method !== "GET" && request.method !== "HEAD") {
     body = await request.text();
   }
-
+ 
   const res = await fetch(notionUrl, {
     method: request.method,
     headers: {
@@ -70,11 +70,11 @@ async function handleNotion(request, env, url, path) {
     },
     body,
   });
-
+ 
   const data = await res.json();
   return json(data, res.status);
 }
-
+ 
 // ══════════════════════════════════════
 // Claude API 프록시  ★추가
 // ──────────────────────────────────────
@@ -86,15 +86,15 @@ async function handleNotion(request, env, url, path) {
 // ══════════════════════════════════════
 async function handleClaude(request, env) {
   if (request.method !== "POST") return json({ error: "POST only" }, 405);
-
+ 
   // 키는 앱이 헤더로 보냄(우선) → 없으면 Worker 환경변수(ANTHROPIC_KEY) 폴백
   const key = request.headers.get("x-anthropic-key") || env.ANTHROPIC_KEY;
   if (!key) return json({ error: "Anthropic API 키가 없습니다 (헤더 x-anthropic-key 또는 환경변수 ANTHROPIC_KEY)" }, 400);
-
+ 
   let body;
   try { body = await request.text(); }
   catch (e) { return json({ error: "본문 읽기 실패: " + e.message }, 400); }
-
+ 
   const res = await fetch(ANTHROPIC_BASE, {
     method: "POST",
     headers: {
@@ -104,11 +104,11 @@ async function handleClaude(request, env) {
     },
     body,
   });
-
+ 
   const data = await res.json();
   return json(data, res.status);
 }
-
+ 
 // ══════════════════════════════════════
 // 이미지 검색 프록시  ★Pexels 우선 + Google CSE 폴백
 // ──────────────────────────────────────
@@ -124,9 +124,9 @@ async function handleImageSearch(request, env, url) {
   const q    = (url.searchParams.get("q") || "").trim();
   const n    = Math.min(parseInt(url.searchParams.get("n") || "12", 10) || 12, 30);
   const page = Math.max(parseInt(url.searchParams.get("page") || "1", 10) || 1, 1);
-
+ 
   if (!q) return json({ error: "검색어(q)가 없습니다." }, 400);
-
+ 
   // ── 1순위: Pexels ──────────────────────────
   if (env.PEXELS_KEY) {
     const api = new URL("https://api.pexels.com/v1/search");
@@ -134,7 +134,7 @@ async function handleImageSearch(request, env, url) {
     api.searchParams.set("per_page", String(n));
     api.searchParams.set("page", String(page));
     api.searchParams.set("orientation", "portrait"); // 제안서 카드용 세로 컷 우선
-
+ 
     try {
       const r = await fetch(api.toString(), { headers: { Authorization: env.PEXELS_KEY } });
       const data = await r.json();
@@ -152,7 +152,7 @@ async function handleImageSearch(request, env, url) {
       return json({ error: "Pexels 요청 실패: " + e.message }, 502);
     }
   }
-
+ 
   // ── 폴백: Google Custom Search ──────────────
   if (env.GOOGLE_CSE_KEY && env.GOOGLE_CSE_CX) {
     const start = (page - 1) * 10 + 1;
@@ -182,17 +182,17 @@ async function handleImageSearch(request, env, url) {
       return json({ error: "검색 요청 실패: " + e.message }, 502);
     }
   }
-
+ 
   return json({ error: "이미지 검색 키 미설정 — Worker 환경변수 PEXELS_KEY(권장) 또는 GOOGLE_CSE_KEY/CX를 등록하세요." }, 500);
 }
-
+ 
 // ══════════════════════════════════════
 // R2 파일 스토리지
 // ══════════════════════════════════════
 async function handleR2(request, env, url, path) {
   const bucket = env.EK_FILES;
   if (!bucket) return json({ error: "R2 bucket not bound. Add R2 binding 'EK_FILES' in Worker settings." }, 500);
-
+ 
   if (request.method === "POST" && path === "/r2/upload") return uploadFile(request, bucket);
   if (request.method === "GET"  && path === "/r2/list")   return listFiles(url, bucket);
   if (request.method === "GET"  && path.startsWith("/r2/file/")) {
@@ -201,16 +201,16 @@ async function handleR2(request, env, url, path) {
   if (request.method === "DELETE" && path.startsWith("/r2/file/")) {
     return deleteFile(decodeURIComponent(path.replace("/r2/file/", "")), bucket);
   }
-
+ 
   return json({ error: "Unknown R2 route" }, 404);
 }
-
+ 
 async function uploadFile(request, bucket) {
   try {
     const contentType = request.headers.get("X-File-Type") || "application/octet-stream";
     const fileName    = request.headers.get("X-File-Name")  || `file_${Date.now()}`;
     const isBase64    = request.headers.get("X-Encoding")   === "base64";
-
+ 
     let body;
     if (isBase64) {
       const text   = await request.text();
@@ -219,21 +219,21 @@ async function uploadFile(request, bucket) {
     } else {
       body = await request.arrayBuffer();
     }
-
+ 
     const now = new Date();
     const key = `uploads/${now.getFullYear()}/${String(now.getMonth()+1).padStart(2,"0")}/${String(now.getDate()).padStart(2,"0")}/${Date.now()}_${sanitize(fileName)}`;
-
+ 
     await bucket.put(key, body, {
       httpMetadata:   { contentType },
       customMetadata: { originalName: fileName, uploadedAt: now.toISOString() },
     });
-
+ 
     return json({ success: true, key, url: `/r2/file/${encodeURIComponent(key)}`, name: fileName, type: contentType, size: body.byteLength });
   } catch (e) {
     return json({ error: "Upload failed: " + e.message }, 500);
   }
 }
-
+ 
 async function getFile(key, bucket) {
   const obj = await bucket.get(key);
   if (!obj) return json({ error: "File not found" }, 404);
@@ -241,7 +241,7 @@ async function getFile(key, bucket) {
     headers: { ...CORS, "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream", "Cache-Control": "public, max-age=31536000" },
   });
 }
-
+ 
 async function listFiles(url, bucket) {
   const prefix = url.searchParams.get("prefix") || "uploads/";
   const limit  = parseInt(url.searchParams.get("limit") || "200");
@@ -251,12 +251,12 @@ async function listFiles(url, bucket) {
     truncated: listed.truncated,
   });
 }
-
+ 
 async function deleteFile(key, bucket) {
   await bucket.delete(key);
   return json({ success: true, deleted: key });
 }
-
+ 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 }
