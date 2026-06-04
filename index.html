@@ -188,6 +188,8 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .fi,.fs,.fta{width:100%;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;color:var(--t1);padding:6px 9px;font-size:12px;font-family:inherit;outline:none;transition:.15s}
 .fi:focus,.fs:focus,.fta:focus{border-color:var(--gold);background:var(--s1)}
 .fta{resize:vertical;min-height:48px}
+/* 필수 입력 미작성 — 빨간 테두리 강조 */
+.fi.req-empty,.fs.req-empty,.fta.req-empty,input.req-empty,select.req-empty,textarea.req-empty{border:1.5px solid var(--red) !important;background:rgba(192,48,48,.06) !important;box-shadow:0 0 0 2px rgba(192,48,48,.12)}
 .fr2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .fr3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:7px}
 .fr4{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
@@ -2640,7 +2642,8 @@ function openASModal(idOrNull){
 }
 
 async function saveAS(){
-  const client=gv('as_client');if(!client)return showToast('⚠ 고객사를 입력해 주세요','var(--red)');
+  if(!_validateRequired([{id:'as_client',label:'고객사'}])) return;
+  const client=gv('as_client');
   const id=gv('as_id');
   // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
   if(!id && !requireNotion('asDb', 'AS')) return;
@@ -4248,8 +4251,8 @@ function renderPdImgPrev(){
     </div>`).join('');
 }
 function saveProduct(){
+  if(!_validateRequired([{id:'pd_name',label:'품목명'}])) return;
   const code=gv('pd_code'), name=gv('pd_name');
-  if(!name) return showToast('⚠ 품목명을 입력해 주세요','var(--red)');
   const id=gv('pd_id');
   // 🔒 노션-우선 모드: 신규 등록 시 노션 연결 필수
   // (수정은 기존 항목이 이미 노션에 있다고 가정하고 통과)
@@ -14826,6 +14829,40 @@ function gv(id){return(document.getElementById(id)?.value||'').trim();}
 function gchk(id){return document.getElementById(id)?.checked;}
 function sv(id,v){if(document.getElementById(id))document.getElementById(id).value=v||'';}
 
+// ── 필수 입력 검증 헬퍼 ──
+// fields: [{id:'o_vendor', label:'업체명'}, ...]
+// 비어있는 첫 필드에 빨간 테두리 + 포커스 + 토스트 메시지. 모두 채워지면 true 반환.
+function _clearReqMark(id){
+  const el=document.getElementById(id);
+  if(el){ el.classList.remove('req-empty'); }
+}
+function _validateRequired(fields){
+  // 먼저 모든 표시 제거
+  fields.forEach(f=>_clearReqMark(f.id));
+  let firstEmpty=null;
+  fields.forEach(f=>{
+    const el=document.getElementById(f.id);
+    const val=(el?.value||'').trim();
+    if(!val){
+      if(el) el.classList.add('req-empty');
+      if(!firstEmpty) firstEmpty=f;
+    }
+  });
+  if(firstEmpty){
+    const el=document.getElementById(firstEmpty.id);
+    if(el){
+      try{ el.scrollIntoView({behavior:'smooth',block:'center'}); }catch(e){}
+      setTimeout(()=>{ try{ el.focus(); }catch(e){} }, 250);
+      // 입력 시작하면 빨간 표시 자동 제거
+      const clear=()=>{ el.classList.remove('req-empty'); el.removeEventListener('input',clear); el.removeEventListener('change',clear); };
+      el.addEventListener('input',clear); el.addEventListener('change',clear);
+    }
+    showToast('⚠ '+firstEmpty.label+'을(를) 입력해 주세요','var(--red)',2800);
+    return false;
+  }
+  return true;
+}
+
 // date
 document.getElementById('topDate').textContent=`${TODAY.getFullYear()}년 ${TODAY.getMonth()+1}월 ${TODAY.getDate()}일 (${DAY_KR[TODAY.getDay()]})`;
 
@@ -22206,7 +22243,8 @@ async function autoSyncSampleToProductDB(smp){
 // 샘플 모달의 완료 토글 버튼 — 단순히 status를 '확정'으로 변경 (발주 생성 없음)
 // toggleSmpComplete는 아래(명세서 자동생성 포함 버전)에 정의됨 — 중복 제거됨
 function saveSmp(){
-  const name=gv('s_name');if(!name)return showToast('⚠ 샘플명을 입력해 주세요','var(--red)');
+  if(!_validateRequired([{id:'s_name',label:'샘플명'}])) return;
+  const name=gv('s_name');
   const id=gv('s_id');
   // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
   if(!id && !requireNotion('smpDb', '샘플의뢰')) return;
@@ -23837,7 +23875,8 @@ function toggleOrdComplete(){
   });
 }
 async function saveOrd(forceOverwrite){
-  const vendor=gv('o_vendor');if(!vendor)return showToast('⚠ 업체명을 입력해 주세요','var(--red)');
+  if(!_validateRequired([{id:'o_vendor',label:'업체명'}])) return;
+  const vendor=gv('o_vendor');
   const id=gv('o_id');const isNew=!id;
   // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
   if(isNew && !requireNotion('ordDb', '발주서')) return;
@@ -24218,7 +24257,8 @@ function renderTaskFilePrev(){
     </div>`).join('');
 }
 async function saveTask(){
-  const cont=gv('t_cont');if(!cont)return showToast('⚠ 내용을 입력해 주세요','var(--red)');
+  if(!_validateRequired([{id:'t_cont',label:'내용'}])) return;
+  const cont=gv('t_cont');
   const id=gv('t_id');
   // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
   if(!id && !requireNotion('taskDb', '업무일지')) return;
@@ -25296,7 +25336,8 @@ function openClModal(idOrNull){
 
 // saveCl — 신규 등록 + 수정 통합
 async function saveCl(){
-  const nm=gv('cl_nm'); if(!nm) return showToast('⚠ 고객사명 필수','var(--red)');
+  if(!_validateRequired([{id:'cl_nm',label:'고객사명'}])) return;
+  const nm=gv('cl_nm');
   const id=gv('cl_id');
   // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
   if(!id && !requireNotion('clientDb', '고객사')) return;
@@ -27399,8 +27440,8 @@ function _doTransferToSample(q, row){
 }
 
 async function saveQuote(forceOverwrite){
+  if(!_validateRequired([{id:'qt_vendor',label:'고객사'}])) return;
   const vendor = (gv('qt_vendor')||'').trim();
-  if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
   const validRows = _qtRowsBuf.filter(r=>String(r.name||'').trim());
   if(validRows.length===0){ showToast('⚠ 품목을 1개 이상 입력해 주세요','var(--red)'); return; }
 
@@ -31474,10 +31515,9 @@ function renderInqFilePrev(){
 }
 
 async function saveInq(forceOverwrite){
+  if(!_validateRequired([{id:'inq_vendor',label:'고객사'},{id:'inq_content',label:'문의 내용'}])) return;
   const vendor = gv('inq_vendor').trim();
   const content = gv('inq_content').trim();
-  if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
-  if(!content){ showToast('⚠ 문의 내용을 입력해 주세요','var(--red)'); return; }
   const id = gv('inq_id');
   // 다중 사용자 충돌 감지 (수정 케이스만, 강제 저장이 아닐 때)
   if(id && !forceOverwrite){
