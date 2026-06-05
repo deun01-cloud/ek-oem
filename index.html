@@ -5174,8 +5174,10 @@ function openConsolidationFromSelection(){
   // 청구월 — 가장 최근 발행월을 기본값으로
   const months = [...new Set(selectedInvs.map(v => (v.issuedAt||'').slice(0,7)).filter(Boolean))].sort().reverse();
   const targetMonth = months[0] || new Date().toISOString().slice(0,7);
+  // 📌 직접 선택 모드 활성화 — 발행월 필터 무시하고 고른 명세서를 후보로 사용
+  _consExplicitIds = new Set(selectedInvs.map(v => String(v.id)));
   // 모달 열기 + 선택된 명세서 ID들로 초기화
-  openConsolidationModal();
+  openConsolidationModal({ keepExplicit: true });
   // openConsolidationModal이 vendor/month/selectedIds를 자체 초기화하므로
   // 그 이후 우리 선택으로 덮어쓰기 (DOM 준비 후)
   setTimeout(()=>{
@@ -28665,7 +28667,20 @@ window.migrateDuplicateCodes = async function(opts){
 // - 발행일자가 청구월에 속함 (YYYY-MM)
 // - 아직 합본 안 됨 (_consolidatedInvoiceId 없음)
 // - 합본 청구서 자체는 제외
+// 직접 선택 모드: 사용자가 청구 탭 체크박스로 고른 명세서 ID들.
+// 설정돼 있으면 발행월 필터를 무시하고 이 ID들을 후보로 사용한다.
+let _consExplicitIds = null;
+
 function getConsolidationCandidates(vendor, month){
+  // 직접 선택 모드 — 발행월 무관, 고객사 동일·미합본 조건만 검증
+  if(_consExplicitIds && _consExplicitIds.size){
+    return invoiceHistory.filter(v => {
+      if(v._isConsolidated) return false;
+      if(v._consolidatedInvoiceId) return false;
+      if((v.vendor||'') !== vendor) return false;
+      return _consExplicitIds.has(String(v.id));
+    });
+  }
   if(!vendor || !month) return [];
   return invoiceHistory.filter(v => {
     if(v._isConsolidated) return false;                    // 합본 자체 제외
@@ -28961,7 +28976,10 @@ function isInvoiceLocked(inv){
 let _consSelectedIds = null;
 
 // 합본 작성 모달 열기
-function openConsolidationModal(){
+function openConsolidationModal(opts){
+  opts = opts || {};
+  // 일반(고객사+월 자동) 진입이면 직접 선택 모드 해제
+  if(!opts.keepExplicit) _consExplicitIds = null;
   // 합본 후보가 있는 고객사들만 옵션으로
   const eligibleVendors = [...new Set(
     invoiceHistory
@@ -28999,6 +29017,8 @@ function openConsolidationModal(){
 
 // 후보 변경 시 호출 — 새로운 후보 기준으로 선택 집합 재초기화
 function _resetConsSelection(){
+  // 사용자가 고객사/월을 직접 바꾸면 자동(발행월) 모드로 전환
+  _consExplicitIds = null;
   const vendor = document.getElementById('cons_vendor').value;
   const month = document.getElementById('cons_month').value;
   const candidates = (vendor && month) ? getConsolidationCandidates(vendor, month) : [];
@@ -29156,6 +29176,7 @@ function confirmConsolidation(){
       return;
     }
     _consSelectedIds = null; // 다음 모달 열림 시 재초기화
+    _consExplicitIds = null; // 직접 선택 모드 해제
     closeM('mConsolidate');
     showToast(`✓ ${month} ${vendor} 합본 청구서 발행됨 (${cons.includedInvoiceIds.length}건)`,'#7A4DB5', 3500);
     // 거래명세서 탭이면 새로고침
