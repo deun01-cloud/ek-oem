@@ -6616,12 +6616,13 @@ window.clearTombstones = ()=>{ localStorage.removeItem(_TOMBSTONE_KEY); console.
 //    1개만 남기고 나머지를 묘비 등록 + 노션 archive + 로컬 제거 한다.
 //    저장 무한루프 버그로 노션에 중복 합본 페이지가 생긴 경우 정리용.
 //    호출: dedupeConsolidations()  (먼저 진단만 보고 싶으면 dedupeConsolidations(true))
-window.dedupeConsolidations = function(dryRun){
+window.dedupeConsolidations = function(dryRun, ignoreMonth){
   const allCons = invoiceHistory.filter(v => v._isConsolidated);
   const groups = {};
   allCons.forEach(c => {
     const ids = (c.includedInvoiceIds||[]).slice().sort().join(',');
-    const key = (c.vendor||'?') + '|' + (c.consolidationMonth||'?') + '|' + ids;
+    // ignoreMonth=true면 청구월을 키에서 제외 — 같은 명세서 묶음인데 청구월만 다른 중복도 잡음
+    const key = (c.vendor||'?') + '|' + (ignoreMonth ? '*' : (c.consolidationMonth||'?')) + '|' + ids;
     (groups[key] = groups[key] || []).push(c);
   });
   const dupGroups = Object.keys(groups).filter(k => groups[k].length > 1);
@@ -13158,6 +13159,8 @@ async function syncInvoiceToNotion(inv, update){
     "청구액":{"number":+inv.chargeAmount||0},
     "청구월":{"rich_text":[{"text":{"content":(inv.consolidationMonth||'').slice(0,20)}}]},
     "합본ID":{"rich_text":[{"text":{"content":(inv._consolidatedInvoiceId||'').toString().slice(0,100)}}]},
+    // 합본 자체의 안정적 식별 키 (로컬 id) — 중복 페이지 생성 방지용
+    "합본키":{"rich_text":[{"text":{"content":(inv._isConsolidated?String(inv.id):'').slice(0,100)}}]},
     // 5-A: 명세서별 출고완료 플래그
     "명세서출고완료":{"checkbox":!!inv._shipped},
     // 📅 결산월 — 월별 결산 그룹핑 키 (발행월과 다를 수 있음). 비었으면 발행월로 간주.
@@ -13180,7 +13183,31 @@ async function syncInvoiceToNotion(inv, update){
   // 중복 생성 방지: 같은 키로 이미 Notion에 페이지가 있으면 그것을 update
   // - 발주서 명세서: 발주번호 + 고객사
   // - 샘플 명세서: 샘플IDs + 고객사 (발주번호가 비어있으니까)
-  if(inv.ordNo || inv._fromSample){
+  // - 합본 청구서: 합본 로컬 id (ordNo/sample 둘 다 없어 위 키로는 못 잡음 → 중복 페이지 양산 버그)
+  if(inv._isConsolidated){
+    try{
+      const rows=await nQueryAll(notionCfg.invDb);
+      const myKey = String(inv.id);
+      const existing=rows.find(r=>{
+        const rp=r.properties||{};
+        if(!np.check(rp['합본청구서'])) return false;
+        // 합본키 컬럼이 있으면 그걸로, 없으면 합본ID/포함명세서로 폴백
+        const rowKey = (np.text(rp['합본키'])||'').trim();
+        if(rowKey) return rowKey === myKey;
+        // 폴백: 같은 고객사 + 동일 포함명세서 집합
+        if(np.title(rp['고객사']) !== (inv.vendor||'')) return false;
+        const rowIds = (np.text(rp['포함명세서IDs'])||'');
+        return rowIds === JSON.stringify(inv.includedInvoiceIds||[]);
+      });
+      if(existing){
+        inv._notionId=existing.id;
+        save();
+        await nUpdate(existing.id,p);
+        inv._syncedAt = new Date().toISOString();
+        return;
+      }
+    }catch(e){ console.warn('합본 중복 검사 실패, 신규 생성으로 진행:',e); }
+  } else if(inv.ordNo || inv._fromSample){
     try{
       const rows=await nQueryAll(notionCfg.invDb);
       const targetSmpIdsKey = inv._fromSample ? JSON.stringify(inv.smpIds||[]) : '';
