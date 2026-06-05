@@ -8041,6 +8041,29 @@ async function notionCall(method, path, body, opts){
           // 누락 컬럼을 하나씩 제거하며 최대 15회까지 재시도 (여러 컬럼 누락 대응)
           return notionCall(method, path, newBody, {...opts, _stripCount: _stripCount+1});
         }
+
+        // 🩹 자동 복구 2: select/status 옵션이 DB에 없거나 타입 불일치로 거부 시
+        //    문제된 속성을 찾아 빼고 재시도. 메시지 예:
+        //    "X is expected to be select." / "... is not a valid option ..." 등
+        const propNames = Object.keys(body.properties);
+        const culprit = propNames.find(name =>
+          body.properties[name] != null && bodyText.indexOf(name) !== -1
+        );
+        if(culprit && body.properties[culprit]){
+          console.warn(`[Notion 자동복구2] "${culprit}" 속성이 거부됨 (${bodyText.slice(0,120)}) → 빼고 재시도 (${_stripCount+1})`);
+          if(!window._notionMissingNotified) window._notionMissingNotified = new Set();
+          if(!window._notionMissingNotified.has(culprit) && typeof showToast==='function'){
+            window._notionMissingNotified.add(culprit);
+            showToast(`⚠ 노션 "${culprit}" 속성 저장 실패 (옵션/타입 불일치) — 이 값은 제외하고 저장합니다`, 'var(--org)', 6000);
+          }
+          const newBody2 = {...body, properties: {...body.properties}};
+          delete newBody2.properties[culprit];
+          return notionCall(method, path, newBody2, {...opts, _stripCount: _stripCount+1});
+        }
+        // 어느 속성인지 못 짚으면 실제 사유를 사용자에게 노출 (디버깅용)
+        if(typeof showToast==='function'){
+          showToast('⚠ Notion 거부(400): '+bodyText.slice(0,180), 'var(--red)', 8000);
+        }
       }
 
       _recordNotionFail({status:res.status, message:bodyText||res.statusText});
