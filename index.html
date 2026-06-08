@@ -8394,17 +8394,26 @@ function _applyRemoteItem(type, item, ts, fromClient){
     const k = x._notionId || (x.id !== undefined ? String(x.id) : null);
     return k === remoteKey;
   });
-  if(idx >= 0){
-    const local = arr[idx];
+  // 📑 합본 청구서: _notionId/id가 엇갈려도 자연키(거래처+청구월+포함ID)로 매칭해 중복 방지
+  let idx2 = idx;
+  if(idx2 < 0 && item._isConsolidated){
+    const _ck = 'cons:'+(item.vendor||'')+'_'+(item.consolidationMonth||'')+'_'+((item.includedInvoiceIds||[]).slice().map(String).sort().join(','));
+    idx2 = arr.findIndex(x => x._isConsolidated && ('cons:'+(x.vendor||'')+'_'+(x.consolidationMonth||'')+'_'+((x.includedInvoiceIds||[]).slice().map(String).sort().join(','))) === _ck);
+  }
+  if(idx2 >= 0){
+    const local = arr[idx2];
     const localTs = +local._ts || 0;
     if(localTs > (item._ts || ts || 0)) return;
     // 머지: 로컬 id 유지 (다른 기기에선 다를 수 있으므로)
     const merged = { ...local, ...item, _ts: item._ts || ts };
-    if(local.id !== undefined && (item.id === undefined || item.id === local._notionId)){
+    // 합본은 자연키로 매칭됐을 수 있으므로 항상 로컬 id 유지 (id 흔들림 방지)
+    if(item._isConsolidated && local.id !== undefined){
+      merged.id = local.id;
+    } else if(local.id !== undefined && (item.id === undefined || item.id === local._notionId)){
       merged.id = local.id; // 로컬 id 유지
     }
     if(local._notionId && !merged._notionId) merged._notionId = local._notionId;
-    arr[idx] = merged;
+    arr[idx2] = merged;
   } else {
     // 신규 — 로컬 id 새로 부여
     const newItem = { ...item, _ts: item._ts || ts };
@@ -9494,6 +9503,12 @@ async function pullFromNotion(opts){
       // 중복 판정 키 (발주번호, 샘플명+의뢰일, 고객사 이니셜 등)
       const dupKey=(item)=>{
         if(!item) return null;
+        // 📑 합본 청구서: ordNo가 비어있어 일반 명세서 키로는 식별 불가.
+        //    vendor + 청구월 + 포함명세서ID집합으로 유일 식별 (중복 합본 생성 방지)
+        if(item._isConsolidated){
+          const ids = (item.includedInvoiceIds||[]).slice().map(String).sort().join(',');
+          return 'cons:'+(item.vendor||'')+'_'+(item.consolidationMonth||'')+'_'+ids;
+        }
         if(item.no) return 'no:'+item.no; // 발주
         if(item.ordNo && item.issuedAt) return 'inv:'+item.ordNo+'_'+item.issuedAt+'_'+(item.vendor||''); // 거래명세서
         // 제품DB: 품목코드(code)가 unique key. code가 있으면 무조건 그것으로만 식별.
@@ -9708,6 +9723,18 @@ async function pullFromNotion(opts){
     function upsertMerge(remote, local, idFields){
       if(!remote.length) return local; // 변경 없음
       const byNotionId=Object.fromEntries(local.filter(x=>x._notionId).map((x,i)=>[x._notionId,{x,i}]));
+      // 📑 자연키 인덱스 — _notionId가 아직 없는 로컬 항목(특히 합본)을 노션 풀과 매칭해 중복 방지
+      const _natKey=(item)=>{
+        if(!item) return null;
+        if(item._isConsolidated){
+          const ids=(item.includedInvoiceIds||[]).slice().map(String).sort().join(',');
+          return 'cons:'+(item.vendor||'')+'_'+(item.consolidationMonth||'')+'_'+ids;
+        }
+        if(item.ordNo && item.issuedAt) return 'inv:'+item.ordNo+'_'+item.issuedAt+'_'+(item.vendor||'');
+        return null;
+      };
+      const byNatKey={};
+      local.forEach((x,i)=>{ const k=_natKey(x); if(k && !byNatKey[k]) byNatKey[k]={x,i}; });
       // 새 id 생성기 — 카운터 + 노션 ID hash 기반 (genId() 충돌 방지)
       let _idCounter = 0;
       const _genId = (notionId) => {
@@ -9725,7 +9752,16 @@ async function pullFromNotion(opts){
       };
       const out=local.slice();
       for(const r of remote){
-        const hit=byNotionId[r._notionId];
+        let hit=byNotionId[r._notionId];
+        // _notionId 매칭 실패 시 자연키로 재시도 (로컬에서 막 만든 합본/명세서가 노션 풀로 돌아온 경우)
+        if(!hit){
+          const nk=_natKey(r);
+          if(nk && byNatKey[nk]){
+            hit=byNatKey[nk];
+            // 로컬 항목에 _notionId 부여 (다음부터 정상 매칭)
+            if(!out[hit.i]._notionId && r._notionId) out[hit.i]._notionId=r._notionId;
+          }
+        }
         if(hit){
           // 기존 항목 갱신: 로컬 보존 필드 유지
           const prev=hit.x;
@@ -29469,6 +29505,14 @@ function createConsolidatedInvoice(vendor, month, options){
     ? candidates.filter(v => selectedIds.has(String(v.id)))
     : candidates;
   if(!targets.length) return null;
+  // 📑 중복 합본 방지: 같은 (vendor + 청구월 + 포함명세서ID집합) 합본이 이미 있으면 그것을 반환
+  const _wantKey = 'cons:'+(vendor||'')+'_'+(month||'')+'_'+targets.map(v=>String(v.id)).sort().join(',');
+  const _existing = invoiceHistory.find(v => v._isConsolidated &&
+    ('cons:'+(v.vendor||'')+'_'+(v.consolidationMonth||'')+'_'+((v.includedInvoiceIds||[]).slice().map(String).sort().join(','))) === _wantKey);
+  if(_existing){
+    if(typeof showToast==='function') showToast('이미 동일한 합본 청구서가 있습니다','var(--org)',2200);
+    return _existing;
+  }
   const summary = calcConsolidationSummary(targets);
   const today = (typeof toLocalDateStr==='function') ? toLocalDateStr(new Date()) : new Date().toISOString().slice(0,10);
   const newId = Date.now();
