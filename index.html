@@ -922,26 +922,30 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 
   <div style="display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);margin-bottom:16px">
     <span style="font-size:13px;font-weight:600">USD 환율</span>
-    <input type="number" id="usd-rate" value="1350" min="100" max="9999" style="width:90px;border:1px solid var(--bd2);border-radius:7px;padding:6px 9px;font-size:13px;font-family:inherit" oninput="MGT.renderPurchase();if(MGT.renderCnBoard)MGT.renderCnBoard()">
+    <input type="number" id="usd-rate" value="1350" min="100" max="9999" style="width:90px;border:1px solid var(--bd2);border-radius:7px;padding:6px 9px;font-size:13px;font-family:inherit" oninput="MGT.renderPurchase();if(MGT.renderBoard)MGT.renderBoard(false)">
     <span style="font-size:12px;color:var(--mu)">원 / USD</span>
     <span style="font-size:12px;color:var(--mu);margin-left:4px" id="cn-preview"></span>
   </div>
 
-  <!-- 📋 중국 인보이스 게시판 (전체 기간 누적) -->
+  <!-- 📋 매입 자료실 — 공장 인보이스 + 지출내역서 (전체 기간 누적) -->
   <div class="card" style="margin-bottom:16px">
-    <div class="card-h">
-      <div class="card-t">📋 중국 인보이스 게시판 <span style="color:var(--ac);font-size:10px;background:var(--acbg);padding:1px 6px;border-radius:4px;margin-left:4px;text-transform:none;letter-spacing:0">전체 기간</span></div>
+    <div class="card-h" style="flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:4px">
+        <button class="board-tab on" data-board="cn" onclick="MGT.switchBoardTab('cn')" style="padding:6px 12px;font-size:12.5px;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-weight:600;background:var(--acbg);color:var(--ac)">🏭 공장 인보이스</button>
+        <button class="board-tab" data-board="exp" onclick="MGT.switchBoardTab('exp')" style="padding:6px 12px;font-size:12.5px;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-weight:500;background:transparent;color:var(--mu)">🧾 지출내역서</button>
+        <span style="color:var(--ac);font-size:10px;background:var(--acbg);padding:1px 6px;border-radius:4px;margin-left:4px">전체 기간</span>
+      </div>
       <div style="display:flex;align-items:center;gap:8px">
-        <span class="card-badge" id="cn-board-stat">—</span>
-        <input type="text" placeholder="🔍 파일명/월/날짜 검색" oninput="MGT.cnBoardSearch(this.value)" style="border:1px solid var(--bd2);border-radius:7px;padding:5px 10px;font-size:12px;font-family:inherit;width:170px">
-        <button class="btn btn-sm" onclick="MGT.renderCnBoard(true)" title="노션에서 다시 불러오기">↻</button>
+        <span class="card-badge" id="board-stat">—</span>
+        <input type="text" placeholder="🔍 파일명/월/날짜 검색" oninput="MGT.boardSearch(this.value)" style="border:1px solid var(--bd2);border-radius:7px;padding:5px 10px;font-size:12px;font-family:inherit;width:150px">
+        <button class="btn btn-sm" onclick="MGT.renderBoard(true)" title="노션에서 다시 불러오기">↻</button>
       </div>
     </div>
-    <div id="cn-board-body" style="max-height:420px;overflow:auto">
+    <div id="board-body" style="max-height:420px;overflow:auto">
       <div class="empty" style="padding:24px"><div class="empty-ico">📭</div><div style="font-size:12px;color:var(--mu)">불러오는 중...</div></div>
     </div>
     <div style="padding:8px 16px;border-top:1px solid var(--bd);background:var(--sf);font-size:11px;color:var(--hi)">
-      업로드 칸에 인보이스 엑셀을 올리면 자동으로 R2에 원본 보관 + 노션에 기록되어 이 게시판에 누적됩니다. 환산 금액은 위 USD 환율 기준입니다.
+      위 업로드 칸에 엑셀을 올리면 자동으로 R2에 원본 보관 + 노션에 기록되어 이 게시판에 누적됩니다. 공장 인보이스는 USD 환율로 환산되고, 지출내역서는 파일별 지출 합계가 표시됩니다.
     </div>
   </div>
 
@@ -5851,6 +5855,50 @@ function moveInvoiceToSettleMonth(invId, newMonth){
   // 경영지원 매출 자동집계도 갱신 (청구월 변경 즉시 반영)
   try{ if(typeof mgtRefreshSales==='function') mgtRefreshSales(); }catch(e){}
 }
+
+// 📑 합본 청구서의 청구월(consolidationMonth) 변경
+function changeConsolidationMonth(invId, newMonth){
+  const v = invoiceHistory.find(x=>String(x.id)===String(invId) && x._isConsolidated);
+  if(!v) return;
+  if((v.consolidationMonth||'') === newMonth) return;
+  v.consolidationMonth = newMonth;
+  // itemSummary/memo의 월 표기도 갱신 (가독성)
+  if(v.itemSummary){ v.itemSummary = v.itemSummary.replace(/^\d{4}-\d{2}/, newMonth); }
+  v._syncedAt = new Date().toISOString();
+  if(typeof save === 'function') save();
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+    syncInvoiceToNotion(v, true)
+      .then(()=>{ if(typeof showToast==='function') showToast('✓ 합본 청구월 변경 → '+newMonth,'var(--grn)',1800); })
+      .catch(e=>{ console.warn('합본 청구월 노션 저장 실패:',e); if(typeof showToast==='function') showToast('⚠ 노션 저장 실패 (로컬은 반영됨)','var(--org)',2500); });
+  } else {
+    if(typeof showToast==='function') showToast('✓ 합본 청구월 변경 → '+newMonth,'var(--grn)',1800);
+  }
+  renderInvoiceHistory();
+  try{ if(typeof mgtRefreshSales==='function') mgtRefreshSales(); }catch(e){}
+}
+
+// 📑 합본 청구월 드롭다운 HTML
+function consMonthDropdownHtml(v){
+  if(!v || !v._isConsolidated) return '';
+  var _curM = v.consolidationMonth || (v.issuedAt||'').slice(0,7);
+  var _mset = {};
+  // 후보: 현재 청구월 + 발행월 + 다른 합본들의 청구월 + 인접 2개월
+  invoiceHistory.forEach(function(x){ if(x._isConsolidated && x.consolidationMonth) _mset[x.consolidationMonth]=1; });
+  if((v.issuedAt||'').slice(0,7)) _mset[(v.issuedAt||'').slice(0,7)]=1;
+  if(_curM) _mset[_curM]=1;
+  if(/^\d{4}-\d{2}$/.test(_curM)){
+    var _y=+_curM.slice(0,4), _mo=+_curM.slice(5,7);
+    var _prev=new Date(_y,_mo-2,1), _next=new Date(_y,_mo,1);
+    _mset[_prev.getFullYear()+'-'+String(_prev.getMonth()+1).padStart(2,'0')]=1;
+    _mset[_next.getFullYear()+'-'+String(_next.getMonth()+1).padStart(2,'0')]=1;
+  }
+  var _opts = Object.keys(_mset).sort().reverse();
+  var _isMoved = (v.issuedAt||'').slice(0,7) !== _curM;
+  var h='<div style="margin-top:4px"><span style="font-size:9.5px;color:#7A4DB5;margin-right:3px">청구월</span><select onchange="changeConsolidationMonth('+v.id+',this.value)" title="합본 청구월 변경 — 경영지원 매출집계 기준" style="font-size:10px;padding:1px 5px;border-radius:10px;border:1px solid '+(_isMoved?'var(--org)':'#7A4DB5')+';background:'+(_isMoved?'var(--org-bg,#FFF4E6)':'rgba(122,77,181,.08)')+';color:'+(_isMoved?'var(--org)':'#7A4DB5')+';font-family:inherit;cursor:pointer">';
+  _opts.forEach(function(m){ h+='<option value="'+m+'"'+(m===_curM?' selected':'')+'>📑 '+m+(((v.issuedAt||'').slice(0,7)===m)?'':' ⤴')+'</option>'; });
+  h+='</select></div>';
+  return h;
+}
 // PC 드래그앤드롭 핸들러
 var _invDragId = null;
 function invDragStart(ev, invId){
@@ -6397,8 +6445,11 @@ function renderInvoiceHistory(){
         if(!isCons && !v._consolidatedInvoiceId){
           h+='<button onclick="if(confirm(\'이 명세서를 미청구(출고 전)로 되돌립니다.\\n출고완료 표시가 해제되고, 연결된 발주도 출고완료였다면 진행중으로 돌아갑니다.\\n\\n계속할까요?\')){markInvoiceShipped('+v.id+',false);renderInvoiceHistory();}" title="아직 출고 전이면 미청구로 되돌립니다" style="margin-left:8px;padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">↩ 미청구로</button>';
         }
-        // 📅 청구 탭 — 청구월(결산월) 지정 드롭다운 (발행월과 다른 달 청구 가능)
-        if(subTab==='billing') h+=settleMonthDropdownHtml(v);
+        // 📅 청구 탭 — 청구월 지정 드롭다운 (일반=결산월 / 합본=청구월)
+        if(subTab==='billing'){
+          if(isCons) h+=consMonthDropdownHtml(v);
+          else h+=settleMonthDropdownHtml(v);
+        }
         h+='</td>';
       } else {
         // 완료/전체/합본 탭 — 상태 표시 (읽기 전용 라벨)
@@ -6410,6 +6461,7 @@ function renderInvoiceHistory(){
             +'<option value="발행완료"'+(v.status==='발행완료'?' selected':'')+'>발행완료</option>'
             +'<option value="입금완료"'+(v.status==='입금완료'?' selected':'')+'>입금완료</option>'
             +'</select>';
+          if(subTab==='done') h+=consMonthDropdownHtml(v);
         } else {
           // 두 체크 상태에 따라 라벨 표시
           var lbl, lblColor;
@@ -34190,36 +34242,36 @@ async function loadFilesFromNotion(period){
 }
 
 // ══════════════════════════════════════════════════════════════
-//  📋 중국 인보이스 게시판 — 전체 기간(모든 월)의 중국인보이스 누적 관리
+//  📋 매입 자료실 — 공장 인보이스(cn) + 지출내역서(exp) 탭형 게시판 (전체 기간 누적)
 // ══════════════════════════════════════════════════════════════
-var _cnBoard = [];        // 전체 중국 인보이스 메타 목록
-var _cnBoardLoaded = false;
-var _cnBoardSearch = '';
+var _board = { cn:[], exp:[] };      // 타입별 메타 목록
+var _boardLoaded = { cn:false, exp:false };
+var _boardSearch = '';
+var _boardTab = 'cn';                // 현재 활성 탭
 
-// 비고 텍스트에서 USD / 인보이스날짜 / r2key 추출
-function _parseCnMemo(memo){
+// 비고 텍스트에서 USD / KRW / 날짜 / 건수 / r2key 추출
+function _parseBoardMemo(memo){
   memo = memo || '';
-  var usd = 0, invDate = '', r2key = '';
-  var mu = memo.match(/USD\s*([\d,.]+)/i);
-  if(mu) usd = parseFloat(mu[1].replace(/,/g,'')) || 0;
-  var md = memo.match(/(\d{4}-\d{2}-\d{2})/);
-  if(md) invDate = md[1];
-  var mk = memo.match(/r2key:([^\s|]+)/);
-  if(mk) r2key = mk[1];
-  return { usd: usd, invDate: invDate, r2key: r2key };
+  var usd = 0, krw = 0, cnt = 0, invDate = '', r2key = '';
+  var mu = memo.match(/USD\s*([\d,.]+)/i); if(mu) usd = parseFloat(mu[1].replace(/,/g,'')) || 0;
+  var mw = memo.match(/KRW\s*([\d,.]+)/i); if(mw) krw = parseFloat(mw[1].replace(/,/g,'')) || 0;
+  var mc = memo.match(/건수\s*([\d]+)/);   if(mc) cnt = parseInt(mc[1]) || 0;
+  var md = memo.match(/(\d{4}-\d{2}-\d{2})/); if(md) invDate = md[1];
+  var mk = memo.match(/r2key:([^\s|]+)/);   if(mk) r2key = mk[1];
+  return { usd: usd, krw: krw, cnt: cnt, invDate: invDate, r2key: r2key };
 }
 
-// 노션 파일DB에서 '중국인보이스' 타입 전체 로드 (기간 필터 없음)
-async function loadAllCnInvoices(){
+// 노션 파일DB에서 특정 타입 전체 로드 (기간 필터 없음)
+async function loadBoardFiles(boardType){
   if(!NOTION_FILES_DB) return [];
   var results = [];
   var cursor = undefined;
+  var label = FILE_TYPE_LABEL[boardType]; // 'cn'→'중국인보이스', 'exp'→'지출내역'
   try{
-    // 페이지네이션 — 최대 5페이지(500건)
     for(var pageNo=0; pageNo<5; pageNo++){
       var bodyObj = {
         page_size:100,
-        filter:{ property:'타입', select:{ equals: FILE_TYPE_LABEL['cn'] } },
+        filter:{ property:'타입', select:{ equals: label } },
         sorts:[{ property:'업로드일시', direction:'descending' }]
       };
       if(cursor) bodyObj.start_cursor = cursor;
@@ -34228,7 +34280,7 @@ async function loadAllCnInvoices(){
         headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},
         body: JSON.stringify(bodyObj)
       });
-      if(!resp.ok){ console.warn('중국 인보이스 로드 실패:', resp.status); break; }
+      if(!resp.ok){ console.warn('자료실 로드 실패:', resp.status); break; }
       var data = await resp.json();
       (data.results||[]).forEach(function(p){
         if(p.archived) return;
@@ -34237,7 +34289,7 @@ async function loadAllCnInvoices(){
         var period = pr['기간']&&pr['기간'].rich_text&&pr['기간'].rich_text[0] ? pr['기간'].rich_text[0].plain_text : '';
         var uploadedAt = pr['업로드일시']&&pr['업로드일시'].rich_text&&pr['업로드일시'].rich_text[0] ? pr['업로드일시'].rich_text[0].plain_text : (p.created_time||'');
         var memo = pr['비고']&&pr['비고'].rich_text&&pr['비고'].rich_text[0] ? pr['비고'].rich_text[0].plain_text : '';
-        var info = _parseCnMemo(memo);
+        var info = _parseBoardMemo(memo);
         var fileObj = pr['파일']&&pr['파일'].files&&pr['파일'].files[0] ? pr['파일'].files[0] : null;
         var url = '';
         if(fileObj){
@@ -34247,95 +34299,146 @@ async function loadAllCnInvoices(){
         var pageUrl = p.url || ('https://www.notion.so/' + (p.id||'').replace(/-/g,''));
         results.push({
           pageId: p.id, pageUrl: pageUrl, name: name, period: period,
-          uploadedAt: uploadedAt, usd: info.usd, invDate: info.invDate,
-          r2key: info.r2key, url: url, attached: !!url, memo: memo
+          uploadedAt: uploadedAt, usd: info.usd, krw: info.krw, cnt: info.cnt,
+          invDate: info.invDate, r2key: info.r2key, url: url, attached: !!url, memo: memo
         });
       });
       if(data.has_more && data.next_cursor){ cursor = data.next_cursor; }
       else break;
     }
-  }catch(e){ console.warn('중국 인보이스 로드 예외:', e.message); }
-  // 인보이스 날짜(있으면) → 업로드일 순 정렬, 최신 우선
+  }catch(e){ console.warn('자료실 로드 예외:', e.message); }
   results.sort(function(a,b){
-    var ka = a.invDate || (a.uploadedAt||'').slice(0,10);
-    var kb = b.invDate || (b.uploadedAt||'').slice(0,10);
+    var ka = a.invDate || a.period || (a.uploadedAt||'').slice(0,10);
+    var kb = b.invDate || b.period || (b.uploadedAt||'').slice(0,10);
     return kb.localeCompare(ka);
   });
-  _cnBoard = results;
-  _cnBoardLoaded = true;
+  _board[boardType] = results;
+  _boardLoaded[boardType] = true;
   return results;
 }
 
-// 게시판 렌더
-function renderCnBoard(forceReload){
-  var wrap = document.getElementById('cn-board-body');
-  var stat = document.getElementById('cn-board-stat');
-  if(!wrap) return;
-  if(forceReload || !_cnBoardLoaded){
-    wrap.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-ico">⏳</div><div style="font-size:12px;color:var(--mu)">불러오는 중...</div></div>';
-    loadAllCnInvoices().then(function(){ _renderCnBoardRows(); });
-    return;
-  }
-  _renderCnBoardRows();
+// 탭 전환
+function switchBoardTab(boardType){
+  _boardTab = boardType;
+  document.querySelectorAll('.board-tab').forEach(function(t){
+    var on = t.getAttribute('data-board')===boardType;
+    t.classList.toggle('on', on);
+    t.style.background = on ? 'var(--acbg)' : 'transparent';
+    t.style.color = on ? 'var(--ac)' : 'var(--mu)';
+    t.style.fontWeight = on ? '600' : '500';
+  });
+  renderBoard(false);
 }
 
-function _renderCnBoardRows(){
-  var wrap = document.getElementById('cn-board-body');
-  var stat = document.getElementById('cn-board-stat');
+// 게시판 렌더 (현재 탭 기준)
+function renderBoard(forceReload){
+  var wrap = document.getElementById('board-body');
   if(!wrap) return;
+  var t = _boardTab;
+  if(forceReload || !_boardLoaded[t]){
+    wrap.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-ico">⏳</div><div style="font-size:12px;color:var(--mu)">불러오는 중...</div></div>';
+    loadBoardFiles(t).then(function(){ if(_boardTab===t) _renderBoardRows(); });
+    return;
+  }
+  _renderBoardRows();
+}
+
+function _renderBoardRows(){
+  var wrap = document.getElementById('board-body');
+  var stat = document.getElementById('board-stat');
+  if(!wrap) return;
+  var t = _boardTab;
+  var isCn = (t==='cn');
   var rate = parseFloat((document.getElementById('usd-rate')||{}).value) || 1350;
-  var q = (_cnBoardSearch||'').trim().toLowerCase();
-  var list = _cnBoard.filter(function(it){
+  var q = (_boardSearch||'').trim().toLowerCase();
+  var list = (_board[t]||[]).filter(function(it){
     if(!q) return true;
     return (it.name||'').toLowerCase().indexOf(q)>=0
         || (it.period||'').toLowerCase().indexOf(q)>=0
         || (it.invDate||'').toLowerCase().indexOf(q)>=0;
   });
   if(!list.length){
-    wrap.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-ico">📭</div><div class="empty-ttl">'+(q?'검색 결과 없음':'등록된 중국 인보이스가 없습니다')+'</div><div style="font-size:12px;color:var(--mu)">위 업로드 칸에 인보이스 엑셀을 올리면 자동으로 보관·집계됩니다</div></div>';
+    var emptyMsg = isCn ? '등록된 공장 인보이스가 없습니다' : '등록된 지출내역서가 없습니다';
+    wrap.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-ico">📭</div><div class="empty-ttl">'+(q?'검색 결과 없음':emptyMsg)+'</div><div style="font-size:12px;color:var(--mu)">위 업로드 칸에 엑셀을 올리면 자동으로 보관·집계됩니다</div></div>';
     if(stat) stat.textContent = '0건';
     return;
   }
-  var totalUSD = list.reduce(function(s,i){return s+(i.usd||0);},0);
-  var totalKRW = Math.round(totalUSD*rate);
-  var rows = list.map(function(it){
-    var krw = Math.round((it.usd||0)*rate);
-    var dl;
-    if(it.attached && it.url){
-      dl = '<a href="'+it.url+'" target="_blank" rel="noopener" download="'+it.name+'" style="color:var(--ac);text-decoration:none;font-weight:500" title="다운로드">📄 '+it.name+'</a>';
-    } else {
-      dl = '<a href="'+it.pageUrl+'" target="_blank" rel="noopener" style="color:var(--mu);text-decoration:none" title="노션에서 확인">⚠️ '+it.name+'</a>';
-    }
-    return '<tr>'+
-      '<td style="font-size:11px;color:var(--mu);white-space:nowrap">'+(it.invDate||'—')+'</td>'+
-      '<td>'+dl+'</td>'+
-      '<td style="font-size:11px;color:var(--mu);white-space:nowrap">'+(it.period||'—')+'</td>'+
-      '<td class="r" style="font-weight:600">$'+(it.usd||0).toLocaleString('en-US',{maximumFractionDigits:2})+'</td>'+
-      '<td class="r">'+won(krw)+'</td>'+
-      '<td style="font-size:10px;color:var(--hi);white-space:nowrap">'+((it.uploadedAt||'').slice(0,10))+'</td>'+
-      '<td style="text-align:center"><button onclick="MGT.deleteCnInvoice(\''+it.pageId+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:14px" title="삭제">×</button></td>'+
-    '</tr>';
-  }).join('');
-  rows += '<tr class="tr-tot"><td colspan="3">합계 ('+list.length+'건)</td><td class="r">$'+totalUSD.toLocaleString('en-US',{maximumFractionDigits:2})+'</td><td class="r">'+won(totalKRW)+'</td><td colspan="2"></td></tr>';
-  wrap.innerHTML = '<table><thead><tr><th>인보이스 날짜</th><th>파일</th><th>업로드월</th><th class="r">USD</th><th class="r">환산 (KRW)</th><th>등록일</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
-  if(stat) stat.textContent = list.length+'건 · $'+totalUSD.toLocaleString('en-US',{maximumFractionDigits:0})+' · '+won(totalKRW);
+  var rows, head, totalKRW;
+  if(isCn){
+    var totalUSD = list.reduce(function(s,i){return s+(i.usd||0);},0);
+    totalKRW = Math.round(totalUSD*rate);
+    rows = list.map(function(it){
+      var krw = Math.round((it.usd||0)*rate);
+      return '<tr>'+
+        '<td style="font-size:11px;color:var(--mu);white-space:nowrap">'+(it.invDate||'—')+'</td>'+
+        '<td>'+_boardFileLink(it)+'</td>'+
+        '<td style="font-size:11px;color:var(--mu);white-space:nowrap">'+(it.period||'—')+'</td>'+
+        '<td class="r" style="font-weight:600">$'+(it.usd||0).toLocaleString('en-US',{maximumFractionDigits:2})+'</td>'+
+        '<td class="r">'+won(krw)+'</td>'+
+        '<td style="font-size:10px;color:var(--hi);white-space:nowrap">'+((it.uploadedAt||'').slice(0,10))+'</td>'+
+        '<td style="text-align:center"><button onclick="MGT.deleteBoardFile(\''+it.pageId+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:14px" title="삭제">×</button></td>'+
+      '</tr>';
+    }).join('');
+    rows += '<tr class="tr-tot"><td colspan="3">합계 ('+list.length+'건)</td><td class="r">$'+totalUSD.toLocaleString('en-US',{maximumFractionDigits:2})+'</td><td class="r">'+won(totalKRW)+'</td><td colspan="2"></td></tr>';
+    head = '<tr><th>인보이스 날짜</th><th>파일</th><th>업로드월</th><th class="r">USD</th><th class="r">환산 (KRW)</th><th>등록일</th><th></th></tr>';
+    if(stat) stat.textContent = list.length+'건 · $'+totalUSD.toLocaleString('en-US',{maximumFractionDigits:0})+' · '+won(totalKRW);
+  } else {
+    totalKRW = list.reduce(function(s,i){return s+(i.krw||0);},0);
+    rows = list.map(function(it){
+      return '<tr>'+
+        '<td style="font-size:11px;color:var(--mu);white-space:nowrap">'+(it.period||'—')+'</td>'+
+        '<td>'+_boardFileLink(it)+'</td>'+
+        '<td class="r" style="font-size:11px;color:var(--mu)">'+(it.cnt?it.cnt+'건':'—')+'</td>'+
+        '<td class="r" style="font-weight:600">'+(it.krw?won(it.krw):'—')+'</td>'+
+        '<td style="font-size:10px;color:var(--hi);white-space:nowrap">'+((it.uploadedAt||'').slice(0,10))+'</td>'+
+        '<td style="text-align:center"><button onclick="MGT.deleteBoardFile(\''+it.pageId+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:14px" title="삭제">×</button></td>'+
+      '</tr>';
+    }).join('');
+    rows += '<tr class="tr-tot"><td colspan="3">합계 ('+list.length+'개 파일)</td><td class="r">'+won(totalKRW)+'</td><td colspan="2"></td></tr>';
+    head = '<tr><th>기간</th><th>파일</th><th class="r">항목수</th><th class="r">지출 합계</th><th>등록일</th><th></th></tr>';
+    if(stat) stat.textContent = list.length+'개 파일 · '+won(totalKRW);
+  }
+  wrap.innerHTML = '<table><thead>'+head+'</thead><tbody>'+rows+'</tbody></table>';
 }
 
-function cnBoardSearch(v){ _cnBoardSearch = v||''; _renderCnBoardRows(); }
+function _boardFileLink(it){
+  if(it.attached && it.url){
+    return '<a href="'+it.url+'" target="_blank" rel="noopener" download="'+it.name+'" style="color:var(--ac);text-decoration:none;font-weight:500" title="다운로드">📄 '+it.name+'</a>';
+  }
+  return '<a href="'+it.pageUrl+'" target="_blank" rel="noopener" style="color:var(--mu);text-decoration:none" title="노션에서 확인">⚠️ '+it.name+'</a>';
+}
 
-// 게시판에서 인보이스 삭제 (노션 archive + R2 삭제)
-async function deleteCnInvoice(pageId){
-  if(!confirm('이 중국 인보이스를 삭제할까요?\n(원본 파일 + 기록 모두 삭제됩니다)')) return;
-  var item = _cnBoard.find(function(x){return x.pageId===pageId;});
+function boardSearch(v){ _boardSearch = v||''; _renderBoardRows(); }
+
+// 게시판에서 파일 삭제 (노션 archive + R2 삭제)
+async function deleteBoardFile(pageId){
+  if(!confirm('이 파일을 삭제할까요?\n(원본 파일 + 기록 모두 삭제됩니다)')) return;
+  var t = _boardTab;
+  var item = (_board[t]||[]).find(function(x){return x.pageId===pageId;});
   var ok = await deleteFileMeta(pageId);
   if(item && item.r2key){ try{ await deleteFileFromR2(item.r2key); }catch(e){} }
   if(!ok){ toast('삭제 실패','err'); return; }
-  _cnBoard = _cnBoard.filter(function(x){return x.pageId!==pageId;});
-  // 해당 기간 파일 캐시에서도 제거
+  _board[t] = (_board[t]||[]).filter(function(x){return x.pageId!==pageId;});
   try{ Object.keys(S.files||{}).forEach(function(p){ if(S.files[p]) S.files[p]=S.files[p].filter(function(f){return f.pageId!==pageId;}); }); }catch(e){}
-  _renderCnBoardRows();
+  _renderBoardRows();
   toast('🗑️ 삭제됨','ok');
 }
+
+// ── 하위호환 별칭 (기존 호출부 유지) ──
+function renderCnBoard(forceReload){
+  // cn 탭으로 전환 후 렌더 — 새 파일 업로드 시 호출됨
+  if(forceReload){ _boardLoaded.cn=false; }
+  if(_boardTab!=='cn'){ switchBoardTab('cn'); }
+  else renderBoard(forceReload);
+}
+function renderExpBoard(forceReload){
+  if(forceReload){ _boardLoaded.exp=false; }
+  if(_boardTab!=='exp'){ switchBoardTab('exp'); }
+  else renderBoard(forceReload);
+}
+function cnBoardSearch(v){ boardSearch(v); }
+async function deleteCnInvoice(pageId){ return deleteBoardFile(pageId); }
+async function loadAllCnInvoices(){ return loadBoardFiles('cn'); }
 
 // 파일 메타 페이지 archive (= 목록에서 제거. 첨부 자체는 Notion 정책상 즉시 삭제 안됨)
 async function deleteFileMeta(pageId){
@@ -34755,7 +34858,7 @@ function go(id,el){
   el.classList.add('on');
   if(id==='dash'){ document.getElementById('dash-view-month').style.display='block'; document.getElementById('dash-view-year').style.display='none'; renderDash(); }
   if(id==='sales'){ try{ renderOtherSales('as'); renderOtherSales('commerce'); }catch(e){} }
-  if(id==='purchase'){ try{ if(typeof renderCnBoard==='function') renderCnBoard(); }catch(e){} }
+  if(id==='purchase'){ try{ if(typeof renderBoard==='function') renderBoard(false); }catch(e){} }
   if(id==='pnl') calcPnL();
 }
 
@@ -34863,6 +34966,8 @@ function rf(file,type){
         S.exp.forEach(function(x){ if(x._srcFile) expFiles[x._srcFile]=true; });
         var nExp = Object.keys(expFiles).length;
         var expStat = S.exp.length+'건' + (nExp>1?' (파일 '+nExp+'개)':'');
+        window._lastExpFileTotal = parsedExp.reduce(function(s,it){return s+(+it.amount||0);},0);
+        window._lastExpFileCount = parsedExp.length;
         markDz('dz-exp','i-exp','s-exp',file.name,expStat);
         renderPurchase(); calcPnL(); autoSyncNotion(); if(_p) syncCogsToNotion(_p);
       }
@@ -34881,6 +34986,7 @@ function rf(file,type){
       if(_p && NOTION_FILES_DB){
         var extra = '';
         if(type==='cn' && parsed) extra = 'USD '+ (parsed.usd||0).toFixed(0) + (parsed.invDate?' / '+parsed.invDate:'');
+        if(type==='exp') extra = 'KRW '+ (window._lastExpFileTotal||0) + ' / 건수 '+(window._lastExpFileCount||0);
         uploadFileToNotion(file, type, _p, extra).then(function(meta){
           if(meta){
             if(!S.files[_p]) S.files[_p] = [];
@@ -34892,7 +34998,8 @@ function rf(file,type){
               toast('⚠️ R2 업로드 실패 — 노션 행만 생성됨','err');
             }
             // 중국 인보이스면 게시판 새로고침
-            if(type==='cn' && typeof renderCnBoard==='function'){ try{ renderCnBoard(true); }catch(e){} }
+            if(type==='cn'){ try{ _boardLoaded.cn=false; if(_boardTab==='cn') renderBoard(true); }catch(e){} }
+            if(type==='exp'){ try{ _boardLoaded.exp=false; if(_boardTab==='exp') renderBoard(true); }catch(e){} }
           } else {
             toast('⚠️ 파일 보관 실패: '+file.name+' (손익 계산은 정상)','err');
           }
@@ -37376,6 +37483,12 @@ return {
   loadAllCnInvoices: (typeof loadAllCnInvoices!=="undefined"?loadAllCnInvoices:undefined),
   cnBoardSearch: (typeof cnBoardSearch!=="undefined"?cnBoardSearch:undefined),
   deleteCnInvoice: (typeof deleteCnInvoice!=="undefined"?deleteCnInvoice:undefined),
+  renderBoard: (typeof renderBoard!=="undefined"?renderBoard:undefined),
+  renderExpBoard: (typeof renderExpBoard!=="undefined"?renderExpBoard:undefined),
+  switchBoardTab: (typeof switchBoardTab!=="undefined"?switchBoardTab:undefined),
+  boardSearch: (typeof boardSearch!=="undefined"?boardSearch:undefined),
+  deleteBoardFile: (typeof deleteBoardFile!=="undefined"?deleteBoardFile:undefined),
+  loadBoardFiles: (typeof loadBoardFiles!=="undefined"?loadBoardFiles:undefined),
   addOtherSales: (typeof addOtherSales!=="undefined"?addOtherSales:undefined),
   renderOtherSales: (typeof renderOtherSales!=="undefined"?renderOtherSales:undefined),
   updateOtherSalesTotal: (typeof updateOtherSalesTotal!=="undefined"?updateOtherSalesTotal:undefined),
