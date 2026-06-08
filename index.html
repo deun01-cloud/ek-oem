@@ -37632,9 +37632,15 @@ return {
       // 중복 방지: 합본에 포함된 단건 명세서는 제외 (합본만 카운트)
       //   - 합본청구서(_isConsolidated)는 포함
       //   - 일반 명세서 중 합본에 묶인 것(_consolidatedInvoiceId 존재)은 제외
+      // 📌 미청구(draft) 제외: 아직 청구 전(출고 전) 명세서는 매출로 잡지 않음
+      //    청구(billing)·완료(done) 단계만 매출 인정
       var counted = inMonth.filter(function(v){
-        if(v._isConsolidated) return true;
-        if(v._consolidatedInvoiceId) return false; // 합본에 흡수됨
+        if(v._isConsolidated) return true;            // 합본은 항상 청구 단계 이상
+        if(v._consolidatedInvoiceId) return false;    // 합본에 흡수됨
+        // 단계 판정: _invStage 우선, 없으면 inferInvStage로 보정
+        var stage = v._invStage;
+        if(!stage && typeof inferInvStage === 'function'){ try{ stage = inferInvStage(v); }catch(e){} }
+        if(stage === 'draft') return false;           // 미청구 = 매출 제외
         return true;
       });
 
