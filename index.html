@@ -8109,8 +8109,8 @@ function _openNotionCircuit(reason){
     }
   },60000);
 }
-async function nCreate(dbId,props){ return notionCall('POST','/pages',{parent:{database_id:dbId.replace(/-/g,'')},properties:props}); }
-async function nUpdate(pageId,props){ return notionCall('PATCH','/pages/'+pageId,{properties:props}); }
+async function nCreate(dbId,props){ return notionCall('POST','/pages',{parent:{database_id:dbId.replace(/-/g,'')},properties:props},{bypassCircuit:true}); }
+async function nUpdate(pageId,props){ return notionCall('PATCH','/pages/'+pageId,{properties:props},{bypassCircuit:true}); }
 async function nDelete(pageId){
   if(!notionCfg.workerUrl||!pageId) return;
   // 🪦 묘비 자동 등록 — 노션 archive를 시도하기 전에 먼저 로컬에 "삭제 의도" 기록
@@ -8119,7 +8119,7 @@ async function nDelete(pageId){
     _markNotionIdDeleted(pageId, 'generic');
   }
   try{
-    const result = await notionCall('PATCH','/pages/'+pageId,{archived:true});
+    const result = await notionCall('PATCH','/pages/'+pageId,{archived:true},{bypassCircuit:true});
     // 성공 → 묘비 confirmed 표시
     if(typeof _markNotionArchiveConfirmed === 'function'){
       _markNotionArchiveConfirmed(pageId);
@@ -8537,7 +8537,7 @@ function mapNotionProc(row){
     qty:     np.text(p['수량']),
     note:    np.text(p['비고']),
     due:     np.date(p['출고예정일']),
-    shipped: np.check(p['확정']),
+    shipped: np.check(p['출고완료']) || np.check(p['확정']),
     stageIdx:stageIdx>=0?stageIdx:0,
     ordQty:  np.number(p['발주수량']),
     rcvQty:  np.number(p['입고수량']),
@@ -12515,7 +12515,10 @@ async function syncSampleToNotion(s, update){
   if(s._notionId){ await nUpdate(s._notionId,p); }
   else{
     const r=await nCreate(notionCfg.smpDb,p);
-    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (샘플의뢰)');
+    if(!r || !r.id){
+      const reason = (_notionLastError && _notionLastError.message) ? (' — '+String(_notionLastError.message).slice(0,200)) : '';
+      throw new Error('Notion 생성 실패: 응답에 ID 없음 (샘플의뢰)'+reason);
+    }
     saveNotionId(samples,s.id,r.id,SK.s);
     s._notionId = r.id;
   }
@@ -12634,7 +12637,7 @@ async function syncProcToNotion(proc, update){
     "발주서번호":{"rich_text":[{"text":{"content":ord?.no||ord?.id+''||''}}]},
     "업체":{"rich_text":[{"text":{"content":proc.vendor||''}}]},
     "수량":{"rich_text":[{"text":{"content":proc.qty+''||''}}]},
-    "확정":{"checkbox":proc.shipped||false},
+    "출고완료":{"checkbox":proc.shipped||false},
     "비고":{"rich_text":[{"text":{"content":proc.note||''}}]},
     "발주수량":{"number":+proc.ordQty||0},
     "입고수량":{"number":+proc.rcvQty||0},
