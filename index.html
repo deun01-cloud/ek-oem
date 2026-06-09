@@ -34339,14 +34339,15 @@ var _boardMonth = '';                // 매입월 필터 ('' = 전체 기간)
 // 비고 텍스트에서 USD / KRW / 날짜 / 건수 / r2key 추출
 function _parseBoardMemo(memo){
   memo = memo || '';
-  var usd = 0, krw = 0, cnt = 0, invDate = '', r2key = '', rate = 0;
+  var usd = 0, krw = 0, cnt = 0, invDate = '', r2key = '', rate = 0, vendor = '';
   var mu = memo.match(/USD\s*([\d,.]+)/i); if(mu) usd = parseFloat(mu[1].replace(/,/g,'')) || 0;
   var mw = memo.match(/KRW\s*([\d,.]+)/i); if(mw) krw = parseFloat(mw[1].replace(/,/g,'')) || 0;
   var mr = memo.match(/RATE\s*([\d,.]+)/i); if(mr) rate = parseFloat(mr[1].replace(/,/g,'')) || 0;
   var mc = memo.match(/건수\s*([\d]+)/);   if(mc) cnt = parseInt(mc[1]) || 0;
   var md = memo.match(/(\d{4}-\d{2}-\d{2})/); if(md) invDate = md[1];
   var mk = memo.match(/r2key:([^\s|]+)/);   if(mk) r2key = mk[1];
-  return { usd: usd, krw: krw, cnt: cnt, invDate: invDate, r2key: r2key, rate: rate };
+  var mv = memo.match(/VENDOR:([^|]+)/i);    if(mv) vendor = mv[1].trim();
+  return { usd: usd, krw: krw, cnt: cnt, invDate: invDate, r2key: r2key, rate: rate, vendor: vendor };
 }
 
 // 노션 파일DB에서 특정 타입 전체 로드 (기간 필터 없음)
@@ -34397,7 +34398,7 @@ async function loadBoardFiles(boardType){
           if(!invNo){ var mn=memo.match(/(?:INV|인보이스)[\s#:-]*([A-Za-z0-9\-_]+)/i); if(mn) invNo=mn[1]; }
           results.push({
             pageId: p.id, pageUrl: pageUrl, name: name, period: period,
-            uploadedAt: uploadedAt, usd: info.usd, krw: info.krw, cnt: info.cnt, rate: info.rate,
+            uploadedAt: uploadedAt, usd: info.usd, krw: info.krw, cnt: info.cnt, rate: info.rate, vendor: info.vendor,
             invDate: info.invDate, invNo: invNo, r2key: info.r2key, url: url, attached: !!url, memo: memo,
             kind: (typeLabel==='중국인보이스증빙') ? 'proof' : (boardType==='cn' ? 'detail' : boardType)
           });
@@ -34425,9 +34426,10 @@ function _buildInvoiceItems(){
     // 묶음 키: 인보이스번호 우선, 없으면 파일명 stem, 그래도 없으면 pageId(독립)
     var key = f.invNo ? ('no:'+f.invNo) : null;
     if(!key){ var stem=(f.name||'').replace(/\.(xlsx|xls|pdf|png|jpe?g|webp)$/i,'').trim(); key = stem? ('nm:'+stem+'_'+(f.period||'')) : ('id:'+f.pageId); }
-    if(!groups[key]){ groups[key]={ key:key, invNo:f.invNo||'', period:f.period||'', invDate:f.invDate||'', usd:0, krw:0, rate:0, detail:null, proof:null, allFiles:[], uploadedAt:f.uploadedAt, _manual:false }; order.push(key); }
+    if(!groups[key]){ groups[key]={ key:key, invNo:f.invNo||'', period:f.period||'', invDate:f.invDate||'', vendor:f.vendor||'', usd:0, krw:0, rate:0, detail:null, proof:null, allFiles:[], uploadedAt:f.uploadedAt, _manual:false }; order.push(key); }
     var g=groups[key];
     g.allFiles.push(f);  // 모든 첨부 파일 수집 (역할 구분 없이)
+    if(f.vendor && !g.vendor) g.vendor=f.vendor;
     if(f.kind==='proof'){ g.proof=f; if(f.usd && !g.usd) g.usd=f.usd; if(f.krw && !g.krw) g.krw=f.krw; if(f.rate && !g.rate) g.rate=f.rate; }
     else { g.detail=f; if(f.usd) g.usd=f.usd; if(f.krw) g.krw=f.krw; if(f.rate) g.rate=f.rate; }
     if(f.rate && !g.rate) g.rate=f.rate;
@@ -34663,6 +34665,12 @@ function _invoiceItemHtml(it, rate, krw){
     delBtn = '<button onclick="MGT.deleteInvoiceItem(\''+ids.join(',')+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:15px" title="삭제">×</button>';
   }
   var subParts=[];
+  if(!it._manual){
+    // 공장(거래처) 입력칸 — 어느 공장 인보이스인지 기록
+    var _vids=[]; (it.allFiles||[]).forEach(function(f){ if(f.pageId) _vids.push(f.pageId); });
+    if(!_vids.length){ if(it.detail) _vids.push(it.detail.pageId); if(it.proof) _vids.push(it.proof.pageId); }
+    subParts.push('<input value="'+(it.vendor||'').replace(/"/g,'&quot;')+'" placeholder="🏭 공장명" onchange="MGT.editInvoiceVendor(\''+_vids.join(',')+'\',this.value)" style="border:none;border-bottom:1px dashed var(--bd2);background:transparent;font-size:11.5px;font-family:inherit;color:var(--ac);font-weight:600;width:90px;padding:1px 2px" title="공장(거래처)명">');
+  }
   if(it.invDate) subParts.push('📆 '+it.invDate);
   subParts.push(monthSel);
   if(it.uploadedAt) subParts.push('<span style="color:var(--hi)">등록 '+(it.uploadedAt||'').slice(0,10)+'</span>');
@@ -35193,6 +35201,43 @@ function _attachUploadFiles(fileList){
 }
 
 // 업로드 인보이스에 USD 금액 직접 입력 → 파일DB 비고 + COGS_DB(중국인보이스)에 저장 → 손익 반영
+// 인보이스의 공장(거래처)명 저장 — 묶인 모든 파일의 비고에 VENDOR: 기록
+async function editInvoiceVendor(idsCsv, val){
+  var vendor=(val||'').trim();
+  var ids=(idsCsv||'').split(',').filter(Boolean);
+  if(!ids.length) return;
+  // 캐시 낙관적 갱신
+  (_board.cn||[]).forEach(function(x){ if(ids.indexOf(x.pageId)>=0) x.vendor=vendor; });
+  for(var i=0;i<ids.length;i++){
+    var pageId=ids[i];
+    var item=(_board.cn||[]).find(function(x){return x.pageId===pageId;});
+    if(!item) continue;
+    var memo=item.memo||'';
+    // 기존 VENDOR 토큰 제거 후 새로 추가
+    var rest=memo.replace(/VENDOR:[^|]*/ig,'').replace(/\s*\|\s*\|\s*/g,' | ').replace(/^\s*\|\s*/,'').replace(/\s*\|\s*$/,'').trim();
+    var newMemo=(rest? rest+' | ' : '')+'VENDOR:'+vendor;
+    try{
+      var resp=await fetch(NOTION_PROXY+'/pages/'+pageId,{method:'PATCH',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({properties:{'비고':{rich_text:[{text:{content:newMemo.slice(0,1900)}}]}}})});
+      if(resp.ok){ item.memo=newMemo; item.vendor=vendor; }
+    }catch(e){ console.warn('공장명 저장 실패:', e.message); }
+  }
+  // COGS_DB의 거래처도 갱신 (있으면) — 손익 거래처별 집계 일관성
+  if(vendor){
+    try{
+      var rep=(_board.cn||[]).find(function(x){return ids.indexOf(x.pageId)>=0;});
+      if(rep && rep.invNo){
+        var p=rep.period||document.getElementById('g-period').value;
+        if(p){
+          var q=await fetch(NOTION_PROXY+'/databases/'+NOTION_COGS_DB+'/query',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({page_size:100, filter:{ and:[ {property:'구분', rich_text:{equals:'중국인보이스'}}, {property:'기간', rich_text:{equals:p}} ] }})});
+          if(q.ok){ var qd=await q.json(); var dupTag='INVKEY:'+rep.invNo; (qd.results||[]).forEach(function(pg){ var bg=pg.properties&&pg.properties['비고']&&pg.properties['비고'].rich_text&&pg.properties['비고'].rich_text[0]?pg.properties['비고'].rich_text[0].plain_text:''; if(bg.indexOf(dupTag)>=0 && !pg.archived){ fetch(NOTION_PROXY+'/pages/'+pg.id,{method:'PATCH',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({properties:{'거래처':{rich_text:[{text:{content:vendor}}]}}})}); } }); }
+        }
+      }
+    }catch(e){}
+  }
+  _renderBoardRows();
+  if(typeof toast==='function') toast(vendor?('🏭 공장: '+vendor):'공장명 지움','ok');
+}
+
 async function editInvoiceUsd(idsCsv, val){
   var usd = parseFloat(val)||0;
   var ids = (idsCsv||'').split(',').filter(Boolean);
@@ -35231,11 +35276,12 @@ async function editInvoiceUsd(idsCsv, val){
       var q = await fetch(NOTION_PROXY+'/databases/'+NOTION_COGS_DB+'/query',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({page_size:100, filter:{ and:[ {property:'구분', rich_text:{equals:'중국인보이스'}}, {property:'기간', rich_text:{equals:invPeriod}} ] }})});
       var existId='';
       if(q.ok){ var qd=await q.json(); (qd.results||[]).forEach(function(p){ var bg=p.properties&&p.properties['비고']&&p.properties['비고'].rich_text&&p.properties['비고'].rich_text[0]?p.properties['비고'].rich_text[0].plain_text:''; if(bg.indexOf(dupTag)>=0 && !p.archived) existId=p.id; }); }
+      var _vname = (rep.vendor||'').trim() || '중국공장';
       var props = {
         '항목명':{title:[{text:{content:invName}}]},
         '기간':  {rich_text:[{text:{content:invPeriod}}]},
         '구분':  {rich_text:[{text:{content:'중국인보이스'}}]},
-        '거래처':{rich_text:[{text:{content:'중국공장'}}]},
+        '거래처':{rich_text:[{text:{content:_vname}}]},
         '금액':  {number:Math.round(usd*rate)},
         '비고':  {rich_text:[{text:{content:'USD '+usd+' RATE '+rate+' '+dupTag}}]}
       };
@@ -38686,6 +38732,7 @@ return {
   changeBoardFileMonth: (typeof changeBoardFileMonth!=="undefined"?changeBoardFileMonth:undefined),
   changeInvoiceMonth: (typeof changeInvoiceMonth!=="undefined"?changeInvoiceMonth:undefined),
   editInvoiceUsd: (typeof editInvoiceUsd!=="undefined"?editInvoiceUsd:undefined),
+  editInvoiceVendor: (typeof editInvoiceVendor!=="undefined"?editInvoiceVendor:undefined),
   attachToInvoice: (typeof attachToInvoice!=="undefined"?attachToInvoice:undefined),
   openAttachModal: (typeof openAttachModal!=="undefined"?openAttachModal:undefined),
   closeAttach: (typeof closeAttach!=="undefined"?closeAttach:undefined),
