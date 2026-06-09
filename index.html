@@ -34583,13 +34583,13 @@ function _invoiceItemHtml(it, rate, krw){
   if(it._manual){
     (it.files||[]).forEach(function(f,fi){
       var nm=(f.name||'파일'); var disp=nm.length>14?nm.slice(0,12)+'…':nm;
-      links += '<a class="bitem-flink" href="'+(f.url||f.pageUrl||'#')+'" target="_blank" rel="noopener" title="'+nm+'">📎 '+disp+'</a>'
+      links += '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm+' (미리보기)">📎 '+disp+'</a>'
             +  '<button onclick="MGT.removeManualFile('+it._idx+','+fi+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px;margin-left:-2px" title="첨부 제거">×</button>';
     });
     links += '<button class="bitem-flink" style="cursor:pointer;background:var(--s2)" onclick="MGT.attachManualFile('+it._idx+')" title="파일 첨부 (인보이스/증빙)">+ 파일</button>';
   } else {
-    if(it.detail) links += '<a class="bitem-flink" href="'+(it.detail.url||it.detail.pageUrl)+'" target="_blank" rel="noopener" title="세부내역 다운로드">📊 세부</a>';
-    if(it.proof)  links += '<a class="bitem-flink" href="'+(it.proof.url||it.proof.pageUrl)+'" target="_blank" rel="noopener" title="증빙 다운로드">📄 증빙</a>';
+    if(it.detail) links += '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(it.detail.url||it.detail.pageUrl||'')+'\',\''+encodeURIComponent(it.detail.name||'세부내역')+'\',\''+encodeURIComponent(it.detail.type||'')+'\')" title="세부내역 미리보기">📊 세부</a>';
+    if(it.proof)  links += '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(it.proof.url||it.proof.pageUrl||'')+'\',\''+encodeURIComponent(it.proof.name||'증빙')+'\',\''+encodeURIComponent(it.proof.type||'')+'\')" title="증빙 미리보기">📄 증빙</a>';
   }
   // 삭제 버튼
   var delBtn;
@@ -34982,6 +34982,20 @@ async function editInvoiceUsd(idsCsv, val){
   }
   try{ calcPnL(); renderPurchase&&renderPurchase(); }catch(e){}
   if(typeof toast==='function') toast('✓ 인보이스 금액 저장: $'+usd+' (≈'+won(Math.round(usd*rate))+')','ok');
+}
+
+// 인보이스 파일 큰 화면 미리보기 (메인 앱의 openFilePreviewList 재사용)
+function previewInvoiceFile(encUrl, encName, encType){
+  var url=''; var name=''; var type='';
+  try{ url=decodeURIComponent(encUrl||''); }catch(e){ url=encUrl||''; }
+  try{ name=decodeURIComponent(encName||'파일'); }catch(e){ name=encName||'파일'; }
+  try{ type=decodeURIComponent(encType||''); }catch(e){ type=encType||''; }
+  if(!url){ if(typeof toast==='function') toast('파일 URL이 없습니다','err'); return; }
+  if(typeof openFilePreviewList==='function'){
+    openFilePreviewList([{name:name, url:url, type:type}], 0);
+  } else {
+    window.open(url,'_blank');
+  }
 }
 
 async function deleteBoardFile(pageId){
@@ -38398,6 +38412,7 @@ return {
   changeBoardFileMonth: (typeof changeBoardFileMonth!=="undefined"?changeBoardFileMonth:undefined),
   changeInvoiceMonth: (typeof changeInvoiceMonth!=="undefined"?changeInvoiceMonth:undefined),
   editInvoiceUsd: (typeof editInvoiceUsd!=="undefined"?editInvoiceUsd:undefined),
+  previewInvoiceFile: (typeof previewInvoiceFile!=="undefined"?previewInvoiceFile:undefined),
   saveUsdRate: (typeof saveUsdRate!=="undefined"?saveUsdRate:undefined),
   restoreUsdRate: (typeof restoreUsdRate!=="undefined"?restoreUsdRate:undefined),
   addManualInvoice: (typeof addManualInvoice!=="undefined"?addManualInvoice:undefined),
