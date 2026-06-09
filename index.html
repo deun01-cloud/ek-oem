@@ -34170,7 +34170,9 @@ async function uploadFileToR2(file){
     if(!resp.ok){ console.warn('R2 업로드 실패:', resp.status); return null; }
     var d = await resp.json();
     if(!d.key) return null;
-    return { key: d.key, publicUrl: R2_PUBLIC + '/' + d.key };
+    // 워커 경유 URL로 제공 (공개 r2.dev 도메인은 Public Access 미설정 시 404 → 워커가 직접 서빙)
+    var servedUrl = R2_PROXY + '/r2/file/' + encodeURIComponent(d.key);
+    return { key: d.key, publicUrl: servedUrl };
   }catch(e){
     console.warn('R2 업로드 예외:', e.message); return null;
   }
@@ -34288,6 +34290,9 @@ async function loadFilesFromNotion(period){
       var r2key = '';
       var km = memo.match(/r2key:([^\s|]+)/);
       if(km) r2key = km[1];
+      // 🔧 공개 r2.dev URL은 Public Access 미설정 시 404 → 워커 경유 URL로 교체
+      if(r2key){ url = R2_PROXY + '/r2/file/' + encodeURIComponent(r2key); }
+      else if(url && url.indexOf('.r2.dev/')>=0){ var _k=url.split('.r2.dev/')[1]; if(_k) url = R2_PROXY + '/r2/file/' + _k; }
       // 노션 페이지 URL (파일 첨부가 없을 때 페이지로 이동해서 직접 확인할 수 있도록)
       var pageUrl = p.url || ('https://www.notion.so/' + (p.id||'').replace(/-/g,''));
       return {
@@ -34374,6 +34379,9 @@ async function loadBoardFiles(boardType){
             if(fileObj.type==='file' && fileObj.file) url = fileObj.file.url;
             else if(fileObj.type==='external' && fileObj.external) url = fileObj.external.url;
           }
+          // 🔧 공개 r2.dev URL 404 방지 → 워커 경유 URL로 교체
+          if(info.r2key){ url = R2_PROXY + '/r2/file/' + encodeURIComponent(info.r2key); }
+          else if(url && url.indexOf('.r2.dev/')>=0){ var _k2=url.split('.r2.dev/')[1]; if(_k2) url = R2_PROXY + '/r2/file/' + _k2; }
           var pageUrl = p.url || ('https://www.notion.so/' + (p.id||'').replace(/-/g,''));
           // 비고에서 인보이스 번호 추출 (있으면 묶음 키로 사용)
           var invNo = info.invNo || '';
@@ -34421,8 +34429,13 @@ function _buildInvoiceItems(){
   var items = order.map(function(k){ return groups[k]; });
   // 직접입력 매입 항목 (S.manual) — 게시판에 함께 표시
   (S.manual||[]).forEach(function(m, idx){
+    var isUsd = (m.cur==='USD');
+    // KRW(amount)는 입력/전환 시점 환율로 고정 저장된 값 → 그대로 사용 (환율 바뀌어도 안 흔들림)
+    var krwVal = (+m.amount||0);
+    var lockRate = (isUsd && m.usd) ? Math.round(krwVal/(+m.usd))  : 0;
     items.push({ key:'manual:'+idx, _manual:true, _idx:idx, invNo:'', period:(m.period||''), invDate:m.date||'',
-      label:m.label||'', usd:0, krw:(+m.amount||0), detail:null, proof:null, uploadedAt:m._at||'', files:(m.files||[]) });
+      label:m.label||'', cur:(m.cur||'KRW'), usd:(+m.usd||0), krw:krwVal, _rate:lockRate,
+      detail:null, proof:null, uploadedAt:m._at||'', files:(m.files||[]) });
   });
   return items;
 }
@@ -34541,7 +34554,12 @@ function _invoiceItemHtml(it, rate, krw){
   // 금액 표시
   var amtHtml;
   if(it._manual){
-    amtHtml = '<input type="number" value="'+(it.krw||'')+'" onchange="MGT.editManualAmount('+it._idx+',this.value)" style="width:110px;text-align:right;border:1px solid var(--bd2);border-radius:6px;padding:4px 7px;font-size:12.5px;font-family:inherit;font-weight:700">';
+    var isUsd = (it.cur==='USD');
+    var dispRate = it._rate || (parseFloat((document.getElementById('usd-rate')||{}).value)||1350);
+    var curBtn = '<button onclick="MGT.toggleManualCur('+it._idx+')" title="통화 전환 (원/달러)" style="border:1px solid var(--bd2);background:var(--s2);border-radius:6px 0 0 6px;padding:4px 7px;font-size:11px;font-family:inherit;cursor:pointer;font-weight:700;color:'+(isUsd?'var(--ac)':'var(--t2)')+'">'+(isUsd?'$':'₩')+'</button>';
+    var valInput = '<input type="number" value="'+(isUsd?(it.usd||''):(it.krw||''))+'" onchange="MGT.editManualAmount('+it._idx+',this.value)" style="width:92px;text-align:right;border:1px solid var(--bd2);border-left:none;border-radius:0 6px 6px 0;padding:4px 7px;font-size:12.5px;font-family:inherit;font-weight:700">';
+    var sub = isUsd ? ('<small style="display:block;color:var(--mu);font-size:10.5px;margin-top:2px">= '+won(it.krw||0)+' <span style="color:var(--hi)">@'+dispRate+'</span></small>') : '';
+    amtHtml = '<div style="display:flex;align-items:center;justify-content:flex-end">'+curBtn+valInput+'</div>'+sub;
   } else if(it.usd){
     var _rt = it.rate || (parseFloat((document.getElementById('usd-rate')||{}).value)||1350);
     amtHtml = '$'+it.usd.toLocaleString('en-US',{maximumFractionDigits:2})+'<small>'+won(krw)+' <span style="color:var(--hi)">@'+_rt+'</span></small>';
@@ -34586,14 +34604,31 @@ function _invoiceItemHtml(it, rate, krw){
 }
 
 // 인보이스 묶음의 매입월 변경 (detail/proof 모두 같은 월로)
+// 매입월 후보 목록 — 데이터가 있는 월 + 현재월 기준 과거 18개월~미래 2개월 범위를 항상 제공
+function _monthOptionSet(cur, invDate){
+  var mset = {};
+  if(cur) mset[cur]=1;
+  if(invDate && /^\d{4}-\d{2}/.test(invDate)) mset[invDate.slice(0,7)]=1;
+  // 데이터가 있는 월들
+  (_board.cn||[]).forEach(function(x){ if(x.period) mset[x.period]=1; });
+  (_board.exp||[]).forEach(function(x){ if(x.period) mset[x.period]=1; });
+  // 손익 기간
+  try{ var gp=(document.getElementById('g-period')||{}).value; if(gp) mset[gp]=1; }catch(e){}
+  // 기준월(현재 손익 기간 또는 cur 또는 오늘) 중심으로 과거 18개월 ~ 미래 2개월 생성
+  var anchor = cur || (function(){ try{return (document.getElementById('g-period')||{}).value;}catch(e){return '';} })() || '';
+  var ay, am;
+  if(/^\d{4}-\d{2}$/.test(anchor)){ ay=+anchor.slice(0,4); am=+anchor.slice(5,7); }
+  else { var d=new Date(); ay=d.getFullYear(); am=d.getMonth()+1; }
+  for(var k=-18; k<=2; k++){
+    var dt=new Date(ay, am-1+k, 1);
+    mset[dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')]=1;
+  }
+  return Object.keys(mset).filter(function(m){return /^\d{4}-\d{2}$/.test(m);}).sort().reverse();
+}
+
 function _itemMonthCell(it){
   var cur = it.period || '';
-  var mset = {}; if(cur) mset[cur]=1;
-  (_board.cn||[]).forEach(function(x){ if(x.period) mset[x.period]=1; });
-  if(it.invDate && /^\d{4}-\d{2}/.test(it.invDate)) mset[it.invDate.slice(0,7)]=1;
-  try{ var gp=(document.getElementById('g-period')||{}).value; if(gp) mset[gp]=1; }catch(e){}
-  if(/^\d{4}-\d{2}$/.test(cur)){ var y=+cur.slice(0,4),mo=+cur.slice(5,7); var pv=new Date(y,mo-2,1),nx=new Date(y,mo,1); mset[pv.getFullYear()+'-'+String(pv.getMonth()+1).padStart(2,'0')]=1; mset[nx.getFullYear()+'-'+String(nx.getMonth()+1).padStart(2,'0')]=1; }
-  var opts = Object.keys(mset).filter(function(m){return /^\d{4}-\d{2}$/.test(m);}).sort().reverse();
+  var opts = _monthOptionSet(cur, it.invDate);
   var ids=[]; if(it.detail) ids.push(it.detail.pageId); if(it.proof) ids.push(it.proof.pageId);
   var h='<select class="bmonth-sel" onchange="MGT.changeInvoiceMonth(\''+ids.join(',')+'\',this.value)" title="매입월 변경">';
   if(!cur) h+='<option value="" selected>매입월?</option>';
@@ -34602,10 +34637,8 @@ function _itemMonthCell(it){
   return h;
 }
 function _manualMonthCell(it){
-  var cur=it.period||''; var mset={}; if(cur) mset[cur]=1;
-  try{ var gp=(document.getElementById('g-period')||{}).value; if(gp) mset[gp]=1; }catch(e){}
-  (_board.cn||[]).forEach(function(x){ if(x.period) mset[x.period]=1; });
-  var opts=Object.keys(mset).filter(function(m){return /^\d{4}-\d{2}$/.test(m);}).sort().reverse();
+  var cur=it.period||'';
+  var opts=_monthOptionSet(cur, it.invDate);
   var h='<select class="bmonth-sel" onchange="MGT.editManualMonth('+it._idx+',this.value)" title="매입월">';
   if(!cur) h+='<option value="" selected>매입월?</option>';
   opts.forEach(function(m){ h+='<option value="'+m+'"'+(m===cur?' selected':'')+'>'+m+'</option>'; });
@@ -34696,8 +34729,31 @@ function addManualInvoice(){
   calcPnL(); renderPurchase();
   if(_boardTab==='cn') _renderBoardRows();
 }
-function editManualAmount(idx, v){ if(S.manual&&S.manual[idx]){ S.manual[idx].amount=parseFloat(v)||0; calcPnL(); renderPurchase(); _renderBoardRows(); } }
-function editManualMonth(idx, m){ if(S.manual&&S.manual[idx]){ S.manual[idx].period=m; calcPnL(); _renderBoardRows(); } }
+function editManualAmount(idx, v){
+  if(!(S.manual&&S.manual[idx])) return;
+  var m=S.manual[idx];
+  var n=parseFloat(v)||0;
+  var rate=parseFloat((document.getElementById('usd-rate')||{}).value)||1350;
+  if(m.cur==='USD'){ m.usd=n; m.amount=Math.round(n*rate); }   // amount = 원화 환산(집계용)
+  else { m.amount=n; m.usd=0; }
+  calcPnL(); renderPurchase(); _renderBoardRows();
+  var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p);
+}
+function toggleManualCur(idx){
+  if(!(S.manual&&S.manual[idx])) return;
+  var m=S.manual[idx];
+  var rate=parseFloat((document.getElementById('usd-rate')||{}).value)||1350;
+  if(m.cur==='USD'){
+    // USD → KRW: 현재 환산액을 원화 입력값으로 유지
+    m.cur='KRW'; m.amount=Math.round((+m.usd||0)*rate); m.usd=0;
+  } else {
+    // KRW → USD: 현재 원화를 환율로 나눠 USD 추정
+    m.cur='USD'; m.usd= m.amount? Math.round((+m.amount||0)/rate*100)/100 : 0; m.amount=Math.round((+m.usd||0)*rate);
+  }
+  calcPnL(); renderPurchase(); _renderBoardRows();
+  var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p);
+}
+function editManualMonth(idx, m){ if(S.manual&&S.manual[idx]){ S.manual[idx].period=m; calcPnL(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
 function editManualLabel(idx, v){ if(S.manual&&S.manual[idx]){ S.manual[idx].label=v; calcPnL(); renderPurchase(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
 
 // 직접입력 항목에 파일 첨부 (인보이스/증빙 — R2+노션 보관, 항목의 files에 연결)
@@ -35182,23 +35238,20 @@ async function _mgtTestProxy(base){
 }
 async function _mgtPickWorkingProxy(){
   try{
-    var ok = await _mgtTestProxy(NOTION_PROXY);
-    if(ok){ console.log('[경영지원] Notion 프록시 정상:', NOTION_PROXY); return; }
-    // 1차 실패 → 메인 앱 프록시로 전환 시도
-    var alt = (typeof notionCfg!=='undefined' && notionCfg.workerUrl) ? (notionCfg.workerUrl.replace(/\/$/, '')+'/notion') : '';
-    if(alt && alt!==NOTION_PROXY){
-      var ok2 = await _mgtTestProxy(alt);
-      if(ok2){
-        NOTION_PROXY = alt;
-        console.warn('[경영지원] 기존 Notion 프록시 응답 없음 → 메인 앱 프록시로 전환:', NOTION_PROXY);
-        var st=document.getElementById('notion-sync-status'); if(st) st.textContent='ℹ️ Notion 프록시를 메인 앱 경로로 전환했습니다';
-        // 전환 후 데이터 다시 로드
-        try{ await loadFixedFromNotion(); }catch(e){}
-        try{ var p=document.getElementById('g-period').value; if(p){ await loadPeriodFromNotion(p); await loadFilesFromNotion(p); renderFileList(p); } }catch(e){}
-        try{ if(_boardTab) { _boardLoaded.cn=false; _boardLoaded.exp=false; renderBoard(true); } }catch(e){}
+    // 🎯 통일 방침: 메인 OEM 워커(ek-proxy /notion)를 우선 사용한다.
+    //    (경영지원 DB를 메인 OEM 노션 통합에 연결했다는 전제 — 토큰이 동일하므로 같은 워커로 읽고 쓴다)
+    var ekProxy = (typeof notionCfg!=='undefined' && notionCfg.workerUrl) ? (notionCfg.workerUrl.replace(/\/$/, '')+'/notion') : '';
+    if(ekProxy){
+      var okEk = await _mgtTestProxy(ekProxy);
+      if(okEk){
+        if(NOTION_PROXY!==ekProxy){ NOTION_PROXY = ekProxy; console.log('[경영지원] 메인 OEM 워커로 통일:', NOTION_PROXY); }
         return;
       }
+      console.warn('[경영지원] 메인 워커('+ekProxy+') 조회 실패 — 기존 notion-proxy로 폴백 시도');
     }
+    // 메인 워커가 안 되면 기존 notion-proxy 시도 (구버전 호환)
+    var okOld = await _mgtTestProxy(NOTION_PROXY);
+    if(okOld){ console.log('[경영지원] 기존 notion-proxy 사용:', NOTION_PROXY); return; }
     // 둘 다 실패 → 사용자에게 알림
     console.warn('[경영지원] 두 프록시 모두 응답 없음 — 저장/로드가 안 될 수 있습니다');
     var st2=document.getElementById('notion-sync-status'); if(st2) st2.textContent='⚠️ Notion 프록시 응답 없음 — 저장이 안 될 수 있습니다 (설정 확인)';
@@ -35208,7 +35261,8 @@ async function _mgtPickWorkingProxy(){
 function mgtBootstrap(){
   // 🔧 Notion 프록시 자동 점검 — notion-proxy 가 죽어 저장이 조용히 실패하는 문제 대응.
   //    백그라운드에서 현재 프록시로 조회 테스트 → 실패하면 메인 앱(ek-proxy /notion)로 전환.
-  _mgtPickWorkingProxy();
+  // 🎯 통일: 메인 OEM 워커를 기본 프록시로 즉시 설정 (아래 async에서 검증/폴백)
+  try{ if(typeof notionCfg!=='undefined' && notionCfg.workerUrl){ NOTION_PROXY = notionCfg.workerUrl.replace(/\/$/, '')+'/notion'; } }catch(e){}
   // USD 환율 복원 (한 번 설정하면 계속 유지)
   restoreUsdRate();
   // 마지막으로 보던 기간 복원 (없으면 현재월)
@@ -35243,6 +35297,8 @@ function mgtBootstrap(){
   try{ restoreMgtSubtab(); }catch(e){}
   (async function(){
     try {
+      // 🎯 데이터 로드 전에 작동하는 프록시(메인 OEM 워커)부터 확정
+      await _mgtPickWorkingProxy();
       document.getElementById('notion-sync-status').textContent = '🔄 Notion에서 모든 데이터 불러오는 중...';
       // [신규] 월별 손익 스냅샷 먼저 로드 (대시보드/요약에 필요)
       var recOk = await loadAllRecordsFromNotion();
@@ -37123,14 +37179,16 @@ async function syncCogsToNotion(period){
     if(S.manual&&S.manual.length){
       for(var i=0;i<S.manual.length;i++){
         var m=S.manual[i];
-        if(!m.amount||!m.label) continue;
+        if(!m.amount && !m.usd) continue; // 금액(원/달러) 둘 다 없으면 스킵
+        var memoM='수동입력';
+        if(m.cur==='USD' && m.usd){ var rM=(m.amount&&m.usd)?Math.round(m.amount/m.usd):0; memoM='USD '+m.usd+(rM?' RATE '+rM:''); }
         await fetch(NOTION_PROXY+'/pages',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({parent:{database_id:NOTION_COGS_DB}, properties:{
-          '항목명':{title:[{text:{content:m.label||''}}]},
+          '항목명':{title:[{text:{content:m.label||'(직접입력)'}}]},
           '기간':  {rich_text:[{text:{content:period}}]},
           '구분':  {rich_text:[{text:{content:'직접입력'}}]},
           '거래처':{rich_text:[{text:{content:''}}]},
           '금액':  {number:Math.round(m.amount||0)},
-          '비고':  {rich_text:[{text:{content:'수동입력'}}]}
+          '비고':  {rich_text:[{text:{content:memoM}}]}
         }})});
       }
     }
@@ -37209,7 +37267,11 @@ async function loadPeriodFromNotion(period, silent){
           var fname = getText('항목명');
           loaded.cnList[fname] = {fname:fname, usd:usd, invDate:invDate, invNo:'', _rate:lockedRate};
         } else if(gubun==='직접입력'){
-          loaded.manual.push({label:getText('항목명'), amount:amt});
+          var mBigo=getText('비고');
+          var mUsdM=mBigo.match(/USD\s*([\d.]+)/i);
+          var manItem={label:getText('항목명'), amount:amt};
+          if(mUsdM){ manItem.cur='USD'; manItem.usd=parseFloat(mUsdM[1])||0; } else { manItem.cur='KRW'; }
+          loaded.manual.push(manItem);
         }
       });
     }
@@ -38226,6 +38288,7 @@ return {
   restoreUsdRate: (typeof restoreUsdRate!=="undefined"?restoreUsdRate:undefined),
   addManualInvoice: (typeof addManualInvoice!=="undefined"?addManualInvoice:undefined),
   editManualAmount: (typeof editManualAmount!=="undefined"?editManualAmount:undefined),
+  toggleManualCur: (typeof toggleManualCur!=="undefined"?toggleManualCur:undefined),
   editManualMonth: (typeof editManualMonth!=="undefined"?editManualMonth:undefined),
   editManualLabel: (typeof editManualLabel!=="undefined"?editManualLabel:undefined),
   attachManualFile: (typeof attachManualFile!=="undefined"?attachManualFile:undefined),
