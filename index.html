@@ -35708,6 +35708,8 @@ async function loadAllRecordsFromNotion(){
           revD: num('납품매출'),
           revS: num('샘플청구'),
           revDev: num('개발비청구'),
+          // PNL DB에 AS/커머스 컬럼이 없으므로, 총매출 - (납품+샘플+개발비) 차액을 기타(AS/커머스)로 보존
+          revOther: Math.max(0, rev - (num('납품매출')+num('샘플청구')+num('개발비청구'))),
           cogs: cogs,
           fixed: fixed,
           ratio: num('원가율'),
@@ -38018,6 +38020,8 @@ function renderSavedSummary(period){
     var html = '';
     var _revD = rec.revD||0, _revS = rec.revS||0, _revDev = rec.revDev||0, _revAS = rec.revAS||0, _revCm = rec.revCm||0;
     var _revTotal = (rec.rev!=null) ? rec.rev : (_revD+_revS+_revDev+_revAS+_revCm);
+    // PNL DB 재로드 시 AS/커머스 컬럼이 없어 0이 되면, 총매출 차액(revOther)으로 보정
+    var _revOther = (rec.revOther!=null) ? rec.revOther : Math.max(0, _revTotal - (_revD+_revS+_revDev+_revAS+_revCm));
     // 매출 = 납품+샘플+개발비+AS+커머스 통합 (세부는 sub에 표시)
     var _revSubParts = [];
     if(_revD)   _revSubParts.push('납품 '+won(_revD));
@@ -38025,6 +38029,7 @@ function renderSavedSummary(period){
     if(_revDev) _revSubParts.push('개발비 '+won(_revDev));
     if(_revAS)  _revSubParts.push('AS '+won(_revAS));
     if(_revCm)  _revSubParts.push('커머스 '+won(_revCm));
+    if(!_revAS && !_revCm && _revOther>0) _revSubParts.push('AS·커머스 '+won(_revOther));
     var _revSub = _revSubParts.length ? _revSubParts.join(' · ') : '—';
     html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">';
     html += '<div class="met"><div class="met-lbl">총 매출</div><div class="met-val">'+won(_revTotal)+'</div><div class="met-sub">'+_revSub+'</div></div>';
@@ -38088,20 +38093,20 @@ async function onPeriodChange(){
   // [신규] 기간 바뀌면 해당 기간의 파일 목록도 갱신
   await loadFilesFromNotion(period);
   renderFileList(period);
-  // 📌 상단 월 변경 시 매입 자료실(공장 인보이스/지출내역) 게시판도 같은 월로 필터
+  // 📌 상단 월 변경 시 매입 자료실 게시판 + 매입 원가 집계를 같은 월로 갱신
   try{
     _boardMonth = period;
-    var _mf = document.getElementById('board-month-filter');
-    if(_mf){
-      // 옵션에 현재 월이 없으면 추가
-      if(!Array.prototype.some.call(_mf.options, function(o){return o.value===period;})){
-        var _opt=document.createElement('option'); _opt.value=period; _opt.textContent=period; _mf.appendChild(_opt);
-      }
-      _mf.value = period;
+    // 게시판 파일이 아직 로드 안 됐으면 로드 (집계가 빈값으로 잘못 나오는 것 방지)
+    if(typeof _boardLoaded!=='undefined' && _boardLoaded && !_boardLoaded[_boardTab] && typeof loadBoardFiles==='function'){
+      await loadBoardFiles(_boardTab);
     }
     if(typeof _renderBoardRows==='function') _renderBoardRows();
-  }catch(e){}
-  if(rec){ toast('📂 '+period+' 저장 데이터 불러옴','ok'); calcPnL(); }
+    // ★ 매입 원가 집계는 onPeriodChange에서 누락돼 있어 월 변경 시 갱신 안 됐음 → 추가
+    if(typeof renderPurchase==='function') renderPurchase();
+  }catch(e){ console.warn('board/purchase refresh 실패:', e&&e.message); }
+  // 손익도 항상 최신화 (매입원가 = 현재 월 게시판 기준)
+  if(typeof calcPnL==='function') calcPnL();
+  if(rec){ toast('📂 '+period+' 저장 데이터 불러옴','ok'); }
   else { toast('📭 '+period+' 저장된 데이터 없음 — 파일을 업로드하세요','ok'); }
 }
 
@@ -38122,9 +38127,8 @@ async function savePeriod(){
   var rate=parseFloat(document.getElementById('usd-rate').value)||1350;
   var ekCogs = 0; // [legacy] EK정산 제거됨
   var expCogs = S.exp ? S.exp.reduce(function(s,i){return s+i.amount},0) : 0;
-  var cnCogs = 0;
-  if(S.cnList&&S.cnList.length) S.cnList.forEach(function(inv){cnCogs+=inv.usd*rate;});
-  else if(S.cn) cnCogs = S.cn.usd * rate;
+  // 📌 중국 인보이스 원가는 게시판(현재 페이지 월) 기준으로 — totalCogs()와 일치시킴
+  var cnCogs = (typeof _cnCostForCurrentPeriod==='function') ? _cnCostForCurrentPeriod(rate) : 0;
   var manCogs = S.manual.reduce(function(s,m){return s+m.amount},0);
 
   var bySales={};
