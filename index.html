@@ -1973,7 +1973,24 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
   <div id="mFilePrev_body" style="flex:1;overflow:auto;background:#f5f5f5;padding:0;min-height:400px"></div>
 </div></div>
 
+<!-- 📎 파일 첨부 모달 (드래그&드롭 / 다중 선택) -->
+<div class="ov" id="mAttach" style="z-index:450"><div class="modal" style="max-width:520px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+    <div class="mt" id="mAttach_t" style="margin:0">📎 파일 첨부</div>
+    <button class="btn bgo bs" onclick="MGT.closeAttach()">✕ 닫기</button>
+  </div>
+  <div id="mAttach_drop" style="border:2px dashed var(--bd2);border-radius:12px;padding:30px 18px;text-align:center;background:var(--s2);cursor:pointer;transition:.15s"
+       onclick="document.getElementById('mAttach_input').click()">
+    <div style="font-size:34px;margin-bottom:8px">📥</div>
+    <div style="font-size:14px;font-weight:600;color:var(--t1)">여기로 파일을 끌어다 놓거나 클릭하세요</div>
+    <div style="font-size:11.5px;color:var(--hi);margin-top:5px">PDF · 이미지 · 엑셀 · 여러 개 한꺼번에 가능</div>
+    <input type="file" id="mAttach_input" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls" multiple style="display:none">
+  </div>
+  <div id="mAttach_list" style="margin-top:14px;display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto"></div>
+</div></div>
+
 <!-- 제품DB 등록/수정 모달 -->
+
 <div class="ov" id="mProduct"><div class="modal wide" style="max-width:640px">
   <div class="mt" id="mProduct_t">📦 제품 등록</div>
   <input type="hidden" id="pd_id">
@@ -34408,8 +34425,9 @@ function _buildInvoiceItems(){
     // 묶음 키: 인보이스번호 우선, 없으면 파일명 stem, 그래도 없으면 pageId(독립)
     var key = f.invNo ? ('no:'+f.invNo) : null;
     if(!key){ var stem=(f.name||'').replace(/\.(xlsx|xls|pdf|png|jpe?g|webp)$/i,'').trim(); key = stem? ('nm:'+stem+'_'+(f.period||'')) : ('id:'+f.pageId); }
-    if(!groups[key]){ groups[key]={ key:key, invNo:f.invNo||'', period:f.period||'', invDate:f.invDate||'', usd:0, krw:0, rate:0, detail:null, proof:null, uploadedAt:f.uploadedAt, _manual:false }; order.push(key); }
+    if(!groups[key]){ groups[key]={ key:key, invNo:f.invNo||'', period:f.period||'', invDate:f.invDate||'', usd:0, krw:0, rate:0, detail:null, proof:null, allFiles:[], uploadedAt:f.uploadedAt, _manual:false }; order.push(key); }
     var g=groups[key];
+    g.allFiles.push(f);  // 모든 첨부 파일 수집 (역할 구분 없이)
     if(f.kind==='proof'){ g.proof=f; if(f.usd && !g.usd) g.usd=f.usd; if(f.krw && !g.krw) g.krw=f.krw; if(f.rate && !g.rate) g.rate=f.rate; }
     else { g.detail=f; if(f.usd) g.usd=f.usd; if(f.krw) g.krw=f.krw; if(f.rate) g.rate=f.rate; }
     if(f.rate && !g.rate) g.rate=f.rate;
@@ -34529,11 +34547,9 @@ function _renderBoardRows(){
       var e=o.e, i=o.i;
       var fileChips='';
       (e.files||[]).forEach(function(f,fi){
-        var roleLbl = (f.role==='detail') ? '첨부' : '증빙';
-        var roleColor = (f.role==='detail') ? '#3A6DD6' : '#3A7D3A';
         var nm=(f.name||'파일'); var disp=nm.length>12?nm.slice(0,10)+'…':nm;
         fileChips += '<span style="display:inline-flex;align-items:center;gap:3px;margin-right:4px">'
-          + '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm+' 미리보기"><span style="font-size:9px;font-weight:700;color:'+roleColor+'">['+roleLbl+']</span> 📎 '+disp+'</a>'
+          + '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm+' 미리보기">📎 '+disp+'</a>'
           + '<button onclick="MGT.removeExpFile('+i+','+fi+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px" title="첨부 제거">×</button></span>';
       });
       html2 += '<div class="bitem" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 4px;border-bottom:1px solid var(--bd)">'
@@ -34544,8 +34560,7 @@ function _renderBoardRows(){
         + '</select>'
         + '<label style="font-size:11px;color:var(--mu);display:inline-flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" '+(e.inclVat?'checked':'')+' onchange="MGT.editExpVat('+i+',this.checked)">부가세포함</label>'
         + '<span style="display:inline-flex;gap:4px">'
-          + '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px" onclick="MGT.attachExpFile('+i+',\'detail\')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToExp(event,'+i+',\'detail\')" title="첨부파일 추가 (클릭 또는 드래그)">+ 첨부파일</button>'
-          + '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF6EE;color:#3A7D3A;font-size:10.5px" onclick="MGT.attachExpFile('+i+',\'proof\')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToExp(event,'+i+',\'proof\')" title="증빙 파일 추가 (클릭 또는 드래그)">+ 증빙</button>'
+          + '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px" onclick="MGT.openAttachModal(\'exp\','+i+')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToExp(event,'+i+',\'attach\')" title="첨부파일 추가 (클릭=창 / 드래그=바로첨부)">+ 첨부파일</button>'
         + '</span>'
         + fileChips
         + '<input type="number" value="'+(e.amount||'')+'" onchange="MGT.editExpAmount('+i+',this.value)" placeholder="금액(원)" style="width:110px;text-align:right;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12.5px;font-family:inherit;font-weight:700">'
@@ -34625,20 +34640,19 @@ function _invoiceItemHtml(it, rate, krw){
   if(it._manual){
     (it.files||[]).forEach(function(f,fi){
       var nm=(f.name||'파일'); var disp=nm.length>14?nm.slice(0,12)+'…':nm;
-      var roleLbl = (f.role==='detail') ? '첨부' : '증빙';
-      var roleColor = (f.role==='detail') ? '#3A6DD6' : '#3A7D3A';
-      links += '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm+' (미리보기)"><span style="font-size:9px;font-weight:700;color:'+roleColor+'">['+roleLbl+']</span> 📎 '+disp+'</a>'
+      links += '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm+' (미리보기)">📎 '+disp+'</a>'
             +  '<button onclick="MGT.removeManualFile('+it._idx+','+fi+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px;margin-left:-2px" title="첨부 제거">×</button>';
     });
-    links += '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px" onclick="MGT.attachManualFile('+it._idx+',\'detail\')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToManual(event,'+it._idx+',\'detail\')" title="첨부파일 추가 (클릭 또는 드래그)">+ 첨부파일</button>';
-    links += '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF6EE;color:#3A7D3A;font-size:10.5px" onclick="MGT.attachManualFile('+it._idx+',\'proof\')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToManual(event,'+it._idx+',\'proof\')" title="증빙 파일 추가 (클릭 또는 드래그)">+ 증빙</button>';
+    links += '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px" onclick="MGT.openAttachModal(\'manual\','+it._idx+')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToManual(event,'+it._idx+',\'attach\')" title="첨부파일 추가 (클릭=창 / 드래그=바로첨부)">+ 첨부파일</button>';
   } else {
-    if(it.detail){ var dnm=(it.detail.name||'세부'); var ddisp=dnm.length>18?dnm.slice(0,16)+'…':dnm; links += '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(it.detail.url||it.detail.pageUrl||'')+'\',\''+encodeURIComponent(dnm)+'\',\''+encodeURIComponent(it.detail.type||'')+'\')" title="'+dnm+' (미리보기)"><span style="font-size:9px;font-weight:700;color:#3A6DD6">[첨부]</span> 📎 '+ddisp+'</a>'; }
-    if(it.proof){ var pnm=(it.proof.name||'증빙'); var pdisp=pnm.length>18?pnm.slice(0,16)+'…':pnm; links += '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(it.proof.url||it.proof.pageUrl||'')+'\',\''+encodeURIComponent(pnm)+'\',\''+encodeURIComponent(it.proof.type||'')+'\')" title="'+pnm+' (미리보기)"><span style="font-size:9px;font-weight:700;color:#3A7D3A">[증빙]</span> 📄 '+pdisp+'</a>'; }
-    // 이 인보이스에 파일 추가 (세부내역/증빙 구분) — 인보이스번호+기간으로 같은 묶음에 연결
+    // 이 인보이스에 묶인 모든 파일을 파일명으로 표시 (역할 구분 없음)
+    (it.allFiles||[]).forEach(function(f){
+      var fnm=(f.name||'파일'); var fdisp=fnm.length>18?fnm.slice(0,16)+'…':fnm;
+      links += '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(fnm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+fnm+' (미리보기)">📎 '+fdisp+'</a>';
+    });
+    // 이 인보이스에 파일 추가 — 모달(드래그&드롭/다중)
     var _invKey = encodeURIComponent(it.invNo||'') + '|' + encodeURIComponent(it.period||'');
-    if(!it.detail) links += '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px" onclick="MGT.attachToInvoice(\''+_invKey+'\',\'detail\')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToInvoice(event,\''+_invKey+'\',\'detail\')" title="첨부파일 추가 (클릭 또는 드래그)">+ 첨부파일</button>';
-    if(!it.proof)  links += '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF6EE;color:#3A7D3A;font-size:10.5px" onclick="MGT.attachToInvoice(\''+_invKey+'\',\'proof\')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToInvoice(event,\''+_invKey+'\',\'proof\')" title="증빙 파일 추가 (클릭 또는 드래그)">+ 증빙</button>';
+    links += '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px" onclick="MGT.openAttachModal(\'invoice\',\''+_invKey+'\')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToInvoice(event,\''+_invKey+'\',\'attach\')" title="첨부파일 추가 (클릭=창 / 드래그=바로첨부)">+ 첨부파일</button>';
   }
   // 삭제 버튼
   var delBtn;
@@ -35075,6 +35089,108 @@ function dropToInvoice(e, invKeyEnc, fileRole){
 }
 function dragOverBtn(e){ e.preventDefault(); e.stopPropagation(); try{ if(e.currentTarget&&e.currentTarget.classList) e.currentTarget.classList.add('drag-over'); }catch(_){} }
 function dragLeaveBtn(e){ try{ if(e.currentTarget&&e.currentTarget.classList) e.currentTarget.classList.remove('drag-over'); }catch(_){} }
+
+// ── 📎 통합 파일 첨부 모달 (드래그&드롭 / 다중 / 역할 구분 없음) ──
+var _attachTarget = null; // {kind:'invoice'|'manual'|'exp', invKeyEnc, idx, period, invNo}
+function openAttachModal(kind, ref){
+  var period='', invNo='', idx=-1, invKeyEnc='';
+  if(kind==='invoice'){
+    invKeyEnc=ref;
+    var parts=(ref||'').split('|');
+    try{ invNo=decodeURIComponent(parts[0]||''); }catch(e){}
+    try{ period=decodeURIComponent(parts[1]||''); }catch(e){}
+    if(!period) period=document.getElementById('g-period').value||'';
+  } else if(kind==='manual'){
+    idx=ref; if(!(S.manual&&S.manual[idx])) return;
+    period=S.manual[idx].period || document.getElementById('g-period').value||'';
+  } else if(kind==='exp'){
+    idx=ref; if(!(S.exp&&S.exp[idx])) return;
+    period=S.exp[idx].period || document.getElementById('g-period').value||'';
+  }
+  if(!period){ toast('매입월(기간)을 먼저 지정하세요','err'); return; }
+  if(!NOTION_FILES_DB){ toast('노션 파일DB 미설정','err'); return; }
+  _attachTarget={kind:kind, invKeyEnc:invKeyEnc, idx:idx, period:period, invNo:invNo};
+  var listEl=document.getElementById('mAttach_list'); if(listEl) listEl.innerHTML='';
+  _renderAttachExisting();
+  var inp=document.getElementById('mAttach_input'); if(inp){ inp.value=''; inp.onchange=function(){ if(inp.files&&inp.files.length) _attachUploadFiles(inp.files); }; }
+  var dz=document.getElementById('mAttach_drop');
+  if(dz){
+    dz.ondragover=function(e){ e.preventDefault(); dz.style.borderColor='var(--ac)'; dz.style.background='var(--acbg)'; };
+    dz.ondragleave=function(){ dz.style.borderColor='var(--bd2)'; dz.style.background='var(--s2)'; };
+    dz.ondrop=function(e){ e.preventDefault(); dz.style.borderColor='var(--bd2)'; dz.style.background='var(--s2)'; if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length) _attachUploadFiles(e.dataTransfer.files); };
+  }
+  openM('mAttach');
+}
+function closeAttach(){ closeM('mAttach'); _attachTarget=null; }
+// 현재 항목에 이미 붙은 파일 목록 표시 (삭제 가능)
+function _renderAttachExisting(){
+  var listEl=document.getElementById('mAttach_list'); if(!listEl||!_attachTarget) return;
+  var files=[];
+  if(_attachTarget.kind==='manual' && S.manual[_attachTarget.idx]) files=S.manual[_attachTarget.idx].files||[];
+  else if(_attachTarget.kind==='exp' && S.exp[_attachTarget.idx]) files=S.exp[_attachTarget.idx].files||[];
+  else if(_attachTarget.kind==='invoice'){
+    // 같은 인보이스 묶음의 파일들
+    files=(_board.cn||[]).filter(function(x){
+      if(_attachTarget.invNo) return x.invNo===_attachTarget.invNo;
+      return false;
+    }).map(function(x){ return {name:x.name, url:x.url, _pageId:x.pageId}; });
+  }
+  if(!files.length){ listEl.innerHTML='<div style="font-size:11.5px;color:var(--hi);text-align:center;padding:4px">아직 첨부된 파일이 없습니다</div>'; return; }
+  listEl.innerHTML=files.map(function(f,i){
+    var nm=(f.name||'파일'); var disp=nm.length>30?nm.slice(0,28)+'…':nm;
+    return '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--s2);border-radius:8px">'
+      + '<span style="font-size:14px">📎</span>'
+      + '<a style="flex:1;font-size:12px;color:var(--ac);text-decoration:none;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||'')+'\',\''+encodeURIComponent(nm)+'\',\'\')" title="'+nm+'">'+disp+'</a>'
+      + '<button onclick="MGT.attachRemoveExisting('+i+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:13px" title="삭제">×</button>'
+      + '</div>';
+  }).join('');
+}
+function attachRemoveExisting(i){
+  if(!_attachTarget) return;
+  if(_attachTarget.kind==='manual'){ removeManualFile(_attachTarget.idx, i).then(function(){ _renderAttachExisting(); }); }
+  else if(_attachTarget.kind==='exp'){ removeExpFile(_attachTarget.idx, i).then(function(){ _renderAttachExisting(); }); }
+  else if(_attachTarget.kind==='invoice'){
+    var files=(_board.cn||[]).filter(function(x){ return _attachTarget.invNo && x.invNo===_attachTarget.invNo; });
+    var f=files[i]; if(f && f.pageId){ deleteBoardFile(f.pageId); setTimeout(function(){ _renderAttachExisting(); }, 600); }
+  }
+}
+// 모달에서 받은 파일들 업로드 (다중)
+function _attachUploadFiles(fileList){
+  if(!_attachTarget) return;
+  var files=Array.prototype.slice.call(fileList);
+  var t=_attachTarget;
+  var listEl=document.getElementById('mAttach_list');
+  var seq=Promise.resolve();
+  files.forEach(function(file){
+    seq=seq.then(function(){
+      if(listEl){ var ph=document.createElement('div'); ph.style.cssText='font-size:11.5px;color:var(--ac);padding:4px 10px'; ph.textContent='🔄 '+file.name+' 업로드 중...'; ph.id='attach-ph-'+file.name.replace(/[^a-z0-9]/gi,''); listEl.appendChild(ph); }
+      if(t.kind==='invoice'){
+        var extra=t.invNo?('INV '+t.invNo):'';
+        return uploadFileToNotion(file,'cninv',t.period,extra).then(function(meta){
+          if(meta){ _boardLoaded.cn=false; }
+          return meta;
+        });
+      } else if(t.kind==='manual'){
+        return uploadFileToNotion(file,'cninv',t.period,'직접입력 첨부').then(function(meta){
+          if(meta){ if(!S.manual[t.idx].files) S.manual[t.idx].files=[]; S.manual[t.idx].files.push({name:file.name,url:meta.url,pageId:meta.pageId,pageUrl:meta.pageUrl,r2key:meta.r2key}); if(!S.manual[t.idx].label) S.manual[t.idx].label=file.name.replace(/\.[^.]+$/,''); }
+          return meta;
+        });
+      } else if(t.kind==='exp'){
+        return uploadFileToNotion(file,'exp',t.period,'지출 첨부').then(function(meta){
+          if(meta){ if(!S.exp[t.idx].files) S.exp[t.idx].files=[]; S.exp[t.idx].files.push({name:file.name,url:meta.url,pageId:meta.pageId,pageUrl:meta.pageUrl,r2key:meta.r2key}); if(!S.exp[t.idx].vendor) S.exp[t.idx].vendor=file.name.replace(/\.[^.]+$/,''); }
+          return meta;
+        });
+      }
+    });
+  });
+  seq.then(function(){
+    if(t.kind==='invoice'){ renderBoard(true); }
+    else { _renderBoardRows(); var p=document.getElementById('g-period').value; if(p&&t.kind!=='exp') syncCogsToNotion(p); }
+    _renderAttachExisting();
+    var inp=document.getElementById('mAttach_input'); if(inp) inp.value='';
+    toast('📎 첨부 완료','ok');
+  });
+}
 
 // 업로드 인보이스에 USD 금액 직접 입력 → 파일DB 비고 + COGS_DB(중국인보이스)에 저장 → 손익 반영
 async function editInvoiceUsd(idsCsv, val){
@@ -38571,6 +38687,9 @@ return {
   changeInvoiceMonth: (typeof changeInvoiceMonth!=="undefined"?changeInvoiceMonth:undefined),
   editInvoiceUsd: (typeof editInvoiceUsd!=="undefined"?editInvoiceUsd:undefined),
   attachToInvoice: (typeof attachToInvoice!=="undefined"?attachToInvoice:undefined),
+  openAttachModal: (typeof openAttachModal!=="undefined"?openAttachModal:undefined),
+  closeAttach: (typeof closeAttach!=="undefined"?closeAttach:undefined),
+  attachRemoveExisting: (typeof attachRemoveExisting!=="undefined"?attachRemoveExisting:undefined),
   dropToInvoice: (typeof dropToInvoice!=="undefined"?dropToInvoice:undefined),
   dragOverBtn: (typeof dragOverBtn!=="undefined"?dragOverBtn:undefined),
   dragLeaveBtn: (typeof dragLeaveBtn!=="undefined"?dragLeaveBtn:undefined),
