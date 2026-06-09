@@ -34572,8 +34572,16 @@ function _buildInvoiceItems(){
 // 탭 전환
 function switchBoardTab(boardType){
   _boardTab = boardType;
-  _boardMonth = ''; // 탭 전환 시 매입월 필터 초기화
-  var mf = document.getElementById('board-month-filter'); if(mf) mf.value='';
+  // 📌 게시판 기본 필터 = 현재 페이지 월 (상단 g-period). 해당 월 항목만 보이게.
+  var _gp=''; try{ _gp=(document.getElementById('g-period')||{}).value||''; }catch(e){}
+  _boardMonth = _gp || '';
+  var mf = document.getElementById('board-month-filter');
+  if(mf){
+    if(_gp && !Array.prototype.some.call(mf.options, function(o){return o.value===_gp;})){
+      var _o=document.createElement('option'); _o.value=_gp; _o.textContent=_gp; mf.appendChild(_o);
+    }
+    mf.value = _boardMonth;
+  }
   var addBtn=document.getElementById('board-add-manual');
   if(addBtn){ addBtn.style.display=''; addBtn.textContent = (boardType==='exp') ? '+ 직접입력' : '+ 직접입력'; addBtn.title = (boardType==='exp') ? '지출 항목 직접 입력' : '금액을 직접 입력한 매입 항목 추가'; }
   document.querySelectorAll('.board-tab').forEach(function(t){
@@ -35138,16 +35146,20 @@ function _refreshBoardMonthOptions(){
   if(!sel) return;
   var months = {};
   (_board[_boardTab]||[]).forEach(function(it){ if(it.period) months[it.period]=1; });
-  var opts = Object.keys(months).sort().reverse();
+  // 지출내역서 탭이면 S.exp의 월도 옵션에 포함
+  if(_boardTab==='exp'){ (S.exp||[]).forEach(function(e){ if(e.period) months[e.period]=1; }); }
   var cur = _boardMonth;
+  // 📌 현재 선택된 월(g-period)에 파일이 없어도 옵션으로 유지 — 전체로 풀리지 않게
+  if(cur) months[cur]=months[cur]||0;
+  var opts = Object.keys(months).sort().reverse();
   var html = '<option value="">📅 전체 기간</option>';
   opts.forEach(function(m){
     var cnt = (_board[_boardTab]||[]).filter(function(it){return it.period===m;}).length;
+    if(_boardTab==='exp') cnt += (S.exp||[]).filter(function(e){return (e.period||'')===m;}).length;
     html += '<option value="'+m+'"'+(m===cur?' selected':'')+'>📅 '+m+' ('+cnt+')</option>';
   });
   sel.innerHTML = html;
-  // 현재 선택값이 더 이상 목록에 없으면 전체로 리셋
-  if(cur && opts.indexOf(cur)<0){ _boardMonth=''; sel.value=''; }
+  sel.value = cur || '';
 }
 
 // 게시판에서 파일 삭제 (노션 archive + R2 삭제)
