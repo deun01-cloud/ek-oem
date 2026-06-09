@@ -38069,6 +38069,19 @@ async function onPeriodChange(){
   // [신규] 기간 바뀌면 해당 기간의 파일 목록도 갱신
   await loadFilesFromNotion(period);
   renderFileList(period);
+  // 📌 상단 월 변경 시 매입 자료실(공장 인보이스/지출내역) 게시판도 같은 월로 필터
+  try{
+    _boardMonth = period;
+    var _mf = document.getElementById('board-month-filter');
+    if(_mf){
+      // 옵션에 현재 월이 없으면 추가
+      if(!Array.prototype.some.call(_mf.options, function(o){return o.value===period;})){
+        var _opt=document.createElement('option'); _opt.value=period; _opt.textContent=period; _mf.appendChild(_opt);
+      }
+      _mf.value = period;
+    }
+    if(typeof _renderBoardRows==='function') _renderBoardRows();
+  }catch(e){}
   if(rec){ toast('📂 '+period+' 저장 데이터 불러옴','ok'); calcPnL(); }
   else { toast('📭 '+period+' 저장된 데이터 없음 — 파일을 업로드하세요','ok'); }
 }
