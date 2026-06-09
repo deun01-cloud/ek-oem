@@ -442,14 +442,14 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 #mgtRoot .bitem-main{flex:1;min-width:0}
 #mgtRoot .bitem-ttl{font-size:13.5px;font-weight:600;color:var(--t1);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 #mgtRoot .bitem-sub{font-size:11px;color:var(--mu);margin-top:3px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-#mgtRoot .bitem-amt{text-align:right;flex-shrink:0;font-weight:700;font-size:13.5px;white-space:nowrap}
+#mgtRoot .bitem-amt{text-align:right;flex-shrink:0;font-weight:700;font-size:13.5px;white-space:nowrap;width:170px;display:flex;flex-direction:column;align-items:flex-end;justify-content:center}
 #mgtRoot .bitem-amt small{display:block;font-size:10.5px;color:var(--mu);font-weight:500}
 #mgtRoot .bchip{font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600;white-space:nowrap}
 #mgtRoot .bchip-detail{background:var(--acbg);color:var(--ac)}
 #mgtRoot .bchip-proof{background:#EEF6EE;color:#3A7D3A}
 #mgtRoot .bchip-manual{background:#FFF4E6;color:var(--org)}
 #mgtRoot .bchip-need{background:#FBECEC;color:var(--rd)}
-#mgtRoot .bitem-act{display:flex;gap:4px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end;max-width:230px}
+#mgtRoot .bitem-act{display:flex;gap:4px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end;width:200px}
 #mgtRoot .bitem-flink{font-size:10.5px;color:var(--ac);text-decoration:none;padding:2px 6px;border:1px solid var(--bd2);border-radius:6px}
 #mgtRoot .bitem-flink:hover{background:var(--acbg)}
 #mgtRoot .dz-btn.drag-over{outline:2px dashed var(--ac);outline-offset:1px;background:var(--acbg)!important;transform:scale(1.05)}
@@ -34347,7 +34347,9 @@ function _parseBoardMemo(memo){
   var md = memo.match(/(\d{4}-\d{2}-\d{2})/); if(md) invDate = md[1];
   var mk = memo.match(/r2key:([^\s|]+)/);   if(mk) r2key = mk[1];
   var mv = memo.match(/VENDOR:([^|]+)/i);    if(mv) vendor = mv[1].trim();
-  return { usd: usd, krw: krw, cnt: cnt, invDate: invDate, r2key: r2key, rate: rate, vendor: vendor };
+  var grp = '';
+  var mg = memo.match(/GRP:([^\s|]+)/i);     if(mg) grp = mg[1];
+  return { usd: usd, krw: krw, cnt: cnt, invDate: invDate, r2key: r2key, rate: rate, vendor: vendor, grp: grp };
 }
 
 // 노션 파일DB에서 특정 타입 전체 로드 (기간 필터 없음)
@@ -34399,7 +34401,7 @@ async function loadBoardFiles(boardType){
           results.push({
             pageId: p.id, pageUrl: pageUrl, name: name, period: period,
             uploadedAt: uploadedAt, usd: info.usd, krw: info.krw, cnt: info.cnt, rate: info.rate, vendor: info.vendor,
-            invDate: info.invDate, invNo: invNo, r2key: info.r2key, url: url, attached: !!url, memo: memo,
+            invDate: info.invDate, invNo: invNo, r2key: info.r2key, url: url, attached: !!url, memo: memo, grp: info.grp,
             kind: (typeLabel==='중국인보이스증빙') ? 'proof' : (boardType==='cn' ? 'detail' : boardType)
           });
         });
@@ -34423,11 +34425,12 @@ function _buildInvoiceItems(){
   var files = _board.cn || [];
   var groups = {}; var order = [];
   files.forEach(function(f){
-    // 묶음 키: 인보이스번호 우선, 없으면 파일명 stem, 그래도 없으면 pageId(독립)
-    var key = f.invNo ? ('no:'+f.invNo) : null;
+    // 묶음 키: GRP 그룹ID 우선 → 인보이스번호 → 파일명 stem → pageId(독립)
+    var key = f.grp ? ('grp:'+f.grp) : (f.invNo ? ('no:'+f.invNo) : null);
     if(!key){ var stem=(f.name||'').replace(/\.(xlsx|xls|pdf|png|jpe?g|webp)$/i,'').trim(); key = stem? ('nm:'+stem+'_'+(f.period||'')) : ('id:'+f.pageId); }
-    if(!groups[key]){ groups[key]={ key:key, invNo:f.invNo||'', period:f.period||'', invDate:f.invDate||'', vendor:f.vendor||'', usd:0, krw:0, rate:0, detail:null, proof:null, allFiles:[], uploadedAt:f.uploadedAt, _manual:false }; order.push(key); }
+    if(!groups[key]){ groups[key]={ key:key, grp:f.grp||'', invNo:f.invNo||'', period:f.period||'', invDate:f.invDate||'', vendor:f.vendor||'', usd:0, krw:0, rate:0, detail:null, proof:null, allFiles:[], uploadedAt:f.uploadedAt, _manual:false }; order.push(key); }
     var g=groups[key];
+    if(f.grp && !g.grp) g.grp=f.grp;
     g.allFiles.push(f);  // 모든 첨부 파일 수집 (역할 구분 없이)
     if(f.vendor && !g.vendor) g.vendor=f.vendor;
     if(f.kind==='proof'){ g.proof=f; if(f.usd && !g.usd) g.usd=f.usd; if(f.krw && !g.krw) g.krw=f.krw; if(f.rate && !g.rate) g.rate=f.rate; }
@@ -34653,7 +34656,8 @@ function _invoiceItemHtml(it, rate, krw){
       links += '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(fnm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+fnm+' (미리보기)">📎 '+fdisp+'</a>';
     });
     // 이 인보이스에 파일 추가 — 모달(드래그&드롭/다중)
-    var _invKey = encodeURIComponent(it.invNo||'') + '|' + encodeURIComponent(it.period||'');
+    var _anchorId = (it.allFiles && it.allFiles[0] && it.allFiles[0].pageId) ? it.allFiles[0].pageId : '';
+    var _invKey = [encodeURIComponent(it.invNo||''), encodeURIComponent(it.period||''), encodeURIComponent(it.grp||''), encodeURIComponent(_anchorId)].join('|');
     links += '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px" onclick="MGT.openAttachModal(\'invoice\',\''+_invKey+'\')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToInvoice(event,\''+_invKey+'\',\'attach\')" title="첨부파일 추가 (클릭=창 / 드래그=바로첨부)">+ 첨부파일</button>';
   }
   // 삭제 버튼
@@ -35093,7 +35097,17 @@ function dropToInvoice(e, invKeyEnc, fileRole){
   e.preventDefault(); e.stopPropagation();
   try{ var el=e.currentTarget; if(el&&el.classList) el.classList.remove('drag-over'); }catch(_){}
   var dt=e.dataTransfer; if(!dt||!dt.files||!dt.files.length) return;
-  attachToInvoice(invKeyEnc, fileRole, dt.files[0]);
+  // 같은 묶음으로 들어가도록 모달과 동일한 GRP 처리 경로 사용
+  var parts=(invKeyEnc||'').split('|');
+  var invNo='', period='', grp='', anchorId='';
+  try{ invNo=decodeURIComponent(parts[0]||''); }catch(_){}
+  try{ period=decodeURIComponent(parts[1]||''); }catch(_){}
+  try{ grp=decodeURIComponent(parts[2]||''); }catch(_){}
+  try{ anchorId=decodeURIComponent(parts[3]||''); }catch(_){}
+  if(!period) period=document.getElementById('g-period').value||'';
+  if(!period){ toast('매입월을 먼저 지정하세요','err'); return; }
+  _attachTarget={kind:'invoice', invKeyEnc:invKeyEnc, idx:-1, period:period, invNo:invNo, grp:grp, anchorId:anchorId};
+  _attachUploadFiles(dt.files);
 }
 function dragOverBtn(e){ e.preventDefault(); e.stopPropagation(); try{ if(e.currentTarget&&e.currentTarget.classList) e.currentTarget.classList.add('drag-over'); }catch(_){} }
 function dragLeaveBtn(e){ try{ if(e.currentTarget&&e.currentTarget.classList) e.currentTarget.classList.remove('drag-over'); }catch(_){} }
@@ -35101,12 +35115,14 @@ function dragLeaveBtn(e){ try{ if(e.currentTarget&&e.currentTarget.classList) e.
 // ── 📎 통합 파일 첨부 모달 (드래그&드롭 / 다중 / 역할 구분 없음) ──
 var _attachTarget = null; // {kind:'invoice'|'manual'|'exp', invKeyEnc, idx, period, invNo}
 function openAttachModal(kind, ref){
-  var period='', invNo='', idx=-1, invKeyEnc='';
+  var period='', invNo='', idx=-1, invKeyEnc='', grp='', anchorId='';
   if(kind==='invoice'){
     invKeyEnc=ref;
     var parts=(ref||'').split('|');
     try{ invNo=decodeURIComponent(parts[0]||''); }catch(e){}
     try{ period=decodeURIComponent(parts[1]||''); }catch(e){}
+    try{ grp=decodeURIComponent(parts[2]||''); }catch(e){}
+    try{ anchorId=decodeURIComponent(parts[3]||''); }catch(e){}
     if(!period) period=document.getElementById('g-period').value||'';
   } else if(kind==='manual'){
     idx=ref; if(!(S.manual&&S.manual[idx])) return;
@@ -35117,7 +35133,7 @@ function openAttachModal(kind, ref){
   }
   if(!period){ toast('매입월(기간)을 먼저 지정하세요','err'); return; }
   if(!NOTION_FILES_DB){ toast('노션 파일DB 미설정','err'); return; }
-  _attachTarget={kind:kind, invKeyEnc:invKeyEnc, idx:idx, period:period, invNo:invNo};
+  _attachTarget={kind:kind, invKeyEnc:invKeyEnc, idx:idx, period:period, invNo:invNo, grp:grp, anchorId:anchorId};
   var listEl=document.getElementById('mAttach_list'); if(listEl) listEl.innerHTML='';
   _renderAttachExisting();
   var inp=document.getElementById('mAttach_input'); if(inp){ inp.value=''; inp.onchange=function(){ if(inp.files&&inp.files.length) _attachUploadFiles(inp.files); }; }
@@ -35168,12 +35184,29 @@ function _attachUploadFiles(fileList){
   var files=Array.prototype.slice.call(fileList);
   var t=_attachTarget;
   var listEl=document.getElementById('mAttach_list');
-  var seq=Promise.resolve();
+  // 인보이스 첨부: 같은 묶음으로 들어가도록 공유 그룹ID(GRP) 확보
+  var grpReady = Promise.resolve();
+  if(t.kind==='invoice'){
+    if(!t.grp){
+      // 그룹ID 신규 생성 + 기준(anchor) 파일 비고에도 기록 → 기존 파일과 새 파일이 같은 그룹
+      t.grp = 'g'+Date.now().toString(36);
+      if(t.anchorId){
+        var anchor=(_board.cn||[]).find(function(x){return x.pageId===t.anchorId;});
+        if(anchor){
+          var am=anchor.memo||'';
+          var newAm=(am? am+' | ' : '')+'GRP:'+t.grp;
+          grpReady = fetch(NOTION_PROXY+'/pages/'+t.anchorId,{method:'PATCH',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({properties:{'비고':{rich_text:[{text:{content:newAm.slice(0,1900)}}]}}})}).then(function(){ anchor.memo=newAm; anchor.grp=t.grp; }).catch(function(){});
+        }
+      }
+    }
+  }
+  var seq=grpReady;
   files.forEach(function(file){
     seq=seq.then(function(){
       if(listEl){ var ph=document.createElement('div'); ph.style.cssText='font-size:11.5px;color:var(--ac);padding:4px 10px'; ph.textContent='🔄 '+file.name+' 업로드 중...'; ph.id='attach-ph-'+file.name.replace(/[^a-z0-9]/gi,''); listEl.appendChild(ph); }
       if(t.kind==='invoice'){
-        var extra=t.invNo?('INV '+t.invNo):'';
+        var parts=[]; if(t.invNo) parts.push('INV '+t.invNo); if(t.grp) parts.push('GRP:'+t.grp);
+        var extra=parts.join(' | ');
         return uploadFileToNotion(file,'cninv',t.period,extra).then(function(meta){
           if(meta){ _boardLoaded.cn=false; }
           return meta;
