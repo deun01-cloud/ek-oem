@@ -995,9 +995,10 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 
   <div class="card" style="margin-top:14px">
     <div class="card-h">
-      <div class="card-t">🏢 고정비</div>
+      <div class="card-t">🏢 고정비 <span id="fixed-save-status" style="font-size:11px;font-weight:500;color:var(--mu);margin-left:6px"></span></div>
       <div style="display:flex;gap:6px">
         <button class="btn btn-sm" onclick="MGT.addFixed()">+ 항목 추가</button>
+        <button class="btn btn-sm" style="background:var(--ac);color:#fff" onclick="MGT.saveFixedNow()">💾 지금 저장</button>
         <button class="btn btn-sm" style="color:var(--rd)" onclick="MGT.resetFixedCosts()">🗑️ 초기화</button>
       </div>
     </div>
@@ -34119,6 +34120,7 @@ try{ window.S = S; }catch(e){}
 
 var _fixedLoading = false; try{window._mgtFixedLoading=false;}catch(e){}
 var _fixedSyncing = false;
+var _fixedSyncPending = false;
 var _recordsLoaded = false; // Notion PNL DB가 한번이라도 로드됐는지
 
 // ─────────────────────────────────────────
@@ -36129,9 +36131,32 @@ function addFixed(){S.fixed.push({label:'',amount:0});renderFixed();saveFixed();
 function renderFixed(){
   var el=document.getElementById('fixed-list');
   el.innerHTML=S.fixed.map(function(f,i){
-    return'<div class="fc-grid"><input class="fci" placeholder="비용 항목 (예: 임직원 급여)" value="'+f.label+'" oninput="if(!window._mgtFixedLoading){S.fixed['+i+'].label=this.value;MGT.saveFixed()}" onblur="if(!window._mgtFixedLoading&&MGT.saveFixedNow)MGT.saveFixedNow()"><input class="fci" type="number" placeholder="금액" value="'+(f.amount!=null&&f.amount!==''?f.amount:'')+'" oninput="if(!window._mgtFixedLoading){S.fixed['+i+'].amount=parseFloat(this.value)||0;MGT.updateFixedTotal();MGT.saveFixed()}" onblur="if(!window._mgtFixedLoading&&MGT.saveFixedNow)MGT.saveFixedNow()"><button class="fc-del" onclick="S.fixed.splice('+i+',1);MGT.renderFixed();MGT.saveFixed()">×</button></div>';
+    return'<div class="fc-grid"><input class="fci" data-fxrow="'+i+'" data-fxfield="label" placeholder="비용 항목 (예: 임직원 급여)" value="'+f.label+'" oninput="if(!window._mgtFixedLoading){S.fixed['+i+'].label=this.value;MGT.saveFixed()}" onkeydown="MGT.fixedKey(event,'+i+',\'label\')" onblur="if(!window._mgtFixedLoading&&MGT.saveFixedNow)MGT.saveFixedNow()"><input class="fci" data-fxrow="'+i+'" data-fxfield="amount" type="number" placeholder="금액" value="'+(f.amount!=null&&f.amount!==''?f.amount:'')+'" oninput="if(!window._mgtFixedLoading){S.fixed['+i+'].amount=parseFloat(this.value)||0;MGT.updateFixedTotal();MGT.saveFixed()}" onkeydown="MGT.fixedKey(event,'+i+',\'amount\')" onblur="if(!window._mgtFixedLoading&&MGT.saveFixedNow)MGT.saveFixedNow()"><button class="fc-del" onclick="S.fixed.splice('+i+',1);MGT.renderFixed();MGT.saveFixed()">×</button></div>';
   }).join('')||'<div style="font-size:12px;color:var(--hi);padding:4px 0">항목이 없습니다. 위 버튼으로 추가하세요</div>';
   updateFixedTotal();
+}
+
+// 고정비 입력 중 엔터 처리
+//  - 항목명에서 엔터 → 같은 행 금액칸으로 이동
+//  - 금액에서 엔터 → 새 항목 추가 + 새 행 항목명칸 포커스 (저장)
+function fixedKey(e, idx, field){
+  if(e.key!=='Enter') return;
+  e.preventDefault();
+  if(field==='label'){
+    var amtInp=document.querySelector('#fixed-list input[data-fxrow="'+idx+'"][data-fxfield="amount"]');
+    if(amtInp) amtInp.focus();
+    return;
+  }
+  // 금액칸에서 엔터 → 직전 입력 즉시 저장하고 새 행 추가
+  if(typeof saveFixedNow==='function') saveFixedNow();
+  S.fixed.push({label:'', amount:0});
+  renderFixed();
+  // 새로 추가된 마지막 행의 항목명칸에 포커스
+  var newIdx=S.fixed.length-1;
+  setTimeout(function(){
+    var inp=document.querySelector('#fixed-list input[data-fxrow="'+newIdx+'"][data-fxfield="label"]');
+    if(inp) inp.focus();
+  }, 30);
 }
 
 function updateFixedTotal(){var t=S.fixed.reduce(function(s,f){return s+f.amount},0);document.getElementById('fixed-total').textContent=won(t)}
@@ -36151,13 +36176,14 @@ function saveFixed(){
 // 입력칸 떠날 때(blur) 즉시 저장 — 디바운스 미완료로 누락되는 것 방지
 function saveFixedNow(){
   clearTimeout(saveFixed._timer);
+  var fs=document.getElementById('fixed-save-status');
+  if(fs){ fs.textContent='저장 중...'; fs.style.color='var(--mu)'; }
   syncFixedToNotion();
 }
 
 async function syncFixedToNotion(){
-  if(_fixedSyncing) return;
-  // 빈 배열이어도, 의도적으로 0개로 만든 경우(전체 삭제) 반영해야 하므로 가드 제거.
-  // 단, 모든 항목이 항목명/금액 모두 비면 저장 의미 없음 → 그 경우만 스킵.
+  if(_fixedSyncing){ _fixedSyncPending = true; return; }
+  _fixedSyncPending = false;
   var meaningful = (S.fixed||[]).filter(function(f){ return (f.label&&f.label.trim()) || f.amount; });
   _fixedSyncing = true;
   var seen2={};
@@ -36197,9 +36223,18 @@ async function syncFixedToNotion(){
     }
     var statusEl=document.getElementById('notion-sync-status');
     if(statusEl) statusEl.textContent = writeErr? ('⚠️ 고정비 '+writeErr+'건 저장 실패 — 노션 DB 컬럼(항목명/금액) 확인') : '✅ 고정비 Notion 동기화 완료';
+    var fs2=document.getElementById('fixed-save-status');
+    if(fs2){
+      var savedN = S.fixed.filter(function(f){ return (f.label&&f.label.trim())||f.amount; }).length;
+      if(writeErr){ fs2.textContent='⚠ 저장 실패 '+writeErr+'건'; fs2.style.color='var(--rd)'; }
+      else { fs2.textContent='✓ 저장됨 ('+savedN+'건) '+new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}); fs2.style.color='var(--gr)'; }
+    }
     if(writeErr && typeof toast==='function') toast('⚠ 고정비 '+writeErr+'건 저장 실패 — 노션 DB 컬럼명을 확인하세요','err');
   }catch(e){ console.warn('고정비 동기화 실패:', e.message); }
-  finally { _fixedSyncing = false; }
+  finally {
+    _fixedSyncing = false;
+    if(_fixedSyncPending){ _fixedSyncPending=false; setTimeout(function(){ syncFixedToNotion(); }, 100); }
+  }
 }
 
 async function loadFixedFromNotion(){
@@ -38106,6 +38141,7 @@ return {
   syncFixedToNotion: (typeof syncFixedToNotion!=="undefined"?syncFixedToNotion:undefined),
   loadFixedFromNotion: (typeof loadFixedFromNotion!=="undefined"?loadFixedFromNotion:undefined),
   addFixed: (typeof addFixed!=="undefined"?addFixed:undefined),
+  fixedKey: (typeof fixedKey!=="undefined"?fixedKey:undefined),
   updateFixedTotal: (typeof updateFixedTotal!=="undefined"?updateFixedTotal:undefined),
   resetFixedCosts: (typeof resetFixedCosts!=="undefined"?resetFixedCosts:undefined),
   addDepositRow: (typeof addDepositRow!=="undefined"?addDepositRow:undefined),
