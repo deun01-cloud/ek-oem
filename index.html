@@ -3220,7 +3220,7 @@ async function saveAS(){
     const ok = await createWithNotion(asItems, na, syncASToNotion, 'AS');
     if(!ok) return; // 실패 — 모달 유지
   }
-  save();_asAIPasteCleanup();closeM('mAS');renderTab();updateBadges();
+  save();_asAIPasteCleanup();closeMAfterSave('mAS');renderTab();updateBadges();
   showToast('✓ AS 저장됨','var(--grn)');
 }
 
@@ -10803,7 +10803,7 @@ async function saveIo(idOrNull){
     }
   }
   save();
-  closeM('mIo');
+  closeMAfterSave('mIo');
   showToast(`✓ ${isEdit?'수정':'등록'} 완료${stockMsg}`,'var(--grn)',2500);
   renderIo();
   // 노션 동기화 (백그라운드)
@@ -15395,6 +15395,12 @@ function closeM(id){
   // 데이터 모달이면 safe close, 아니면 그냥 닫음
   if(_modalSaveFnMap[id]) return _safeCloseM(id);
   return _rawCloseM(id);
+}
+// 저장 함수가 저장 직후 호출 — dirty 확인 팝업 없이 바로 닫음 (저장 버튼 중복 저장 방지)
+function closeMAfterSave(id){
+  const ov = document.getElementById(id);
+  if(ov){ delete ov._initialSnapshot; delete ov._snapshotTakenAt; }
+  _rawCloseM(id);
 }
 function openM(id){
   const ov = document.getElementById(id);
@@ -23130,7 +23136,7 @@ function saveSmp(){
       const ok = await createWithNotion(samples, newSmp, syncSampleToNotion, '샘플의뢰');
       if(!ok){ _releaseSmpLock(); return; } // 실패 — 모달 유지, 사용자가 다시 시도하거나 닫음
     }
-    save();closeM('mSmp');renderTab();updateBadges();
+    save();closeMAfterSave('mSmp');renderTab();updateBadges();
     _releaseSmpLock();
     if(!id){
       showRegToast(finalObj.name,'sample');
@@ -24978,7 +24984,7 @@ async function saveOrd(forceOverwrite){
       }
     }
   }
-  closeM('mOrd');renderTab();updateBadges();
+  closeMAfterSave('mOrd');renderTab();updateBadges();
 }
 // saveOrd, deleteOrd defined above
 
@@ -25004,7 +25010,7 @@ async function saveProc(){
     const ok = await createWithNotion(procItems, np, syncProcToNotion, '공정');
     if(!ok) return;
   }
-  save();closeM('mProc');renderTab();updateBadges();
+  save();closeMAfterSave('mProc');renderTab();updateBadges();
 }
 // deleteProc defined above
 
@@ -25139,7 +25145,7 @@ async function saveTask(){
     const ok = await createWithNotion(tasks, nt, syncTaskToNotion, '업무일지');
     if(!ok) return;
   }
-  save();closeM('mTask');
+  save();closeMAfterSave('mTask');
   if(currentTab==='schedule')renderSchedContent();
   if(currentTab==='dash')renderDash();
 }
@@ -28408,7 +28414,7 @@ async function saveQuote(forceOverwrite){
     }).catch(e=>console.warn('견적 노션 sync 실패:',e));
   }
 
-  closeM('mQuote');
+  closeMAfterSave('mQuote');
   // 결과 토스트: 견적 + 제품DB 처리 결과 함께 표시
   const baseMsg = isNew?'✓ 견적서 등록됨':'✓ 견적서 수정됨';
   const pdbMsg = (pdbResult.createdCount||pdbResult.updatedCount)
