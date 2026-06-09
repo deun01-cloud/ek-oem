@@ -8449,6 +8449,18 @@ function _applyRemoteItem(type, item, ts, fromClient){
       return xu === _uid;
     });
   }
+  // 🔑 일반 거래명세서: 같은 항목이 'local id' 키와 '_notionId' 키로 두 번 들어와도
+  //    자연키(발주번호+발행일+고객사 / 샘플IDs)로 매칭해 중복 생성 방지 ('몇 초 뒤 중복' 차단)
+  if(idx2 < 0 && type === 'invoice' && !item._isConsolidated){
+    const _natKeyOf = (x) => {
+      if(!x || x._isConsolidated) return null;
+      if(x.ordNo && x.issuedAt) return 'inv:'+x.ordNo+'_'+x.issuedAt+'_'+(x.vendor||'');
+      if(x._fromSample && Array.isArray(x.smpIds) && x.smpIds.length) return 'smp:'+(x.vendor||'')+'_'+x.smpIds.slice().map(String).sort().join(',');
+      return null;
+    };
+    const _nk = _natKeyOf(item);
+    if(_nk){ idx2 = arr.findIndex(x => _natKeyOf(x) === _nk); }
+  }
   if(idx2 >= 0){
     const local = arr[idx2];
     const localTs = +local._ts || 0;
@@ -13982,9 +13994,20 @@ async function syncInvoiceToNotion(inv, update){
   }
   const r=await nCreate(notionCfg.invDb,p);
   if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (거래명세서)');
+  const _hadNoNotionId = !inv._notionId;
+  const _oldLocalKey = (inv.id !== undefined && inv.id !== null) ? String(inv.id) : null;
   inv._notionId=r.id;
   inv._syncedAt = new Date().toISOString();
   save();
+  // 🔑 근본 수정: 이 항목은 _notionId 없을 때 '로컬 id' 키로 실시간 발행됐다.
+  //    이제 _notionId가 생겼으니 실시간 식별키가 'local id' → '_notionId'로 바뀐다.
+  //    옛 local-id 키 엔트리를 서버에서 제거하지 않으면, 서버가 같은 항목을 2개(local id + _notionId)
+  //    들고 있다가 스냅샷 때 둘 다 내보내 '몇 초 뒤 중복'이 생긴다.
+  //    → 옛 키 삭제(에코 무시되므로 내 화면엔 영향 없음) 후 _notionId 키로 재발행.
+  if(_hadNoNotionId && _oldLocalKey && _oldLocalKey !== String(r.id) && typeof realtimeDelete === 'function'){
+    try{ realtimeDelete('invoice', _oldLocalKey); }catch(_){}
+    try{ if(typeof realtimePublish === 'function') realtimePublish('invoice', inv); }catch(_){}
+  }
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -34698,8 +34721,15 @@ function _invoiceItemHtml(it, rate, krw){
     chips = '<span class="bchip bchip-manual">직접입력</span>';
     if(it.files && it.files.length) chips += '<span class="bchip bchip-proof">📎 '+it.files.length+'</span>';
   } else {
-    ico = it.detail ? '🏭' : '📄';
-    title = it.invNo ? ('INV '+it.invNo) : ((it.detail&&it.detail.name)||(it.proof&&it.proof.name)||'(인보이스)');
+    ico = '';
+    // 제목: 공장명 + 등록날짜 (공장명 없으면 인보이스번호/파일명 폴백)
+    var _vend = (it.vendor||'').trim();
+    var _regDate = (it.uploadedAt||'').slice(0,10);
+    if(_vend){
+      title = _vend + (_regDate ? ' <span style="font-size:11px;color:var(--hi);font-weight:500">'+_regDate+'</span>' : '');
+    } else {
+      title = (it.invNo ? ('INV '+it.invNo) : ((it.detail&&it.detail.name)||(it.proof&&it.proof.name)||'(인보이스)')) + (_regDate ? ' <span style="font-size:11px;color:var(--hi);font-weight:500">'+_regDate+'</span>' : '');
+    }
     if(!it.usd && !it.krw) chips += '<span class="bchip bchip-need">금액없음</span>';
   }
   // 매입월 드롭다운
@@ -34769,7 +34799,7 @@ function _invoiceItemHtml(it, rate, krw){
   if(it.uploadedAt) subParts.push('<span style="color:var(--hi)">등록 '+(it.uploadedAt||'').slice(0,10)+'</span>');
 
   return '<div class="bitem">'+
-    '<div class="bitem-ico">'+ico+'</div>'+
+    (ico ? '<div class="bitem-ico">'+ico+'</div>' : '')+
     '<div class="bitem-main">'+
       '<div class="bitem-ttl">'+title+' '+chips+'</div>'+
       '<div class="bitem-sub">'+subParts.join('<span style="opacity:.4">·</span>')+'</div>'+
@@ -36741,12 +36771,33 @@ function renderPurchase(){
     S.exp.forEach(function(it){rows.push({type:'지출내역',cls:'bExp',vendor:it.vendor,amount:it.amount,note:it.inclVat?'부가세 포함→순액':'순액'})});
   }
   var rate=parseFloat(document.getElementById('usd-rate').value)||1350;
-  var cnItems = S.cnList&&S.cnList.length ? S.cnList : (S.cn?[{fname:'인보이스',usd:S.cn.usd}]:[]);
+  var curPeriod = (document.getElementById('g-period')||{}).value || '';
+  // 📌 중국 인보이스 집계 — 게시판(_board.cn)에서 '매입월 = 현재 페이지 기간'인 인보이스만 합산.
+  //    (게시판은 모든 월을 보여주지만, 집계/손익은 현재 페이지 월 기준이어야 함)
+  var cnItems = [];
+  if(typeof _buildInvoiceItems==='function' && _board && _board.cn){
+    var _seen={};
+    _buildInvoiceItems().forEach(function(it){
+      if(it._manual) return;                       // 직접입력은 아래 S.manual에서 처리
+      if(curPeriod && it.period !== curPeriod) return; // 현재 페이지 매입월만
+      var usd = +it.usd || 0;
+      if(!usd && !it.krw) return;                  // 금액 없는 인보이스 제외
+      var key = it.grp || it.invNo || it.key;
+      if(_seen[key]) return; _seen[key]=1;
+      cnItems.push({ fname: (it.vendor||it.invNo||'중국 공장 인보이스'),
+        usd: usd, _rate: (it.rate||rate), amount: Math.round(usd*(it.rate||rate)),
+        invDate: it.invDate||'', invNo: it.invNo||'' });
+    });
+  }
+  // 폴백: 게시판이 비었으면 기존 S.cnList 사용 (옛 동작 호환)
+  if(!cnItems.length && S.cnList && S.cnList.length){
+    cnItems = S.cnList.map(function(inv){ return {fname:inv.fname, usd:+inv.usd||0, _rate:inv._rate||rate, amount:Math.round((+inv.usd||0)*(inv._rate||rate)), invDate:inv.invDate||'', invNo:inv.invNo||''}; });
+  }
   if(cnItems.length){
     var totalUSD=cnItems.reduce(function(s,i){return s+i.usd},0);
-    document.getElementById('cn-preview').textContent='≈ '+won(totalUSD*rate)+' (USD '+totalUSD.toFixed(0)+' × '+rate+')';
+    document.getElementById('cn-preview').textContent='≈ '+won(cnItems.reduce(function(s,i){return s+i.amount},0))+' (USD '+totalUSD.toFixed(0)+')';
     cnItems.forEach(function(inv){
-      rows.push({type:'중국인보이스',cls:'bCN',isCN:true, vendor:inv.fname||'중국 공장 인보이스', usd:inv.usd, amount:Math.round(inv.usd*rate), invDate:inv.invDate||'', invNo:inv.invNo||'', note:'USD '+inv.usd.toFixed(0)});
+      rows.push({type:'중국인보이스',cls:'bCN',isCN:true, vendor:inv.fname||'중국 공장 인보이스', usd:inv.usd, amount:inv.amount, invDate:inv.invDate||'', invNo:inv.invNo||'', note:'USD '+inv.usd.toFixed(0)});
     });
   } else {document.getElementById('cn-preview').textContent=''}
   S.manual.forEach(function(m){if(m.amount>0)rows.push({type:'직접입력',cls:'bMan',vendor:m.label||'(항목명 없음)',amount:m.amount,note:'수동 입력'})});
@@ -36948,12 +36999,33 @@ function totalSalesDelivery(){return S.sales ? S.sales.reduce(function(s,i){retu
 function totalSampleRev(){return S.sample ? S.sample.filter(function(i){return !i.isDev}).reduce(function(s,i){return s+i.amount},0) : 0;}
 function totalDevRev(){return S.sample ? S.sample.filter(function(i){return i.isDev}).reduce(function(s,i){return s+i.amount},0) : 0;}
 function totalSales(){return totalSalesDelivery() + totalSampleRev() + totalDevRev() + totalASRev() + totalCommerceRev();}
+// 📌 현재 페이지 기간(매입월)에 해당하는 중국 인보이스 매입원가 합 — 게시판(_board.cn) 기준
+//    게시판은 모든 월을 보여주지만 손익/집계는 현재 페이지 월만 합산해야 한다.
+function _cnCostForCurrentPeriod(rate){
+  rate = rate || (parseFloat((document.getElementById('usd-rate')||{}).value)||1350);
+  var curPeriod = (document.getElementById('g-period')||{}).value || '';
+  if(typeof _buildInvoiceItems==='function' && _board && _board.cn && _board.cn.length){
+    var sum=0, seen={};
+    _buildInvoiceItems().forEach(function(it){
+      if(it._manual) return;
+      if(curPeriod && it.period !== curPeriod) return;
+      var usd=+it.usd||0; if(!usd && !it.krw) return;
+      var key=it.grp||it.invNo||it.key; if(seen[key]) return; seen[key]=1;
+      sum += usd ? Math.round(usd*(it.rate||rate)) : (+it.krw||0);
+    });
+    return sum;
+  }
+  // 폴백: 게시판 미로드 시 기존 S.cnList
+  var t=0;
+  if(S.cnList&&S.cnList.length) S.cnList.forEach(function(inv){t+=(+inv.usd||0)*(inv._rate||rate);});
+  else if(S.cn) t+=(+S.cn.usd||0)*rate;
+  return t;
+}
 function totalCogs(){
   var t = 0;
   var rate = parseFloat(document.getElementById('usd-rate').value)||1350;
   if(S.exp) t += S.exp.reduce(function(s,i){return s+i.amount},0);
-  if(S.cnList&&S.cnList.length) S.cnList.forEach(function(inv){t+=inv.usd*(inv._rate||rate);});
-  else if(S.cn) t+=S.cn.usd*rate;
+  t += _cnCostForCurrentPeriod(rate);
   t += S.manual.reduce(function(s,m){return s+m.amount},0);
   return t;
 }
@@ -36971,6 +37043,7 @@ function calcPnL(){
   var hasLiveData = (S.sales&&S.sales.length)||(S.sample&&S.sample.length)||
                    (S.exp&&S.exp.length)||
                    (S.cnList&&S.cnList.length)||(S.manual&&S.manual.length)||
+                   (_board&&_board.cn&&_board.cn.length)||
                    (S.salesAS&&S.salesAS.length)||(S.salesCommerce&&S.salesCommerce.length);
 
   var rev, cogs, fx, revDelivery, revSample, revDev, op, gross, cogsR;
@@ -36988,9 +37061,7 @@ function calcPnL(){
     revCommerce = totalCommerceRev();
     rev         = revDelivery + revSample + revDev + revAS + revCommerce;
     expCogs = S.exp ? S.exp.reduce(function(s,i){return s+i.amount},0) : 0;
-    cnCogs  = 0;
-    if(S.cnList&&S.cnList.length) S.cnList.forEach(function(inv){cnCogs+=inv.usd*(inv._rate||rate);});
-    else if(S.cn) cnCogs = S.cn.usd * rate;
+    cnCogs  = _cnCostForCurrentPeriod(rate);
     manCogs = S.manual.reduce(function(s,m){return s+m.amount},0);
     cogs    = expCogs + cnCogs + manCogs;
     fx      = currentFx;
