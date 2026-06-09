@@ -1142,11 +1142,13 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <button class="btn btn-sm" onclick="MGT.saveNotionCfg()">설정 저장</button>
+      <button class="btn btn-sm" style="background:var(--ac);color:#fff" onclick="MGT.diagNotion()">🔍 연결 진단</button>
       <span style="font-size:11px;color:var(--hi)">Cloudflare Worker 프록시로 자동 동기화됩니다. 별도 토큰 설정 불필요.</span>
     </div>
     <div style="margin-top:10px;font-size:12px;padding:8px 12px;background:var(--acbg);border-radius:var(--r);color:var(--ac)" id="notion-sync-status">
       ✅ Cloudflare Worker 프록시 연결됨 — 저장 시 자동으로 Notion에 동기화됩니다
     </div>
+    <div id="notion-diag-result" style="margin-top:8px;font-size:12px;line-height:1.7;display:none;padding:10px 12px;background:var(--s2);border-radius:var(--r);white-space:pre-wrap"></div>
   </div>
 </div>
 
@@ -34562,9 +34564,19 @@ function _invoiceItemHtml(it, rate, krw){
     amtHtml = '<div style="display:flex;align-items:center;justify-content:flex-end">'+curBtn+valInput+'</div>'+sub;
   } else if(it.usd){
     var _rt = it.rate || (parseFloat((document.getElementById('usd-rate')||{}).value)||1350);
-    amtHtml = '$'+it.usd.toLocaleString('en-US',{maximumFractionDigits:2})+'<small>'+won(krw)+' <span style="color:var(--hi)">@'+_rt+'</span></small>';
+    // 업로드 인보이스 금액도 클릭해서 수정 가능하게 (USD 입력)
+    var _ids = []; if(it.detail) _ids.push(it.detail.pageId); if(it.proof) _ids.push(it.proof.pageId);
+    amtHtml = '<div style="display:flex;align-items:center;justify-content:flex-end;gap:3px">'
+      + '<span style="font-size:11px;color:var(--ac);font-weight:700">$</span>'
+      + '<input type="number" value="'+it.usd+'" onchange="MGT.editInvoiceUsd(\''+_ids.join(',')+'\',this.value)" style="width:90px;text-align:right;border:1px solid var(--bd2);border-radius:6px;padding:4px 7px;font-size:12.5px;font-family:inherit;font-weight:700">'
+      + '</div><small style="display:block;color:var(--mu);font-size:10.5px;margin-top:2px">= '+won(krw)+' <span style="color:var(--hi)">@'+_rt+'</span></small>';
   } else {
-    amtHtml = won(krw||0);
+    // 금액 없는 업로드 인보이스(증빙만 등) → USD 직접 입력 칸 제공
+    var _ids2 = []; if(it.detail) _ids2.push(it.detail.pageId); if(it.proof) _ids2.push(it.proof.pageId);
+    amtHtml = '<div style="display:flex;align-items:center;justify-content:flex-end;gap:3px">'
+      + '<span style="font-size:11px;color:var(--ac);font-weight:700">$</span>'
+      + '<input type="number" placeholder="USD 금액" onchange="MGT.editInvoiceUsd(\''+_ids2.join(',')+'\',this.value)" style="width:90px;text-align:right;border:1px solid var(--bd2);border-radius:6px;padding:4px 7px;font-size:12.5px;font-family:inherit;font-weight:700">'
+      + '</div><small style="display:block;color:var(--hi);font-size:10.5px;margin-top:2px">달러 금액 입력 시 자동 환산</small>';
   }
   // 파일 링크 + 첨부 버튼
   var links='';
@@ -34906,6 +34918,70 @@ async function changeBoardFileMonth(pageId, newMonth, skipRender){
     if(!skipRender) _renderBoardRows();
     if(typeof toast==='function') toast('⚠ 매입월 변경 실패: '+e.message,'err');
   }
+}
+
+// 업로드 인보이스에 USD 금액 직접 입력 → 파일DB 비고 + COGS_DB(중국인보이스)에 저장 → 손익 반영
+async function editInvoiceUsd(idsCsv, val){
+  var usd = parseFloat(val)||0;
+  var ids = (idsCsv||'').split(',').filter(Boolean);
+  if(!ids.length){ if(typeof toast==='function') toast('금액을 저장할 인보이스를 찾지 못했습니다','err'); return; }
+  var rate = parseFloat((document.getElementById('usd-rate')||{}).value)||1350;
+  var period = document.getElementById('g-period').value || '';
+  // 캐시 낙관적 갱신
+  var targets = (_board.cn||[]).filter(function(x){ return ids.indexOf(x.pageId)>=0; });
+  targets.forEach(function(x){ x.usd = usd; x.rate = rate; });
+  // 대표 인보이스명/번호
+  var rep = targets[0] || {};
+  var invName = rep.invNo ? ('INV-'+rep.invNo) : (rep.name || '공장인보이스');
+  var invPeriod = rep.period || period;
+  _renderBoardRows();
+  // 1) 파일DB 비고 갱신 (표시·복원용)
+  for(var i=0;i<ids.length;i++){
+    var pageId = ids[i];
+    var item = (_board.cn||[]).find(function(x){return x.pageId===pageId;});
+    if(!item) continue;
+    var memo = item.memo || '';
+    var rest = memo.replace(/USD\s*[\d,.]+/ig,'').replace(/RATE\s*[\d,.]+/ig,'').replace(/\s*\|\s*\|\s*/g,' | ').replace(/^\s*\|\s*/,'').trim();
+    var newMemo = ('USD '+usd+' RATE '+rate + (rest? ' | '+rest : '')).trim();
+    try{
+      var resp = await fetch(NOTION_PROXY+'/pages/'+pageId,{
+        method:'PATCH', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},
+        body: JSON.stringify({properties:{'비고':{rich_text:[{text:{content:newMemo.slice(0,1900)}}]}}})
+      });
+      if(resp.ok){ item.memo=newMemo; item.usd=usd; item.rate=rate; }
+    }catch(e){ console.warn('인보이스 금액(파일DB) 저장 실패:', e.message); }
+  }
+  // 2) COGS_DB(중국인보이스)에 반영 — 손익 매입원가에 잡히도록. 같은 인보이스는 갱신(중복 방지).
+  if(invPeriod){
+    try{
+      var dupTag = 'INVKEY:'+(rep.invNo||rep.pageId||ids[0]);
+      // 기존 동일 인보이스 COGS 행 찾기
+      var q = await fetch(NOTION_PROXY+'/databases/'+NOTION_COGS_DB+'/query',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({page_size:100, filter:{ and:[ {property:'구분', rich_text:{equals:'중국인보이스'}}, {property:'기간', rich_text:{equals:invPeriod}} ] }})});
+      var existId='';
+      if(q.ok){ var qd=await q.json(); (qd.results||[]).forEach(function(p){ var bg=p.properties&&p.properties['비고']&&p.properties['비고'].rich_text&&p.properties['비고'].rich_text[0]?p.properties['비고'].rich_text[0].plain_text:''; if(bg.indexOf(dupTag)>=0 && !p.archived) existId=p.id; }); }
+      var props = {
+        '항목명':{title:[{text:{content:invName}}]},
+        '기간':  {rich_text:[{text:{content:invPeriod}}]},
+        '구분':  {rich_text:[{text:{content:'중국인보이스'}}]},
+        '거래처':{rich_text:[{text:{content:'중국공장'}}]},
+        '금액':  {number:Math.round(usd*rate)},
+        '비고':  {rich_text:[{text:{content:'USD '+usd+' RATE '+rate+' '+dupTag}}]}
+      };
+      if(existId){
+        await fetch(NOTION_PROXY+'/pages/'+existId,{method:'PATCH',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({properties:props})});
+      } else {
+        await fetch(NOTION_PROXY+'/pages',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({parent:{database_id:NOTION_COGS_DB}, properties:props})});
+      }
+      // 로컬 S.cnList도 갱신 (현재 기간이면 즉시 손익 반영)
+      if(invPeriod===period){
+        if(!S.cnList) S.cnList=[];
+        var found=S.cnList.find(function(c){return c.fname===invName;});
+        if(found){ found.usd=usd; found._rate=rate; } else { S.cnList.push({fname:invName, usd:usd, _rate:rate, invNo:rep.invNo||'', invDate:rep.invDate||''}); }
+      }
+    }catch(e){ console.warn('인보이스 금액(COGS) 저장 실패:', e.message); }
+  }
+  try{ calcPnL(); renderPurchase&&renderPurchase(); }catch(e){}
+  if(typeof toast==='function') toast('✓ 인보이스 금액 저장: $'+usd+' (≈'+won(Math.round(usd*rate))+')','ok');
 }
 
 async function deleteBoardFile(pageId){
@@ -35256,6 +35332,42 @@ async function _mgtPickWorkingProxy(){
     console.warn('[경영지원] 두 프록시 모두 응답 없음 — 저장/로드가 안 될 수 있습니다');
     var st2=document.getElementById('notion-sync-status'); if(st2) st2.textContent='⚠️ Notion 프록시 응답 없음 — 저장이 안 될 수 있습니다 (설정 확인)';
   }catch(e){ console.warn('프록시 점검 실패:', e.message); }
+}
+
+// 🔍 노션 연결 진단 — 어느 프록시를 쓰는지 / 읽기 / 쓰기를 실제 테스트
+async function diagNotion(){
+  var box=document.getElementById('notion-diag-result');
+  if(box){ box.style.display='block'; box.textContent='🔍 진단 중...'; }
+  var lines=[];
+  var ekProxy = (typeof notionCfg!=='undefined' && notionCfg.workerUrl) ? (notionCfg.workerUrl.replace(/\/$/, '')+'/notion') : '(설정 없음)';
+  lines.push('• 메인 OEM 워커: '+ekProxy);
+  lines.push('• 현재 사용 프록시: '+NOTION_PROXY);
+  var readOk=false, readMsg='';
+  try{
+    var r=await fetch(NOTION_PROXY+'/databases/'+NOTION_FIXED_DB+'/query',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({page_size:5})});
+    if(r.ok){ var d=await r.json(); readOk=true; var n=(d.results||[]).filter(function(p){return !p.archived;}).length; readMsg='성공 (고정비 '+n+'건 조회됨)'; }
+    else { var t=''; try{t=(await r.text()).slice(0,120);}catch(_){}; readMsg='실패 ('+r.status+') '+t; }
+  }catch(e){ readMsg='네트워크 오류: '+e.message; }
+  lines.push((readOk?'✅':'❌')+' 읽기: '+readMsg);
+  var writeOk=false, writeMsg='';
+  if(readOk){
+    try{
+      var wr=await fetch(NOTION_PROXY+'/pages',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({
+        parent:{database_id:NOTION_FIXED_DB},
+        properties:{'항목명':{title:[{text:{content:'__연결테스트__'}}]},'금액':{number:0}}
+      })});
+      if(wr.ok){
+        var wd=await wr.json(); writeOk=true; writeMsg='성공 (테스트 행 생성 → 정리됨)';
+        try{ if(wd.id) await fetch(NOTION_PROXY+'/pages/'+wd.id,{method:'PATCH',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({archived:true})}); }catch(_){}
+      } else { var t2=''; try{t2=(await wr.text()).slice(0,150);}catch(_){}; writeMsg='실패 ('+wr.status+') '+t2; }
+    }catch(e){ writeMsg='네트워크 오류: '+e.message; }
+  } else { writeMsg='읽기 실패로 건너뜀'; }
+  lines.push((writeOk?'✅':'❌')+' 쓰기: '+writeMsg);
+  lines.push('');
+  if(readOk&&writeOk){ lines.push('🎉 연결 정상! 고정비·인보이스가 저장/로드됩니다.'); if(typeof loadFixedFromNotion==='function'){ try{ await loadFixedFromNotion(); }catch(_){} } }
+  else if(!readOk){ lines.push('⚠ 워커가 경영지원 노션 DB에 접근하지 못합니다.\n   → 「📊 EK 재무 관리 시스템」에 EK-OEM 통합 연결 + 워커 토큰 확인 필요'); }
+  else { lines.push('⚠ 읽기는 되나 쓰기 실패 — 통합 권한이 읽기 전용일 수 있습니다.'); }
+  if(box) box.textContent=lines.join('\n');
 }
 
 function mgtBootstrap(){
@@ -38262,6 +38374,7 @@ return {
   loadBillingFromNotion: (typeof loadBillingFromNotion!=="undefined"?loadBillingFromNotion:undefined),
   syncBillingToNotion: (typeof syncBillingToNotion!=="undefined"?syncBillingToNotion:undefined),
   saveNotionCfg: (typeof saveNotionCfg!=="undefined"?saveNotionCfg:undefined),
+  diagNotion: (typeof diagNotion!=="undefined"?diagNotion:undefined),
   dzo: (typeof dzo!=="undefined"?dzo:undefined),
   dzl: (typeof dzl!=="undefined"?dzl:undefined),
   dzd: (typeof dzd!=="undefined"?dzd:undefined),
@@ -38284,6 +38397,7 @@ return {
   setBoardMonth: (typeof setBoardMonth!=="undefined"?setBoardMonth:undefined),
   changeBoardFileMonth: (typeof changeBoardFileMonth!=="undefined"?changeBoardFileMonth:undefined),
   changeInvoiceMonth: (typeof changeInvoiceMonth!=="undefined"?changeInvoiceMonth:undefined),
+  editInvoiceUsd: (typeof editInvoiceUsd!=="undefined"?editInvoiceUsd:undefined),
   saveUsdRate: (typeof saveUsdRate!=="undefined"?saveUsdRate:undefined),
   restoreUsdRate: (typeof restoreUsdRate!=="undefined"?restoreUsdRate:undefined),
   addManualInvoice: (typeof addManualInvoice!=="undefined"?addManualInvoice:undefined),
