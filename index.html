@@ -38016,9 +38016,18 @@ function renderSavedSummary(period){
     });
 
     var html = '';
-    html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">';
-    html += '<div class="met"><div class="met-lbl">총 매출</div><div class="met-val">'+won(rec.rev||0)+'</div><div class="met-sub">납품 '+won(rec.revD||0)+'</div></div>';
-    html += '<div class="met"><div class="met-lbl">샘플·개발비</div><div class="met-val">'+won((rec.revS||0)+(rec.revDev||0))+'</div><div class="met-sub">샘플 '+won(rec.revS||0)+' / 개발비 '+won(rec.revDev||0)+'</div></div>';
+    var _revD = rec.revD||0, _revS = rec.revS||0, _revDev = rec.revDev||0, _revAS = rec.revAS||0, _revCm = rec.revCm||0;
+    var _revTotal = (rec.rev!=null) ? rec.rev : (_revD+_revS+_revDev+_revAS+_revCm);
+    // 매출 = 납품+샘플+개발비+AS+커머스 통합 (세부는 sub에 표시)
+    var _revSubParts = [];
+    if(_revD)   _revSubParts.push('납품 '+won(_revD));
+    if(_revS)   _revSubParts.push('샘플 '+won(_revS));
+    if(_revDev) _revSubParts.push('개발비 '+won(_revDev));
+    if(_revAS)  _revSubParts.push('AS '+won(_revAS));
+    if(_revCm)  _revSubParts.push('커머스 '+won(_revCm));
+    var _revSub = _revSubParts.length ? _revSubParts.join(' · ') : '—';
+    html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">';
+    html += '<div class="met"><div class="met-lbl">총 매출</div><div class="met-val">'+won(_revTotal)+'</div><div class="met-sub">'+_revSub+'</div></div>';
     html += '<div class="met"><div class="met-lbl">매입원가</div><div class="met-val">'+won(rec.cogs||0)+'</div><div class="met-sub">원가율 '+ratio+'%</div></div>';
     html += '<div class="met"><div class="met-lbl">영업이익</div><div class="met-val" style="color:'+opColor+'">'+won(op)+'</div><div class="met-sub">고정비 '+won(rec.fixed||0)+'</div></div>';
     html += '</div>';
