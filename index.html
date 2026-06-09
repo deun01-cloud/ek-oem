@@ -35170,7 +35170,45 @@ async function cleanupLegacyEkData(){
 // ─────────────────────────────────────────
 //  Init — mgtBootstrap()로 온디맨드 실행 (경영지원 탭 진입 시)
 // ─────────────────────────────────────────
+// 현재 NOTION_PROXY로 가벼운 조회를 시도 → 실패하면 메인 앱 프록시(ek-proxy/notion)로 자동 전환.
+async function _mgtTestProxy(base){
+  try{
+    var r = await fetch(base+'/databases/'+NOTION_FIXED_DB+'/query',{
+      method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},
+      body: JSON.stringify({page_size:1})
+    });
+    return r.ok;
+  }catch(e){ return false; }
+}
+async function _mgtPickWorkingProxy(){
+  try{
+    var ok = await _mgtTestProxy(NOTION_PROXY);
+    if(ok){ console.log('[경영지원] Notion 프록시 정상:', NOTION_PROXY); return; }
+    // 1차 실패 → 메인 앱 프록시로 전환 시도
+    var alt = (typeof notionCfg!=='undefined' && notionCfg.workerUrl) ? (notionCfg.workerUrl.replace(/\/$/, '')+'/notion') : '';
+    if(alt && alt!==NOTION_PROXY){
+      var ok2 = await _mgtTestProxy(alt);
+      if(ok2){
+        NOTION_PROXY = alt;
+        console.warn('[경영지원] 기존 Notion 프록시 응답 없음 → 메인 앱 프록시로 전환:', NOTION_PROXY);
+        var st=document.getElementById('notion-sync-status'); if(st) st.textContent='ℹ️ Notion 프록시를 메인 앱 경로로 전환했습니다';
+        // 전환 후 데이터 다시 로드
+        try{ await loadFixedFromNotion(); }catch(e){}
+        try{ var p=document.getElementById('g-period').value; if(p){ await loadPeriodFromNotion(p); await loadFilesFromNotion(p); renderFileList(p); } }catch(e){}
+        try{ if(_boardTab) { _boardLoaded.cn=false; _boardLoaded.exp=false; renderBoard(true); } }catch(e){}
+        return;
+      }
+    }
+    // 둘 다 실패 → 사용자에게 알림
+    console.warn('[경영지원] 두 프록시 모두 응답 없음 — 저장/로드가 안 될 수 있습니다');
+    var st2=document.getElementById('notion-sync-status'); if(st2) st2.textContent='⚠️ Notion 프록시 응답 없음 — 저장이 안 될 수 있습니다 (설정 확인)';
+  }catch(e){ console.warn('프록시 점검 실패:', e.message); }
+}
+
 function mgtBootstrap(){
+  // 🔧 Notion 프록시 자동 점검 — notion-proxy 가 죽어 저장이 조용히 실패하는 문제 대응.
+  //    백그라운드에서 현재 프록시로 조회 테스트 → 실패하면 메인 앱(ek-proxy /notion)로 전환.
+  _mgtPickWorkingProxy();
   // USD 환율 복원 (한 번 설정하면 계속 유지)
   restoreUsdRate();
   // 마지막으로 보던 기간 복원 (없으면 현재월)
