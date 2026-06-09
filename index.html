@@ -912,12 +912,23 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       <button class="dz-x" onclick="event.stopPropagation();MGT.czd('cn')">×</button>
       <span class="dz-ico" id="i-cn">📤</span>
       <div class="dz-ttl">중국 공장 인보이스</div>
-      <div class="dz-dsc">USD 인보이스 엑셀</div>
-      <div class="dz-hint">여러 파일 동시 드래그&drop 가능 · 금액 컬럼 자동 탐색 · 아래 환율로 KRW 변환</div>
+      <div class="dz-dsc">USD 인보이스 <b>세부내역</b> 엑셀 <span style="color:var(--ac)">또는 인보이스 이미지/PDF (AI 금액인식)</span></div>
+      <div class="dz-hint">금액 집계용 · 엑셀=자동 합산 / 이미지·PDF=AI가 금액 추출 후 확인 · 아래 환율로 KRW 변환</div>
       <div class="dz-stat" id="s-cn"></div>
       <div id="files-cn" style="display:none;text-align:left;margin-top:8px"></div>
-      <input type="file" id="fi-cn" accept=".xlsx,.xls" multiple onchange="MGT.lfMulti(this,'cn')">
+      <input type="file" id="fi-cn" accept=".xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp" multiple onchange="MGT.lfMulti(this,'cn')">
     </div>
+  </div>
+
+  <!-- 📄 인보이스 증빙 (세부내역과 짝지어 보관 — 집계 X, 보관 O) -->
+  <div class="dz" id="dz-cninv" style="margin-bottom:16px" onclick="document.getElementById('fi-cninv').click()" ondragover="MGT.dzo(event,'dz-cninv')" ondragleave="MGT.dzl('dz-cninv')" ondrop="MGT.dzd(event,'cninv')">
+    <button class="dz-x" onclick="event.stopPropagation();MGT.czd('cninv')">×</button>
+    <span class="dz-ico" id="i-cninv">📄</span>
+    <div class="dz-ttl">인보이스 증빙 (发票)</div>
+    <div class="dz-dsc">위 세부내역에 대응하는 인보이스 원본 — PDF · 이미지 · 엑셀</div>
+    <div class="dz-hint">증빙 보관용 (매입원가 집계엔 미반영) · 드래그&drop / 클릭 업로드 · 게시판 "📄 인보이스 증빙" 탭에 누적</div>
+    <div class="dz-stat" id="s-cninv"></div>
+    <input type="file" id="fi-cninv" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls" multiple onchange="MGT.lfMulti(this,'cninv')">
   </div>
 
   <div style="display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);margin-bottom:16px">
@@ -932,8 +943,11 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     <div class="card-h" style="flex-wrap:wrap;gap:8px">
       <div style="display:flex;align-items:center;gap:4px">
         <button class="board-tab on" data-board="cn" onclick="MGT.switchBoardTab('cn')" style="padding:6px 12px;font-size:12.5px;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-weight:600;background:var(--acbg);color:var(--ac)">🏭 공장 인보이스</button>
+        <button class="board-tab" data-board="cninv" onclick="MGT.switchBoardTab('cninv')" style="padding:6px 12px;font-size:12.5px;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-weight:500;background:transparent;color:var(--mu)">📄 인보이스 증빙</button>
         <button class="board-tab" data-board="exp" onclick="MGT.switchBoardTab('exp')" style="padding:6px 12px;font-size:12.5px;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-weight:500;background:transparent;color:var(--mu)">🧾 지출내역서</button>
-        <span style="color:var(--ac);font-size:10px;background:var(--acbg);padding:1px 6px;border-radius:4px;margin-left:4px">전체 기간</span>
+        <select id="board-month-filter" onchange="MGT.setBoardMonth(this.value)" title="매입월 필터" style="margin-left:6px;font-size:11.5px;padding:3px 8px;border-radius:6px;border:1px solid var(--bd2);background:var(--s1);color:var(--t2);font-family:inherit;cursor:pointer">
+          <option value="">📅 전체 기간</option>
+        </select>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <span class="card-badge" id="board-stat">—</span>
@@ -34109,7 +34123,8 @@ var FILE_TYPE_LABEL = {
   'sales':  '납품매출',
   'sample': '샘플개발비',
   'exp':    '지출내역',
-  'cn':     '중국인보이스'
+  'cn':     '중국인보이스',
+  'cninv':  '중국인보이스증빙'
 };
 
 // R2 public 도메인 (워커 EK_FILES 버킷의 Public Development URL)
@@ -34294,10 +34309,11 @@ async function loadFilesFromNotion(period){
 // ══════════════════════════════════════════════════════════════
 //  📋 매입 자료실 — 공장 인보이스(cn) + 지출내역서(exp) 탭형 게시판 (전체 기간 누적)
 // ══════════════════════════════════════════════════════════════
-var _board = { cn:[], exp:[] };      // 타입별 메타 목록
-var _boardLoaded = { cn:false, exp:false };
+var _board = { cn:[], exp:[], cninv:[] };      // 타입별 메타 목록
+var _boardLoaded = { cn:false, exp:false, cninv:false };
 var _boardSearch = '';
 var _boardTab = 'cn';                // 현재 활성 탭
+var _boardMonth = '';                // 매입월 필터 ('' = 전체 기간)
 
 // 비고 텍스트에서 USD / KRW / 날짜 / 건수 / r2key 추출
 function _parseBoardMemo(memo){
@@ -34370,6 +34386,8 @@ async function loadBoardFiles(boardType){
 // 탭 전환
 function switchBoardTab(boardType){
   _boardTab = boardType;
+  _boardMonth = ''; // 탭 전환 시 매입월 필터 초기화
+  var mf = document.getElementById('board-month-filter'); if(mf) mf.value='';
   document.querySelectorAll('.board-tab').forEach(function(t){
     var on = t.getAttribute('data-board')===boardType;
     t.classList.toggle('on', on);
@@ -34400,16 +34418,21 @@ function _renderBoardRows(){
   var t = _boardTab;
   var isCn = (t==='cn');
   var rate = parseFloat((document.getElementById('usd-rate')||{}).value) || 1350;
+  // 매입월 드롭다운 옵션 갱신
+  _refreshBoardMonthOptions();
   var q = (_boardSearch||'').trim().toLowerCase();
   var list = (_board[t]||[]).filter(function(it){
+    // 매입월 필터
+    if(_boardMonth && it.period !== _boardMonth) return false;
     if(!q) return true;
     return (it.name||'').toLowerCase().indexOf(q)>=0
         || (it.period||'').toLowerCase().indexOf(q)>=0
         || (it.invDate||'').toLowerCase().indexOf(q)>=0;
   });
   if(!list.length){
-    var emptyMsg = isCn ? '등록된 공장 인보이스가 없습니다' : '등록된 지출내역서가 없습니다';
-    wrap.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-ico">📭</div><div class="empty-ttl">'+(q?'검색 결과 없음':emptyMsg)+'</div><div style="font-size:12px;color:var(--mu)">위 업로드 칸에 엑셀을 올리면 자동으로 보관·집계됩니다</div></div>';
+    var emptyMsg = isCn ? '등록된 공장 인보이스가 없습니다' : (t==='cninv' ? '등록된 인보이스 증빙이 없습니다' : '등록된 지출내역서가 없습니다');
+    var emptyHint = (t==='cninv') ? '위 "인보이스 증빙" 칸에 PDF·이미지·엑셀을 올리면 보관됩니다' : '위 업로드 칸에 엑셀을 올리면 자동으로 보관·집계됩니다';
+    wrap.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-ico">📭</div><div class="empty-ttl">'+(q?'검색 결과 없음':emptyMsg)+'</div><div style="font-size:12px;color:var(--mu)">'+emptyHint+'</div></div>';
     if(stat) stat.textContent = '0건';
     return;
   }
@@ -34422,7 +34445,7 @@ function _renderBoardRows(){
       return '<tr>'+
         '<td style="font-size:11px;color:var(--mu);white-space:nowrap">'+(it.invDate||'—')+'</td>'+
         '<td>'+_boardFileLink(it)+'</td>'+
-        '<td style="font-size:11px;color:var(--mu);white-space:nowrap">'+(it.period||'—')+'</td>'+
+        '<td style="white-space:nowrap">'+_boardMonthCell(it)+'</td>'+
         '<td class="r" style="font-weight:600">$'+(it.usd||0).toLocaleString('en-US',{maximumFractionDigits:2})+'</td>'+
         '<td class="r">'+won(krw)+'</td>'+
         '<td style="font-size:10px;color:var(--hi);white-space:nowrap">'+((it.uploadedAt||'').slice(0,10))+'</td>'+
@@ -34430,8 +34453,22 @@ function _renderBoardRows(){
       '</tr>';
     }).join('');
     rows += '<tr class="tr-tot"><td colspan="3">합계 ('+list.length+'건)</td><td class="r">$'+totalUSD.toLocaleString('en-US',{maximumFractionDigits:2})+'</td><td class="r">'+won(totalKRW)+'</td><td colspan="2"></td></tr>';
-    head = '<tr><th>인보이스 날짜</th><th>파일</th><th>업로드월</th><th class="r">USD</th><th class="r">환산 (KRW)</th><th>등록일</th><th></th></tr>';
+    head = '<tr><th>인보이스 날짜</th><th>파일</th><th>매입월</th><th class="r">USD</th><th class="r">환산 (KRW)</th><th>등록일</th><th></th></tr>';
     if(stat) stat.textContent = list.length+'건 · $'+totalUSD.toLocaleString('en-US',{maximumFractionDigits:0})+' · '+won(totalKRW);
+  } else if(t==='cninv'){
+    // 인보이스 증빙: 금액 없음 — 기간 · 파일 · 등록일만
+    rows = list.map(function(it){
+      var ext = (it.name||'').split('.').pop().toLowerCase();
+      var ico = ext==='pdf'?'📕':(['png','jpg','jpeg','webp'].indexOf(ext)>=0?'🖼️':'📄');
+      return '<tr>'+
+        '<td style="white-space:nowrap">'+_boardMonthCell(it)+'</td>'+
+        '<td>'+ico+' '+_boardFileLink(it)+'</td>'+
+        '<td style="font-size:10px;color:var(--hi);white-space:nowrap">'+((it.uploadedAt||'').slice(0,10))+'</td>'+
+        '<td style="text-align:center"><button onclick="MGT.deleteBoardFile(\''+it.pageId+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:14px" title="삭제">×</button></td>'+
+      '</tr>';
+    }).join('');
+    head = '<tr><th>매입월</th><th>증빙 파일</th><th>등록일</th><th></th></tr>';
+    if(stat) stat.textContent = list.length+'개 파일';
   } else {
     totalKRW = list.reduce(function(s,i){return s+(i.krw||0);},0);
     rows = list.map(function(it){
@@ -34458,9 +34495,83 @@ function _boardFileLink(it){
   return '<a href="'+it.pageUrl+'" target="_blank" rel="noopener" style="color:var(--mu);text-decoration:none" title="노션에서 확인">⚠️ '+it.name+'</a>';
 }
 
+// 행 단위 매입월 변경 드롭다운 (cn/cninv 공용)
+function _boardMonthCell(it){
+  var cur = it.period || '';
+  // 후보 월: 현재 게시판의 모든 period + 인보이스 날짜 월 + 현재값 + 인접월
+  var mset = {};
+  Object.keys(_board).forEach(function(k){ (_board[k]||[]).forEach(function(x){ if(x.period) mset[x.period]=1; }); });
+  if(cur) mset[cur]=1;
+  if(it.invDate && /^\d{4}-\d{2}/.test(it.invDate)) mset[it.invDate.slice(0,7)]=1;
+  // 현재 손익 기간도 후보
+  try{ var gp=(document.getElementById('g-period')||{}).value; if(gp) mset[gp]=1; }catch(e){}
+  if(/^\d{4}-\d{2}$/.test(cur)){
+    var y=+cur.slice(0,4), mo=+cur.slice(5,7);
+    var pv=new Date(y,mo-2,1), nx=new Date(y,mo,1);
+    mset[pv.getFullYear()+'-'+String(pv.getMonth()+1).padStart(2,'0')]=1;
+    mset[nx.getFullYear()+'-'+String(nx.getMonth()+1).padStart(2,'0')]=1;
+  }
+  var opts = Object.keys(mset).filter(function(m){return /^\d{4}-\d{2}$/.test(m);}).sort().reverse();
+  var h = '<select onchange="MGT.changeBoardFileMonth(\''+it.pageId+'\',this.value)" title="매입월 변경" style="font-size:10.5px;padding:1px 5px;border-radius:8px;border:1px solid var(--bd2);background:var(--s1);color:var(--t3);font-family:inherit;cursor:pointer">';
+  if(!cur) h += '<option value="" selected>—</option>';
+  opts.forEach(function(m){ h += '<option value="'+m+'"'+(m===cur?' selected':'')+'>'+m+'</option>'; });
+  h += '</select>';
+  return h;
+}
+
 function boardSearch(v){ _boardSearch = v||''; _renderBoardRows(); }
 
+// 매입월 필터 설정
+function setBoardMonth(m){ _boardMonth = m||''; _renderBoardRows(); }
+
+// 현재 탭 목록의 매입월(period)들로 드롭다운 옵션 채우기
+function _refreshBoardMonthOptions(){
+  var sel = document.getElementById('board-month-filter');
+  if(!sel) return;
+  var months = {};
+  (_board[_boardTab]||[]).forEach(function(it){ if(it.period) months[it.period]=1; });
+  var opts = Object.keys(months).sort().reverse();
+  var cur = _boardMonth;
+  var html = '<option value="">📅 전체 기간</option>';
+  opts.forEach(function(m){
+    var cnt = (_board[_boardTab]||[]).filter(function(it){return it.period===m;}).length;
+    html += '<option value="'+m+'"'+(m===cur?' selected':'')+'>📅 '+m+' ('+cnt+')</option>';
+  });
+  sel.innerHTML = html;
+  // 현재 선택값이 더 이상 목록에 없으면 전체로 리셋
+  if(cur && opts.indexOf(cur)<0){ _boardMonth=''; sel.value=''; }
+}
+
 // 게시판에서 파일 삭제 (노션 archive + R2 삭제)
+// 📅 공장 인보이스/증빙의 매입월(period) 변경 — 노션 '기간' 컬럼 갱신 + 로컬 반영
+async function changeBoardFileMonth(pageId, newMonth){
+  var t = _boardTab;
+  var item = (_board[t]||[]).find(function(x){return x.pageId===pageId;});
+  if(!item || item.period===newMonth) return;
+  var prev = item.period;
+  item.period = newMonth; // 낙관적 반영
+  _renderBoardRows();
+  try{
+    var resp = await fetch(NOTION_PROXY+'/pages/'+pageId,{
+      method:'PATCH',
+      headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},
+      body: JSON.stringify({properties:{'기간':{rich_text:[{text:{content:newMonth}}]}}})
+    });
+    if(!resp.ok){ throw new Error('HTTP '+resp.status); }
+    // S.files 캐시도 갱신
+    try{
+      if(prev && S.files[prev]){ S.files[prev] = S.files[prev].filter(function(f){return f.pageId!==pageId;}); }
+      if(!S.files[newMonth]) S.files[newMonth]=[];
+      if(item){ var copy=Object.assign({}, item); copy.period=newMonth; S.files[newMonth].unshift(copy); }
+    }catch(e){}
+    if(typeof toast==='function') toast('✓ 매입월 변경 → '+newMonth,'ok');
+  }catch(e){
+    item.period = prev; // 롤백
+    _renderBoardRows();
+    if(typeof toast==='function') toast('⚠ 매입월 변경 실패: '+e.message,'err');
+  }
+}
+
 async function deleteBoardFile(pageId){
   if(!confirm('이 파일을 삭제할까요?\n(원본 파일 + 기록 모두 삭제됩니다)')) return;
   var t = _boardTab;
@@ -34626,11 +34737,12 @@ function resetDz(type){
     'sales': ['dz-sales','i-sales','s-sales','fi-sales'],
     'sample':['dz-sample','i-sample','s-sample','fi-sample'],
     'exp':   ['dz-exp','i-exp','s-exp','fi-exp'],
-    'cn':    ['dz-cn','i-cn','s-cn','fi-cn']
+    'cn':    ['dz-cn','i-cn','s-cn','fi-cn'],
+    'cninv': ['dz-cninv','i-cninv','s-cninv','fi-cninv']
   };
   var ids=m[type]; if(!ids) return;
   var dz=document.getElementById(ids[0]); if(dz) dz.classList.remove('ok');
-  var ic=document.getElementById(ids[1]); if(ic) ic.textContent='📤';
+  var ic=document.getElementById(ids[1]); if(ic) ic.textContent= (type==='cninv'?'📄':'📤');
   var st=document.getElementById(ids[2]); if(st) st.textContent='';
   var fi=document.getElementById(ids[3]); if(fi) fi.value='';
 }
@@ -34936,7 +35048,7 @@ function dzo(e,id){e.preventDefault();document.getElementById(id).classList.add(
 function dzl(id){document.getElementById(id).classList.remove('drag')}
 function dzd(e,type){
   e.preventDefault();
-  var dzId={'sales':'dz-sales','sample':'dz-sample','exp':'dz-exp','cn':'dz-cn'}[type];
+  var dzId={'sales':'dz-sales','sample':'dz-sample','exp':'dz-exp','cn':'dz-cn','cninv':'dz-cninv'}[type];
   document.getElementById(dzId).classList.remove('drag');
   var files=e.dataTransfer.files;
   if(!files||!files.length) return;
@@ -34950,6 +35062,36 @@ function lfMulti(inp,type){
 }
 
 function rf(file,type){
+  // 📄 인보이스 증빙(cninv): 엑셀 파싱 없이 R2+노션에 원본만 보관 (PDF/이미지/엑셀 모두 허용)
+  if(type==='cninv'){
+    var _p2 = document.getElementById('g-period').value;
+    if(!_p2){ toast('기간을 먼저 선택하세요','err'); return; }
+    if(!NOTION_FILES_DB){ toast('노션 파일DB 미설정','err'); return; }
+    markDz('dz-cninv','i-cninv','s-cninv',file.name,'업로드 중...');
+    uploadFileToNotion(file, 'cninv', _p2, '증빙').then(function(meta){
+      if(meta){
+        if(!S.files[_p2]) S.files[_p2] = [];
+        S.files[_p2].unshift(meta);
+        renderFileList(_p2);
+        markDz('dz-cninv','i-cninv','s-cninv',file.name, meta.attached?'✓ 보관 완료':'⚠ R2 실패(노션만)');
+        toast(meta.attached?'📎 인보이스 증빙 보관 완료':'⚠ R2 업로드 실패','ok');
+        try{ _boardLoaded.cninv=false; if(_boardTab==='cninv') renderBoard(true); }catch(e){}
+      } else {
+        markDz('dz-cninv','i-cninv','s-cninv','','');
+        toast('⚠ 증빙 보관 실패: '+file.name,'err');
+      }
+    });
+    return;
+  }
+  // 🏭 공장 인보이스(cn): 엑셀이 아니면(이미지/PDF) AI로 금액 자동 인식
+  if(type==='cn'){
+    var _ext = (file.name||'').split('.').pop().toLowerCase();
+    var _isExcel = (_ext==='xlsx' || _ext==='xls');
+    if(!_isExcel){
+      cnAnalyzeFile(file);   // 이미지/PDF → AI 금액 추출
+      return;
+    }
+  }
   var r=new FileReader();
   r.onload=function(e){
     try{
@@ -35067,6 +35209,7 @@ function markDz(dzId,icoId,statId,fname,info){
 }
 
 function czd(type){
+  if(type==='cninv'){ resetDz('cninv'); var _ci=document.getElementById('fi-cninv'); if(_ci) _ci.value=''; return; }
   var m={
     'sales': ['dz-sales','i-sales','s-sales','fi-sales'],
     'sample':['dz-sample','i-sample','s-sample','fi-sample'],
@@ -35259,6 +35402,132 @@ function parseCN(wb){
     if(invNo||invDate) break;
   }
   return {usd:usd, rows:rows, amtCol:amtCol, lastRow:lastRow, dataRows:dataRows, invNo:invNo, invDate:invDate};
+}
+
+// ── 🏭 공장 인보이스 이미지/PDF → AI 금액 자동 인식 ──
+function _fileToBase64(file){
+  return new Promise(function(resolve){
+    var r=new FileReader();
+    r.onload=function(e){ var s=String(e.target.result); var i=s.indexOf(','); resolve(i>=0?s.slice(i+1):s); };
+    r.onerror=function(){ resolve(null); };
+    r.readAsDataURL(file);
+  });
+}
+// 이미지를 Anthropic 허용 포맷(jpeg/png/gif/webp)으로 정규화
+function _normalizeImgFile(file){
+  return new Promise(function(resolve){
+    var ALLOWED=['image/jpeg','image/png','image/gif','image/webp'];
+    var mime=(file.type||'').toLowerCase(); if(mime==='image/jpg') mime='image/jpeg';
+    var r=new FileReader();
+    r.onload=function(e){
+      var dataUrl=String(e.target.result);
+      if(ALLOWED.indexOf(mime)>=0){ var i=dataUrl.indexOf(','); resolve({media_type:mime,data:dataUrl.slice(i+1)}); return; }
+      var img=new Image();
+      img.onload=function(){
+        try{
+          var cv=document.createElement('canvas'); var mx=1600; var w=img.naturalWidth,h=img.naturalHeight;
+          if(w>mx||h>mx){ var rr=mx/Math.max(w,h); w=Math.round(w*rr); h=Math.round(h*rr); }
+          cv.width=w; cv.height=h; var ctx=cv.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,h); ctx.drawImage(img,0,0,w,h);
+          var jp=cv.toDataURL('image/jpeg',0.9); var jm=jp.indexOf(',');
+          resolve({media_type:'image/jpeg',data:jp.slice(jm+1)});
+        }catch(_){ resolve(null); }
+      };
+      img.onerror=function(){ resolve(null); };
+      img.src=dataUrl;
+    };
+    r.onerror=function(){ resolve(null); };
+    r.readAsDataURL(file);
+  });
+}
+
+async function cnAnalyzeFile(file){
+  var _p=document.getElementById('g-period').value;
+  if(!_p){ toast('기간을 먼저 선택하세요','err'); return; }
+  if(typeof anthropicKey==='undefined' || !anthropicKey || !anthropicKey.trim()){
+    toast('AI 금액 인식엔 Claude API 키가 필요합니다 (⚙ 설정). 금액은 수동 입력하세요.','err');
+    // 키 없으면 그냥 증빙처럼 보관만
+    markDz('dz-cn','i-cn','s-cn',file.name,'키 없음 — 보관만');
+    uploadFileToNotion(file,'cn',_p,'AI미인식').then(function(meta){ if(meta){ if(!S.files[_p])S.files[_p]=[]; S.files[_p].unshift(meta); renderFileList(_p); try{_boardLoaded.cn=false; if(_boardTab==='cn')renderBoard(true);}catch(e){} } });
+    return;
+  }
+  markDz('dz-cn','i-cn','s-cn',file.name,'🔍 AI 금액 인식 중...');
+  var ext=(file.name||'').split('.').pop().toLowerCase();
+  var isPdf=(ext==='pdf');
+  var prompt='첨부한 중국 공장 인보이스(INVOICE)에서 다음을 추출해 JSON으로만 답하세요. 값을 못 찾으면 빈 문자열/0.\n\n{\n  "usd": 총액 숫자만 (USD, 콤마/통화기호 제외, TOTAL/GRAND TOTAL/AMOUNT 우선),\n  "currency": "USD 또는 CNY 등 통화코드",\n  "invNo": "인보이스 번호",\n  "invDate": "YYYY-MM-DD 형식 인보이스 날짜"\n}\n\n규칙: 합계(TOTAL)가 여러 개면 최종 총액을 쓰세요. 통화가 CNY/RMB면 currency에 그대로 표기하고 usd엔 그 숫자를 넣으세요(환산하지 말것).';
+  try{
+    var content;
+    if(isPdf){
+      var b64=await _fileToBase64(file);
+      if(!b64){ throw new Error('PDF 읽기 실패'); }
+      content=[{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}},{type:'text',text:prompt}];
+    } else {
+      var n=await _normalizeImgFile(file);
+      if(!n){ throw new Error('이미지 변환 실패'); }
+      content=[{type:'image',source:{type:'base64',media_type:n.media_type,data:n.data}},{type:'text',text:prompt}];
+    }
+    var data=await callClaudeAPI({model:'claude-sonnet-4-20250514',max_tokens:500,messages:[{role:'user',content:content}]});
+    if(data.error){ throw new Error((data.error.message||data.error||'').toString().slice(0,200)); }
+    var text=(data.content||[]).filter(function(c){return c.type==='text';}).map(function(c){return c.text;}).join('').trim();
+    var m=text.match(/\{[\s\S]*\}/); var parsed=m?JSON.parse(m[0]):null;
+    if(!parsed){ throw new Error('AI 응답 파싱 실패'); }
+    var usd=parseFloat(String(parsed.usd).replace(/[^\d.]/g,''))||0;
+    // 확인/수정 모달 표시 (사용자 확정 후 집계)
+    _showCnConfirm(file, _p, {usd:usd, currency:parsed.currency||'USD', invNo:parsed.invNo||'', invDate:parsed.invDate||''});
+  }catch(e){
+    markDz('dz-cn','i-cn','s-cn',file.name,'⚠ 인식 실패 — 수동 입력');
+    _showCnConfirm(file, _p, {usd:0, currency:'USD', invNo:'', invDate:'', _failed:e.message});
+  }
+}
+
+// AI 인식 결과 확인/수정 → 확정 시 집계 + 보관
+function _showCnConfirm(file, period, info){
+  var existing=document.getElementById('cnConfirmOv'); if(existing) existing.remove();
+  var ov=document.createElement('div'); ov.id='cnConfirmOv';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  var warn=info._failed?'<div style="font-size:11px;color:var(--rd);margin-bottom:8px">AI 인식 실패('+info._failed+') — 직접 입력해 주세요</div>':'<div style="font-size:11px;color:var(--gr);margin-bottom:8px">✓ AI가 인식한 값입니다. 확인 후 수정하세요.</div>';
+  ov.innerHTML='<div style="background:var(--s1);border-radius:14px;padding:22px;max-width:420px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.25)">'
+    +'<div style="font-size:15px;font-weight:700;margin-bottom:4px">🏭 공장 인보이스 금액 확인</div>'
+    +'<div style="font-size:11px;color:var(--mu);margin-bottom:12px;word-break:break-all">📄 '+file.name+'</div>'
+    +warn
+    +'<div style="display:grid;grid-template-columns:auto 1fr;gap:9px 10px;align-items:center;font-size:12.5px">'
+    +'<label>금액</label><div style="display:flex;gap:6px"><input id="cnc-usd" type="number" step="0.01" value="'+(info.usd||'')+'" style="flex:1;border:1px solid var(--bd2);border-radius:7px;padding:7px 9px;font-size:13px;font-family:inherit"><input id="cnc-cur" value="'+(info.currency||'USD')+'" style="width:64px;border:1px solid var(--bd2);border-radius:7px;padding:7px 9px;font-size:12px;font-family:inherit;text-align:center"></div>'
+    +'<label>인보이스 번호</label><input id="cnc-no" value="'+(info.invNo||'')+'" style="border:1px solid var(--bd2);border-radius:7px;padding:7px 9px;font-size:12px;font-family:inherit">'
+    +'<label>인보이스 날짜</label><input id="cnc-date" type="date" value="'+(info.invDate||'')+'" style="border:1px solid var(--bd2);border-radius:7px;padding:7px 9px;font-size:12px;font-family:inherit">'
+    +'<label>매입월</label><input id="cnc-month" value="'+period+'" placeholder="YYYY-MM" style="border:1px solid var(--bd2);border-radius:7px;padding:7px 9px;font-size:12px;font-family:inherit">'
+    +'</div>'
+    +'<div id="cnc-krw" style="font-size:11px;color:var(--mu);margin-top:8px"></div>'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">'
+    +'<button onclick="document.getElementById(\'cnConfirmOv\').remove()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--bd2);background:var(--s2);cursor:pointer;font-family:inherit;font-size:12.5px">취소</button>'
+    +'<button id="cnc-save" style="padding:8px 18px;border-radius:8px;border:none;background:var(--ac);color:#fff;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600">저장 + 집계</button>'
+    +'</div></div>';
+  document.body.appendChild(ov);
+  var rate=parseFloat((document.getElementById('usd-rate')||{}).value)||1350;
+  function updKrw(){ var u=parseFloat(document.getElementById('cnc-usd').value)||0; var cur=(document.getElementById('cnc-cur').value||'USD').toUpperCase(); document.getElementById('cnc-krw').textContent = cur==='USD'?('환산 ≈ '+won(Math.round(u*rate))+' (환율 '+rate+')'):(cur+' '+u+' — USD 아님: 환율 적용 주의'); }
+  document.getElementById('cnc-usd').addEventListener('input',updKrw);
+  document.getElementById('cnc-cur').addEventListener('input',updKrw); updKrw();
+  document.getElementById('cnc-save').addEventListener('click', function(){
+    var usd=parseFloat(document.getElementById('cnc-usd').value)||0;
+    var cur=(document.getElementById('cnc-cur').value||'USD').toUpperCase();
+    var no=document.getElementById('cnc-no').value.trim();
+    var date=document.getElementById('cnc-date').value.trim();
+    var month=document.getElementById('cnc-month').value.trim()||period;
+    if(usd<=0){ toast('금액을 입력하세요','err'); return; }
+    // 집계 반영 (parseCN 결과와 동일한 형태로 S.cnList에 추가)
+    if(!S.cnList) S.cnList=[];
+    S.cnList.push({fname:file.name, usd:usd, lastRow:null, invNo:no, invDate:date, _aiImg:true, _cur:cur});
+    S.cn={usd:usd, invNo:no, invDate:date};
+    var totalUSD=S.cnList.reduce(function(s,i){return s+i.usd;},0);
+    markDz('dz-cn','i-cn','s-cn',file.name,S.cnList.length+'개 · '+cur+' '+totalUSD.toFixed(0)+(date?' ('+date+')':''));
+    renderPurchase(); calcPnL(); autoSyncNotion();
+    if(month) syncCogsToNotion(month);
+    // R2+노션 보관 (금액/날짜/번호 메타 포함)
+    var extra=cur+' '+usd.toFixed(0)+(date?' / '+date:'')+(no?' / '+no:'');
+    uploadFileToNotion(file,'cn',month,extra).then(function(meta){
+      if(meta){ if(!S.files[month])S.files[month]=[]; S.files[month].unshift(meta); renderFileList(month); try{_boardLoaded.cn=false; if(_boardTab==='cn')renderBoard(true);}catch(e){} toast('✓ 인보이스 저장 + 집계 완료','ok'); }
+      else toast('⚠ 보관 실패 (집계는 반영됨)','err');
+    });
+    document.getElementById('cnConfirmOv').remove();
+  });
 }
 
 function renderSales(){
@@ -37522,6 +37791,7 @@ return {
   dzo: (typeof dzo!=="undefined"?dzo:undefined),
   dzl: (typeof dzl!=="undefined"?dzl:undefined),
   dzd: (typeof dzd!=="undefined"?dzd:undefined),
+  cnAnalyzeFile: (typeof cnAnalyzeFile!=="undefined"?cnAnalyzeFile:undefined),
   lf: (typeof lf!=="undefined"?lf:undefined),
   lfMulti: (typeof lfMulti!=="undefined"?lfMulti:undefined),
   czd: (typeof czd!=="undefined"?czd:undefined),
@@ -37537,6 +37807,8 @@ return {
   renderExpBoard: (typeof renderExpBoard!=="undefined"?renderExpBoard:undefined),
   switchBoardTab: (typeof switchBoardTab!=="undefined"?switchBoardTab:undefined),
   boardSearch: (typeof boardSearch!=="undefined"?boardSearch:undefined),
+  setBoardMonth: (typeof setBoardMonth!=="undefined"?setBoardMonth:undefined),
+  changeBoardFileMonth: (typeof changeBoardFileMonth!=="undefined"?changeBoardFileMonth:undefined),
   deleteBoardFile: (typeof deleteBoardFile!=="undefined"?deleteBoardFile:undefined),
   loadBoardFiles: (typeof loadBoardFiles!=="undefined"?loadBoardFiles:undefined),
   addOtherSales: (typeof addOtherSales!=="undefined"?addOtherSales:undefined),
