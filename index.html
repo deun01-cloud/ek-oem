@@ -6193,7 +6193,7 @@ function renderInvoiceHistory(){
     return !v._consolidatedInvoiceId;
   }).length;
   // 진행중 탭에선 입금완료 칩 제외, 입금완료 탭에선 입금완료 칩만
-  var statuses = subTab==='done' ? ['전체','입금완료'] : ['전체','발행완료','청구완료','미수'];
+  var statuses = subTab==='done' ? ['전체','입금완료'] : ['전체','발행완료','청구완료'];
 
   var h='';
   // 서브탭 (미청구 → 청구 → 완료 + 합본 + 모든 명세서)
@@ -7061,7 +7061,7 @@ function openInvDetail(id){
   // 상태
   b+='<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--s2);border-radius:6px;border:1px solid var(--bdr)">';
   b+='<span style="font-size:12px;color:var(--t2);font-weight:600">청구 상태</span><div style="display:flex;gap:6px">';
-  ['발행완료','청구완료','미수','입금완료'].forEach(function(s){
+  ['발행완료','청구완료','입금완료'].forEach(function(s){
     var on=v.status===s;
     b+='<button data-sv="'+s+'" data-vid="'+v.id+'" onclick="updateInvStatus(this.dataset.vid,this.dataset.sv);renderInvoiceHistory();closeM(\'mInvDetail\')" style="padding:5px 12px;border-radius:14px;font-size:11.5px;cursor:pointer;font-family:inherit;border:1px solid '+(on?(SC[s]||'var(--bdr)'):'var(--bdr)')+';background:'+(on?'rgba(0,0,0,.05)':'var(--s1)')+';color:'+(on?(SC[s]||'var(--t2)'):'var(--t2)')+'">'+s+'</button>';
   });
@@ -7106,6 +7106,21 @@ function updateInvStatus(id,status){
     return;
   }
   v.status=status;
+  // 📌 status 변경 시 밑단 플래그도 일치시켜 stage(탭)가 정확히 따라오게 한다.
+  //    발행완료→미청구(draft) / 청구완료→청구(billing) / 입금완료→완료(done)
+  if(!v._isConsolidated){
+    if(status==='발행완료'){
+      // 발행만 됨 — 아직 청구/입금/계산서 전. 미청구로.
+      v._paid=false; v._taxInvoiceIssued=false; v._shipped=false; v.paymentRatio=0;
+    } else if(status==='청구완료' || status==='미수'){
+      // 청구 단계 — 출고/청구는 됐지만 입금·계산서 미완. 청구 탭으로.
+      v._shipped=true; v._paid=false; v._taxInvoiceIssued=false;
+      if((+v.paymentRatio||0)>=100) v.paymentRatio=0;
+    } else if(status==='입금완료'){
+      // 입금 + 계산서까지 완료 — 완료 탭으로.
+      v._paid=true; v._taxInvoiceIssued=true; v._shipped=true; v.paymentRatio=100;
+    }
+  }
   // 4-A: status 변경에 따라 _invStage도 자동 갱신 (단계만 갱신, 동기화는 아래서 1회)
   if(!v._isConsolidated && typeof inferInvStage === 'function'){
     v._invStage = inferInvStage(v);
@@ -7308,6 +7323,7 @@ window.dedupeConsolidations = function(dryRun, ignoreMonth){
   console.log(`\n✓ 중복 합본 ${removed}건 제거 완료`);
   if(typeof showToast==='function') showToast(`✓ 중복 합본 ${removed}건 정리됨`, 'var(--grn)', 4000);
 };
+
 
 // ── 노션 archive 실패 재시도 큐 ──
 function _loadArchiveRetryQueue(){
@@ -8423,11 +8439,15 @@ function _applyRemoteItem(type, item, ts, fromClient){
     const k = x._notionId || (x.id !== undefined ? String(x.id) : null);
     return k === remoteKey;
   });
-  // 📑 합본 청구서: _notionId/id가 엇갈려도 자연키(거래처+청구월+포함ID)로 매칭해 중복 방지
+  // 📑 합본 청구서: _notionId/id가 엇갈려도 안정적 자연키(_consUid, 청구월 무관)로 매칭해 중복 방지
   let idx2 = idx;
   if(idx2 < 0 && item._isConsolidated){
-    const _ck = 'cons:'+(item.vendor||'')+'_'+(item.consolidationMonth||'')+'_'+((item.includedInvoiceIds||[]).slice().map(String).sort().join(','));
-    idx2 = arr.findIndex(x => x._isConsolidated && ('cons:'+(x.vendor||'')+'_'+(x.consolidationMonth||'')+'_'+((x.includedInvoiceIds||[]).slice().map(String).sort().join(','))) === _ck);
+    const _uid = item._consUid || _consNaturalUid(item.vendor, (item.includedChildKeys && item.includedChildKeys.length ? item.includedChildKeys : (item.includedInvoiceIds||[]).map(String)));
+    idx2 = arr.findIndex(x => {
+      if(!x._isConsolidated) return false;
+      const xu = x._consUid || _consNaturalUid(x.vendor, (x.includedChildKeys && x.includedChildKeys.length ? x.includedChildKeys : _consChildStableKeys(x)));
+      return xu === _uid;
+    });
   }
   if(idx2 >= 0){
     const local = arr[idx2];
@@ -8438,6 +8458,12 @@ function _applyRemoteItem(type, item, ts, fromClient){
     // 합본은 자연키로 매칭됐을 수 있으므로 항상 로컬 id 유지 (id 흔들림 방지)
     if(item._isConsolidated && local.id !== undefined){
       merged.id = local.id;
+      // 📑 안정키 보존: 둘 중 존재하는 값 유지
+      merged._consUid = local._consUid || item._consUid || _consNaturalUid(merged.vendor, (merged.includedChildKeys||[]));
+      if((!merged.includedChildKeys || !merged.includedChildKeys.length) && local.includedChildKeys && local.includedChildKeys.length) merged.includedChildKeys = local.includedChildKeys;
+      // 📑 자식 로컬ID는 이 기기 기준이 더 정확 — 로컬에 유효 자식이 있으면 로컬 것 유지 (원격의 남의 기기 id로 덮어써 0건 되는 것 방지)
+      const _localValid = (local.includedInvoiceIds||[]).filter(cid=>invoiceHistory.find(x=>!x._isConsolidated && String(x.id)===String(cid)));
+      if(_localValid.length) merged.includedInvoiceIds = local.includedInvoiceIds;
     } else if(local.id !== undefined && (item.id === undefined || item.id === local._notionId)){
       merged.id = local.id; // 로컬 id 유지
     }
@@ -8448,6 +8474,19 @@ function _applyRemoteItem(type, item, ts, fromClient){
     const newItem = { ...item, _ts: item._ts || ts };
     if(typeof genId === 'function' && (!newItem.id || String(newItem.id) === String(newItem._notionId))){
       newItem.id = genId();
+    }
+    // 📑 합본이면 자식 로컬ID를 이 기기 기준으로 재해석 (보낸 기기의 로컬id는 여기서 무효 → 0건 방지)
+    if(newItem._isConsolidated){
+      if(!newItem._consUid) newItem._consUid = _consNaturalUid(newItem.vendor, (newItem.includedChildKeys||[]));
+      if(Array.isArray(newItem.includedChildKeys) && newItem.includedChildKeys.length){
+        const _mapped = [];
+        newItem.includedChildKeys.forEach(function(sk){
+          // 안정키로 이 기기의 명세서 찾기
+          var child = invoiceHistory.find(function(x){ return !x._isConsolidated && _invStableKey(x)===sk; });
+          if(child){ _mapped.push(child.id); child._consolidatedInvoiceId = String(newItem.id); }
+        });
+        if(_mapped.length) newItem.includedInvoiceIds = _mapped;
+      }
     }
     arr.push(newItem);
   }
@@ -9378,6 +9417,8 @@ function mapNotionInvoice(row){
     // 합본 청구서 (2-A 단계)
     _isConsolidated:        !!np.check(p['합본청구서']),
     includedInvoiceIds:     parseIds(np.text(p['포함명세서IDs'])),
+    _consUid:               (function(){ try{ var o=JSON.parse(np.text(p['합본키'])||'{}'); return o.uid||undefined; }catch(e){ return undefined; } })(),
+    includedChildKeys:      (function(){ try{ var o=JSON.parse(np.text(p['합본키'])||'{}'); return Array.isArray(o.childKeys)?o.childKeys:[]; }catch(e){ return []; } })(),
     prepaidDeducted:        np.number(p['선금차감'])||0,
     chargeAmount:           np.number(p['청구액'])||0,
     consolidationMonth:     np.text(p['청구월']),
@@ -9535,8 +9576,9 @@ async function pullFromNotion(opts){
         // 📑 합본 청구서: ordNo가 비어있어 일반 명세서 키로는 식별 불가.
         //    vendor + 청구월 + 포함명세서ID집합으로 유일 식별 (중복 합본 생성 방지)
         if(item._isConsolidated){
-          const ids = (item.includedInvoiceIds||[]).slice().map(String).sort().join(',');
-          return 'cons:'+(item.vendor||'')+'_'+(item.consolidationMonth||'')+'_'+ids;
+          // 📑 청구월 무관 안정키 — 같은 명세서 묶음이면 월이 달라도 동일 합본으로 판정 (중복 방지)
+          const ck = (item.includedChildKeys && item.includedChildKeys.length) ? item.includedChildKeys.slice() : (item.includedInvoiceIds||[]).map(String);
+          return item._consUid || ('consU:'+(item.vendor||'')+'_'+ck.slice().sort().join(','));
         }
         if(item.no) return 'no:'+item.no; // 발주
         if(item.ordNo && item.issuedAt) return 'inv:'+item.ordNo+'_'+item.issuedAt+'_'+(item.vendor||''); // 거래명세서
@@ -9756,8 +9798,8 @@ async function pullFromNotion(opts){
       const _natKey=(item)=>{
         if(!item) return null;
         if(item._isConsolidated){
-          const ids=(item.includedInvoiceIds||[]).slice().map(String).sort().join(',');
-          return 'cons:'+(item.vendor||'')+'_'+(item.consolidationMonth||'')+'_'+ids;
+          const ck=(item.includedChildKeys && item.includedChildKeys.length) ? item.includedChildKeys.slice() : (item.includedInvoiceIds||[]).map(String);
+          return item._consUid || ('consU:'+(item.vendor||'')+'_'+ck.slice().sort().join(','));
         }
         if(item.ordNo && item.issuedAt) return 'inv:'+item.ordNo+'_'+item.issuedAt+'_'+(item.vendor||'');
         return null;
@@ -13863,8 +13905,8 @@ async function syncInvoiceToNotion(inv, update){
     "청구액":{"number":+inv.chargeAmount||0},
     "청구월":{"rich_text":[{"text":{"content":(inv.consolidationMonth||'').slice(0,20)}}]},
     "합본ID":{"rich_text":[{"text":{"content":(inv._consolidatedInvoiceId||'').toString().slice(0,100)}}]},
-    // 합본 자체의 안정적 식별 키 (로컬 id) — 중복 페이지 생성 방지용
-    "합본키":{"rich_text":[{"text":{"content":(inv._isConsolidated?String(inv.id):'').slice(0,100)}}]},
+    // 합본 자체의 기기 간 안정적 식별 키(_consUid) + 자식 안정키 — 중복/0건 방지용
+    "합본키":{"rich_text":chunkRichText(inv._isConsolidated ? JSON.stringify({uid:inv._consUid||'', childKeys:inv.includedChildKeys||[]}) : '')},
     // 5-A: 명세서별 출고완료 플래그
     "명세서출고완료":{"checkbox":!!inv._shipped},
     // 📅 결산월 — 월별 결산 그룹핑 키 (발행월과 다를 수 있음). 비었으면 발행월로 간주.
@@ -13891,13 +13933,14 @@ async function syncInvoiceToNotion(inv, update){
   if(inv._isConsolidated){
     try{
       const rows=await nQueryAll(notionCfg.invDb);
-      const myKey = String(inv.id);
+      const myUid = inv._consUid || ('consU:'+(inv.vendor||'')+'_'+((inv.includedChildKeys&&inv.includedChildKeys.length?inv.includedChildKeys:(inv.includedInvoiceIds||[]).map(String)).slice().sort().join(',')));
       const existing=rows.find(r=>{
         const rp=r.properties||{};
         if(!np.check(rp['합본청구서'])) return false;
-        // 합본키 컬럼이 있으면 그걸로, 없으면 합본ID/포함명세서로 폴백
-        const rowKey = (np.text(rp['합본키'])||'').trim();
-        if(rowKey) return rowKey === myKey;
+        // 합본키(JSON: {uid, childKeys})에서 uid 비교 — 청구월 무관 안정키
+        let rowUid='';
+        try{ const o=JSON.parse(np.text(rp['합본키'])||'{}'); rowUid=o.uid||''; }catch(e){}
+        if(rowUid) return rowUid === myUid;
         // 폴백: 같은 고객사 + 동일 포함명세서 집합
         if(np.title(rp['고객사']) !== (inv.vendor||'')) return false;
         const rowIds = (np.text(rp['포함명세서IDs'])||'');
@@ -14118,6 +14161,8 @@ function load(){try{const s=localStorage.getItem(SK.s);if(s)samples=JSON.parse(s
   }
   // 📌 거래명세서 부동소수점 id 정규화 (옛 데이터 버그 복구) — 공용 함수 호출
   normalizeInvoiceIds();
+  // 📑 기존 합본 안정키 백필 (이번 수정 이전 데이터 — 중복/0건 방지 키 생성)
+  try{ if(typeof _backfillConsUids==='function') _backfillConsUids(); }catch(e){}
 }catch(e){}}
 
 // ════════════════════════════════
@@ -14167,9 +14212,30 @@ function normalizeInvoiceIds(){
   return _fixed;
 }
 
-// ════════════════════════════════
-// 데모/테스트 데이터 — 콘솔에서 호출
-// 사용법:
+// 📑 기존 합본에 안정키(_consUid, includedChildKeys) 백필 — 이번 수정 이전 데이터 복구용
+function _backfillConsUids(){
+  if(typeof invoiceHistory==='undefined' || !Array.isArray(invoiceHistory)) return;
+  var changed=0;
+  invoiceHistory.forEach(function(c){
+    if(!c._isConsolidated) return;
+    if(!Array.isArray(c.includedChildKeys) || !c.includedChildKeys.length){
+      var keys=[];
+      (c.includedInvoiceIds||[]).forEach(function(cid){
+        var child=invoiceHistory.find(function(x){ return !x._isConsolidated && String(x.id)===String(cid); });
+        if(child) keys.push(_invStableKey(child));
+      });
+      if(keys.length){ c.includedChildKeys=keys; changed++; }
+    }
+    if(!c._consUid){
+      var ck=(c.includedChildKeys && c.includedChildKeys.length)?c.includedChildKeys:(c.includedInvoiceIds||[]).map(String);
+      c._consUid='consU:'+(c.vendor||'')+'_'+ck.slice().sort().join(',');
+      changed++;
+    }
+  });
+  if(changed){ try{ localStorage.setItem(SK.iv, JSON.stringify(invoiceHistory)); }catch(e){} }
+  return changed;
+}
+
 //   window.loadDemoData()  → 테스트용 발주서 추가 (_demo:true 마커)
 //   window.clearDemoData() → 데모 데이터만 제거
 //   window.demoStatus()    → 데모 데이터 현황 확인
@@ -29524,6 +29590,28 @@ function calcConsolidationSummary(invoices){
   };
 }
 
+// 📑 명세서의 기기 간 안정적 식별키 — _notionId 우선, 없으면 발주번호+출고일 자연키, 그래도 없으면 로컬 id
+function _invStableKey(v){
+  if(!v) return '';
+  if(v._notionId) return 'n:'+v._notionId;
+  if(v.ordNo) return 'o:'+v.ordNo+'_'+(v.shipDate||v.issuedAt||'');
+  return 'l:'+String(v.id);
+}
+// 📑 합본의 기기 간 안정적 자연키 — 청구월 제외(월이 달라도 같은 묶음이면 동일키) + 거래처 + 자식 안정키 집합
+function _consNaturalUid(vendor, childStableKeys){
+  return 'consU:'+(vendor||'')+'_'+(childStableKeys||[]).slice().sort().join(',');
+}
+// 합본 레코드에서 자식 안정키 목록 얻기 (저장돼 있으면 그걸, 없으면 현재 invoiceHistory에서 계산)
+function _consChildStableKeys(cons){
+  if(cons && Array.isArray(cons.includedChildKeys) && cons.includedChildKeys.length) return cons.includedChildKeys.slice();
+  var keys=[];
+  (cons && cons.includedInvoiceIds || []).forEach(function(cid){
+    var child = invoiceHistory.find(function(x){ return !x._isConsolidated && String(x.id)===String(cid); });
+    if(child) keys.push(_invStableKey(child));
+  });
+  return keys;
+}
+
 // 합본 청구서 작성 (실제 발행)
 // vendor + month 조합으로 생성
 // 묶인 명세서들에 _consolidatedInvoiceId 표시 → 다른 합본에 중복 안 묶임
@@ -29540,10 +29628,11 @@ function createConsolidatedInvoice(vendor, month, options){
     ? candidates.filter(v => selectedIds.has(String(v.id)))
     : candidates;
   if(!targets.length) return null;
-  // 📑 중복 합본 방지: 같은 (vendor + 청구월 + 포함명세서ID집합) 합본이 이미 있으면 그것을 반환
-  const _wantKey = 'cons:'+(vendor||'')+'_'+(month||'')+'_'+targets.map(v=>String(v.id)).sort().join(',');
+  // 📑 중복 합본 방지: 청구월과 무관하게 (거래처 + 묶인 명세서 안정키 집합)으로 기존 합본 탐색
+  const _childKeys = targets.map(v=>_invStableKey(v));
+  const _wantUid = _consNaturalUid(vendor, _childKeys);
   const _existing = invoiceHistory.find(v => v._isConsolidated &&
-    ('cons:'+(v.vendor||'')+'_'+(v.consolidationMonth||'')+'_'+((v.includedInvoiceIds||[]).slice().map(String).sort().join(','))) === _wantKey);
+    ((v._consUid || _consNaturalUid(v.vendor, _consChildStableKeys(v))) === _wantUid));
   if(_existing){
     if(typeof showToast==='function') showToast('이미 동일한 합본 청구서가 있습니다','var(--org)',2200);
     return _existing;
@@ -29555,7 +29644,9 @@ function createConsolidatedInvoice(vendor, month, options){
   const invRec = {
     id: newId,
     _isConsolidated: true,                    // 합본 식별 마커
-    includedInvoiceIds: targets.map(v=>v.id), // 묶인 명세서 ID들
+    _consUid: _wantUid,                       // 📑 기기 간 안정적 식별키 (청구월 무관)
+    includedInvoiceIds: targets.map(v=>v.id), // 묶인 명세서 로컬 ID들
+    includedChildKeys: _childKeys,            // 📑 묶인 명세서 안정키 (기기 간 자식 해석용)
     consolidationMonth: month,                // 청구월
     issuedAt: today,
     vendor,
@@ -34609,8 +34700,6 @@ function _invoiceItemHtml(it, rate, krw){
   } else {
     ico = it.detail ? '🏭' : '📄';
     title = it.invNo ? ('INV '+it.invNo) : ((it.detail&&it.detail.name)||(it.proof&&it.proof.name)||'(인보이스)');
-    if(it.detail) chips += '<span class="bchip bchip-detail">세부내역</span>';
-    if(it.proof) chips += '<span class="bchip bchip-proof">증빙</span>';
     if(!it.usd && !it.krw) chips += '<span class="bchip bchip-need">금액없음</span>';
   }
   // 매입월 드롭다운
