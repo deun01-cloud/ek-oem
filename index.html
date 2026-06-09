@@ -36156,10 +36156,12 @@ function saveFixedNow(){
 
 async function syncFixedToNotion(){
   if(_fixedSyncing) return;
-  if(!S.fixed.length) return;
+  // 빈 배열이어도, 의도적으로 0개로 만든 경우(전체 삭제) 반영해야 하므로 가드 제거.
+  // 단, 모든 항목이 항목명/금액 모두 비면 저장 의미 없음 → 그 경우만 스킵.
+  var meaningful = (S.fixed||[]).filter(function(f){ return (f.label&&f.label.trim()) || f.amount; });
   _fixedSyncing = true;
   var seen2={};
-  S.fixed = S.fixed.filter(function(f){
+  S.fixed = (S.fixed||[]).filter(function(f){
     var k=(f.label||'').trim()+'__'+f.amount;
     if(seen2[k]) return false;
     seen2[k]=true;
@@ -36167,51 +36169,79 @@ async function syncFixedToNotion(){
   });
   try{
     var qResp=await fetch(NOTION_PROXY+'/databases/'+NOTION_FIXED_DB+'/query',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({page_size:100})});
-    if(!qResp.ok){ _fixedSyncing=false; return; }
+    if(!qResp.ok){ console.warn('고정비 동기화: 조회 실패', qResp.status); _fixedSyncing=false; return; }
     var qData=await qResp.json();
     var toDelete=(qData.results||[]).filter(function(p){return !p.archived;});
     for(var i=0;i<toDelete.length;i++){
       await fetch(NOTION_PROXY+'/pages/'+toDelete[i].id,{method:'PATCH',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({archived:true})});
     }
+    var writeErr=0;
     for(var i=0;i<S.fixed.length;i++){
       var f=S.fixed[i];
-      await fetch(NOTION_PROXY+'/pages',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({
-        parent:{database_id:NOTION_FIXED_DB},
-        properties:{
-          '항목명':{title:[{text:{content:f.label||''}}]},
-          '금액':  {number:Math.round(f.amount)||0},
-          '순서':  {number:i},
-          '사용여부':{checkbox:true}
-        }
-      })});
+      if(!(f.label&&f.label.trim()) && !f.amount) continue; // 완전 빈 행은 저장 스킵
+      var fullProps={
+        '항목명':{title:[{text:{content:f.label||''}}]},
+        '금액':  {number:Math.round(f.amount)||0},
+        '순서':  {number:i},
+        '사용여부':{checkbox:true}
+      };
+      var r=await fetch(NOTION_PROXY+'/pages',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({parent:{database_id:NOTION_FIXED_DB}, properties:fullProps})});
+      if(!r.ok){
+        // 컬럼(순서/사용여부)이 없어서 실패했을 수 있음 → 최소 컬럼으로 재시도
+        var errTxt=''; try{ errTxt=await r.text(); }catch(_){}
+        console.warn('고정비 저장 실패('+r.status+') — 최소 컬럼 재시도:', errTxt.slice(0,150));
+        var minProps={'항목명':{title:[{text:{content:f.label||''}}]},'금액':{number:Math.round(f.amount)||0}};
+        var r2=await fetch(NOTION_PROXY+'/pages',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({parent:{database_id:NOTION_FIXED_DB}, properties:minProps})});
+        if(!r2.ok){ writeErr++; var e2=''; try{e2=await r2.text();}catch(_){}; console.warn('고정비 최소 저장도 실패:', e2.slice(0,150)); }
+      }
     }
-    document.getElementById('notion-sync-status').textContent='✅ 고정비 Notion 동기화 완료';
+    var statusEl=document.getElementById('notion-sync-status');
+    if(statusEl) statusEl.textContent = writeErr? ('⚠️ 고정비 '+writeErr+'건 저장 실패 — 노션 DB 컬럼(항목명/금액) 확인') : '✅ 고정비 Notion 동기화 완료';
+    if(writeErr && typeof toast==='function') toast('⚠ 고정비 '+writeErr+'건 저장 실패 — 노션 DB 컬럼명을 확인하세요','err');
   }catch(e){ console.warn('고정비 동기화 실패:', e.message); }
   finally { _fixedSyncing = false; }
 }
 
 async function loadFixedFromNotion(){
   try{
+    // 1차: 순서 정렬로 조회. 순서 컬럼이 없어서 400이 나면 정렬 없이 재시도.
     var resp=await fetch(NOTION_PROXY+'/databases/'+NOTION_FIXED_DB+'/query',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({page_size:100,sorts:[{property:'순서',direction:'ascending'}]})});
-    if(!resp.ok) return false;
+    if(!resp.ok){
+      console.warn('고정비 조회 1차 실패('+resp.status+') — 정렬 없이 재시도');
+      resp=await fetch(NOTION_PROXY+'/databases/'+NOTION_FIXED_DB+'/query',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({page_size:100})});
+      if(!resp.ok){ console.warn('고정비 조회 2차도 실패:', resp.status); return false; }
+    }
     var data=await resp.json();
     var pages=(data.results||[]).filter(function(p){return !p.archived;});
     if(!pages.length) return false;
     var seen={};
     var items=[];
     pages.forEach(function(p){
-      var props=p.properties;
-      var label=props['항목명']&&props['항목명'].title&&props['항목명'].title[0]?props['항목명'].title[0].plain_text.trim():'';
-      var amount=props['금액']&&props['금액'].number!=null?props['금액'].number:0;
-      if(!label) return;
-      var key=label+'__'+amount;
-      if(seen[key]) return;
-      seen[key]=true;
-      items.push({label:label, amount:amount});
+      try{
+        var props=p.properties||{};
+        // 항목명: title 또는 rich_text 모두 허용 (스키마 차이 방어)
+        var label='';
+        var tp=props['항목명'];
+        if(tp){
+          if(tp.title&&tp.title[0]) label=(tp.title[0].plain_text||tp.title[0].text&&tp.title[0].text.content||'');
+          else if(tp.rich_text&&tp.rich_text[0]) label=(tp.rich_text[0].plain_text||'');
+        }
+        label=(label||'').trim();
+        var amount=(props['금액']&&props['금액'].number!=null)?props['금액'].number:0;
+        // 순서(정렬용) 보관
+        var ord=(props['순서']&&props['순서'].number!=null)?props['순서'].number:9999;
+        if(!label && !amount) return; // 완전히 빈 행만 스킵 (금액만 있으면 살림)
+        var key=label+'__'+amount;
+        if(seen[key]) return;
+        seen[key]=true;
+        items.push({label:label, amount:amount, _ord:ord});
+      }catch(rowErr){ console.warn('고정비 행 파싱 스킵:', rowErr.message); }
     });
     if(!items.length) return false;
+    // 클라이언트에서 순서 정렬 (서버 정렬 실패 대비)
+    items.sort(function(a,b){ return (a._ord||0)-(b._ord||0); });
+    items.forEach(function(it){ delete it._ord; });
     S.fixed=items;
-    /* localStorage.setItem('ek_fixed',JSON.stringify(S.fixed)); 제거됨 */
     _fixedLoading = true; try{window._mgtFixedLoading=true;}catch(e){}
     renderFixed();
     _fixedLoading = false; try{window._mgtFixedLoading=false;}catch(e){}
@@ -38073,6 +38103,8 @@ return {
   renderFixed: (typeof renderFixed!=="undefined"?renderFixed:undefined),
   saveFixed: (typeof saveFixed!=="undefined"?saveFixed:undefined),
   saveFixedNow: (typeof saveFixedNow!=="undefined"?saveFixedNow:undefined),
+  syncFixedToNotion: (typeof syncFixedToNotion!=="undefined"?syncFixedToNotion:undefined),
+  loadFixedFromNotion: (typeof loadFixedFromNotion!=="undefined"?loadFixedFromNotion:undefined),
   addFixed: (typeof addFixed!=="undefined"?addFixed:undefined),
   updateFixedTotal: (typeof updateFixedTotal!=="undefined"?updateFixedTotal:undefined),
   resetFixedCosts: (typeof resetFixedCosts!=="undefined"?resetFixedCosts:undefined),
