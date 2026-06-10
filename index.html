@@ -6124,17 +6124,23 @@ function renderInvoiceHistory(){
           if(ch){ seenChildIds[String(ch.id)] = ch; }
         });
       }
-      // 역참조 설정
+      // 역참조 설정 + includedInvoiceIds를 '실제 해석된 자식'으로 재구성(중복/유령 id 제거)
+      var _rebuiltIds = [];
       Object.keys(seenChildIds).forEach(function(k){
         var ch = seenChildIds[k];
         if(String(ch._consolidatedInvoiceId) !== String(c.id)){
           ch._consolidatedInvoiceId = String(c.id);
           _reconciled++;
         }
-        // includedInvoiceIds에도 이 자식 id가 반영되도록 보정 (childKeys로만 잡힌 경우)
-        c.includedInvoiceIds = c.includedInvoiceIds || [];
-        if(c.includedInvoiceIds.map(String).indexOf(String(ch.id)) < 0) c.includedInvoiceIds.push(ch.id);
+        if(_rebuiltIds.indexOf(ch.id) < 0) _rebuiltIds.push(ch.id);
       });
+      // includedInvoiceIds는 항상 실제 자식 id 집합으로 정규화 (다른 기기 로컬id/중복 잔재 제거)
+      //   단, 해석된 자식이 한 건이라도 있을 때만 덮어쓴다 (전부 일시적으로 못 찾는 경우 기존 보존)
+      if(_rebuiltIds.length){
+        var _old = (c.includedInvoiceIds||[]).map(String).sort().join(',');
+        var _new = _rebuiltIds.map(String).sort().join(',');
+        if(_old !== _new){ c.includedInvoiceIds = _rebuiltIds; _reconciled++; }
+      }
     });
     if(_reconciled > 0){
       console.log('[invoice] 🔗 합본 자식 역참조', _reconciled, '건 동기화 (중복 표시 제거)');
@@ -29100,6 +29106,7 @@ function markConsolidationBilled(consId, billed){
     v._paid = false; v._taxInvoiceIssued = false; v.paymentRatio = 0; v.status = '발행완료';
   }
   v._invStage = inferInvStage(v);
+  v._ts = Date.now(); // ⏱ LWW: 이 변경이 최신이 되도록 타임스탬프 갱신 (동기화가 옛 상태로 되돌리는 것 방지)
   if(typeof save === 'function') save();
   if(typeof realtimePublish === 'function') realtimePublish('invoice', v);
   if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
@@ -29131,6 +29138,7 @@ function markInvoiceShipped(invId, shipped){
   v._shipped = !!shipped;
   // _invStage 자동 재계산
   v._invStage = inferInvStage(v);
+  v._ts = Date.now(); // ⏱ LWW: 최신 상태로 보호
   if(typeof save === 'function') save();
   // 🌐 실시간 동기화 — 다른 기기에 즉시 푸시
   if(typeof realtimePublish === 'function') realtimePublish('invoice', v);
@@ -29210,6 +29218,7 @@ function toggleInvPaid(invId, checked){
   if(!v) return false;
   v._paid = !!checked;
   _syncInvStatusFromFlags(v);
+  v._ts = Date.now(); // ⏱ LWW
   // 📌 합본 청구서면 묶인 명세서들에도 동일하게 적용 (회계 일관성)
   if(v._isConsolidated && Array.isArray(v.includedInvoiceIds)){
     v.includedInvoiceIds.forEach(childId => {
@@ -29217,6 +29226,7 @@ function toggleInvPaid(invId, checked){
       if(child){
         child._paid = !!checked;
         _syncInvStatusFromFlags(child);
+        child._ts = Date.now();
         if(typeof realtimePublish === 'function') realtimePublish('invoice', child);
         if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && child._notionId && typeof syncInvoiceToNotion==='function'){
           syncInvoiceToNotion(child, true).catch(e=>console.warn('합본 묶인 명세서 입금 동기화 실패:',e));
@@ -29243,6 +29253,7 @@ function toggleInvTaxIssued(invId, checked){
   if(!v) return false;
   v._taxInvoiceIssued = !!checked;
   _syncInvStatusFromFlags(v);
+  v._ts = Date.now(); // ⏱ LWW
   // 📌 합본 청구서면 묶인 명세서들에도 동일하게 적용
   if(v._isConsolidated && Array.isArray(v.includedInvoiceIds)){
     v.includedInvoiceIds.forEach(childId => {
@@ -29250,6 +29261,7 @@ function toggleInvTaxIssued(invId, checked){
       if(child){
         child._taxInvoiceIssued = !!checked;
         _syncInvStatusFromFlags(child);
+        child._ts = Date.now();
         if(typeof realtimePublish === 'function') realtimePublish('invoice', child);
         if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && child._notionId && typeof syncInvoiceToNotion==='function'){
           syncInvoiceToNotion(child, true).catch(e=>console.warn('합본 묶인 명세서 계산서 동기화 실패:',e));
