@@ -35016,7 +35016,10 @@ function _renderBoardRows(){
   // 직접입력(수동) 지출 항목 — 편집 가능한 리스트
   if(manualExp.length){
     html2 += '<div class="blist">';
-    manualExp.forEach(function(o){
+    // 📌 청구내역(입금대기) / 영수내역(입금완료) 두 그룹으로 나눠 표시
+    var _grpChung = manualExp.filter(function(o){ return (o.e.category||(o.e._paid?'영수':'청구'))!=='영수'; });
+    var _grpYoung = manualExp.filter(function(o){ return (o.e.category||(o.e._paid?'영수':'청구'))==='영수'; });
+    var _renderExpRow = function(o){
       var e=o.e, i=o.i;
       var fileChips='';
       (e.files||[]).forEach(function(f,fi){
@@ -35025,15 +35028,13 @@ function _renderBoardRows(){
           + '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm+' 미리보기">📎 '+disp+'</a>'
           + '<button onclick="MGT.removeExpFile('+i+','+fi+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px" title="첨부 제거">×</button></span>';
       });
-      html2 += '<div class="bitem" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 4px;border-bottom:1px solid var(--bd)">'
+      return '<div class="bitem" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 4px;border-bottom:1px solid var(--bd)">'
         + '<span style="font-size:16px">🧾</span>'
         + '<input value="'+(e.vendor||'').replace(/"/g,'&quot;')+'" onchange="MGT.editExpVendor('+i+',this.value)" placeholder="거래처/항목명" style="flex:1;min-width:140px;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12.5px;font-family:inherit;font-weight:600">'
         + '<select class="bmonth-sel" onchange="MGT.editExpMonth('+i+',this.value)" title="기간">'
           + (function(){ var cur=e.period||''; var opts=_monthOptionSet(cur,''); var h=''; if(!cur)h+='<option value="" selected>기간?</option>'; opts.forEach(function(mm){h+='<option value="'+mm+'"'+(mm===cur?' selected':'')+'>'+mm+'</option>';}); return h; })()
         + '</select>'
-        + '<label style="font-size:11px;color:var(--mu);display:inline-flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" '+(e.inclVat?'checked':'')+' onchange="MGT.editExpVat('+i+',this.checked)">부가세포함</label>'
-        + (function(){ var cat=e.category||(e._paid?'\uc601\uc218':'\uccad\uad6c'); var isR=(cat==='\uc601\uc218'); return '<span style=\"font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600;'+(isR?'background:#E8F5E9;color:#2E7D32':'background:#FFF3E0;color:#E65100')+'\">'+cat+'</span>'; })()
-        + '<label style=\"font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-weight:600;'+(e._paid?'color:#2E7D32':'color:#E65100')+'\"><input type=\"checkbox\" '+(e._paid?'checked':'')+' onchange=\"MGT.editExpPaid('+i+',this.checked)\">'+(e._paid?'\uc785\uae08\uc644\ub8cc':'\uc785\uae08\ub300\uae30')+'</label>'
+        + '<label style="font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-weight:600;'+(e._paid?'color:#2E7D32':'color:#E65100')+'"><input type="checkbox" '+(e._paid?'checked':'')+' onchange="MGT.editExpPaid('+i+',this.checked)">'+(e._paid?'입금완료':'입금대기')+'</label>'
         + '<span style="display:inline-flex;gap:4px">'
           + '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px" onclick="MGT.openAttachModal(\'exp\','+i+')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToExp(event,'+i+',\'attach\')" title="첨부파일 추가 (클릭=창 / 드래그=바로첨부)">+ 첨부파일</button>'
         + '</span>'
@@ -35041,7 +35042,22 @@ function _renderBoardRows(){
         + '<input type="number" value="'+(e.amount||'')+'" onchange="MGT.editExpAmount('+i+',this.value)" placeholder="금액(원)" style="width:110px;text-align:right;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12.5px;font-family:inherit;font-weight:700">'
         + '<button onclick="MGT.deleteManualExp('+i+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:15px" title="삭제">×</button>'
         + '</div>';
-    });
+    };
+    var _sectionHdr = function(label, cnt, sum, color, bg){
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 8px;margin-top:6px;background:'+bg+';border-radius:7px 7px 0 0;font-weight:700;font-size:12px;color:'+color+'">'
+        + '<span>'+label+' <span style="font-weight:500;opacity:.8">'+cnt+'건</span></span>'
+        + '<span style="font-size:12px">'+won(sum)+'</span></div>';
+    };
+    if(_grpChung.length){
+      var sumC=_grpChung.reduce(function(s,o){return s+(+o.e.amount||0);},0);
+      html2 += _sectionHdr('📋 청구내역 (입금대기)', _grpChung.length, sumC, '#E65100', '#FFF3E0');
+      _grpChung.forEach(function(o){ html2 += _renderExpRow(o); });
+    }
+    if(_grpYoung.length){
+      var sumY=_grpYoung.reduce(function(s,o){return s+(+o.e.amount||0);},0);
+      html2 += _sectionHdr('🧾 영수내역 (입금완료)', _grpYoung.length, sumY, '#2E7D32', '#E8F5E9');
+      _grpYoung.forEach(function(o){ html2 += _renderExpRow(o); });
+    }
     html2 += '</div>';
   }
   if(!list.length){
