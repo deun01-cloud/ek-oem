@@ -124,9 +124,10 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .cal-cell.holiday{background:rgba(192,48,48,.04)}
 .cal-cell.holiday.today-c{background:linear-gradient(135deg,rgba(255,213,0,.22) 0%,rgba(192,48,48,.08) 100%)}
 .cal-split{display:flex;flex-direction:column;gap:0}
-.cal-half{min-height:30px;padding:1px 0}
+.cal-half{min-height:26px;padding:1px 0}
 .cal-half-lbl{font-size:8px;font-weight:700;letter-spacing:.2px;text-transform:uppercase;opacity:.8;margin-bottom:1px;padding-left:2px}
 .cal-split-div{border-top:1px dashed var(--bdr);margin:2px 0}
+.cal-split-cn{border-top:1.5px solid rgba(192,48,48,.35);margin:3px 0}
 .cal-dn{font-size:11px;font-weight:600;color:var(--t2);width:20px;height:20px;display:flex;align-items:center;justify-content:center;margin-bottom:2px}
 .cal-evt{font-size:9px;padding:1px 4px;border-radius:2px;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;border-left:2px solid;display:flex;align-items:center;gap:2px}
 .cal-evt .cl-init{width:14px;height:14px;font-size:8px;border-radius:3px;flex-shrink:0}
@@ -18984,7 +18985,7 @@ function renderCalWidget(){
       const isDone = st==='확정' || isOrderCanceled(st);
       r.push({
         cls:'ev-ship',
-        group:'smp',
+        group:'cn',
         done: isDone,
         canceled: isOrderCanceled(st),
         t:`<span style="margin-right:3px">🇨🇳→</span><span>샘플: ${(s.name||'').substring(0,8)}</span>`,
@@ -18999,7 +19000,7 @@ function renderCalWidget(){
       const isDone = st==='확정' || isOrderCanceled(st);
       r.push({
         cls:'ev-ship',
-        group:'ord',
+        group:'cn',
         done: isDone,
         canceled: isOrderCanceled(st),
         t:`<span style="margin-right:3px">🇨🇳→</span><span>발주: ${(o.vendor||'').substring(0,8)}</span>`,
@@ -19026,8 +19027,8 @@ function renderCalWidget(){
       const TASK_CAT_GROUP={
         '발주출고':'ord',
         '샘플출고':'smp',
-        '중국입고':'ord',
-        '중국출고':'smp'
+        '중국입고':'cn',
+        '중국출고':'cn'
       };
       tasks.filter(t=>t.date===ds && CAL_TASK_CATS.includes(t.cat)).forEach(t=>{
         const cls=TASK_CAT_CLS[t.cat]||'ev-task';
@@ -19084,9 +19085,10 @@ function renderCalWidget(){
         </div>
         ${(function(){
           const ordEv = ev.filter(e=>e.group==='ord');
-          const smpEv = ev.filter(e=>e.group!=='ord');
-          const sec=(items,label,col)=>{
-            const shown=items.slice(0,2);
+          const smpEv = ev.filter(e=>e.group==='smp');
+          const cnEv  = ev.filter(e=>e.group==='cn');
+          const sec=(items,label,col,maxShow)=>{
+            const shown=items.slice(0,maxShow||2);
             const more=items.length-shown.length;
             return `<div class="cal-half">
               <div class="cal-half-lbl" style="color:${col}">${label}<span style="opacity:.6;font-weight:600;margin-left:3px">${items.length}</span></div>
@@ -19098,6 +19100,8 @@ function renderCalWidget(){
             ${sec(ordEv,'📦 발주','var(--org)')}
             <div class="cal-split-div"></div>
             ${sec(smpEv,'◉ 샘플','var(--blu)')}
+            <div class="cal-split-div cal-split-cn"></div>
+            ${sec(cnEv,'🇨🇳 중국출고','var(--red)')}
           </div>`;
         })()}
       </div>`;
