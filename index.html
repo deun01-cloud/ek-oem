@@ -5977,6 +5977,25 @@ function renderInvoiceHistory(){
         const byId = _hasRecentSet && _recentlyDeletedConsolidationIds.has(String(v.id));
         const byNotion = _hasTomb && v._notionId && _ts[v._notionId];
         if(byId || byNotion){
+          // 🛡 보호: 유효한 자식이 묶여 있는 합본은 자동 제거하지 않는다.
+          //    (방금 만든 합본이 동기화 처리 중 좀비로 오인되어 사라지는 것 방지 — 돈 데이터 보호)
+          if(v._isConsolidated){
+            var _childIds = (v.includedInvoiceIds||[]).map(String);
+            var _ck = Array.isArray(v.includedChildKeys) ? v.includedChildKeys : [];
+            var _hasLiveChild = invoiceHistory.some(function(x){
+              if(!x || x._isConsolidated) return false;
+              if(_childIds.indexOf(String(x.id)) >= 0) return true;
+              if(_ck.length && typeof _invStableKey==='function' && _ck.indexOf(_invStableKey(x)) >= 0) return true;
+              return false;
+            });
+            if(_hasLiveChild){
+              console.warn('[invoice] 🛡 좀비 판정됐지만 유효 자식이 있어 합본 보존:', v.id, v.vendor, v.consolidationMonth, '(묘비/최근삭제 오인 방지)');
+              // 잘못된 묘비/최근삭제 표시 해제 — 다음 렌더에서 또 지우려 하지 않도록
+              if(byId) _recentlyDeletedConsolidationIds.delete(String(v.id));
+              if(byNotion && typeof _unmarkNotionIdDeleted === 'function') _unmarkNotionIdDeleted(v._notionId);
+              continue;
+            }
+          }
           console.warn('[invoice] 삭제된 합본/명세서 부활 감지 — 재제거:', v.id, v.vendor, v.consolidationMonth||v.ordNo, '_notionId:', v._notionId||'(없음)', byNotion?'[묘비]':'[최근삭제]');
           invoiceHistory.splice(i, 1);
           _zombiesRemoved++;
@@ -7281,6 +7300,12 @@ function _markNotionArchiveConfirmed(notionId){
     ts[notionId].confirmed = true;
     _saveTombstones(ts);
   }
+}
+// 묘비 해제 — 유효한 데이터가 잘못 묘비에 올라간 경우 복구용
+function _unmarkNotionIdDeleted(notionId){
+  if(!notionId) return;
+  const ts = _loadTombstones();
+  if(ts[notionId]){ delete ts[notionId]; _saveTombstones(ts); }
 }
 function _isNotionIdDeleted(notionId){
   if(!notionId) return false;
