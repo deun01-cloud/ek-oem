@@ -6104,6 +6104,43 @@ function renderInvoiceHistory(){
       });
     }
   }
+  // 🔗 0-B단계: 합본 ↔ 자식 역참조 동기화 (자식이 합본 밖에 중복으로 보이는 것 방지)
+  //    합본의 includedInvoiceIds/includedChildKeys로 해석되는 자식에게 _consolidatedInvoiceId를
+  //    그 합본 id로 설정한다. (자식의 역참조가 비어 있으면 톱레벨 목록에 또 나타나 '중복 표시'됨)
+  {
+    var _reconciled = 0;
+    invoiceHistory.forEach(function(c){
+      if(!c || !c._isConsolidated) return;
+      var seenChildIds = {};
+      // (1) includedInvoiceIds 로컬 id 매칭
+      (c.includedInvoiceIds||[]).forEach(function(cid){
+        var ch = invoiceHistory.find(function(x){ return !x._isConsolidated && String(x.id)===String(cid); });
+        if(ch){ seenChildIds[String(ch.id)] = ch; }
+      });
+      // (2) includedChildKeys 안정키 매칭 (id가 어긋난 자식까지)
+      if(Array.isArray(c.includedChildKeys) && typeof _invStableKey==='function'){
+        c.includedChildKeys.forEach(function(sk){
+          var ch = invoiceHistory.find(function(x){ return !x._isConsolidated && _invStableKey(x)===sk; });
+          if(ch){ seenChildIds[String(ch.id)] = ch; }
+        });
+      }
+      // 역참조 설정
+      Object.keys(seenChildIds).forEach(function(k){
+        var ch = seenChildIds[k];
+        if(String(ch._consolidatedInvoiceId) !== String(c.id)){
+          ch._consolidatedInvoiceId = String(c.id);
+          _reconciled++;
+        }
+        // includedInvoiceIds에도 이 자식 id가 반영되도록 보정 (childKeys로만 잡힌 경우)
+        c.includedInvoiceIds = c.includedInvoiceIds || [];
+        if(c.includedInvoiceIds.map(String).indexOf(String(ch.id)) < 0) c.includedInvoiceIds.push(ch.id);
+      });
+    });
+    if(_reconciled > 0){
+      console.log('[invoice] 🔗 합본 자식 역참조', _reconciled, '건 동기화 (중복 표시 제거)');
+      if(typeof save === 'function') save();
+    }
+  }
   // 💰 0-C단계: 고아 자식 명세서 복구 (돈 사라짐 방지 — 매우 중요)
   //    _consolidatedInvoiceId(합본에 묶임 표시)를 가진 명세서인데 그 부모 합본이
   //    invoiceHistory에 없으면 → 모든 탭에서 숨겨져 영영 안 보이게 된다(돈이 사라짐).
