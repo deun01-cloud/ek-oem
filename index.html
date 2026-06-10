@@ -38317,8 +38317,17 @@ async function loadPeriodFromNotion(period, silent){
   try{
     var loaded = {sales:[], sample:[], exp:[], cnList:{}, manual:[], salesAS:[], salesCommerce:[]};
 
-    var r1 = await fetch(NOTION_PROXY+'/databases/'+NOTION_SALES_DB+'/query',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({page_size:100, filter:{property:'기간', rich_text:{equals:period}}})});
-    if(r1.ok){
+    // ⚡ 세 개의 독립 쿼리(매출/샘플/매입)를 병렬로 동시에 호출 → 순차 대기(약 4초) 제거
+    var _q = function(db, pageSize){
+      return fetch(NOTION_PROXY+'/databases/'+db+'/query',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({page_size:pageSize, filter:{property:'기간', rich_text:{equals:period}}})});
+    };
+    var _results = await Promise.all([
+      _q(NOTION_SALES_DB,100).catch(function(){return null;}),
+      _q(NOTION_SAMPLE_DB,100).catch(function(){return null;}),
+      _q(NOTION_COGS_DB,200).catch(function(){return null;})
+    ]);
+    var r1=_results[0], r2=_results[1], r3=_results[2];
+    if(r1&&r1.ok){
       var d1 = await r1.json();
       (d1.results||[]).filter(function(p){return !p.archived;}).forEach(function(p){
         var pr=p.properties;
@@ -38343,8 +38352,7 @@ async function loadPeriodFromNotion(period, silent){
       });
     }
 
-    var r2 = await fetch(NOTION_PROXY+'/databases/'+NOTION_SAMPLE_DB+'/query',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({page_size:100, filter:{property:'기간', rich_text:{equals:period}}})});
-    if(r2.ok){
+    if(r2&&r2.ok){
       var d2 = await r2.json();
       (d2.results||[]).filter(function(p){return !p.archived;}).forEach(function(p){
         var pr=p.properties;
@@ -38360,8 +38368,7 @@ async function loadPeriodFromNotion(period, silent){
       });
     }
 
-    var r3 = await fetch(NOTION_PROXY+'/databases/'+NOTION_COGS_DB+'/query',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({page_size:200, filter:{property:'기간', rich_text:{equals:period}}})});
-    if(r3.ok){
+    if(r3&&r3.ok){
       var d3 = await r3.json();
       (d3.results||[]).filter(function(p){return !p.archived;}).forEach(function(p){
         var pr=p.properties;
