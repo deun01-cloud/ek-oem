@@ -7433,7 +7433,51 @@ window.checkInvoiceIntegrity = function(){
   return issues;
 };
 
-// 합본 중복 정리 (콘솔 진단/실행). dedupeConsolidations(true)=진단만, dedupeConsolidations(false,true)=청구월 무시하고 정리
+// 💊 합본에서 빠진 명세서를 다시 붙이기 (콘솔 수동 복구용)
+//    repairConsolidationChild('제이스','2026-05','260604')  처럼 호출.
+//    consVendorFrag/monthExact로 합본을 찾고, ordNoFrag(또는 명세서번호 일부)에 맞는 살아있는 명세서를 합본에 재연결.
+window.repairConsolidationChild = function(consVendorFrag, monthExact, ordNoFrag){
+  var cons = invoiceHistory.find(function(v){
+    return v._isConsolidated
+      && (v.vendor||'').indexOf(consVendorFrag) >= 0
+      && (!monthExact || v.consolidationMonth === monthExact);
+  });
+  if(!cons){ console.warn('합본을 못 찾음:', consVendorFrag, monthExact); return; }
+  var inv = invoiceHistory.find(function(v){
+    return !v._isConsolidated && ((v.ordNo||'').indexOf(ordNoFrag) >= 0 || String(v.id).indexOf(ordNoFrag) >= 0);
+  });
+  if(!inv){
+    console.warn('붙일 명세서를 못 찾음 (이미 삭제됐을 수 있음):', ordNoFrag);
+    console.log('→ 명세서가 삭제된 경우엔 합본을 해제하고 명세서를 다시 만든 뒤 재합본하세요.');
+    return;
+  }
+  // 이미 다른 합본에 묶여있으면 경고
+  if(inv._consolidatedInvoiceId && String(inv._consolidatedInvoiceId)!==String(cons.id)){
+    console.warn('이 명세서는 다른 합본('+inv._consolidatedInvoiceId+')에 묶여 있습니다. 먼저 그 합본을 해제하세요.');
+    return;
+  }
+  cons.includedInvoiceIds = cons.includedInvoiceIds || [];
+  cons.includedChildKeys = cons.includedChildKeys || [];
+  if(cons.includedInvoiceIds.map(String).indexOf(String(inv.id)) < 0) cons.includedInvoiceIds.push(inv.id);
+  var sk = (typeof _invStableKey==='function') ? _invStableKey(inv) : null;
+  if(sk && cons.includedChildKeys.indexOf(sk) < 0) cons.includedChildKeys.push(sk);
+  inv._consolidatedInvoiceId = String(cons.id);
+  // 합계 재계산
+  if(typeof calcConsolidationSummary === 'function'){
+    var sum = calcConsolidationSummary(cons.includedInvoiceIds.map(function(id){ return invoiceHistory.find(function(x){return !x._isConsolidated && String(x.id)===String(id);}); }).filter(Boolean));
+    if(sum){ cons.supplyAmt=sum.supplyAmt; cons.tax=sum.tax; cons.total=sum.total; cons.chargeAmount=sum.chargeAmount; cons.prepaidDeducted=sum.prepaidDeducted; }
+  }
+  cons._consUid = (typeof _consNaturalUid==='function') ? _consNaturalUid(cons.vendor, cons.includedChildKeys) : cons._consUid;
+  if(typeof save==='function') save();
+  if(typeof realtimePublish==='function'){ realtimePublish('invoice', cons); realtimePublish('invoice', inv); }
+  if(typeof syncInvoiceToNotion==='function' && notionCfg.workerUrl && notionCfg.invDb){
+    syncInvoiceToNotion(cons, !!cons._notionId).catch(function(e){console.warn(e);});
+    syncInvoiceToNotion(inv, !!inv._notionId).catch(function(e){console.warn(e);});
+  }
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+  console.log('%c✓ 복구 완료','color:green;font-weight:bold', '— 합본', cons.vendor, cons.consolidationMonth, '에', inv.ordNo||inv.id, '재연결. 새 합계:', (cons.total||0).toLocaleString());
+  return cons;
+};
 window.dedupeConsolidations = function(dryRun, ignoreMonth){
   const allCons = invoiceHistory.filter(v => v._isConsolidated);
   const groups = {};
@@ -8633,10 +8677,30 @@ function _applyRemoteItem(type, item, ts, fromClient){
       merged.id = local.id;
       // 📑 안정키 보존: 둘 중 존재하는 값 유지
       merged._consUid = local._consUid || item._consUid || _consNaturalUid(merged.vendor, (merged.includedChildKeys||[]));
-      if((!merged.includedChildKeys || !merged.includedChildKeys.length) && local.includedChildKeys && local.includedChildKeys.length) merged.includedChildKeys = local.includedChildKeys;
-      // 📑 자식 로컬ID는 이 기기 기준이 더 정확 — 로컬에 유효 자식이 있으면 로컬 것 유지 (원격의 남의 기기 id로 덮어써 0건 되는 것 방지)
-      const _localValid = (local.includedInvoiceIds||[]).filter(cid=>invoiceHistory.find(x=>!x._isConsolidated && String(x.id)===String(cid)));
-      if(_localValid.length) merged.includedInvoiceIds = local.includedInvoiceIds;
+      // 💰 자식 목록은 절대 '줄어드는' 방향으로 머지하지 않는다 (명세서가 합본에서 사라지는 것 방지).
+      //    로컬과 원격의 자식 안정키를 UNION 해서 더 완전한 쪽 + 빠진 것까지 모두 보존.
+      var _localKeys = Array.isArray(local.includedChildKeys) ? local.includedChildKeys.slice() : [];
+      var _itemKeys  = Array.isArray(item.includedChildKeys)  ? item.includedChildKeys.slice()  : [];
+      // 로컬 자식의 안정키도 추가 산출 (childKeys가 비어있던 옛 데이터 대비)
+      (local.includedInvoiceIds||[]).forEach(function(cid){
+        var ch = invoiceHistory.find(function(x){ return !x._isConsolidated && String(x.id)===String(cid); });
+        if(ch && typeof _invStableKey==='function'){ var sk=_invStableKey(ch); if(_localKeys.indexOf(sk)<0) _localKeys.push(sk); }
+      });
+      var _unionKeys = _localKeys.slice();
+      _itemKeys.forEach(function(sk){ if(_unionKeys.indexOf(sk)<0) _unionKeys.push(sk); });
+      merged.includedChildKeys = _unionKeys;
+      // includedInvoiceIds도 union된 키로부터 이 기기 기준 로컬 id로 재구성
+      var _unionIds = [];
+      _unionKeys.forEach(function(sk){
+        var ch = (typeof _invStableKey==='function') ? invoiceHistory.find(function(x){ return !x._isConsolidated && _invStableKey(x)===sk; }) : null;
+        if(ch && _unionIds.indexOf(ch.id)<0) _unionIds.push(ch.id);
+      });
+      // 키로 못 찾은 로컬 유효 자식 id도 보존
+      (local.includedInvoiceIds||[]).forEach(function(cid){
+        if(invoiceHistory.find(function(x){ return !x._isConsolidated && String(x.id)===String(cid); }) && _unionIds.indexOf(cid)<0) _unionIds.push(cid);
+      });
+      if(_unionIds.length) merged.includedInvoiceIds = _unionIds;
+      else if((local.includedInvoiceIds||[]).length) merged.includedInvoiceIds = local.includedInvoiceIds;
     } else if(local.id !== undefined && (item.id === undefined || item.id === local._notionId)){
       merged.id = local.id; // 로컬 id 유지
     }
