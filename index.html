@@ -4852,18 +4852,32 @@ function saveProduct(){
     return;
   }
   // 품목코드 중복 검증 (코드가 비어있지 않을 때만)
-  // 같은 코드 가진 다른 제품(자기 자신 제외)이 있으면 거부
+  // 같은 코드 가진 다른 제품(자기 자신 제외)이 있으면 거부.
+  // 단, 수정 모드에서 충돌 상대가 '사실상 같은 제품'(동일 품목명+도금+사이즈)이면
+  //   진짜 코드 충돌이 아니라 중복 레코드이므로 막지 않고 저장을 허용한다.
   if(code && code.trim()){
     const trimmedCode = code.trim();
+    const _norm = function(v){ return String(v==null?'':v).trim().toLowerCase(); };
+    const _curName = _norm(name), _curPlating = _norm(gv('pd_plating')), _curSize = _norm(gv('pd_size'));
     const duplicates = productDB.filter(p =>
       String(p.id) !== String(id) && // 자기 자신 제외
       (p.code||'').trim() === trimmedCode
     );
-    if(duplicates.length > 0){
-      const dup = duplicates[0];
+    // 수정 모드: 충돌 상대 중 '서로 다른 제품'만 진짜 충돌로 본다
+    const realCollisions = duplicates.filter(function(p){
+      if(!id) return true; // 신규 등록은 코드만 겹쳐도 충돌로 간주(기존 동작 유지)
+      var sameProduct = _norm(p.name)===_curName && _norm(p.plating)===_curPlating && _norm(p.size)===_curSize;
+      return !sameProduct; // 같은 제품(중복 레코드)이면 충돌 아님
+    });
+    if(realCollisions.length > 0){
+      const dup = realCollisions[0];
       const platingInfo = dup.plating ? ` (도금:${dup.plating})` : '';
       showToast(`⚠ 품목코드 "${trimmedCode}"는 이미 등록되어 있습니다 — "${dup.name||'(이름없음)'}"${platingInfo}. 도금/사이즈가 다르면 코드에 접미사를 붙이세요 (예: ${trimmedCode}-GD)`, 'var(--red)', 6000);
       return;
+    }
+    // 동일 제품의 중복 레코드가 있으면 콘솔에만 안내 (저장은 진행)
+    if(duplicates.length > 0 && realCollisions.length === 0){
+      console.warn('[제품] 동일 품목코드의 중복 레코드 감지 — 저장은 진행합니다. 코드:', trimmedCode, '중복', duplicates.length, '건');
     }
   }
   const newStock=+gv('pd_stock')||0;
