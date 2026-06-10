@@ -30516,10 +30516,26 @@ function openConsDetail(consId){
   const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
   if(!cons){ showToast('⚠ 합본 청구서를 찾을 수 없습니다','var(--red)'); return; }
   _currentConsId = consId;
-  // 묶인 명세서들 조회
-  const includedInvs = (cons.includedInvoiceIds||[]).map(id =>
-    invoiceHistory.find(v => String(v.id)===String(id))
-  ).filter(Boolean);
+  // 묶인 명세서들 조회 — 로컬 id 우선, 못 찾으면 안정키(includedChildKeys)로 이 기기의 명세서 매칭
+  //    (노션 재로드/다른 기기 동기화로 로컬 id가 바뀌면 id만으로는 0건이 되는 버그 방지)
+  var _ck = Array.isArray(cons.includedChildKeys) ? cons.includedChildKeys : [];
+  const includedInvs = (cons.includedInvoiceIds||[]).map(function(id, _i){
+    var found = invoiceHistory.find(function(v){ return !v._isConsolidated && String(v.id)===String(id); });
+    if(found) return found;
+    var sk = _ck[_i];
+    if(sk && typeof _invStableKey==='function'){
+      var byKey = invoiceHistory.find(function(v){ return !v._isConsolidated && _invStableKey(v)===sk; });
+      if(byKey) return byKey;
+    }
+    return null;
+  }).filter(Boolean);
+  // id 배열이 전부 어긋나도 childKeys로 한 번 더 시도
+  var _resolvedInvs = includedInvs;
+  if(!_resolvedInvs.length && _ck.length && typeof _invStableKey==='function'){
+    _resolvedInvs = _ck.map(function(sk){ return invoiceHistory.find(function(v){ return !v._isConsolidated && _invStableKey(v)===sk; }); }).filter(Boolean);
+  }
+  // 이후 코드가 includedInvs를 쓰므로 재할당
+  if(_resolvedInvs !== includedInvs){ try{ includedInvs.push.apply(includedInvs, _resolvedInvs); }catch(e){} }
 
   // 📌 제목: "포에리 — 5월 거래명세서 (3건 합본)"
   const monthLbl = (function(){
