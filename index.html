@@ -21907,9 +21907,10 @@ function renderFilePreview(){
 // 엑셀 미리보기 — SheetJS로 읽어서 HTML 테이블 + 이미지 그리드
 async function renderExcelPreview(f, body){
   try{
+    if(!f || !f.url){ throw new Error('파일 URL이 없습니다'); }
     // URL이 http면 fetch, dataURL이면 바로 디코드
     let ab;
-    if(f.url.startsWith('data:')){
+    if(String(f.url).startsWith('data:')){
       const base64=f.url.split(',')[1];
       const bin=atob(base64);
       const arr=new Uint8Array(bin.length);
@@ -21917,11 +21918,20 @@ async function renderExcelPreview(f, body){
       ab=arr.buffer;
     } else {
       const res=await fetch(f.url);
+      if(!res.ok) throw new Error('파일을 불러오지 못했습니다 ('+res.status+')');
       ab=await res.arrayBuffer();
     }
+    // xlsx는 ZIP(PK\x03\x04) 시그니처로 시작. 아니면 (HTML 오류페이지 등) 미리보기 불가.
+    try{
+      var _sig=new Uint8Array(ab.slice(0,4));
+      var _isZip = _sig[0]===0x50 && _sig[1]===0x4B; // 'PK'
+      var _isOldXls = _sig[0]===0xD0 && _sig[1]===0xCF; // 구버전 .xls (OLE2)
+      if(!_isZip && !_isOldXls){ throw new Error('엑셀 파일 형식이 아닙니다 (다운로드해서 확인하세요)'); }
+    }catch(_sigErr){ if(_sigErr && _sigErr.message && _sigErr.message.indexOf('엑셀')>=0) throw _sigErr; }
     // 시트 텍스트 + 이미지 추출
     const wb=XLSX.read(ab,{type:'array'});
-    const rowImages = await extractExcelImages(ab);  // 이전에 만든 함수 재사용
+    let rowImages={};
+    try{ rowImages = await extractExcelImages(ab) || {}; }catch(_imgErr){ console.warn('엑셀 이미지 추출 건너뜀:', _imgErr && _imgErr.message); rowImages={}; }
 
     let html='<div style="padding:16px;background:#f5f5f5">';
     // 이미지 그리드 (있으면 맨 위)
@@ -35320,7 +35330,7 @@ function editExpVendor(idx, v){ if(S.exp&&S.exp[idx]){ S.exp[idx].vendor=v; _ren
 function editExpAmount(idx, v){ if(S.exp&&S.exp[idx]){ S.exp[idx].amount=parseFloat(v)||0; calcPnL(); renderPurchase&&renderPurchase(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
 function editExpMonth(idx, m){ if(S.exp&&S.exp[idx]){ S.exp[idx].period=m; calcPnL(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
 function editExpVat(idx, checked){ if(S.exp&&S.exp[idx]){ S.exp[idx].inclVat=!!checked; calcPnL(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
-function editExpPaid(idx, checked){ if(S.exp&&S.exp[idx]){ S.exp[idx]._paid=!!checked; S.exp[idx].category = checked?'영수':'청구'; _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
+function editExpPaid(idx, checked){ if(S.exp&&S.exp[idx]){ S.exp[idx]._paid=!!checked; _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
 function deleteManualExp(idx){
   if(!(S.exp&&S.exp[idx])) return;
   if(!confirm('이 지출 항목을 삭제할까요?')) return;
@@ -38213,16 +38223,33 @@ async function syncSampleToNotion(period){
 }
 
 // [수정] 매입원가 — 중국 인보이스 포함 모든 종류 매번 저장
+var _cogsSyncInFlight = false;
+var _cogsSyncPending = null;
 async function syncCogsToNotion(period){
+  // 🔒 동시/연속 호출 방지: 진행 중이면 마지막 요청만 대기시켰다가 1회 더 실행
+  //    (입금 토글을 빠르게 여러 번 누를 때 archive-재생성이 겹쳐 중복 행이 쌓이던 문제 차단)
+  if(_cogsSyncInFlight){ _cogsSyncPending = period; return; }
+  _cogsSyncInFlight = true;
   var status = document.getElementById('notion-sync-status');
   if(status) status.textContent='🔄 매입원가 저장 중...';
   try{
+    // 💧 저장 전 S.exp 중복 제거 (거래처+금액+기간 동일하면 1건만)
+    if(S.exp && S.exp.length){
+      var _seenExp={}; var _dedup=[];
+      S.exp.forEach(function(it){
+        var k=(it.vendor||'')+'|'+(it.amount||0)+'|'+(it.period||period)+'|'+(it.category||'');
+        if(_seenExp[k]) return; _seenExp[k]=1; _dedup.push(it);
+      });
+      if(_dedup.length !== S.exp.length){ S.exp = _dedup; }
+    }
+    // 지출내역/중국인보이스/직접입력 = 이 기간의 매입 행만 archive 후 재생성
     var qR = await fetch(NOTION_PROXY+'/databases/'+NOTION_COGS_DB+'/query',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({page_size:100, filter:{property:'기간', rich_text:{equals:period}}})});
     if(qR.ok){
       var qD = await qR.json();
-      for(var i=0;i<(qD.results||[]).length;i++){
-        await fetch(NOTION_PROXY+'/pages/'+qD.results[i].id,{method:'PATCH', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({archived:true})});
-      }
+      // 병렬 archive 후 모두 완료될 때까지 대기 (다음 재생성 전에 확실히 제거)
+      await Promise.all((qD.results||[]).map(function(pg){
+        return fetch(NOTION_PROXY+'/pages/'+pg.id,{method:'PATCH', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({archived:true})});
+      }));
     }
     if(S.exp&&S.exp.length){
       for(var i=0;i<S.exp.length;i++){
@@ -38277,6 +38304,10 @@ async function syncCogsToNotion(period){
     }
     if(status) status.textContent='✅ 매입원가 Notion 저장 완료';
   }catch(e){ console.warn('매입원가 저장 실패:', e.message); }
+  finally{
+    _cogsSyncInFlight = false;
+    if(_cogsSyncPending){ var _p=_cogsSyncPending; _cogsSyncPending=null; setTimeout(function(){ syncCogsToNotion(_p); }, 50); }
+  }
 }
 
 // [수정] 기간 데이터 로드 (silent 옵션)
@@ -38371,7 +38402,12 @@ async function loadPeriodFromNotion(period, silent){
     if(loaded.manual.length){ S.manual=loaded.manual; renderManual(); }
     if(loaded.sales.length){ S.sales=loaded.sales; markDz('dz-sales','i-sales','s-sales','[Notion] '+period,loaded.sales.length+'건'); }
     if(loaded.sample.length){ S.sample=loaded.sample; markDz('dz-sample','i-sample','s-sample','[Notion] '+period,loaded.sample.length+'건'); }
-    if(loaded.exp.length){ S.exp=loaded.exp; markDz('dz-exp','i-exp','s-exp','[Notion] '+period,loaded.exp.length+'건'); }
+    if(loaded.exp.length){
+      // 💧 중복 제거 (과거 동기화로 노션에 중복 행이 쌓였을 수 있음)
+      var _se={}, _de=[];
+      loaded.exp.forEach(function(it){ var k=(it.vendor||'')+'|'+(it.amount||0)+'|'+(it.period||period)+'|'+(it.category||''); if(_se[k])return; _se[k]=1; _de.push(it); });
+      S.exp=_de; markDz('dz-exp','i-exp','s-exp','[Notion] '+period,_de.length+'건');
+    }
     var cnArr=Object.keys(loaded.cnList).map(function(k){return loaded.cnList[k];});
     if(cnArr.length){ S.cnList=cnArr; S.cn=cnArr[0]; markDz('dz-cn','i-cn','s-cn','[Notion] '+period,cnArr.length+'개 · USD '+cnArr.reduce(function(s,i){return s+i.usd;},0).toFixed(0)); }
 
@@ -39339,6 +39375,7 @@ return {
   copyPnL: (typeof copyPnL!=="undefined"?copyPnL:undefined),
   exportHistXlsx: (typeof exportHistXlsx!=="undefined"?exportHistXlsx:undefined),
   reloadFromNotion: (typeof reloadFromNotion!=="undefined"?reloadFromNotion:undefined),
+  loadPeriodFromNotion: (typeof loadPeriodFromNotion!=="undefined"?loadPeriodFromNotion:undefined),
   clearAll: (typeof clearAll!=="undefined"?clearAll:undefined),
   injectTestData: (typeof injectTestData!=="undefined"?injectTestData:undefined),
   clearTestData: (typeof clearTestData!=="undefined"?clearTestData:undefined),
