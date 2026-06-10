@@ -767,13 +767,19 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 <div class="content" id="content"></div>
 <!-- ===== 💼 경영지원(손익관리) 모듈 — 비밀번호 게이트 + 본문 ===== -->
 <div id="mgtRoot" style="display:none">
-  <div id="mgtGate">
-    <h2>🔒 경영지원</h2>
-    <p>경영 상황(매출·손익·청구)은 관리자만 열람할 수 있습니다.</p>
-    <input type="password" id="mgtPw" placeholder="비밀번호" autocomplete="off"
-      onkeydown="if(event.key==='Enter')mgtUnlock()">
-    <button onclick="mgtUnlock()">열기</button>
-    <div class="err" id="mgtPwErr"></div>
+  <div id="mgtGate" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(15,18,28,.55);align-items:center;justify-content:center;flex-direction:column">
+    <div style="background:var(--card,#fff);border-radius:16px;padding:32px 36px;max-width:380px;width:90%;box-shadow:0 18px 50px rgba(0,0,0,.3);text-align:center">
+      <h2 style="margin:0 0 8px">🔒 관리자 인증</h2>
+      <p style="font-size:13px;color:#667;margin:0 0 16px">손익 계산·대시보드는 관리자만 열람할 수 있습니다.<br>한 번 인증하면 이 세션 동안 다시 묻지 않습니다.</p>
+      <input type="password" id="mgtPw" placeholder="비밀번호" autocomplete="off"
+        style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #d0d5dd;border-radius:8px;font-size:14px;margin-bottom:10px"
+        onkeydown="if(event.key==='Enter')mgtUnlock()">
+      <div style="display:flex;gap:8px">
+        <button onclick="mgtGateCancel()" style="flex:1;padding:10px;border:1px solid #d0d5dd;background:#fff;border-radius:8px;font-family:inherit;font-size:14px;cursor:pointer;color:#555">취소</button>
+        <button onclick="mgtUnlock()" style="flex:2;padding:10px;border:none;background:#4F46E5;color:#fff;border-radius:8px;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer">열기</button>
+      </div>
+      <div class="err" id="mgtPwErr" style="color:#d33;font-size:12px;margin-top:10px;min-height:14px"></div>
+    </div>
   </div>
   <div id="mgtApp" style="display:none">
 <div class="shell">
@@ -794,10 +800,9 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 </div>
 
 <div class="tabs">
-  <button class="tab on"  onclick="MGT.go('sales',this)">📦 매출 입력</button>
-  <button class="tab"     onclick="MGT.go('purchase',this)">🧾 매입 &amp; 고정비</button>
-  <button class="tab"     onclick="MGT.go('pnl',this)">📊 손익 계산</button>
-  <button class="tab"     onclick="MGT.go('dash',this)">📈 대시보드</button>
+  <button class="tab on"  onclick="MGT.go('sales',this)">📥 데이터 입력</button>
+  <button class="tab"     onclick="MGT.go('pnl',this)">🔒 손익 계산</button>
+  <button class="tab"     onclick="MGT.go('dash',this)">🔒 대시보드</button>
 </div>
 
 <div class="pg on" id="pg-sales">
@@ -914,9 +919,8 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       <div id="cm-sales-list"></div>
     </div>
   </div>
-</div>
 
-<div class="pg" id="pg-purchase">
+  <!-- ===== 매입 자료 (데이터 입력 탭에 통합) ===== -->
   <div class="dz-row">
     <div class="dz" id="dz-exp" onclick="document.getElementById('fi-exp').click()" ondragover="MGT.dzo(event,'dz-exp')" ondragleave="MGT.dzl('dz-exp')" ondrop="MGT.dzd(event,'exp')">
       <button class="dz-x" onclick="event.stopPropagation();MGT.czd('exp')">×</button>
@@ -980,29 +984,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
     </table>
   </div>
 
-  <div class="card" style="margin-top:14px">
-    <div class="card-h">
-      <div class="card-t">🏢 고정비 <span id="fixed-save-status" style="font-size:11px;font-weight:500;color:var(--mu);margin-left:6px"></span></div>
-      <div style="display:flex;gap:6px">
-        <button class="btn btn-sm" onclick="MGT.addFixed()">+ 항목 추가</button>
-        <button class="btn btn-sm" style="background:var(--ac);color:#fff" onclick="MGT.saveFixedNow()">💾 지금 저장</button>
-        <button class="btn btn-sm" style="color:var(--rd)" onclick="MGT.resetFixedCosts()">🗑️ 초기화</button>
-      </div>
-    </div>
-    <div style="padding:14px 16px">
-      <div style="display:grid;grid-template-columns:1fr 150px 36px;gap:8px;margin-bottom:8px">
-        <div style="font-size:11px;font-weight:700;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;padding:0 2px">항목명</div>
-        <div style="font-size:11px;font-weight:700;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;padding:0 2px">금액 (원)</div>
-        <div></div>
-      </div>
-      <div id="fixed-list"></div>
-    </div>
-    <div style="padding:12px 16px;border-top:1px solid var(--bd);background:var(--sf);display:flex;justify-content:space-between;align-items:center">
-      <span style="font-size:13px;font-weight:700">월 고정비 합계</span>
-      <span style="font-size:20px;font-weight:700;color:var(--rd)" id="fixed-total">0원</span>
-    </div>
-  </div>
-  <div style="font-size:11px;color:var(--hi);margin-top:4px">* 고정비는 삭제하지 않는 한 Notion에 영구 저장됩니다.</div>
+  <div style="font-size:11px;color:var(--hi);margin-top:4px">* 매입 자료(공장 인보이스·지출내역)는 위 게시판에서 월별로 관리됩니다.</div>
 </div>
 
 <div class="pg" id="pg-pnl">
@@ -1045,6 +1027,30 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       <tbody id="tb-pnl-stmt"></tbody>
     </table>
   </div>
+
+  <div class="card" style="margin-top:14px">
+    <div class="card-h">
+      <div class="card-t">🏢 고정비 <span id="fixed-save-status" style="font-size:11px;font-weight:500;color:var(--mu);margin-left:6px"></span></div>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-sm" onclick="MGT.addFixed()">+ 항목 추가</button>
+        <button class="btn btn-sm" style="background:var(--ac);color:#fff" onclick="MGT.saveFixedNow()">💾 지금 저장</button>
+        <button class="btn btn-sm" style="color:var(--rd)" onclick="MGT.resetFixedCosts()">🗑️ 초기화</button>
+      </div>
+    </div>
+    <div style="padding:14px 16px">
+      <div style="display:grid;grid-template-columns:1fr 150px 36px;gap:8px;margin-bottom:8px">
+        <div style="font-size:11px;font-weight:700;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;padding:0 2px">항목명</div>
+        <div style="font-size:11px;font-weight:700;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;padding:0 2px">금액 (원)</div>
+        <div></div>
+      </div>
+      <div id="fixed-list"></div>
+    </div>
+    <div style="padding:12px 16px;border-top:1px solid var(--bd);background:var(--sf);display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:13px;font-weight:700">월 고정비 합계</span>
+      <span style="font-size:20px;font-weight:700;color:var(--rd)" id="fixed-total">0원</span>
+    </div>
+  </div>
+  <div style="font-size:11px;color:var(--hi);margin-top:4px">* 고정비는 삭제하지 않는 한 Notion에 영구 저장됩니다.</div>
 </div>
 
 <div class="pg" id="pg-dash">
@@ -35999,6 +36005,11 @@ async function reloadFromNotion(){
 }
 
 function go(id,el){
+  // 🔒 손익계산·대시보드는 관리자 인증 필요 (데이터 입력 탭은 무인증 허용)
+  if((id==='pnl' || id==='dash') && !window._mgtIsAuthed()){
+    window._mgtShowGate(id, el);
+    return;
+  }
   var _scope=document.getElementById('mgtApp')||document;
   _scope.querySelectorAll('.pg').forEach(function(p){p.classList.remove('on')});
   _scope.querySelectorAll('.tab').forEach(function(t){t.classList.remove('on')});
@@ -36006,14 +36017,19 @@ function go(id,el){
   if(el && el.classList) el.classList.add('on');
   try{ localStorage.setItem('ek_mgt_subtab', id); }catch(e){}
   if(id==='dash'){ document.getElementById('dash-view-month').style.display='block'; document.getElementById('dash-view-year').style.display='none'; renderDash(); }
-  if(id==='sales'){ try{ renderOtherSales('as'); renderOtherSales('commerce'); }catch(e){} }
-  if(id==='purchase'){ try{ if(typeof renderBoard==='function') renderBoard(false); }catch(e){} }
+  if(id==='sales'){
+    try{ renderOtherSales('as'); renderOtherSales('commerce'); }catch(e){}
+    try{ if(typeof renderBoard==='function') renderBoard(false); }catch(e){}
+    try{ if(typeof renderPurchase==='function') renderPurchase(); }catch(e){}
+  }
   if(id==='pnl') calcPnL();
 }
 // 새로고침 후 마지막 본 경영지원 세부탭 복원
 function restoreMgtSubtab(){
   var id=''; try{ id=localStorage.getItem('ek_mgt_subtab')||''; }catch(e){}
-  if(!id || ['sales','purchase','pnl','dash'].indexOf(id)<0) return;
+  if(!id || ['sales','pnl','dash'].indexOf(id)<0) id='sales';
+  // 인증 안 된 상태에서 보호 탭이 마지막이었으면 데이터 탭으로
+  if((id==='pnl'||id==='dash') && !window._mgtIsAuthed()) id='sales';
   var btn=document.querySelector('.tabs .tab[onclick*="\''+id+'\'"]');
   if(btn){ go(id, btn); }
 }
@@ -39012,6 +39028,30 @@ return {
   var MGT_PASSWORD = 'ek2026';
   var _mgtAuthed = false;
   var _mgtBootDone = false;
+  var _mgtPendingTab = null;   // 인증 후 이동할 보호 탭
+
+  // 인증 여부 (세션 유지)
+  window._mgtIsAuthed = function(){
+    if(_mgtAuthed) return true;
+    try{ if(sessionStorage.getItem('mgt_authed')==='1'){ _mgtAuthed = true; return true; } }catch(e){}
+    return false;
+  };
+
+  // 보호 탭 클릭 시 인증 안 됐으면 게이트 오버레이 표시
+  window._mgtShowGate = function(pendingId, el){
+    _mgtPendingTab = pendingId || 'pnl';
+    var g=document.getElementById('mgtGate');
+    if(g){ g.style.display='flex'; }
+    // 탭 하이라이트는 바꾸지 않음 (인증 후 이동) — 현재 활성 탭 유지
+    var err=document.getElementById('mgtPwErr'); if(err) err.textContent='';
+    setTimeout(function(){ var i=document.getElementById('mgtPw'); if(i){ i.value=''; i.focus(); } }, 60);
+  };
+
+  // 게이트 닫기 (취소)
+  window.mgtGateCancel = function(){
+    var g=document.getElementById('mgtGate'); if(g) g.style.display='none';
+    _mgtPendingTab = null;
+  };
 
   window.mgtUnlock = function(){
     var pw = (document.getElementById('mgtPw')||{}).value || '';
@@ -39020,29 +39060,26 @@ return {
       _mgtAuthed = true;
       try{ sessionStorage.setItem('mgt_authed','1'); }catch(e){}
       var g=document.getElementById('mgtGate'); if(g) g.style.display='none';
-      var a=document.getElementById('mgtApp'); if(a) a.style.display='block';
       if(err) err.textContent='';
-      mgtBoot();
+      var inp=document.getElementById('mgtPw'); if(inp) inp.value='';
+      // 인증 후 원래 가려던 보호 탭으로 이동
+      var target = _mgtPendingTab || 'pnl';
+      _mgtPendingTab = null;
+      var btn=document.querySelector('.tabs .tab[onclick*="\''+target+'\'"]');
+      if(window.MGT && typeof MGT.go==='function') MGT.go(target, btn);
     } else {
       if(err) err.textContent='비밀번호가 올바르지 않습니다.';
-      var inp=document.getElementById('mgtPw'); if(inp){ inp.value=''; inp.focus(); }
+      var inp2=document.getElementById('mgtPw'); if(inp2){ inp2.value=''; inp2.focus(); }
     }
   };
 
-  // 탭 진입 시 호출 (renderTab에서)
+  // 탭 진입 시 호출 (renderTab에서) — 앱은 항상 표시(데이터 탭 무인증), 보호 탭만 게이트
   window.mgtEnter = function(){
-    // 세션 동안 인증 유지
-    try{ if(sessionStorage.getItem('mgt_authed')==='1') _mgtAuthed = true; }catch(e){}
+    window._mgtIsAuthed(); // 세션 인증 동기화
     var g=document.getElementById('mgtGate'), a=document.getElementById('mgtApp');
-    if(_mgtAuthed){
-      if(g) g.style.display='none';
-      if(a) a.style.display='block';
-      mgtBoot();
-    } else {
-      if(g) g.style.display='block';
-      if(a) a.style.display='none';
-      setTimeout(function(){ var i=document.getElementById('mgtPw'); if(i) i.focus(); }, 60);
-    }
+    if(g) g.style.display='none';   // 진입 시 게이트는 숨김 (보호 탭 클릭 때만 뜸)
+    if(a) a.style.display='block';  // 앱 본문은 항상 표시
+    mgtBoot();
   };
 
   // 16번 앱 최초 부트스트랩 (한 번만)
