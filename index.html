@@ -6459,7 +6459,13 @@ function renderInvoiceHistory(){
         // 미청구 탭 — "청구하기" 버튼 (청구 단계로 이동)
         h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center;white-space:nowrap">';
         if(isCons){
-          h+='<span style="color:var(--t3);font-size:11px">—</span>';
+          var cBilled = v._consBilled === true;
+          var cbg = cBilled ? 'var(--blu-bg)' : 'var(--s1)';
+          var cbd = cBilled ? 'var(--blu)' : 'var(--bdr)';
+          var ccol = cBilled ? 'var(--blu)' : 'var(--t3)';
+          var ctxt = cBilled ? '✓ 청구함' : '청구하기';
+          var ctitle = cBilled ? '클릭하면 미청구로 되돌립니다' : '청구 단계로 이동 (합본)';
+          h+='<button onclick="markConsolidationBilled('+v.id+','+(!cBilled)+')" title="'+ctitle+'" style="padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid '+cbd+';background:'+cbg+';color:'+ccol+';cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">'+ctxt+'</button>';
         } else if(v._consolidatedInvoiceId){
           h+='<span style="font-size:13px" title="합본에 묶여있어 변경 불가">🔒</span>';
         } else {
@@ -6538,9 +6544,27 @@ function renderInvoiceHistory(){
 
       // 📌 합본이 펼쳐진 상태 → 묶인 명세서를 자식 행으로 렌더 (모든 탭)
       if(isCons && consExpandedHere){
+        // 자식 해석: 로컬 id 우선, 못 찾으면 안정키(includedChildKeys)로 이 기기의 명세서를 매칭
+        var _childKeysArr = Array.isArray(v.includedChildKeys) ? v.includedChildKeys : [];
         var childInvs = (v.includedInvoiceIds||[])
-          .map(function(cid){ return invoiceHistory.find(function(x){ return String(x.id)===String(cid); }); })
+          .map(function(cid, _i){
+            var found = invoiceHistory.find(function(x){ return !x._isConsolidated && String(x.id)===String(cid); });
+            if(found) return found;
+            // 폴백: 같은 인덱스의 안정키로 매칭
+            var sk = _childKeysArr[_i];
+            if(sk && typeof _invStableKey==='function'){
+              var byKey = invoiceHistory.find(function(x){ return !x._isConsolidated && _invStableKey(x)===sk; });
+              if(byKey) return byKey;
+            }
+            return null;
+          })
           .filter(Boolean);
+        // includedInvoiceIds가 전부 안 맞아도 childKeys로 한 번 더 시도 (id 배열이 비거나 어긋난 경우)
+        if(!childInvs.length && _childKeysArr.length && typeof _invStableKey==='function'){
+          childInvs = _childKeysArr
+            .map(function(sk){ return invoiceHistory.find(function(x){ return !x._isConsolidated && _invStableKey(x)===sk; }); })
+            .filter(Boolean);
+        }
         // 컬럼 수 계산 (체크박스 셀 유무에 따라)
         var colSpan = canConsolidate ? 9 : 8;
         // 자식 헤더 (작은 안내 행)
@@ -9458,6 +9482,13 @@ function mapNotionInvoice(row){
       const stageMap = { '작성중':'draft', '청구':'billing', '완료':'done' };
       return stageMap[stageName] || null; // null이면 inferInvStage가 채움
     })(),
+    // 📑 합본 청구 단계 플래그 — 로드된 청구단계가 작성중이면 미청구(false), 그 외엔 청구됨(true)
+    _consBilled: (function(){
+      const stageName = np.select(p['청구단계']);
+      if(stageName === '작성중') return false;
+      if(stageName === '청구' || stageName === '완료') return true;
+      return undefined; // 미설정 — inferInvStage 기본 동작
+    })(),
     // 5-A: 명세서별 출고완료 플래그 (사용자가 행에서 토글)
     _shipped: !!np.check(p['명세서출고완료']),
     // 📅 결산월 (월별 결산 그룹핑 키) — 비었으면 undefined → 발행월로 폴백
@@ -10163,6 +10194,20 @@ let _ioSubTab = (function(){
   return 'general';
 })();
 let _ioCommerceBrand = 'all'; // 'all' | '비비케이트' | ...
+let _ioCommerceQ = '';        // 🔍 커머스 검색어 (재렌더 시 input이 새로 그려져 포커스 잃는 것 방지용 보관)
+let _ioCommerceSearchTimer = null;
+// 검색 input 전용 핸들러: 값만 보관 → 디바운스 재렌더 → 포커스/커서 복원
+function _ioCommerceSearchInput(el){
+  _ioCommerceQ = el.value;
+  var caret = el.selectionStart;
+  if(_ioCommerceSearchTimer) clearTimeout(_ioCommerceSearchTimer);
+  _ioCommerceSearchTimer = setTimeout(function(){
+    _renderIoCommerce();
+    // 재렌더 후 검색창에 포커스·커서 위치 복원
+    var n = document.getElementById('ioCommerceSearch');
+    if(n){ n.focus(); try{ n.setSelectionRange(caret, caret); }catch(e){} }
+  }, 180);
+}
 let _ioCommerceShipStatus = 'all'; // (deprecated, 호환용)
 let _ioCommerceReturnFilter = 'all'; // 'all' | '정상' | '교환요청' | '환불요청' | '교환완료' | '환불완료'
 let _ioCommerceMode = (function(){ try{ return localStorage.getItem('ek3_ioCommerceMode')||'order'; }catch(e){ return 'order'; } })(); // 'order'(주문) | 'ship'(출고) | 'return'(교환/환불)
@@ -10383,8 +10428,10 @@ function _renderIoCommerce(){
     }
   }
 
-  // 검색
-  const q = (document.getElementById('ioCommerceSearch')?.value||'').toLowerCase();
+  // 검색 (재렌더로 input이 사라져도 값 유지되도록 상태변수 우선 사용)
+  var _inEl = document.getElementById('ioCommerceSearch');
+  if(_inEl) _ioCommerceQ = _inEl.value;
+  const q = (_ioCommerceQ||'').toLowerCase();
   if(q){
     list = list.filter(io =>
       (io.recipient||'').toLowerCase().includes(q) ||
@@ -10447,7 +10494,7 @@ function _renderIoCommerce(){
   // 검색바 + 카운트
   const searchBar = `
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
-      <input type="text" id="ioCommerceSearch" placeholder="${_ioCommerceMode==='return'?'수령인·연락처·품목·사유 검색':'수령인·연락처·품목·주소·송장 검색'}" oninput="_renderIoCommerce()" value="${escHtml(q)}" style="flex:1;min-width:240px;padding:7px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12.5px;font-family:inherit;background:var(--s1)">
+      <input type="text" id="ioCommerceSearch" placeholder="${_ioCommerceMode==='return'?'수령인·연락처·품목·사유 검색':'수령인·연락처·품목·주소·송장 검색'}" oninput="_ioCommerceSearchInput(this)" value="${escHtml(q)}" style="flex:1;min-width:240px;padding:7px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12.5px;font-family:inherit;background:var(--s1)">
       <div style="font-size:12px;color:var(--t3)">총 <b style="color:var(--t1)">${list.length}</b>건</div>
     </div>
   `;
@@ -28771,7 +28818,10 @@ function inferInvStage(v){
     const consPaid = (v._paid === true) || (v.status === '입금완료') || ((+v.paymentRatio || 0) >= 100);
     const consTaxIssued = (v._taxInvoiceIssued === true);
     if(consPaid && consTaxIssued) return 'done';
-    return 'billing'; // 합본은 draft 단계 없음 (발행 = 청구 시작)
+    // 📌 '청구하기'(_consBilled=true)를 눌러야 청구 단계로. 그 전엔 미청구(draft).
+    //    (단, 이미 입금/계산서 진행됐으면 billing으로 본다. 옛 데이터 _consBilled 미설정 시 billing 유지)
+    if(v._consBilled === false && !consPaid && !consTaxIssued) return 'draft';
+    return 'billing';
   }
   // 📌 done(완료) 판정 원칙: "입금 + 계산서" 둘 다 완료된 경우만 done.
   //    출고 여부는 stage 분류에 영향 없음 (출고는 별도 트래킹).
@@ -28816,6 +28866,24 @@ function inferInvStage(v){
 //   - 노션 동기화
 //   - 같은 발주의 모든 명세서가 출고완료되면 자동 발주 출고완료 처리
 //   - 출고완료 해제 시 발주가 출고완료 상태였으면 발주도 진행중으로 되돌림
+// 📑 합본 청구서 "청구하기" 토글 — 미청구(draft) ↔ 청구(billing)
+//    합본은 작성 직후 미청구 상태. 이 버튼을 눌러야 청구 탭으로 이동한다.
+function markConsolidationBilled(consId, billed){
+  const v = invoiceHistory.find(x => String(x.id)===String(consId) && x._isConsolidated);
+  if(!v){ showToast('⚠ 합본 청구서를 찾을 수 없습니다','var(--red)'); return false; }
+  v._consBilled = !!billed;
+  if(billed && !v.status) v.status = '발행완료';
+  v._invStage = inferInvStage(v);
+  if(typeof save === 'function') save();
+  if(typeof realtimePublish === 'function') realtimePublish('invoice', v);
+  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
+    syncInvoiceToNotion(v, true).catch(e=>console.warn('합본 청구 단계 동기화 실패:',e));
+  }
+  if(typeof renderInvoiceHistory === 'function') renderInvoiceHistory();
+  showToast(billed ? '✓ 합본을 청구 단계로 이동했습니다' : '↩ 합본을 미청구로 되돌렸습니다', billed?'var(--blu)':'var(--t3)', 2500);
+  return true;
+}
+
 function markInvoiceShipped(invId, shipped){
   const v = invoiceHistory.find(x => String(x.id)===String(invId));
   if(!v){ showToast('⚠ 명세서를 찾을 수 없습니다','var(--red)'); return false; }
@@ -29701,6 +29769,8 @@ function createConsolidatedInvoice(vendor, month, options){
     prepaidDeducted:  summary.prepaidDeducted, // 차감된 선금 합
     chargeAmount:     summary.chargeAmount,    // 실제 청구액
     status: '발행완료',
+    _consBilled: false,        // 📌 합본도 미청구→청구 단계 구분. 작성 직후엔 미청구(draft), '청구하기' 눌러야 청구로.
+    _invStage: 'draft',
     memo: options.memo || `${month}분 ${vendor} 합본 청구서 (${targets.length}건)`,
     payments: [],
     totalPaid: 0,
