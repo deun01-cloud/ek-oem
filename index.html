@@ -35032,6 +35032,8 @@ function _renderBoardRows(){
           + (function(){ var cur=e.period||''; var opts=_monthOptionSet(cur,''); var h=''; if(!cur)h+='<option value="" selected>기간?</option>'; opts.forEach(function(mm){h+='<option value="'+mm+'"'+(mm===cur?' selected':'')+'>'+mm+'</option>';}); return h; })()
         + '</select>'
         + '<label style="font-size:11px;color:var(--mu);display:inline-flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" '+(e.inclVat?'checked':'')+' onchange="MGT.editExpVat('+i+',this.checked)">부가세포함</label>'
+        + (function(){ var cat=e.category||(e._paid?'\uc601\uc218':'\uccad\uad6c'); var isR=(cat==='\uc601\uc218'); return '<span style=\"font-size:10px;padding:2px 7px;border-radius:10px;font-weight:600;'+(isR?'background:#E8F5E9;color:#2E7D32':'background:#FFF3E0;color:#E65100')+'\">'+cat+'</span>'; })()
+        + '<label style=\"font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-weight:600;'+(e._paid?'color:#2E7D32':'color:#E65100')+'\"><input type=\"checkbox\" '+(e._paid?'checked':'')+' onchange=\"MGT.editExpPaid('+i+',this.checked)\">'+(e._paid?'\uc785\uae08\uc644\ub8cc':'\uc785\uae08\ub300\uae30')+'</label>'
         + '<span style="display:inline-flex;gap:4px">'
           + '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px" onclick="MGT.openAttachModal(\'exp\','+i+')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToExp(event,'+i+',\'attach\')" title="첨부파일 추가 (클릭=창 / 드래그=바로첨부)">+ 첨부파일</button>'
         + '</span>'
@@ -35302,6 +35304,7 @@ function editExpVendor(idx, v){ if(S.exp&&S.exp[idx]){ S.exp[idx].vendor=v; _ren
 function editExpAmount(idx, v){ if(S.exp&&S.exp[idx]){ S.exp[idx].amount=parseFloat(v)||0; calcPnL(); renderPurchase&&renderPurchase(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
 function editExpMonth(idx, m){ if(S.exp&&S.exp[idx]){ S.exp[idx].period=m; calcPnL(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
 function editExpVat(idx, checked){ if(S.exp&&S.exp[idx]){ S.exp[idx].inclVat=!!checked; calcPnL(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
+function editExpPaid(idx, checked){ if(S.exp&&S.exp[idx]){ S.exp[idx]._paid=!!checked; S.exp[idx].category = checked?'영수':'청구'; _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
 function deleteManualExp(idx){
   if(!(S.exp&&S.exp[idx])) return;
   if(!confirm('이 지출 항목을 삭제할까요?')) return;
@@ -35452,7 +35455,8 @@ async function deleteInvoiceItem(pageIdsCsv){
 
 function _boardFileLink(it){
   if(it.attached && it.url){
-    return '<a href="'+it.url+'" target="_blank" rel="noopener" download="'+it.name+'" style="color:var(--ac);text-decoration:none;font-weight:500" title="다운로드">📄 '+it.name+'</a>';
+    // 클릭 → 미리보기 (PDF/이미지/엑셀). 새 탭 다운로드 대신 인라인 미리보기.
+    return '<a onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(it.url)+'\',\''+encodeURIComponent(it.name||'파일')+'\',\'\')" style="color:var(--ac);text-decoration:none;font-weight:500;cursor:pointer" title="미리보기">📄 '+it.name+'</a>';
   }
   return '<a href="'+it.pageUrl+'" target="_blank" rel="noopener" style="color:var(--mu);text-decoration:none" title="노션에서 확인">⚠️ '+it.name+'</a>';
 }
@@ -36500,8 +36504,10 @@ function rf(file,type){
         renderSample(); calcPnL(); autoSyncNotion(); if(_p) syncSampleToNotion(_p);
       }
       if(type==='exp'){
-        var parsedExp = parseExp(wb);
-        parsedExp.forEach(function(it){ it._srcFile = file.name; });
+        var parsedExp = parseExp(wb, file.name);
+        // 📅 파일명에서 월 자동 인식 (예: "5월지출내역" → 2026-05). 현재 페이지 연도 기준.
+        var _expPeriod = _periodFromFilename(file.name) || document.getElementById('g-period').value || '';
+        parsedExp.forEach(function(it){ it._srcFile = file.name; if(!it.period) it.period = _expPeriod; });
         if(!S.exp) S.exp = [];
         // 동일 파일명만 갱신
         S.exp = S.exp.filter(function(x){ return x._srcFile !== file.name; });
@@ -36683,19 +36689,63 @@ function parseSample(wb){
   return items;
 }
 
-function parseExp(wb){
+// 파일명에서 월 추출 → 현재 페이지 연도 기준 'YYYY-MM' (예: "5월지출내역" → 2026-05)
+function _periodFromFilename(fname){
+  if(!fname) return '';
+  var s = String(fname);
+  // "26년 05월", "2026-05", "5월", "05월" 등 다양한 표기 대응
+  var ym = s.match(/(20\d{2})[\s._-]*(\d{1,2})\s*월/);          // 2026 5월
+  if(ym) return ym[1]+'-'+String(parseInt(ym[2],10)).padStart(2,'0');
+  var ym2 = s.match(/(\d{2})\s*년[\s._-]*(\d{1,2})\s*월/);       // 26년 05월
+  if(ym2) return '20'+ym2[1]+'-'+String(parseInt(ym2[2],10)).padStart(2,'0');
+  var ym3 = s.match(/(20\d{2})[-.](\d{1,2})\b/);                // 2026-05
+  if(ym3) return ym3[1]+'-'+String(parseInt(ym3[2],10)).padStart(2,'0');
+  var mo = s.match(/(\d{1,2})\s*월/);                            // 그냥 "5월"
+  if(mo){
+    var yr;
+    try{ yr = (document.getElementById('g-period').value||'').slice(0,4); }catch(e){}
+    if(!yr) yr = String(new Date().getFullYear());
+    return yr+'-'+String(parseInt(mo[1],10)).padStart(2,'0');
+  }
+  return '';
+}
+
+function parseExp(wb, fname){
   var ws=wb.Sheets[wb.SheetNames[0]];
   var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:null});
-  var hdr=-1;
-  for(var i=0;i<rows.length;i++){if(String(rows[i][0]||'').includes('구분')){hdr=i;break}}
+  var filePeriod = _periodFromFilename(fname||'');
   var items=[];
-  var start=hdr>=0?hdr+1:2;
-  for(var i=start;i<rows.length;i++){
-    var r=rows[i]; if(!r[1]||String(r[1]).trim()==='-') continue;
-    var amt=parseFloat(r[2]);
+  // 📌 두 블록 구분: '청구내역서'(총액A, 입금대기) / '영수내역서'(총액B, 입금완료)
+  //    엑셀에 '구분' 헤더가 두 번 나오고, 그 위/근처에 '청구내역'/'영수내역' 라벨이 있음.
+  //    현재 블록 카테고리를 행을 훑으며 추적한다.
+  var curCat = '청구'; // 기본값: 첫 블록은 청구내역
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i]||[];
+    var rowText = r.map(function(c){return c==null?'':String(c);}).join(' ');
+    // 블록 라벨 감지
+    if(/영수\s*내역/.test(rowText)){ curCat='영수'; continue; }
+    if(/청구\s*내역/.test(rowText)){ curCat='청구'; continue; }
+    // 총액 행은 건너뜀 (총액(A)/총액(B)/총액(A+B))
+    if(/총\s*액/.test(rowText)){ continue; }
+    // '구분' 헤더 행 건너뜀
+    if(String(r[0]||'').includes('구분')){ continue; }
+    // 데이터 행: B열(거래처), C열(금액)
+    var vendor = r[1]!=null ? String(r[1]).trim() : '';
+    if(!vendor || vendor==='-') continue;
+    var amt = parseFloat(String(r[2]!=null?r[2]:'').replace(/[,\s₩]/g,''));
     if(isNaN(amt)||amt<=0) continue;
-    var inclVat=String(r[4]||'').toUpperCase().includes('O');
-    items.push({vendor:String(r[1]).trim(),rawAmt:amt,amount:inclVat?Math.round(amt/1.1):amt,inclVat:inclVat});
+    // 부가세 포함 여부: 청구블록은 E열, 영수블록은 D열(세액포함여부)에 'O' 표기될 수 있음
+    var vatCell = (r[4]!=null?String(r[4]):'') + ' ' + (r[3]!=null?String(r[3]):'');
+    var inclVat = /O|○|포함|Y/i.test(vatCell);
+    items.push({
+      vendor: vendor,
+      rawAmt: amt,
+      amount: inclVat ? Math.round(amt/1.1) : amt,
+      inclVat: inclVat,
+      category: curCat,                  // '청구' | '영수'
+      _paid: (curCat==='영수'),          // 영수=입금완료(true), 청구=입금대기(false)
+      period: filePeriod || ''
+    });
   }
   return items;
 }
@@ -38163,13 +38213,18 @@ async function syncCogsToNotion(period){
         var it=S.exp[i];
         if(!it.vendor && !it.amount) continue; // 빈 직접입력 행 스킵
         var expPeriod = it.period || period;
+        var _cat = it.category || (it._paid?'영수':'청구');
+        var _payTxt = it._paid ? '입금완료' : '입금대기';
+        var _memoParts = [];
+        _memoParts.push(_cat); _memoParts.push(_payTxt);
+        if(it.inclVat) _memoParts.push('부가세포함');
         await fetch(NOTION_PROXY+'/pages',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({parent:{database_id:NOTION_COGS_DB}, properties:{
           '항목명':{title:[{text:{content:it.vendor||'(지출)'}}]},
           '기간':  {rich_text:[{text:{content:expPeriod}}]},
           '구분':  {rich_text:[{text:{content:'지출내역'}}]},
           '거래처':{rich_text:[{text:{content:it.vendor||''}}]},
           '금액':  {number:Math.round(it.amount||0)},
-          '비고':  {rich_text:[{text:{content:it.inclVat?'부가세포함':''}}]}
+          '비고':  {rich_text:[{text:{content:_memoParts.join('|')}}]}
         }})});
       }
     }
@@ -38266,7 +38321,10 @@ async function loadPeriodFromNotion(period, silent){
         var getText=function(k){return pr[k]&&pr[k].rich_text&&pr[k].rich_text[0]?pr[k].rich_text[0].plain_text:'';};
         var gubun=getText('구분'), amt=pr['금액']?pr['금액'].number:0;
         if(gubun==='지출내역'){
-          loaded.exp.push({vendor:getText('거래처'),amount:amt,rawAmt:amt, inclVat:getText('비고').includes('부가세')});
+          var _eb = getText('비고');
+          var _cat = /영수/.test(_eb) ? '영수' : (/청구/.test(_eb) ? '청구' : '청구');
+          var _paid = /입금완료/.test(_eb) || (_cat==='영수' && !/입금대기/.test(_eb));
+          loaded.exp.push({vendor:getText('거래처'),amount:amt,rawAmt:amt, inclVat:_eb.includes('부가세'), category:_cat, _paid:_paid, period:getText('기간')||period});
         } else if(gubun==='중국인보이스'){
           var rate=parseFloat(document.getElementById('usd-rate').value)||1350;
           var bigo = getText('비고');
@@ -39341,6 +39399,9 @@ return {
   editExpVendor: (typeof editExpVendor!=="undefined"?editExpVendor:undefined),
   editExpAmount: (typeof editExpAmount!=="undefined"?editExpAmount:undefined),
   editExpVat: (typeof editExpVat!=="undefined"?editExpVat:undefined),
+  editExpPaid: (typeof editExpPaid!=="undefined"?editExpPaid:undefined),
+  parseExp: (typeof parseExp!=="undefined"?parseExp:undefined),
+  _periodFromFilename: (typeof _periodFromFilename!=="undefined"?_periodFromFilename:undefined),
   editExpMonth: (typeof editExpMonth!=="undefined"?editExpMonth:undefined),
   deleteManualExp: (typeof deleteManualExp!=="undefined"?deleteManualExp:undefined),
   attachExpFile: (typeof attachExpFile!=="undefined"?attachExpFile:undefined),
