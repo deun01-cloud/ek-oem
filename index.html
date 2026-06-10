@@ -6114,9 +6114,10 @@ function renderInvoiceHistory(){
     if(st && st!=='전체' && v.status!==st) return false;
     // 서브탭 필터 (단계 기반)
     if(subTab==='draft'){
-      // 미청구 탭: _invStage='draft' (출고 전)
-      if(v._isConsolidated) return false;
-      if(v._consolidatedInvoiceId) return false;
+      // 출고완료 탭: _invStage='draft'
+      // 📑 합본 청구서도 아직 청구 전(draft)이면 여기 표시 (묶인 명세서는 합본 아래 아코디언으로)
+      //    → 합본을 만들어도 '청구하기' 누르기 전까지는 출고완료 탭에 남는다.
+      if(v._consolidatedInvoiceId) return false; // 묶인 개별 명세서는 합본 행 아래로
       if(v._invStage !== 'draft') return false;
     } else if(subTab==='billing'){
       // 청구 탭: _invStage='billing' (출고완료, 합본 대상)
@@ -6191,9 +6192,10 @@ function renderInvoiceHistory(){
   var months=[...new Set(invoiceHistory.map(function(v){return v.issuedAt.slice(0,7);}))].sort().reverse();
   var vendors=[...new Set(invoiceHistory.map(function(v){return v.vendor;}))].filter(Boolean).sort();
   // 서브탭별 카운트 (전체 invoiceHistory 기준 — 필터 무관)
-  // 미청구: 출고 전 (draft) + 합본에 안 묶임
+  // 출고완료: draft 단계 — 합본 자체(청구 전)는 포함, 합본에 묶인 개별 명세서는 제외(중복 방지)
   var draftCount = invoiceHistory.filter(function(v){
-    return !v._isConsolidated && !v._consolidatedInvoiceId && v._invStage === 'draft';
+    if(v._consolidatedInvoiceId) return false;
+    return v._invStage === 'draft';
   }).length;
   // 청구: 출고완료 후 (billing) — 합본 자체는 포함, 합본에 묶인 개별 명세서는 제외(중복 방지)
   var billingCount = invoiceHistory.filter(function(v){
