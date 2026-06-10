@@ -123,6 +123,10 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .cal-cell.sun.today-c .cal-dn,.cal-cell.sat.today-c .cal-dn{color:#222}
 .cal-cell.holiday{background:rgba(192,48,48,.04)}
 .cal-cell.holiday.today-c{background:linear-gradient(135deg,rgba(255,213,0,.22) 0%,rgba(192,48,48,.08) 100%)}
+.cal-split{display:flex;flex-direction:column;gap:0}
+.cal-half{min-height:30px;padding:1px 0}
+.cal-half-lbl{font-size:8px;font-weight:700;letter-spacing:.2px;text-transform:uppercase;opacity:.8;margin-bottom:1px;padding-left:2px}
+.cal-split-div{border-top:1px dashed var(--bdr);margin:2px 0}
 .cal-dn{font-size:11px;font-weight:600;color:var(--t2);width:20px;height:20px;display:flex;align-items:center;justify-content:center;margin-bottom:2px}
 .cal-evt{font-size:9px;padding:1px 4px;border-radius:2px;margin-bottom:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;border-left:2px solid;display:flex;align-items:center;gap:2px}
 .cal-evt .cl-init{width:14px;height:14px;font-size:8px;border-radius:3px;flex-shrink:0}
@@ -18948,6 +18952,7 @@ function renderCalWidget(){
       const isDone = st==='확정' || isOrderCanceled(st);
       r.push({
         cls:'ev-ord',
+        group:'ord',
         done: isDone,
         canceled: isOrderCanceled(st),
         t:`${initBadge}<span style="margin-left:4px">발주: ${(o.vendor||'').substring(0,6)}</span>`,
@@ -18964,6 +18969,7 @@ function renderCalWidget(){
       const isDone = st==='확정' || isOrderCanceled(st);
       r.push({
         cls:'ev-smp',
+        group:'smp',
         done: isDone,
         canceled: isOrderCanceled(st),
         t:`${initBadge}<span style="margin-left:4px">샘플: ${(s.name||'').substring(0,6)}</span>`,
@@ -18978,6 +18984,7 @@ function renderCalWidget(){
       const isDone = st==='확정' || isOrderCanceled(st);
       r.push({
         cls:'ev-ship',
+        group:'smp',
         done: isDone,
         canceled: isOrderCanceled(st),
         t:`<span style="margin-right:3px">🇨🇳→</span><span>샘플: ${(s.name||'').substring(0,8)}</span>`,
@@ -18992,6 +18999,7 @@ function renderCalWidget(){
       const isDone = st==='확정' || isOrderCanceled(st);
       r.push({
         cls:'ev-ship',
+        group:'ord',
         done: isDone,
         canceled: isOrderCanceled(st),
         t:`<span style="margin-right:3px">🇨🇳→</span><span>발주: ${(o.vendor||'').substring(0,8)}</span>`,
@@ -19015,12 +19023,19 @@ function renderCalWidget(){
         '중국입고':'🇨🇳←',
         '중국출고':'🇨🇳→'
       };
+      const TASK_CAT_GROUP={
+        '발주출고':'ord',
+        '샘플출고':'smp',
+        '중국입고':'ord',
+        '중국출고':'smp'
+      };
       tasks.filter(t=>t.date===ds && CAL_TASK_CATS.includes(t.cat)).forEach(t=>{
         const cls=TASK_CAT_CLS[t.cat]||'ev-task';
         const prefix=TASK_CAT_PREFIX[t.cat]||'';
         const cont=(t.cont||'').substring(0,12);
         r.push({
           cls,
+          group: TASK_CAT_GROUP[t.cat]||'ord',
           done: !!t.done,
           canceled: false,
           t: `${prefix?`<span style="margin-right:3px">${prefix}</span>`:''}<span>${cont}</span>`,
@@ -19062,13 +19077,29 @@ function renderCalWidget(){
       const dow=(d.getDay()+6)%7;const ev=evts(d);
       const holiday=getHoliday(ds);
       const isRedDay=holiday||dow===6; // 공휴일 또는 일요일
-      return`<div class="cal-cell ${isT?'today-c':''} ${dow===6?'sun':dow===5?'sat':''} ${holiday?'holiday':''}" style="min-height:100px;padding:4px 5px" onclick="calClick('${ds}')">
-        <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">
+      return`<div class="cal-cell ${isT?'today-c':''} ${dow===6?'sun':dow===5?'sat':''} ${holiday?'holiday':''}" style="min-height:104px;padding:4px 5px" onclick="calClick('${ds}')">
+        <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">
           <div class="cal-dn" style="width:22px;height:22px;font-size:12px;${isRedDay?'color:var(--red)':''}">${d.getDate()}</div>
           ${holiday?`<span style="font-size:9.5px;color:var(--red);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${holiday}">${holiday}</span>`:''}
         </div>
-        ${ev.slice(0,4).map(e=>`<div class="cal-evt ${e.cls}${e.done?' ev-done':''}${e.canceled?' ev-canceled':''}" style="font-size:10px;padding:2px 5px;margin-bottom:2px;cursor:pointer" onclick="event.stopPropagation();${e.click}" title="${(e.title||'').replace(/"/g,'&quot;')}">${e.t}</div>`).join('')}
-        ${ev.length>4?`<div style="font-size:9px;color:var(--t3);padding-left:4px;cursor:pointer" onclick="event.stopPropagation();calClick('${ds}')">+${ev.length-4}개 더</div>`:''}
+        ${(function(){
+          const ordEv = ev.filter(e=>e.group==='ord');
+          const smpEv = ev.filter(e=>e.group!=='ord');
+          const sec=(items,label,col)=>{
+            const shown=items.slice(0,2);
+            const more=items.length-shown.length;
+            return `<div class="cal-half">
+              <div class="cal-half-lbl" style="color:${col}">${label}<span style="opacity:.6;font-weight:600;margin-left:3px">${items.length}</span></div>
+              ${shown.map(e=>`<div class="cal-evt ${e.cls}${e.done?' ev-done':''}${e.canceled?' ev-canceled':''}" style="font-size:9.5px;padding:1px 5px;margin-bottom:2px;cursor:pointer" onclick="event.stopPropagation();${e.click}" title="${(e.title||'').replace(/"/g,'&quot;')}">${e.t}</div>`).join('')}
+              ${more>0?`<div style="font-size:8.5px;color:var(--t3);padding-left:3px;cursor:pointer" onclick="event.stopPropagation();calClick('${ds}')">+${more}</div>`:''}
+            </div>`;
+          };
+          return `<div class="cal-split">
+            ${sec(ordEv,'📦 발주','var(--org)')}
+            <div class="cal-split-div"></div>
+            ${sec(smpEv,'◉ 샘플','var(--blu)')}
+          </div>`;
+        })()}
       </div>`;
     }).join('')}</div>
   </div>`;
@@ -36393,8 +36424,55 @@ function go(id,el){
     try{ renderOtherSales('as'); renderOtherSales('commerce'); }catch(e){}
     try{ if(typeof renderBoard==='function') renderBoard(false); }catch(e){}
     try{ if(typeof renderPurchase==='function') renderPurchase(); }catch(e){}
+    try{ _initSalesAccordion(); }catch(e){}
   }
   if(id==='pnl') calcPnL();
+}
+
+// 📂 데이터 입력 탭 세부 카드들을 접기/펼치기(아코디언)로 — 페이지가 길어지는 것 방지
+function _initSalesAccordion(){
+  var pg = document.getElementById('pg-sales'); if(!pg) return;
+  // pg-sales 바로 아래의 .card들만 대상 (중첩 카드 제외)
+  var cards = [];
+  pg.querySelectorAll(':scope > .card, :scope > .note').forEach(function(c){ cards.push(c); });
+  // 일부 카드는 래퍼 div 안에 있을 수 있으니, card-h를 가진 .card 전부 보강
+  pg.querySelectorAll('.card').forEach(function(c){
+    if(c.closest('#saved-summary-card')) return;       // 제거된 요약카드 제외
+    if(cards.indexOf(c)<0 && c.querySelector(':scope > .card-h')) cards.push(c);
+  });
+  cards.forEach(function(card){
+    if(card._accInit) return;
+    var head = card.querySelector(':scope > .card-h');
+    if(!head) return;
+    card._accInit = true;
+    // 본문 = card-h 다음 형제 요소들 전부를 래퍼로 묶음
+    var bodyNodes = [];
+    var n = head.nextElementSibling;
+    while(n){ bodyNodes.push(n); n = n.nextElementSibling; }
+    if(!bodyNodes.length) return;
+    var wrap = document.createElement('div');
+    wrap.className = 'acc-body';
+    head.parentNode.insertBefore(wrap, bodyNodes[0]);
+    bodyNodes.forEach(function(b){ wrap.appendChild(b); });
+    // 헤더에 토글 화살표 + 클릭 핸들러
+    head.style.cursor = 'pointer';
+    head.style.userSelect = 'none';
+    var caret = document.createElement('span');
+    caret.className = 'acc-caret';
+    caret.textContent = '▸';
+    caret.style.cssText = 'margin-left:auto;font-size:13px;color:var(--mu);transition:transform .15s;padding-left:8px';
+    head.appendChild(caret);
+    // 기본: 접힘
+    card.classList.add('acc-collapsed');
+    wrap.style.display = 'none';
+    head.addEventListener('click', function(ev){
+      // 헤더 내부의 버튼/입력 클릭 시에는 토글 안 함
+      if(ev.target.closest('button, input, select, a, label')) return;
+      var collapsed = card.classList.toggle('acc-collapsed');
+      wrap.style.display = collapsed ? 'none' : '';
+      caret.style.transform = collapsed ? 'rotate(0deg)' : 'rotate(90deg)';
+    });
+  });
 }
 // 새로고침 후 마지막 본 경영지원 세부탭 복원
 function restoreMgtSubtab(){
@@ -38459,6 +38537,13 @@ function autoSyncNotion(){
 }
 
 function renderSavedSummary(period){
+  var card = document.getElementById('saved-summary-card');
+  if(!card) return;
+  // 🔕 데이터 입력 탭 상단 '저장 데이터 요약' 대시보드 제거 — 항상 숨김 (요약은 대시보드 탭에서 확인)
+  card.style.display='none';
+  return;
+}
+function _renderSavedSummary_DISABLED(period){
   var card = document.getElementById('saved-summary-card');
   if(!card) return;
   try{
