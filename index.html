@@ -6085,6 +6085,30 @@ function renderInvoiceHistory(){
       });
     }
   }
+  // 💰 0-C단계: 고아 자식 명세서 복구 (돈 사라짐 방지 — 매우 중요)
+  //    _consolidatedInvoiceId(합본에 묶임 표시)를 가진 명세서인데 그 부모 합본이
+  //    invoiceHistory에 없으면 → 모든 탭에서 숨겨져 영영 안 보이게 된다(돈이 사라짐).
+  //    이런 고아는 합본 연결을 해제해서 독립 명세서로 되살린다.
+  {
+    var _consIdSet = new Set();
+    invoiceHistory.forEach(function(v){ if(v && v._isConsolidated) _consIdSet.add(String(v.id)); });
+    var _orphansFixed = 0;
+    invoiceHistory.forEach(function(v){
+      if(!v || v._isConsolidated) return;
+      if(v._consolidatedInvoiceId == null) return;
+      // 부모 합본이 존재하면 정상
+      if(_consIdSet.has(String(v._consolidatedInvoiceId))) return;
+      // 부모가 없음 → 고아. 연결 해제하여 독립 명세서로 복구.
+      console.warn('[invoice] 💰 고아 명세서 복구 — 부모 합본 없음. 독립 명세서로 되살림:', v.id, v.vendor, v.ordNo||'', '(이전 합본ID:', v._consolidatedInvoiceId, ')');
+      v._consolidatedInvoiceId = null;
+      // stage는 아래 재계산 단계에서 자동 보정됨
+      _orphansFixed++;
+    });
+    if(_orphansFixed > 0){
+      console.log('[invoice] ✓ 고아 명세서', _orphansFixed, '건 복구됨 (독립 명세서로 — 출고완료/모든명세서 탭에서 다시 보임)');
+      if(typeof save === 'function') save();
+    }
+  }
   // 4-A: _invStage 자동 재계산 — 매 렌더링마다 모든 명세서를 재분류
   // (옛 데이터, 노션 풀로 새로 받은 데이터, 외부 수정 등으로 _invStage가 잘못/누락된 경우 자동 교정)
   // 📌 합본 청구서도 포함 (이전엔 skip해서 옛 합본의 stage가 null로 남는 버그 있었음)
@@ -6494,10 +6518,12 @@ function renderInvoiceHistory(){
         h+='<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11.5px;color:'+(taxIssued?'var(--blu)':'var(--t3)')+';font-weight:'+(taxIssued?'700':'500')+'" title="'+(isCons?'합본 세금계산서 발행 — 묶인 명세서 전체에 적용':'세금계산서 발행 여부')+'">'
           +'<input type="checkbox" '+(taxIssued?'checked':'')+' onchange="toggleInvTaxIssued('+v.id+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blu)">'
           +(taxIssued?'발행':'대기')+'</label>';
-        // 📌 미청구로 되돌리기 — 출고가 아직 안 된 건을 청구→미청구(draft)로 복귀.
-        //    합본/합본묶임 건은 제외 (출고완료 토글 자체가 막혀있음).
+        // 📌 출고완료로 되돌리기 — 청구→출고완료(draft)로 복귀.
         if(!isCons && !v._consolidatedInvoiceId){
           h+='<button onclick="if(confirm(\'이 명세서를 출고완료(청구 전) 탭으로 되돌립니다.\\n청구 표시가 해제됩니다.\\n\\n계속할까요?\')){markInvoiceShipped('+v.id+',false);renderInvoiceHistory();}" title="청구를 취소하고 출고완료 탭으로 되돌립니다" style="margin-left:8px;padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">↩ 출고완료로</button>';
+        } else if(isCons){
+          // 합본도 출고완료(청구 전)로 되돌리기 가능 — 입금/계산서 미완 상태일 때만 의미 있음
+          h+='<button onclick="if(confirm(\'이 합본을 출고완료(청구 전) 탭으로 되돌립니다.\\n청구 표시가 해제됩니다. (묶인 명세서는 그대로 유지)\\n\\n계속할까요?\')){markConsolidationBilled('+v.id+',false);}" title="합본을 청구 취소하고 출고완료 탭으로 되돌립니다" style="margin-left:8px;padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">↩ 출고완료로</button>';
         }
         // 📅 청구 탭 — 청구월 지정 드롭다운 (일반=결산월 / 합본=청구월)
         if(subTab==='billing'){
@@ -7316,6 +7342,73 @@ window.clearTombstones = ()=>{ localStorage.removeItem(_TOMBSTONE_KEY); console.
 //    1개만 남기고 나머지를 묘비 등록 + 노션 archive + 로컬 제거 한다.
 //    저장 무한루프 버그로 노션에 중복 합본 페이지가 생긴 경우 정리용.
 //    호출: dedupeConsolidations()  (먼저 진단만 보고 싶으면 dedupeConsolidations(true))
+// 💰 거래명세서 무결성 점검 (읽기 전용 — 데이터 변경 없음). 콘솔에서 checkInvoiceIntegrity() 호출.
+//    돈 관련 구멍을 진단: 고아 자식, 부모-자식 역참조 불일치, 합본 합계 불일치, 어느 탭에도 안 잡히는 건.
+window.checkInvoiceIntegrity = function(){
+  var issues = [];
+  var consById = {};
+  invoiceHistory.forEach(function(v){ if(v && v._isConsolidated) consById[String(v.id)] = v; });
+  // 1) 고아 자식: 합본에 묶였다고 표시됐는데 부모 합본이 없음
+  invoiceHistory.forEach(function(v){
+    if(!v || v._isConsolidated) return;
+    if(v._consolidatedInvoiceId != null && !consById[String(v._consolidatedInvoiceId)]){
+      issues.push({type:'고아자식(부모합본없음)', id:v.id, vendor:v.vendor, ordNo:v.ordNo, total:v.total, parentId:v._consolidatedInvoiceId});
+    }
+  });
+  // 2) 합본 자식 역참조 불일치 + 합계 검증
+  invoiceHistory.forEach(function(c){
+    if(!c || !c._isConsolidated) return;
+    var childIds = (c.includedInvoiceIds||[]).map(String);
+    var foundChildren = [];
+    childIds.forEach(function(cid){
+      var ch = invoiceHistory.find(function(x){ return !x._isConsolidated && String(x.id)===String(cid); });
+      // 안정키 폴백
+      if(!ch && Array.isArray(c.includedChildKeys) && typeof _invStableKey==='function'){
+        var idx = childIds.indexOf(String(cid));
+        var sk = c.includedChildKeys[idx];
+        if(sk) ch = invoiceHistory.find(function(x){ return !x._isConsolidated && _invStableKey(x)===sk; });
+      }
+      if(ch) foundChildren.push(ch);
+      else issues.push({type:'합본자식해석실패', consId:c.id, vendor:c.vendor, month:c.consolidationMonth, missingChildId:cid});
+    });
+    // 자식이 자기를 부모로 가리키는지 (역참조)
+    foundChildren.forEach(function(ch){
+      if(String(ch._consolidatedInvoiceId) !== String(c.id)){
+        issues.push({type:'역참조불일치', consId:c.id, childId:ch.id, childPoints:ch._consolidatedInvoiceId});
+      }
+    });
+    // 합계 검증 (합본 공급가 vs 자식 합)
+    if(foundChildren.length){
+      var childSupply = foundChildren.reduce(function(s,x){ return s+(+x.supplyAmt||0); }, 0);
+      var consSupply = +c.supplyAmt||0;
+      if(Math.abs(childSupply - consSupply) > 1){
+        issues.push({type:'합계불일치', consId:c.id, vendor:c.vendor, month:c.consolidationMonth, 합본공급가:consSupply, 자식합:childSupply, 차이:consSupply-childSupply});
+      }
+    }
+  });
+  // 3) 어느 stage 탭에도 안 잡히는 건 (stage가 draft/billing/done이 아님)
+  invoiceHistory.forEach(function(v){
+    if(!v || v._consolidatedInvoiceId != null) return; // 자식은 부모 아래
+    if(['draft','billing','done'].indexOf(v._invStage) < 0){
+      issues.push({type:'탭없음(stage비정상)', id:v.id, vendor:v.vendor, stage:v._invStage});
+    }
+  });
+  // 결과 출력
+  var total = invoiceHistory.length;
+  var consCnt = invoiceHistory.filter(function(v){return v._isConsolidated;}).length;
+  var childCnt = invoiceHistory.filter(function(v){return v._consolidatedInvoiceId!=null;}).length;
+  console.log('%c💰 거래명세서 무결성 점검','font-weight:bold;font-size:14px');
+  console.log('총 '+total+'건 (합본 '+consCnt+' · 묶인자식 '+childCnt+')');
+  if(!issues.length){
+    console.log('%c✓ 문제 없음 — 사라지거나 끊긴 명세서 없음','color:green;font-weight:bold');
+  } else {
+    console.warn('⚠ '+issues.length+'건의 문제 발견:');
+    console.table(issues);
+  }
+  return issues;
+};
+
+// 합본 중복 정리 (콘솔 진단/실행). dedupeConsolidations(true)=진단만, dedupeConsolidations(false,true)=청구월 무시하고 정리
 window.dedupeConsolidations = function(dryRun, ignoreMonth){
   const allCons = invoiceHistory.filter(v => v._isConsolidated);
   const groups = {};
@@ -28874,7 +28967,12 @@ function markConsolidationBilled(consId, billed){
   const v = invoiceHistory.find(x => String(x.id)===String(consId) && x._isConsolidated);
   if(!v){ showToast('⚠ 합본 청구서를 찾을 수 없습니다','var(--red)'); return false; }
   v._consBilled = !!billed;
-  if(billed && !v.status) v.status = '발행완료';
+  if(billed){
+    if(!v.status) v.status = '발행완료';
+  } else {
+    // 출고완료(청구 전)로 되돌릴 때는 입금/계산서 표시도 해제 (draft로 확실히 복귀)
+    v._paid = false; v._taxInvoiceIssued = false; v.paymentRatio = 0; v.status = '발행완료';
+  }
   v._invStage = inferInvStage(v);
   if(typeof save === 'function') save();
   if(typeof realtimePublish === 'function') realtimePublish('invoice', v);
