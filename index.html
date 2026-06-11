@@ -34948,7 +34948,7 @@ function _buildInvoiceItems(){
     // KRW(amount)는 입력/전환 시점 환율로 고정 저장된 값 → 그대로 사용 (환율 바뀌어도 안 흔들림)
     var krwVal = (+m.amount||0);
     var lockRate = (isUsd && m.usd) ? Math.round(krwVal/(+m.usd))  : 0;
-    items.push({ key:'manual:'+idx, _manual:true, _idx:idx, invNo:'', period:(m.period||''), invDate:m.date||'',
+    items.push({ key:'manual:'+idx, _manual:true, _idx:idx, invNo:'', period:(m.period||''), invDate:m.invDate||m.date||'', date:m.date||'', vendor:m.vendor||'',
       label:m.label||'', cur:(m.cur||'KRW'), usd:(+m.usd||0), krw:krwVal, _rate:lockRate,
       detail:null, proof:null, uploadedAt:m._at||'', files:(m.files||[]) });
   });
@@ -35133,8 +35133,9 @@ function _invoiceItemHtml(it, rate, krw){
   var title, ico, chips='';
   if(it._manual){
     ico='✏️';
-    // 항목명 인라인 편집
-    title = '<input value="'+(it.label||'').replace(/"/g,'&quot;')+'" placeholder="항목명 (예: 외주 도금비)" onchange="MGT.editManualLabel('+it._idx+',this.value)" style="border:none;border-bottom:1px dashed var(--bd2);background:transparent;font-size:13.5px;font-weight:600;font-family:inherit;color:var(--t1);min-width:140px;padding:1px 2px">';
+    // 항목명 = 자동생성(EK-INV_MMDD_공장명) — 읽기전용 표시. 공장명/일자는 아래 sub에서 편집.
+    var _autoName = (it.label||'').trim() || _buildManualInvName(it.invDate||it.date||'', it.vendor||'');
+    title = '<span style="font-size:13.5px;font-weight:600;color:var(--t1)">'+(_autoName||'<span style="color:var(--mu);font-weight:400">공장명·일자 입력 시 자동생성</span>')+'</span>';
     chips = '<span class="bchip bchip-manual">직접입력</span>';
     if(it.files && it.files.length) chips += '<span class="bchip bchip-proof">📎 '+it.files.length+'</span>';
   } else {
@@ -35205,6 +35206,12 @@ function _invoiceItemHtml(it, rate, krw){
     delBtn = '<button onclick="MGT.deleteInvoiceItem(\''+ids.join(',')+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:15px" title="삭제">×</button>';
   }
   var subParts=[];
+  if(it._manual){
+    // 공장명 입력 — 인보이스 이름 자동생성용
+    subParts.push('<input value="'+(it.vendor||'').replace(/"/g,'&quot;')+'" placeholder="🏭 공장명" onchange="MGT.editManualVendor('+it._idx+',this.value)" style="border:none;border-bottom:1px dashed var(--bd2);background:transparent;font-size:11.5px;font-family:inherit;color:var(--ac);font-weight:600;width:90px;padding:1px 2px" title="공장(거래처)명 — 인보이스 이름 자동생성">');
+    // 일자 입력 — 인보이스 이름 자동생성용 (MMDD)
+    subParts.push('<input type="date" value="'+(it.invDate||it.date||'')+'" onchange="MGT.editManualDate('+it._idx+',this.value)" style="border:none;border-bottom:1px dashed var(--bd2);background:transparent;font-size:11px;font-family:inherit;color:var(--t2);padding:1px 2px" title="일자 — 인보이스 이름 자동생성">');
+  }
   if(!it._manual){
     // 공장(거래처) 입력칸 — 어느 공장 인보이스인지 기록
     var _vids=[]; (it.allFiles||[]).forEach(function(f){ if(f.pageId) _vids.push(f.pageId); });
@@ -35347,7 +35354,7 @@ async function _loadUsdRateFromNotion(){
 function addManualInvoice(){
   if(!S.manual) S.manual=[];
   var gp=''; try{ gp=(document.getElementById('g-period')||{}).value||''; }catch(e){}
-  S.manual.push({label:'', amount:0, period:gp, date:'', _at:new Date().toISOString()});
+  S.manual.push({label:'', vendor:'', amount:0, period:gp, date:'', invDate:'', _at:new Date().toISOString()});
   renderManual && renderManual();
   calcPnL(); renderPurchase();
   if(_boardTab==='cn') _renderBoardRows();
@@ -35440,6 +35447,35 @@ function toggleManualCur(idx){
 }
 function editManualMonth(idx, m){ if(S.manual&&S.manual[idx]){ S.manual[idx].period=m; calcPnL(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
 function editManualLabel(idx, v){ if(S.manual&&S.manual[idx]){ S.manual[idx].label=v; calcPnL(); renderPurchase(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
+
+// 인보이스 이름 자동생성: EK-INV_MMDD_공장명 (일자 없으면 EK-INV_공장명, 공장명 없으면 EK-INV_MMDD)
+function _buildManualInvName(dateStr, vendor){
+  var mmdd='';
+  var m=String(dateStr||'').match(/^\d{4}-(\d{2})-(\d{2})/);
+  if(m) mmdd=m[1]+m[2];
+  var vnd=(vendor||'').trim();
+  var parts=['EK-INV'];
+  if(mmdd) parts.push(mmdd);
+  if(vnd) parts.push(vnd);
+  return parts.join('_');
+}
+// 직접입력 항목 공장명 변경 → 인보이스 이름 자동 재생성
+function editManualVendor(idx, v){
+  if(!(S.manual&&S.manual[idx])) return;
+  S.manual[idx].vendor=(v||'').trim();
+  S.manual[idx].label=_buildManualInvName(S.manual[idx].invDate||S.manual[idx].date||'', S.manual[idx].vendor);
+  calcPnL(); renderPurchase(); _renderBoardRows();
+  var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p);
+}
+// 직접입력 항목 일자 변경 → 인보이스 이름 자동 재생성 (+ 비어있으면 매입월도 채움)
+function editManualDate(idx, v){
+  if(!(S.manual&&S.manual[idx])) return;
+  S.manual[idx].invDate=v; S.manual[idx].date=v;
+  if(v && /^\d{4}-\d{2}/.test(v) && !S.manual[idx].period){ S.manual[idx].period=v.slice(0,7); }
+  S.manual[idx].label=_buildManualInvName(v, S.manual[idx].vendor||'');
+  calcPnL(); renderPurchase(); _renderBoardRows();
+  var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p);
+}
 
 // 직접입력 항목에 파일 첨부 (첨부파일/증빙 — R2+노션 보관, 항목의 files에 연결)
 function attachManualFile(idx, fileRole, droppedFile){
@@ -36982,8 +37018,9 @@ async function cnAnalyzeFile(file){
     var m=text.match(/\{[\s\S]*\}/); var parsed=m?JSON.parse(m[0]):null;
     if(!parsed){ throw new Error('AI 응답 파싱 실패'); }
     var usd=parseFloat(String(parsed.usd).replace(/[^\d.]/g,''))||0;
+    var curClean=(String(parsed.currency||'USD').toUpperCase().match(/[A-Z]{3}/)||['USD'])[0];
     // 확인/수정 모달 표시 (사용자 확정 후 집계)
-    _showCnConfirm(file, _p, {usd:usd, currency:parsed.currency||'USD', invNo:parsed.invNo||'', invDate:parsed.invDate||''});
+    _showCnConfirm(file, _p, {usd:usd, currency:curClean, invNo:parsed.invNo||'', invDate:parsed.invDate||''});
   }catch(e){
     markDz('dz-cn','i-cn','s-cn',file.name,'⚠ 인식 실패 — 수동 입력');
     _showCnConfirm(file, _p, {usd:0, currency:'USD', invNo:'', invDate:'', _failed:e.message});
@@ -36996,7 +37033,7 @@ function _showCnConfirm(file, period, info){
   var ov=document.createElement('div'); ov.id='cnConfirmOv';
   ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
   var warn=info._failed?'<div style="font-size:11px;color:var(--rd);margin-bottom:8px">AI 인식 실패('+info._failed+') — 직접 입력해 주세요</div>':'<div style="font-size:11px;color:var(--gr);margin-bottom:8px">✓ AI가 인식한 값입니다. 확인 후 수정하세요.</div>';
-  ov.innerHTML='<div style="background:var(--s1);border-radius:14px;padding:22px;max-width:420px;width:100%;box-shadow:0 12px 40px rgba(0,0,0,.25)">'
+  ov.innerHTML='<div style="background:var(--s1);border-radius:14px;padding:22px;max-width:420px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.25)">'
     +'<div style="font-size:15px;font-weight:700;margin-bottom:4px">🏭 공장 인보이스 금액 확인</div>'
     +'<div style="font-size:11px;color:var(--mu);margin-bottom:12px;word-break:break-all">📄 '+file.name+'</div>'
     +warn
@@ -37007,18 +37044,18 @@ function _showCnConfirm(file, period, info){
     +'<label>매입월</label><input id="cnc-month" value="'+period+'" placeholder="YYYY-MM" style="border:1px solid var(--bd2);border-radius:7px;padding:7px 9px;font-size:12px;font-family:inherit">'
     +'</div>'
     +'<div id="cnc-krw" style="font-size:11px;color:var(--mu);margin-top:8px"></div>'
-    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">'
+    +'<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;position:sticky;bottom:-22px;background:var(--s1);padding:12px 0 2px">'
     +'<button onclick="document.getElementById(\'cnConfirmOv\').remove()" style="padding:8px 16px;border-radius:8px;border:1px solid var(--bd2);background:var(--s2);cursor:pointer;font-family:inherit;font-size:12.5px">취소</button>'
     +'<button id="cnc-save" style="padding:8px 18px;border-radius:8px;border:none;background:var(--ac);color:#fff;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600">저장 + 집계</button>'
     +'</div></div>';
   document.body.appendChild(ov);
   var rate=parseFloat((document.getElementById('usd-rate')||{}).value)||1350;
-  function updKrw(){ var u=parseFloat(document.getElementById('cnc-usd').value)||0; var cur=(document.getElementById('cnc-cur').value||'USD').toUpperCase(); document.getElementById('cnc-krw').textContent = cur==='USD'?('환산 ≈ '+won(Math.round(u*rate))+' (환율 '+rate+')'):(cur+' '+u+' — USD 아님: 환율 적용 주의'); }
+  function updKrw(){ var u=parseFloat(document.getElementById('cnc-usd').value)||0; var cur=((document.getElementById('cnc-cur').value||'USD').toUpperCase().match(/[A-Z]{3}/)||['USD'])[0]; document.getElementById('cnc-krw').textContent = cur==='USD'?('환산 ≈ '+won(Math.round(u*rate))+' (환율 '+rate+')'):(cur+' '+u+' — USD 아님: 환율 적용 주의'); }
   document.getElementById('cnc-usd').addEventListener('input',updKrw);
   document.getElementById('cnc-cur').addEventListener('input',updKrw); updKrw();
   document.getElementById('cnc-save').addEventListener('click', function(){
     var usd=parseFloat(document.getElementById('cnc-usd').value)||0;
-    var cur=(document.getElementById('cnc-cur').value||'USD').toUpperCase();
+    var cur=((document.getElementById('cnc-cur').value||'USD').toUpperCase().match(/[A-Z]{3}/)||['USD'])[0];
     var no=document.getElementById('cnc-no').value.trim();
     var date=document.getElementById('cnc-date').value.trim();
     var month=document.getElementById('cnc-month').value.trim()||period;
@@ -39559,6 +39596,8 @@ return {
   toggleManualCur: (typeof toggleManualCur!=="undefined"?toggleManualCur:undefined),
   editManualMonth: (typeof editManualMonth!=="undefined"?editManualMonth:undefined),
   editManualLabel: (typeof editManualLabel!=="undefined"?editManualLabel:undefined),
+  editManualVendor: (typeof editManualVendor!=="undefined"?editManualVendor:undefined),
+  editManualDate: (typeof editManualDate!=="undefined"?editManualDate:undefined),
   attachManualFile: (typeof attachManualFile!=="undefined"?attachManualFile:undefined),
   removeManualFile: (typeof removeManualFile!=="undefined"?removeManualFile:undefined),
   deleteManualInvoice: (typeof deleteManualInvoice!=="undefined"?deleteManualInvoice:undefined),
