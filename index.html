@@ -141,6 +141,35 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .ev-smp-req{background:rgba(26,109,181,.05);border-color:rgba(26,109,181,.35);color:var(--blu);opacity:.8}
 .ev-task{background:rgba(80,64,160,.08);border-color:var(--prp);color:var(--prp)}
 
+/* ── 깔끔한 월간 캘린더 (renderCalWidget) ── */
+.calx-cell{min-height:118px;border-right:1px solid var(--bdr);border-bottom:1px solid var(--bdr);padding:5px 6px;background:var(--s1);cursor:pointer;transition:.1s;display:flex;flex-direction:column;gap:3px}
+.calx-cell:hover{background:var(--gold-bg,rgba(255,213,0,.05))}
+.calx-cell.other{background:var(--s2);opacity:.45;cursor:default}
+.calx-cell.today-c{background:rgba(255,213,0,.13)}
+.calx-cell.holiday{background:rgba(192,48,48,.035)}
+.calx-head{display:flex;align-items:center;gap:5px;min-height:22px}
+.calx-dn{width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:600;color:var(--t2);border-radius:50%}
+.calx-cell.today-c .calx-dn{background:#FFD500;color:#222;font-weight:800;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.calx-cell.sun .calx-dn{color:var(--red)}.calx-cell.sat .calx-dn{color:var(--blu)}
+.calx-cell.today-c.sun .calx-dn,.calx-cell.today-c.sat .calx-dn{color:#222}
+.calx-hol{font-size:9.5px;color:var(--red);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.calx-dots{display:flex;gap:3px;margin-left:auto;align-items:center}
+.calx-dot{display:inline-flex;align-items:center;gap:1px;font-size:9px;font-weight:700;line-height:1}
+.calx-dot i{width:6px;height:6px;border-radius:50%;display:inline-block}
+.calx-evts{display:flex;flex-direction:column;gap:2px;overflow:hidden}
+.calx-evt{display:flex;align-items:center;gap:4px;font-size:10.5px;line-height:1.25;padding:2px 6px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;border-left:3px solid;font-weight:500;transition:.1s}
+.calx-evt:hover{filter:brightness(.97);transform:translateX(1px)}
+.calx-evt .calx-nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.calx-evt.x-ord{background:rgba(168,90,16,.09);border-color:var(--org);color:#7A4008}
+.calx-evt.x-smp{background:rgba(26,109,181,.09);border-color:var(--blu);color:#155A9A}
+.calx-evt.x-cn{background:rgba(192,48,48,.08);border-color:var(--red);color:#A32D2D}
+.calx-evt.x-task{background:rgba(80,64,160,.08);border-color:var(--prp);color:#4A3A8C}
+.calx-evt.x-done{text-decoration:line-through;text-decoration-color:rgba(0,0,0,.5);opacity:.6}
+.calx-evt.x-canceled{text-decoration:line-through;text-decoration-color:var(--red);color:var(--red);opacity:.7}
+.calx-more{font-size:9.5px;color:var(--t3);padding:1px 4px;cursor:pointer;font-weight:600}
+.calx-more:hover{color:var(--gold)}
+.calx-cell .cl-init{flex-shrink:0}
+
 /* ── Layout (search-box only) ── */
 .search-box{flex:1;max-width:220px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;padding:4px 9px;font-size:11.5px;font-family:inherit;color:var(--t1);outline:none}
 .search-box:focus{border-color:var(--gold)}
@@ -19213,39 +19242,38 @@ function renderCalWidget(){
         </button>
       </div>
     </div>
-    <div class="cal-dow-row">${['월','화','수','목','금','토','일'].map(d=>`<div class="cal-dow" style="padding:8px 4px;font-size:11px">${d}</div>`).join('')}</div>
+    <div class="cal-dow-row">${['월','화','수','목','금','토','일'].map((d,i)=>`<div class="cal-dow" style="padding:9px 4px;font-size:11px;${i===5?'color:var(--blu)':i===6?'color:var(--red)':''}">${d}</div>`).join('')}</div>
     <div class="cal-grid">${cells.map((d,i)=>{
-      if(!d)return`<div class="cal-cell other" style="min-height:100px"></div>`;
+      if(!d)return`<div class="calx-cell other"></div>`;
       const ds=toLocalDateStr(d);const isT=ds===todayStr;
       const dow=(d.getDay()+6)%7;const ev=evts(d);
       const holiday=getHoliday(ds);
-      const isRedDay=holiday||dow===6; // 공휴일 또는 일요일
-      return`<div class="cal-cell ${isT?'today-c':''} ${dow===6?'sun':dow===5?'sat':''} ${holiday?'holiday':''}" style="min-height:104px;padding:4px 5px" onclick="calClick('${ds}')">
-        <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">
-          <div class="cal-dn" style="width:22px;height:22px;font-size:12px;${isRedDay?'color:var(--red)':''}">${d.getDate()}</div>
-          ${holiday?`<span style="font-size:9.5px;color:var(--red);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${holiday}">${holiday}</span>`:''}
+      const isRedDay=holiday||dow===6;
+      const ordN=ev.filter(e=>e.group==='ord').length;
+      const smpN=ev.filter(e=>e.group==='smp').length;
+      const cnN =ev.filter(e=>e.group==='cn').length;
+      // 카테고리 우선순서로 정렬: 발주 → 샘플 → 중국출고 → 업무
+      const grpOrd={ord:1,smp:2,cn:3,task:4};
+      const grpCls={ord:'x-ord',smp:'x-smp',cn:'x-cn',task:'x-task'};
+      const sorted=ev.slice().sort((a,b)=>(grpOrd[a.group]||9)-(grpOrd[b.group]||9));
+      const MAX=4;
+      const shown=sorted.slice(0,MAX);
+      const more=sorted.length-shown.length;
+      // 상단 우측 요약 점: 건수 있는 것만
+      const dots=[];
+      if(ordN) dots.push(`<span class="calx-dot" style="color:var(--org)" title="발주 출고 ${ordN}건"><i style="background:var(--org)"></i>${ordN}</span>`);
+      if(smpN) dots.push(`<span class="calx-dot" style="color:var(--blu)" title="샘플 출고 ${smpN}건"><i style="background:var(--blu)"></i>${smpN}</span>`);
+      if(cnN)  dots.push(`<span class="calx-dot" style="color:var(--red)" title="중국 출/입고 ${cnN}건"><i style="background:var(--red)"></i>${cnN}</span>`);
+      return`<div class="calx-cell ${isT?'today-c':''} ${dow===6?'sun':dow===5?'sat':''} ${holiday?'holiday':''}" onclick="calClick('${ds}')">
+        <div class="calx-head">
+          <div class="calx-dn" style="${isRedDay&&!isT?'color:var(--red)':''}">${d.getDate()}</div>
+          ${holiday?`<span class="calx-hol" title="${holiday}">${holiday}</span>`:''}
+          ${dots.length?`<div class="calx-dots">${dots.join('')}</div>`:''}
         </div>
-        ${(function(){
-          const ordEv = ev.filter(e=>e.group==='ord');
-          const smpEv = ev.filter(e=>e.group==='smp');
-          const cnEv  = ev.filter(e=>e.group==='cn');
-          const sec=(items,label,col,maxShow)=>{
-            const shown=items.slice(0,maxShow||2);
-            const more=items.length-shown.length;
-            return `<div class="cal-half">
-              <div class="cal-half-lbl" style="color:${col}">${label}<span style="opacity:.6;font-weight:600;margin-left:3px">${items.length}</span></div>
-              ${shown.map(e=>`<div class="cal-evt ${e.cls}${e.done?' ev-done':''}${e.canceled?' ev-canceled':''}" style="font-size:9.5px;padding:1px 5px;margin-bottom:2px;cursor:pointer" onclick="event.stopPropagation();${e.click}" title="${(e.title||'').replace(/"/g,'&quot;')}">${e.t}</div>`).join('')}
-              ${more>0?`<div style="font-size:8.5px;color:var(--t3);padding-left:3px;cursor:pointer" onclick="event.stopPropagation();calClick('${ds}')">+${more}</div>`:''}
-            </div>`;
-          };
-          return `<div class="cal-split">
-            ${sec(ordEv,'📦 발주','var(--org)')}
-            <div class="cal-split-div"></div>
-            ${sec(smpEv,'◉ 샘플','var(--blu)')}
-            <div class="cal-split-div cal-split-cn"></div>
-            ${sec(cnEv,'🇨🇳 중국출고','var(--red)')}
-          </div>`;
-        })()}
+        <div class="calx-evts">
+          ${shown.map(e=>`<div class="calx-evt ${grpCls[e.group]||'x-task'}${e.done?' x-done':''}${e.canceled?' x-canceled':''}" onclick="event.stopPropagation();${e.click}" title="${(e.title||'').replace(/"/g,'&quot;')}"><span class="calx-nm">${e.t}</span></div>`).join('')}
+          ${more>0?`<div class="calx-more" onclick="event.stopPropagation();calClick('${ds}')">+${more}건 더보기</div>`:''}
+        </div>
       </div>`;
     }).join('')}</div>
   </div>`;
