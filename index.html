@@ -1217,6 +1217,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
           <th style="text-align:center">입금예정일</th>
           <th style="text-align:center">상태</th>
           <th style="text-align:left">메모</th>
+          <th style="text-align:center">첨부</th>
           <th></th>
         </tr></thead>
         <tbody id="fin-recv-body"></tbody>
@@ -35573,6 +35574,17 @@ function _finRenderReceivables(){
   (FIN.receivables||[]).forEach(function(r,i){
     var overdue=(r.status!=='입금완료' && r.due && r.due<today);
     var stColor=r.status==='입금완료'?'#2E7D32':(overdue?'var(--rd)':'#E65100');
+    // 첨부 셀: 칩 목록 + 추가 버튼
+    var attHtml='';
+    (r.files||[]).forEach(function(f,fi){
+      var ext=(f.name||'').split('.').pop().toLowerCase();
+      var ic = ['jpg','jpeg','png','gif','webp','bmp','svg'].indexOf(ext)>=0?'🖼':(ext==='pdf'?'📄':(['xlsx','xls','csv'].indexOf(ext)>=0?'📊':'📎'));
+      attHtml+='<span style="display:inline-flex;align-items:center;gap:2px;background:var(--acbg);border:1px solid var(--bd2);border-radius:5px;padding:1px 4px;margin:1px;font-size:10.5px;max-width:120px">'
+        +'<a onclick="MGT.finPreviewReceivable('+i+','+fi+')" style="cursor:pointer;color:var(--ac);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+_finEsc(f.name)+' 미리보기">'+ic+' '+_finEsc((f.name||'').length>10?f.name.slice(0,9)+'…':f.name)+'</a>'
+        +'<span onclick="MGT.finDelReceivableFile('+i+','+fi+')" style="cursor:pointer;color:var(--rd);font-weight:700" title="삭제">×</span>'
+        +'</span>';
+    });
+    attHtml+='<button class="btn btn-sm" style="padding:2px 7px;font-size:10.5px;margin-top:2px" onclick="MGT.finAttachReceivable('+i+')" title="파일 첨부">+ 📎</button>';
     rows+='<tr'+(overdue?' class="tr-warn"':'')+'>'
       +'<td><input value="'+_finEsc(r.client)+'" placeholder="거래처" onchange="MGT.finEdit(\'receivables\','+i+',\'client\',this.value)"></td>'
       +'<td><input type="number" value="'+(r.amount||'')+'" placeholder="0" onchange="MGT.finEdit(\'receivables\','+i+',\'amount\',this.value)"></td>'
@@ -35580,16 +35592,17 @@ function _finRenderReceivables(){
       +'<td><input type="date" value="'+_finEsc(r.due)+'" onchange="MGT.finEdit(\'receivables\','+i+',\'due\',this.value)"></td>'
       +'<td><select style="color:'+stColor+';font-weight:700" onchange="MGT.finEdit(\'receivables\','+i+',\'status\',this.value)">'+['미입금','부분입금','입금완료'].map(function(s){return '<option'+(r.status===s?' selected':'')+'>'+s+'</option>';}).join('')+'</select>'+(overdue?'<div style="font-size:10px;color:var(--rd);margin-top:2px">⚠ 연체</div>':'')+'</td>'
       +'<td><input value="'+_finEsc(r.memo)+'" placeholder="메모" onchange="MGT.finEdit(\'receivables\','+i+',\'memo\',this.value)"></td>'
+      +'<td style="text-align:center;min-width:110px">'+attHtml+'</td>'
       +'<td style="text-align:center"><button class="fin-del" onclick="MGT.finDel(\'receivables\','+i+')" title="삭제">×</button></td>'
       +'</tr>';
   });
-  if(!rows) rows='<tr><td colspan="7" style="text-align:center;color:var(--mu);padding:18px">받을 돈(미수금)을 거래처별로 등록하세요</td></tr>';
+  if(!rows) rows='<tr><td colspan="8" style="text-align:center;color:var(--mu);padding:18px">받을 돈(미수금)을 거래처별로 등록하세요</td></tr>';
   tb.innerHTML=rows;
   var open=(FIN.receivables||[]).filter(function(r){return r.status!=='입금완료';});
   var openTot=open.reduce(function(s,r){return s+_finNum(r.amount);},0);
   var overdueTot=open.filter(function(r){return r.due&&r.due<today;}).reduce(function(s,r){return s+_finNum(r.amount);},0);
   var ft=document.getElementById('fin-recv-foot');
-  if(ft) ft.innerHTML='<tr><td>미입금 합계</td><td style="text-align:right;color:#E65100">'+won(openTot)+'</td><td colspan="5" style="color:var(--rd);font-weight:600">'+(overdueTot>0?('연체 '+won(overdueTot)):'연체 없음')+'</td></tr>';
+  if(ft) ft.innerHTML='<tr><td>미입금 합계</td><td style="text-align:right;color:#E65100">'+won(openTot)+'</td><td colspan="6" style="color:var(--rd);font-weight:600">'+(overdueTot>0?('연체 '+won(overdueTot)):'연체 없음')+'</td></tr>';
 }
 
 function _finRenderTaxes(){
@@ -35688,6 +35701,50 @@ function finFieldChange(){
   var m=document.getElementById('fin-memo'); if(m) FIN.memo=m.value;
   _finRenderSummary();
   saveFinPlan();
+}
+
+// 미수금 첨부 — 파일 선택 → R2+노션 업로드 → r.files에 저장
+function finAttachReceivable(i){
+  if(!FIN.receivables||!FIN.receivables[i]) return;
+  var inp=document.createElement('input');
+  inp.type='file'; inp.accept='.pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls'; inp.multiple=true;
+  inp.style.display='none';
+  inp.onchange=function(){
+    var files=Array.prototype.slice.call(inp.files||[]);
+    inp.remove();
+    if(!files.length) return;
+    if(!FIN.receivables[i].files) FIN.receivables[i].files=[];
+    var period=(FIN.receivables[i].date||'').slice(0,7) || new Date().toISOString().slice(0,7);
+    var seq=Promise.resolve();
+    toast('🔄 첨부 업로드 중…','ac');
+    files.forEach(function(file){
+      seq=seq.then(function(){
+        return uploadFileToNotion(file,'cninv',period,'미수금 첨부 ('+(FIN.receivables[i].client||'')+')').then(function(meta){
+          if(meta){ FIN.receivables[i].files.push({name:file.name, url:meta.url, pageId:meta.pageId, pageUrl:meta.pageUrl, r2key:meta.r2key}); }
+        });
+      });
+    });
+    seq.then(function(){ _finRenderReceivables(); saveFinPlan(true); toast('📎 첨부 완료','ok'); });
+  };
+  document.body.appendChild(inp); inp.click();
+}
+// 미수금 첨부 미리보기 — 공용 openFilePreviewList 재사용 (이미지/PDF/엑셀)
+function finPreviewReceivable(i, fileIdx){
+  if(!FIN.receivables||!FIN.receivables[i]||!FIN.receivables[i].files) return;
+  var files=FIN.receivables[i].files.map(function(f){ return {name:f.name, url:f.url, type:''}; });
+  if(typeof openFilePreviewList==='function') openFilePreviewList(files, fileIdx||0);
+  else if(files[fileIdx||0] && files[fileIdx||0].url) window.open(files[fileIdx||0].url,'_blank');
+}
+// 미수금 첨부 삭제
+function finDelReceivableFile(i, fileIdx){
+  if(!FIN.receivables||!FIN.receivables[i]||!FIN.receivables[i].files) return;
+  var f=FIN.receivables[i].files[fileIdx]; if(!f) return;
+  if(!confirm('첨부 "'+f.name+'"을(를) 삭제할까요?')) return;
+  // R2/노션 정리 (실패해도 목록에서는 제거)
+  try{ if(f.r2key && typeof deleteFileFromR2==='function') deleteFileFromR2(f.r2key); }catch(e){}
+  try{ if(f.pageId) fetch(NOTION_PROXY+'/pages/'+f.pageId,{method:'PATCH',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({archived:true})}).catch(function(){}); }catch(e){}
+  FIN.receivables[i].files.splice(fileIdx,1);
+  _finRenderReceivables(); saveFinPlan(true);
 }
 
 // 저장/로드
@@ -39920,6 +39977,9 @@ return {
   finEdit: (typeof finEdit!=="undefined"?finEdit:undefined),
   finDel: (typeof finDel!=="undefined"?finDel:undefined),
   finFieldChange: (typeof finFieldChange!=="undefined"?finFieldChange:undefined),
+  finAttachReceivable: (typeof finAttachReceivable!=="undefined"?finAttachReceivable:undefined),
+  finPreviewReceivable: (typeof finPreviewReceivable!=="undefined"?finPreviewReceivable:undefined),
+  finDelReceivableFile: (typeof finDelReceivableFile!=="undefined"?finDelReceivableFile:undefined),
   renderFinPlan: (typeof renderFinPlan!=="undefined"?renderFinPlan:undefined),
   deletePeriodData: (typeof deletePeriodData!=="undefined"?deletePeriodData:undefined),
   onPeriodChange: (typeof onPeriodChange!=="undefined"?onPeriodChange:undefined),
