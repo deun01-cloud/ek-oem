@@ -809,6 +809,12 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 
 <!-- CONTENT -->
 <div class="content" id="content"></div>
+
+<!-- 실행취소(Ctrl+Z) 플로팅 버튼 — 되돌릴 작업이 있을 때만 표시 -->
+<button id="undoFab" onclick="undoLastChange()" title="실행취소 (Ctrl+Z)"
+  style="display:none;position:fixed;right:18px;bottom:80px;z-index:8000;align-items:center;gap:7px;background:var(--s1,#fff);color:var(--t1,#222);border:1px solid var(--bdr,#ddd);border-radius:24px;padding:9px 16px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.14);transition:.15s">
+  <span style="font-size:15px">↩️</span><span id="undoFabLbl">되돌리기</span>
+</button>
 <!-- ===== 💼 경영지원(손익관리) 모듈 — 비밀번호 게이트 + 본문 ===== -->
 <div id="mgtRoot" style="display:none">
   <div id="mgtGate" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(15,18,28,.55);align-items:center;justify-content:center;flex-direction:column">
@@ -972,7 +978,7 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
       <span class="dz-ico" id="i-exp">📤</span>
       <div class="dz-ttl">지출내역서</div>
       <div class="dz-dsc">월말 청구내역서 엑셀</div>
-      <div class="dz-hint">컬럼: 구분 · <b>거래처</b> · <b>금액</b> · 확인 · <b>부가세포함여부</b> (O면 ÷1.1 자동)</div>
+      <div class="dz-hint">컬럼: 구분 · <b>거래처</b> · <b>금액</b> · 부가세칸. 금액은 그대로 인식하며, 부가세칸에 <b>O/포함</b> 표기가 있을 때만 ÷1.1 합니다</div>
       <div class="dz-stat" id="s-exp"></div>
       <div id="files-exp" style="display:none;text-align:left;margin-top:8px"></div>
       <input type="file" id="fi-exp" accept=".xlsx,.xls" multiple onchange="MGT.lfMulti(this,'exp')">
@@ -1003,10 +1009,12 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
         <button class="board-tab on" data-board="cn" onclick="MGT.switchBoardTab('cn')" style="padding:6px 12px;font-size:12.5px;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-weight:600;background:var(--acbg);color:var(--ac)">🏭 공장 인보이스</button>
         <button class="board-tab" data-board="exp" onclick="MGT.switchBoardTab('exp')" style="padding:6px 12px;font-size:12.5px;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-weight:500;background:transparent;color:var(--mu)">🧾 지출내역서</button>
       </div>
-      <div style="display:flex;align-items:center;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span class="card-badge" id="board-stat">—</span>
+        <span id="pur-save-stat" style="font-size:11px;color:var(--hi);white-space:nowrap"></span>
         <input type="text" placeholder="🔍 검색" oninput="MGT.boardSearch(this.value)" style="border:1px solid var(--bd2);border-radius:7px;padding:5px 10px;font-size:12px;font-family:inherit;width:120px">
         <button class="btn btn-sm" id="board-add-manual" onclick="MGT.addBoardManual()" title="직접 입력">+ 직접입력</button>
+        <button class="btn btn-sm btn-gr" id="pur-save-btn" onclick="MGT.savePurchaseNow()" title="입력 내용을 노션에 즉시 저장">💾 저장</button>
         <button class="btn btn-sm" onclick="MGT.renderBoard(true)" title="노션에서 다시 불러오기">↻</button>
       </div>
     </div>
@@ -14613,7 +14621,98 @@ let prevImages=[], prevIdx=0;
 // STORAGE
 // ════════════════════════════════
 const SK={s:'ek3_smp',o:'ek3_ord',p:'ek3_proc',t:'ek3_task',a:'ek3_as',pd:'ek3_products',iv:'ek3_invoices',sh:'ek3_stock_hist',io:'ek3_io'};
+// ══════════════════════════════════════════════════════════════
+//  ↩️ 전역 실행취소 (Ctrl+Z) — 모든 변경은 save()를 거치므로 그 직전 상태를 스냅샷
+// ══════════════════════════════════════════════════════════════
+const _UNDO_KEYS = [SK.s, SK.o, SK.p, SK.t, SK.a, SK.pd, SK.iv, SK.sh, SK.io];
+let _undoStack = [];      // [{label, snap:{key:json}}]
+let _undoMax = 30;
+let _undoSuppressed = false;  // 복원 중에는 스냅샷 안 찍음
+let _lastUndoLabel = '';
+
+// save() 진입 시 호출 — localStorage에 아직 남아있는 '변경 전' 값을 캡쳐
+function _pushUndoSnapshot(label){
+  if(_undoSuppressed) return;
+  try{
+    const snap = {};
+    let any = false;
+    _UNDO_KEYS.forEach(k=>{ const v=localStorage.getItem(k); snap[k] = (v===null?null:v); if(v!==null) any=true; });
+    // 직전 스냅샷과 동일하면 중복 저장 안 함
+    if(_undoStack.length){
+      const prev = _undoStack[_undoStack.length-1].snap;
+      let same = true;
+      for(const k of _UNDO_KEYS){ if((prev[k]||'')!==(snap[k]||'')){ same=false; break; } }
+      if(same) return;
+    }
+    _undoStack.push({label: label||_lastUndoLabel||'', snap});
+    if(_undoStack.length>_undoMax) _undoStack.shift();
+    _refreshUndoFab();
+  }catch(e){}
+}
+// 다음 변경에 표시할 라벨 힌트 (선택) — 예: _setUndoLabel('샘플 삭제')
+function _setUndoLabel(label){ _lastUndoLabel = label||''; }
+
+// 플로팅 실행취소 버튼 표시 갱신
+function _refreshUndoFab(){
+  var fab=document.getElementById('undoFab'); if(!fab) return;
+  if(_undoStack.length){
+    var last=_undoStack[_undoStack.length-1];
+    var lbl=document.getElementById('undoFabLbl');
+    if(lbl) lbl.textContent = last && last.label ? ('되돌리기: '+last.label) : '되돌리기';
+    fab.style.display='inline-flex';
+  } else {
+    fab.style.display='none';
+  }
+}
+
+function undoLastChange(){
+  if(!_undoStack.length){
+    if(typeof showToast==='function') showToast('↩️ 되돌릴 작업이 없습니다','var(--t3)',1600);
+    return;
+  }
+  const entry = _undoStack.pop();
+  _undoSuppressed = true;
+  try{
+    // 스냅샷 복원: localStorage + 인메모리 배열 모두
+    _UNDO_KEYS.forEach(k=>{
+      if(entry.snap[k]===null){ try{ localStorage.removeItem(k); }catch(e){} }
+      else { try{ localStorage.setItem(k, entry.snap[k]); }catch(e){} }
+    });
+    // 인메모리 배열 재로드
+    if(typeof load==='function') load();
+    // 화면 갱신
+    if(typeof renderTab==='function') renderTab();
+    // 노션 동기화 (있으면) — 복원된 상태를 백그라운드로 반영
+    try{ if(typeof autoSyncNotion==='function') autoSyncNotion(); }catch(e){}
+    if(typeof showToast==='function') showToast('↩️ 되돌렸습니다'+(entry.label?(' ('+entry.label+')'):'')+' · 남은 단계 '+_undoStack.length,'var(--blu)',2200);
+  }catch(e){
+    console.warn('실행취소 실패:', e.message);
+    if(typeof showToast==='function') showToast('⚠ 실행취소 실패','var(--red)',2000);
+  }finally{
+    _undoSuppressed = false;
+    _lastUndoLabel = '';
+    _refreshUndoFab();
+  }
+}
+
+// Ctrl+Z / Cmd+Z 키 바인딩 (입력 필드 안에서는 기본 텍스트 취소 우선)
+document.addEventListener('keydown', function(e){
+  const z = (e.key==='z' || e.key==='Z');
+  if(!z) return;
+  if(!(e.ctrlKey || e.metaKey)) return;
+  if(e.shiftKey || e.altKey) return; // Ctrl+Shift+Z(다시실행 등)는 제외
+  const el = e.target;
+  const tag = (el && el.tagName) ? el.tagName.toUpperCase() : '';
+  const editable = tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT' || (el && el.isContentEditable);
+  // 편집 중인 칸에서는 그 칸의 텍스트 실행취소를 우선 (전역 취소 안 함)
+  if(editable) return;
+  e.preventDefault();
+  undoLastChange();
+}, true);
+
 function save(){
+  _pushUndoSnapshot(_lastUndoLabel);  // 변경 전 상태 보존 (이번 save로 덮어쓰기 직전)
+  _lastUndoLabel = '';
   const saveKey=(key, data, label)=>{
     try{
       const json=JSON.stringify(data);
@@ -23847,7 +23946,7 @@ function showConfirm(msg, onOk, title, icon, okLabel, okColor, onCancel){
     btn.style.color='';
     btn.style.border='';
   }
-  btn.onclick = ()=>{ closeM('mConfirm'); onOk(); };
+  btn.onclick = ()=>{ closeM('mConfirm'); try{ if(typeof _setUndoLabel==='function') _setUndoLabel((title&&title!=='삭제하시겠습니까?')?title:(okLabel||'삭제')); }catch(e){} onOk(); };
   // 취소 버튼이 있으면 onCancel 연결 (안전: 기존 동작 보존)
   const cancelBtn = document.querySelector('#mConfirm .btn:not(#confirmOkBtn)');
   if(cancelBtn && onCancel){
@@ -35852,11 +35951,24 @@ function addManualExp(){
   _renderBoardRows();
   var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p);
 }
-function editExpVendor(idx, v){ if(S.exp&&S.exp[idx]){ S.exp[idx].vendor=v; _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
-function editExpAmount(idx, v){ if(S.exp&&S.exp[idx]){ S.exp[idx].amount=parseFloat(v)||0; calcPnL(); renderPurchase&&renderPurchase(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
-function editExpMonth(idx, m){ if(S.exp&&S.exp[idx]){ S.exp[idx].period=m; calcPnL(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
-function editExpVat(idx, checked){ if(S.exp&&S.exp[idx]){ S.exp[idx].inclVat=!!checked; calcPnL(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
-function editExpPaid(idx, checked){ if(S.exp&&S.exp[idx]){ S.exp[idx]._paid=!!checked; _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
+// 입력 변경 즉시 "저장 중" 표시 (사용자가 변경이 반영되는지 바로 알 수 있게)
+function _markPurDirty(){
+  var el=document.getElementById('pur-save-stat');
+  if(el){ el.textContent='✏️ 변경됨 — 저장 중…'; el.style.color='var(--ac)'; }
+}
+// 즉시 저장 버튼
+function savePurchaseNow(){
+  _markPurDirty();
+  var p=''; try{ p=(document.getElementById('g-period')||{}).value||''; }catch(e){}
+  if(!p){ var el=document.getElementById('pur-save-stat'); if(el){ el.textContent='⚠ 기간(매입월)을 먼저 선택하세요'; el.style.color='var(--rd)'; } return; }
+  syncCogsToNotion(p);
+  toast('💾 저장 중…','ac');
+}
+function editExpVendor(idx, v){ if(S.exp&&S.exp[idx]){ S.exp[idx].vendor=v; _markPurDirty(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
+function editExpAmount(idx, v){ if(S.exp&&S.exp[idx]){ S.exp[idx].amount=parseFloat(v)||0; _markPurDirty(); calcPnL(); renderPurchase&&renderPurchase(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
+function editExpMonth(idx, m){ if(S.exp&&S.exp[idx]){ S.exp[idx].period=m; _markPurDirty(); calcPnL(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
+function editExpVat(idx, checked){ if(S.exp&&S.exp[idx]){ S.exp[idx].inclVat=!!checked; _markPurDirty(); calcPnL(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
+function editExpPaid(idx, checked){ if(S.exp&&S.exp[idx]){ S.exp[idx]._paid=!!checked; _markPurDirty(); _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); } }
 function deleteManualExp(idx){
   if(!(S.exp&&S.exp[idx])) return;
   if(!confirm('이 지출 항목을 삭제할까요?')) return;
@@ -37353,15 +37465,34 @@ function parseExp(wb, fname){
   var filePeriod = _periodFromFilename(fname||'');
   var items=[];
   // 📌 두 블록 구분: '청구내역서'(총액A, 입금대기) / '영수내역서'(총액B, 입금완료)
-  //    엑셀에 '구분' 헤더가 두 번 나오고, 그 위/근처에 '청구내역'/'영수내역' 라벨이 있음.
-  //    현재 블록 카테고리를 행을 훑으며 추적한다.
   var curCat = '청구'; // 기본값: 첫 블록은 청구내역
+
+  // 🔎 부가세 전용 칼럼이 실제로 '헤더'에 존재할 때만 부가세 처리 대상.
+  //    (예: 헤더 행에 '부가세' / 'VAT' / '부가세포함' 칼럼이 명시된 경우)
+  //    헤더가 없으면 금액은 100% 그대로 사용 — 절대 ÷1.1 하지 않음.
+  var vatColIdx = -1;
+  for(var h=0; h<Math.min(rows.length,12); h++){
+    var hr=rows[h]||[];
+    for(var c=0;c<hr.length;c++){
+      var cell=(hr[c]==null?'':String(hr[c])).replace(/\s/g,'');
+      if(/부가세|VAT/i.test(cell)){ vatColIdx=c; break; }
+    }
+    if(vatColIdx>=0) break;
+  }
+
+  function _isVatYes(cell){
+    if(cell==null) return false;
+    var v=String(cell).trim().toUpperCase();
+    return v==='O' || v==='○' || v==='Y' || v==='YES' || v==='V' || v==='포함' || v==='부가세포함' || v==='1';
+  }
+
   for(var i=0;i<rows.length;i++){
     var r=rows[i]||[];
     var rowText = r.map(function(c){return c==null?'':String(c);}).join(' ');
-    // 블록 라벨 감지
-    if(/영수\s*내역/.test(rowText)){ curCat='영수'; continue; }
-    if(/청구\s*내역/.test(rowText)){ curCat='청구'; continue; }
+    var rowCompact = rowText.replace(/\s/g,'');
+    // 블록 라벨 감지 (공백 무시 매칭 — '영수 내역서' / '영수내역서' / '영수증내역' 모두 포착)
+    if(/영수.{0,3}내역|영수증/.test(rowCompact)){ curCat='영수'; continue; }
+    if(/청구.{0,3}내역/.test(rowCompact)){ curCat='청구'; continue; }
     // 총액 행은 건너뜀 (총액(A)/총액(B)/총액(A+B))
     if(/총\s*액/.test(rowText)){ continue; }
     // '구분' 헤더 행 건너뜀
@@ -37369,11 +37500,13 @@ function parseExp(wb, fname){
     // 데이터 행: B열(거래처), C열(금액)
     var vendor = r[1]!=null ? String(r[1]).trim() : '';
     if(!vendor || vendor==='-') continue;
+    // 거래처 칸이 라벨/헤더 텍스트면 건너뜀 (안전장치)
+    if(/내역|총액|구분|거래처|금액/.test(vendor.replace(/\s/g,''))) continue;
     var amt = parseFloat(String(r[2]!=null?r[2]:'').replace(/[,\s₩]/g,''));
     if(isNaN(amt)||amt<=0) continue;
-    // 부가세 포함 여부: 청구블록은 E열, 영수블록은 D열(세액포함여부)에 'O' 표기될 수 있음
-    var vatCell = (r[4]!=null?String(r[4]):'') + ' ' + (r[3]!=null?String(r[3]):'');
-    var inclVat = /O|○|포함|Y/i.test(vatCell);
+    // 부가세 포함 여부: '부가세 칼럼이 헤더에 실제로 있을 때'만, 그 칼럼 값이 긍정 표기면 ÷1.1.
+    //   부가세 칼럼이 없으면(=구분/거래처/금액 3열) inclVat=false → 금액 그대로 사용.
+    var inclVat = (vatColIdx>=0) ? _isVatYes(r[vatColIdx]) : false;
     items.push({
       vendor: vendor,
       rawAmt: amt,
@@ -38844,6 +38977,8 @@ async function syncCogsToNotion(period){
   _cogsSyncInFlight = true;
   var status = document.getElementById('notion-sync-status');
   if(status) status.textContent='🔄 매입원가 저장 중...';
+  var _purStat = document.getElementById('pur-save-stat');
+  if(_purStat){ _purStat.textContent='🔄 저장 중…'; _purStat.style.color='var(--ac)'; }
   try{
     // 💧 저장 전 S.exp 중복 제거 (거래처+금액+기간 동일하면 1건만)
     if(S.exp && S.exp.length){
@@ -38915,7 +39050,8 @@ async function syncCogsToNotion(period){
       }
     }
     if(status) status.textContent='✅ 매입원가 Notion 저장 완료';
-  }catch(e){ console.warn('매입원가 저장 실패:', e.message); }
+    if(_purStat){ _purStat.textContent='✅ 저장됨 '+new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}); _purStat.style.color='#2E7D32'; }
+  }catch(e){ console.warn('매입원가 저장 실패:', e.message); if(_purStat){ _purStat.textContent='⚠ 저장 실패 — 다시 시도'; _purStat.style.color='var(--rd)'; } }
   finally{
     _cogsSyncInFlight = false;
     if(_cogsSyncPending){ var _p=_cogsSyncPending; _cogsSyncPending=null; setTimeout(function(){ syncCogsToNotion(_p); }, 50); }
@@ -40092,6 +40228,7 @@ return {
   editExpAmount: (typeof editExpAmount!=="undefined"?editExpAmount:undefined),
   editExpVat: (typeof editExpVat!=="undefined"?editExpVat:undefined),
   editExpPaid: (typeof editExpPaid!=="undefined"?editExpPaid:undefined),
+  savePurchaseNow: (typeof savePurchaseNow!=="undefined"?savePurchaseNow:undefined),
   parseExp: (typeof parseExp!=="undefined"?parseExp:undefined),
   _periodFromFilename: (typeof _periodFromFilename!=="undefined"?_periodFromFilename:undefined),
   editExpMonth: (typeof editExpMonth!=="undefined"?editExpMonth:undefined),
