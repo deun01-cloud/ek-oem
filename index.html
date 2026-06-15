@@ -10415,14 +10415,32 @@ async function pullFromNotion(opts){
         }
         return true;
       });
+      // 🛡 합본 청구서 절대 보존 (돈 데이터):
+      //   합본은 로컬에서 생성되고 Notion 반영이 늦을 수 있다. strict(노션-우선) 모드에서
+      //   merged/recentlySynced에 안 잡혔다고 버리면 "보였다 사라지는" 증상이 난다.
+      //   merged에 같은 합본(_notionId 또는 dupKey 일치)이 이미 있으면 중복이므로 제외하고,
+      //   그 외 로컬 합본은 무조건 살린다.
+      const consKept = [];
+      if(label === '청구이력'){
+        const mergedConsKeys = new Set(merged.filter(x=>x._isConsolidated).map(dupKey).filter(Boolean));
+        local.forEach(x=>{
+          if(!x._isConsolidated) return;
+          if(mergedNotionIds.has(x._notionId)) return;           // 이미 merged에 있음
+          if(recentlySynced.includes(x)) return;                  // 이미 recentlySynced로 포함됨
+          const k = dupKey(x);
+          if(k && mergedConsKeys.has(k)) return;                  // 같은 합본이 merged에 있음
+          console.log('[invoice] 🛡 로컬 합본 보존(노션-우선 모드에서도 유지):', x.vendor, x.consolidationMonth, x._notionId||'(notionId없음)');
+          consKept.push(x);
+        });
+      }
       if(strict){
-        const dropped = local.filter(x => !x._notionId && !recentlySynced.includes(x)).length;
+        const dropped = local.filter(x => !x._notionId && !recentlySynced.includes(x) && !consKept.includes(x)).length;
         if(dropped > 0){
           console.log(`[notion-first] 노션 미동기 로컬 항목 ${dropped}건 제외 (${label})`);
         }
       }
 
-      return [...merged, ...recentlySynced, ...localOnly];
+      return [...merged, ...recentlySynced, ...localOnly, ...consKept];
     }
 
     // 안전장치: remote가 비어있는데 로컬에 _notionId가 있는 항목이 있으면
