@@ -27702,6 +27702,25 @@ function vMonthly(c){
   });
   const maxRevenue = Math.max(...mRevenue, 1);
 
+  // ── 📌 월별 예상 매출 (발주 출고일 기준) ──
+  //   각 발주의 출고 시점 = 출고완료일 > 공장출고일 > 출고예정일 > 발주일 순.
+  //   이미 거래명세서가 발행된 발주는 확정 매출(mRevenue)에 잡히므로 예상에서 제외(중복 방지).
+  const _ordShipMonth = (o) => {
+    const d = o.completedAt || o.factShip || o.ship || o.date || '';
+    return /^\d{4}-\d{2}/.test(d) ? d.slice(0,7) : '';
+  };
+  const _ordInvoiced = (o) => invoiceHistory.some(v=>
+    (v.ordId && v.ordId===o.id) || (o.no && v.ordNo && v.ordNo===o.no));
+  const mExpected = months.map(m => {
+    return orders.filter(o=>{
+      if((o.status||'')==='취소') return false;
+      if(_ordInvoiced(o)) return false;          // 명세서 발행됨 → 확정 매출에 이미 반영
+      return _ordShipMonth(o) === m;
+    }).reduce((s,o)=>s+ordAmt(o), 0);
+  });
+  // 차트 높이 기준: 확정+예상 합산 중 최대
+  const maxRevStack = Math.max(...months.map((_,i)=>mRevenue[i]+mExpected[i]), 1);
+
   const maxOrdAmt=Math.max(...mOrdAmt.map(m=>m.amt),1);
   const maxSmpCnt=Math.max(...mSmpCnt,1);
 
@@ -27720,7 +27739,7 @@ function vMonthly(c){
   const clientOrdMap={};
   orders.forEach(o=>{
     const key=(o.vendor||'기타').trim();
-    if(!clientOrdMap[key])clientOrdMap[key]={name:key,doneAmt:0,doneCnt:0,pendAmt:0,pendCnt:0};
+    if(!clientOrdMap[key])clientOrdMap[key]={name:key,doneAmt:0,doneCnt:0,pendAmt:0,pendCnt:0,remainAmt:0,remainCnt:0};
     const st=o.status||'의뢰';
     const a=ordAmt(o);
     const inWindow=o.date && o.date>=ord6mStartStr;
@@ -27734,6 +27753,15 @@ function vMonthly(c){
       clientOrdMap[key].pendAmt+=a;
       clientOrdMap[key].pendCnt++;
     }
+    // 🔸 잔여 발주 = 아직 처리 안 끝난 발주(취소 제외, 미출고 또는 출고완료지만 명세서 미발행)
+    if(st!=='취소'){
+      const shipped = isOrderShipped(st);
+      const invoiced = hasInvoiceFor(o);
+      if(!shipped || !invoiced){   // 미출고이거나, 출고됐어도 명세서 미발행이면 아직 잔여
+        clientOrdMap[key].remainAmt+=a;
+        clientOrdMap[key].remainCnt++;
+      }
+    }
   });
   const clientOrdList=Object.values(clientOrdMap)
     .filter(x=>x.doneCnt>0||x.pendCnt>0)  // 건수 기준으로 변경 (단가 0인 발주도 포함)
@@ -27741,6 +27769,8 @@ function vMonthly(c){
     .sort((a,b)=>(b.totalAmt-a.totalAmt) || (b.totalCnt-a.totalCnt));  // 금액 같으면 건수로 정렬
   const totalDoneAmt=clientOrdList.reduce((s,x)=>s+x.doneAmt,0);
   const totalPendAmt=clientOrdList.reduce((s,x)=>s+x.pendAmt,0);
+  const totalRemainAmt=clientOrdList.reduce((s,x)=>s+x.remainAmt,0);
+  const totalRemainCnt=clientOrdList.reduce((s,x)=>s+x.remainCnt,0);
 
   // ── 고객사별 샘플 의뢰 집계 (최근 3개월) ──
   const smp3mStart=new Date(thisY,thisM-2,1);  // 3개월 전 1일 (이번달 포함)
@@ -27811,27 +27841,39 @@ function vMonthly(c){
   <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
     <!-- (1) 월별 매출 -->
     <div class="card">
-      <div class="ch"><div class="ch-t">월별 매출</div><div class="ch-s">최근 6개월 · 명세서 발행일 기준</div></div>
+      <div class="ch"><div class="ch-t">월별 매출</div><div class="ch-s">최근 6개월 · 확정(발행) + 예상(출고일)</div></div>
       <div style="padding:12px 14px">
         <div class="bar-chart" style="height:100px">
           ${mRevenue.map((amt,i)=>{
-            const h = Math.max(Math.round(amt/maxRevenue*100), amt>0?8:0);
+            const exp = mExpected[i]||0;
+            const hConf = amt>0 ? Math.max(Math.round(amt/maxRevStack*100),6) : 0;
+            const hExp  = exp>0 ? Math.max(Math.round(exp/maxRevStack*100),6) : 0;
+            const totalLbl = (amt+exp)>0 ? fmtMoney(amt+exp) : '';
             return `<div class="bar-col">
-              <div class="bar-val" title="${amt.toLocaleString()}원">${amt>0?fmtMoney(amt):''}</div>
-              <div class="bar-area">
-                <div class="bar" style="height:${h}%;background:${i===5?'var(--grn)':'rgba(46,139,44,0.25)'};border:1px solid var(--grn);border-radius:2px"></div>
+              <div class="bar-val" title="확정 ${amt.toLocaleString()}원 + 예상 ${exp.toLocaleString()}원">${totalLbl}</div>
+              <div class="bar-area" style="display:flex;flex-direction:column;justify-content:flex-end">
+                ${hExp>0?`<div class="bar" style="height:${hExp}%;background:repeating-linear-gradient(45deg,rgba(201,164,94,.55),rgba(201,164,94,.55) 4px,rgba(201,164,94,.25) 4px,rgba(201,164,94,.25) 8px);border:1px dashed var(--gold);border-bottom:none;border-radius:2px 2px 0 0" title="예상 ${exp.toLocaleString()}원"></div>`:''}
+                <div class="bar" style="height:${hConf}%;background:${i===5?'var(--grn)':'rgba(46,139,44,0.25)'};border:1px solid var(--grn);${hExp>0?'border-radius:0 0 2px 2px':'border-radius:2px'}" title="확정 ${amt.toLocaleString()}원"></div>
               </div>
               <div class="bar-lbl" style="${i===5?'font-weight:700;color:var(--grn)':''}">${mLabels[i]}</div>
             </div>`;
           }).join('')}
         </div>
-        <div style="margin-top:10px;border-top:1px solid var(--bdr);padding-top:8px;font-size:10.5px;color:var(--t2);display:flex;justify-content:space-between">
-          <span>월평균</span>
+        <div style="margin-top:8px;display:flex;gap:12px;font-size:10px;color:var(--t3);align-items:center;justify-content:center">
+          <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:9px;height:9px;background:var(--grn);border-radius:1px"></span>확정 (명세서 발행)</span>
+          <span style="display:flex;align-items:center;gap:3px"><span style="display:inline-block;width:9px;height:9px;background:repeating-linear-gradient(45deg,rgba(201,164,94,.55),rgba(201,164,94,.55) 2px,rgba(201,164,94,.25) 2px,rgba(201,164,94,.25) 4px);border:1px dashed var(--gold);border-radius:1px"></span>예상 (출고일)</span>
+        </div>
+        <div style="margin-top:8px;border-top:1px solid var(--bdr);padding-top:8px;font-size:10.5px;color:var(--t2);display:flex;justify-content:space-between">
+          <span>월평균 (확정)</span>
           <b style="color:var(--t1)">${fmtMoney(Math.round(mRevenue.reduce((s,x)=>s+x,0)/6))}원</b>
         </div>
         <div style="margin-top:4px;font-size:10.5px;color:var(--t2);display:flex;justify-content:space-between">
-          <span>6개월 합계</span>
+          <span>6개월 합계 (확정)</span>
           <b style="color:var(--t1)">${fmtMoney(mRevenue.reduce((s,x)=>s+x,0))}원</b>
+        </div>
+        <div style="margin-top:4px;font-size:10.5px;color:var(--gold-lt);display:flex;justify-content:space-between">
+          <span>예상 매출 합계</span>
+          <b>${fmtMoney(mExpected.reduce((s,x)=>s+x,0))}원</b>
         </div>
       </div>
     </div>
@@ -27940,7 +27982,8 @@ function vMonthly(c){
         <div><div class="ch-t">💰 고객사별 발주·매출</div><div class="ch-s">최근 6개월 · 확정 출고 + 진행중 예상</div></div>
         <div style="text-align:right;font-size:10.5px;color:var(--t3)">
           확정 <b style="color:var(--grn)">${totalDoneAmt.toLocaleString()}원</b><br>
-          예상 <b style="color:var(--gold-lt)">${totalPendAmt.toLocaleString()}원</b>
+          예상 <b style="color:var(--gold-lt)">${totalPendAmt.toLocaleString()}원</b><br>
+          <span style="color:var(--org)">잔여 <b>${totalRemainAmt.toLocaleString()}원</b> (${totalRemainCnt}건)</span>
         </div>
       </div>
       <div style="padding:12px 14px;max-height:260px;overflow-y:auto">
@@ -27964,6 +28007,7 @@ function vMonthly(c){
               <div style="font-size:10px;color:var(--t3);display:flex;gap:8px;flex-wrap:wrap">
                 ${x.doneAmt>0?`<span><span style="color:var(--grn)">●</span> 확정 ${x.doneAmt.toLocaleString()}원 (${x.doneCnt}건)</span>`:''}
                 ${x.pendAmt>0?`<span><span style="color:var(--gold-lt)">●</span> 예상 ${x.pendAmt.toLocaleString()}원 (${x.pendCnt}건)</span>`:''}
+                ${x.remainCnt>0?`<span><span style="color:var(--org)">●</span> 잔여 ${x.remainAmt.toLocaleString()}원 (${x.remainCnt}건)</span>`:''}
               </div>
             </div>`;
           }).join('');
@@ -27972,6 +28016,7 @@ function vMonthly(c){
         <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bdr);display:flex;gap:14px;font-size:10px;color:var(--t3);flex-wrap:wrap">
           <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:9px;height:9px;background:var(--grn);opacity:.85;border-radius:1px"></span>확정매출 (출고완료)</span>
           <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:9px;height:9px;background:var(--gold);opacity:.7;border-radius:1px"></span>예상매출 (진행중)</span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:9px;height:9px;background:var(--org);border-radius:1px"></span>잔여 (미출고·미발행)</span>
         </div>
       </div>
     </div>
