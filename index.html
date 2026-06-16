@@ -27976,47 +27976,40 @@ function vMonthly(c){
       </div>
     </div>
 
-    <!-- 우: 고객사별 발주·매출 (6개월) -->
+    <!-- 우: 고객사별 잔여 발주 (미출고·미발행) -->
     <div class="card">
       <div class="ch">
-        <div><div class="ch-t">💰 고객사별 발주·매출</div><div class="ch-s">최근 6개월 · 확정 출고 + 진행중 예상</div></div>
+        <div><div class="ch-t">📦 고객사별 잔여 발주</div><div class="ch-s">미출고 + 출고완료·명세서 미발행</div></div>
         <div style="text-align:right;font-size:10.5px;color:var(--t3)">
-          확정 <b style="color:var(--grn)">${totalDoneAmt.toLocaleString()}원</b><br>
-          예상 <b style="color:var(--gold-lt)">${totalPendAmt.toLocaleString()}원</b><br>
-          <span style="color:var(--org)">잔여 <b>${totalRemainAmt.toLocaleString()}원</b> (${totalRemainCnt}건)</span>
+          잔여 합계 <b style="color:var(--org)">${totalRemainAmt.toLocaleString()}원</b><br>
+          <span style="color:var(--t2)">${totalRemainCnt}건</span>
         </div>
       </div>
       <div style="padding:12px 14px;max-height:260px;overflow-y:auto">
-        ${clientOrdList.length?(()=>{
-          const maxAmt=clientOrdList[0].totalAmt||1;
-          return clientOrdList.map((x,i)=>{
+        ${(()=>{
+          const remainList = clientOrdList.filter(x=>x.remainCnt>0)
+            .sort((a,b)=>(b.remainAmt-a.remainAmt)||(b.remainCnt-a.remainCnt));
+          if(!remainList.length) return `<div style="color:var(--t3);font-size:12px;padding:20px;text-align:center">잔여 발주 없음 — 모두 출고·청구 완료됐어요 👍</div>`;
+          const maxRemain=remainList[0].remainAmt||1;
+          return remainList.map((x,i)=>{
             const _cl=findClientByVendor(x.name);
             const initBadge=_cl&&_cl.initials?`<span class="cl-init cl-init-sm" style="background:${clInitColor(_cl)}">${_cl.initials}</span>`:'';
             const dispName=_cl?_cl.name:x.name;
-            const totalPct=Math.round(x.totalAmt/maxAmt*100);
-            const donePct=x.totalAmt?Math.round(x.doneAmt/x.totalAmt*100):0;
+            const pct=Math.round(x.remainAmt/maxRemain*100);
             return`<div style="margin-bottom:11px">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:8px">
                 <span style="font-size:12px;font-weight:${i<3?600:400};display:inline-flex;align-items:center;gap:5px;min-width:0;overflow:hidden">${initBadge}<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${dispName}">${dispName}</span></span>
-                <span style="font-size:11px;color:var(--t1);flex-shrink:0;font-weight:700;white-space:nowrap">${x.totalAmt.toLocaleString()}원</span>
+                <span style="font-size:11px;color:var(--org);flex-shrink:0;font-weight:700;white-space:nowrap">${x.remainAmt.toLocaleString()}원 <span style="color:var(--t3);font-weight:400">(${x.remainCnt}건)</span></span>
               </div>
-              <div class="prog" style="display:flex;width:${totalPct}%;min-width:2%;height:8px;border-radius:4px;overflow:hidden;background:var(--s2);margin-bottom:3px">
-                ${x.doneAmt>0?`<div style="width:${donePct}%;background:var(--grn);opacity:.85"></div>`:''}
-                ${x.pendAmt>0?`<div style="flex:1;background:var(--gold);opacity:.7"></div>`:''}
-              </div>
-              <div style="font-size:10px;color:var(--t3);display:flex;gap:8px;flex-wrap:wrap">
-                ${x.doneAmt>0?`<span><span style="color:var(--grn)">●</span> 확정 ${x.doneAmt.toLocaleString()}원 (${x.doneCnt}건)</span>`:''}
-                ${x.pendAmt>0?`<span><span style="color:var(--gold-lt)">●</span> 예상 ${x.pendAmt.toLocaleString()}원 (${x.pendCnt}건)</span>`:''}
-                ${x.remainCnt>0?`<span><span style="color:var(--org)">●</span> 잔여 ${x.remainAmt.toLocaleString()}원 (${x.remainCnt}건)</span>`:''}
+              <div class="prog" style="display:flex;width:${Math.max(pct,2)}%;min-width:2%;height:8px;border-radius:4px;overflow:hidden;background:var(--s2)">
+                <div style="flex:1;background:var(--org);opacity:.8"></div>
               </div>
             </div>`;
           }).join('');
-        })():`<div style="color:var(--t3);font-size:12px;padding:20px;text-align:center">발주 데이터 없음</div>`}
+        })()}
         <!-- 범례 -->
-        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bdr);display:flex;gap:14px;font-size:10px;color:var(--t3);flex-wrap:wrap">
-          <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:9px;height:9px;background:var(--grn);opacity:.85;border-radius:1px"></span>확정매출 (출고완료)</span>
-          <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:9px;height:9px;background:var(--gold);opacity:.7;border-radius:1px"></span>예상매출 (진행중)</span>
-          <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:9px;height:9px;background:var(--org);border-radius:1px"></span>잔여 (미출고·미발행)</span>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--bdr);font-size:10px;color:var(--t3)">
+          <span style="display:flex;align-items:center;gap:4px"><span style="display:inline-block;width:9px;height:9px;background:var(--org);opacity:.8;border-radius:1px"></span>잔여 발주 = 아직 출고 안 됐거나, 출고했지만 거래명세서 미발행</span>
         </div>
       </div>
     </div>
