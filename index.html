@@ -11584,6 +11584,31 @@ function _renderIoCommerce(){
   const orderTotal = normalItems.filter(io => _ioStage(io) === 'order').length;
   const shipTotal = normalItems.filter(io => _ioStage(io) === 'shipped').length;
 
+  // 📊 출고 통계 (이번 주 / 이번 달 / 월별 분포) — 출고완료 건의 출고일 기준
+  const _shipStatItems = normalItems.filter(io => _ioStage(io) === 'shipped');
+  const _statBrandFilter = (io) => _ioCommerceBrand === 'all' || (io.brand||'미지정') === _ioCommerceBrand;
+  const _shipStatFiltered = _shipStatItems.filter(_statBrandFilter);
+  const _now = new Date();
+  const _todayStr = _now.toISOString().slice(0,10);
+  // 이번 주(월요일 시작) 범위
+  const _dow = (_now.getDay()+6)%7;   // 월=0
+  const _weekStart = new Date(_now); _weekStart.setDate(_now.getDate()-_dow); _weekStart.setHours(0,0,0,0);
+  const _weekStartStr = _weekStart.toISOString().slice(0,10);
+  const _thisMonth = _todayStr.slice(0,7);
+  const _shipDateOf = (io) => (io.shipDate || io.date || '').slice(0,10);
+  let weekShipCount=0, monthShipCount=0;
+  const monthDist = {};   // 'YYYY-MM' → count
+  _shipStatFiltered.forEach(io=>{
+    const d=_shipDateOf(io); if(!d) return;
+    if(d>=_weekStartStr && d<=_todayStr) weekShipCount++;
+    if(d.slice(0,7)===_thisMonth) monthShipCount++;
+    const mk=d.slice(0,7); monthDist[mk]=(monthDist[mk]||0)+1;
+  });
+  // 교환/환불 통계 (브랜드 필터 반영)
+  const _returnFiltered = allItems.filter(io=> io.returnStatus && io.returnStatus!=='정상' && _statBrandFilter(io));
+  const _returnPendingF = _returnFiltered.filter(io=> io.returnStatus==='교환요청'||io.returnStatus==='환불요청').length;
+  const _returnDoneF = _returnFiltered.filter(io=> io.returnStatus==='교환완료'||io.returnStatus==='환불완료').length;
+
   // ── 모드별 필터링 ──
   let list = allItems.slice();
   // 브랜드 필터 (공통)
@@ -11651,6 +11676,30 @@ function _renderIoCommerce(){
       ${tabBtn('return','🔄 교환/환불', requestPending>0?`<span style="font-size:10px;background:var(--org);color:#fff;padding:1px 6px;border-radius:8px;font-weight:700">${requestPending}</span>`:`<span style="font-size:10.5px;color:var(--t3);font-weight:500">${returnTotalAll}</span>`)}
     </div>
   `;
+
+  // 📊 출고 통계 바 (출고 모드일 때만) — 이번 주/이번 달 출고건수 + 월별 분포 + 교환환불
+  const _statCard = (label,val,sub,accent)=>`<div style="flex:1;min-width:110px;background:var(--s1);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px">
+      <div style="font-size:10.5px;color:var(--t3);font-weight:600;margin-bottom:3px">${label}</div>
+      <div style="font-size:20px;font-weight:800;color:${accent||'var(--t1)'};line-height:1">${val}<span style="font-size:11px;font-weight:600;color:var(--t3);margin-left:2px">건</span></div>
+      ${sub?`<div style="font-size:10px;color:var(--t3);margin-top:3px">${sub}</div>`:''}
+    </div>`;
+  // 월별 분포 (최근 3개월)
+  const _monthKeys = Object.keys(monthDist).sort().slice(-3);
+  const _monthChips = _monthKeys.map(mk=>{
+    const [y,m]=mk.split('-');
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;background:var(--s2);border:1px solid var(--bdr);border-radius:14px;font-size:11px;color:var(--t2)"><b style="color:var(--t1)">${+m}월</b> ${monthDist[mk]}건</span>`;
+  }).join('');
+  const shipStatBar = _ioCommerceMode === 'ship' ? `
+    <div style="margin-bottom:14px">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        ${_statCard('이번 주 출고', weekShipCount, _weekStartStr.slice(5)+' ~ 오늘', 'var(--gold-lt)')}
+        ${_statCard('이번 달 출고', monthShipCount, _thisMonth.replace('-','년 ')+'월', 'var(--grn)')}
+        ${_statCard('전체 출고', shipTotal, '누적', 'var(--t1)')}
+        ${_statCard('교환·환불', _returnPendingF+_returnDoneF, _returnPendingF>0?`진행중 ${_returnPendingF} · 완료 ${_returnDoneF}`:`완료 ${_returnDoneF}`, _returnPendingF>0?'var(--org)':'var(--t1)')}
+      </div>
+      ${_monthChips?`<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span style="font-size:10.5px;color:var(--t3);font-weight:600">월별</span>${_monthChips}</div>`:''}
+    </div>
+  ` : '';
 
   // AI 업로드 영역 (주문 모드일 때만 — 송장 업로드 → 주문으로 등록)
   const aiArea = _ioCommerceMode === 'order' ? `
@@ -11773,9 +11822,9 @@ function _renderIoCommerce(){
       </tr>`;
     } else if(_ioCommerceMode === 'ship'){
       // ── 출고 모드 행 (송장번호·출고일 표시 + 교환환불 등록 + 주문으로 되돌리기) ──
-      const actionCell = `<div style="display:flex;gap:3px;justify-content:center">
-        <button onclick="event.stopPropagation();openReturnModal(${io.id})" style="padding:3px 7px;font-size:10px;background:var(--s1);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">🔄/↩ 교환·환불</button>
-        <button onclick="event.stopPropagation();_ioUnship(${io.id})" style="padding:3px 7px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="출고를 취소하고 주문 단계로 되돌립니다">↶ 주문</button>
+      const actionCell = `<div style="display:flex;gap:3px;justify-content:center;flex-wrap:nowrap">
+        <button onclick="event.stopPropagation();openReturnModal(${io.id})" style="padding:3px 7px;font-size:10px;background:var(--s1);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2);white-space:nowrap">🔄/↩ 교환·환불</button>
+        <button onclick="event.stopPropagation();_ioUnship(${io.id})" style="padding:3px 7px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3);white-space:nowrap" title="출고를 취소하고 주문 단계로 되돌립니다">↶ 주문</button>
       </div>`;
       return `<tr style="border-bottom:1px solid var(--bdr-lt);cursor:pointer" onclick="openIoDetail(${io.id})" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
         <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1)">${escHtml(io.brand||'-')}</td>
@@ -11880,7 +11929,7 @@ function _renderIoCommerce(){
     `;
   }).join('') : emptyState;
 
-  sub.innerHTML = modeTab + aiArea + searchBar + brandFilter + returnFilters + batchBar + tablesHtml;
+  sub.innerHTML = modeTab + shipStatBar + aiArea + searchBar + brandFilter + returnFilters + batchBar + tablesHtml;
 }
 
 // ── 주문 → 출고 처리 ──
