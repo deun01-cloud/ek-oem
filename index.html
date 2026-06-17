@@ -4518,15 +4518,13 @@ function _isDropCandidate(s){
   const days = Math.floor((Date.now() - new Date(baseDate).getTime()) / 86400000);
   return days >= DROP_DAYS;
 }
-// 드랍 후보 목록 (수동 '제외' 태그 반영)
+// 오픈 샘플 목록: 발주 안 된 샘플 자동 선정. '제외'한 것만 빠짐
 function _getDropSamples(){
   const tags = _loadDropTags();
   return (samples||[]).filter(s=>{
     const key = s._notionId || ('local:'+s.id);
-    if(tags[key] && tags[key].status==='exclude') return false;   // 수동 제외
-    // 수동으로 '재판매가능/보류' 지정했으면 무조건 포함, 아니면 자동 판별
-    if(tags[key] && (tags[key].status==='resale'||tags[key].status==='hold')) return true;
-    return _isDropCandidate(s);
+    if(tags[key] && tags[key].status==='exclude') return false;   // 사장님이 수동 제외한 것만 빠짐
+    return _isDropCandidate(s);   // 발주 안 된 샘플은 자동 오픈
   });
 }
 function _dropKey(s){ return s._notionId || ('local:'+s.id); }
@@ -4566,12 +4564,12 @@ function _getCatalogPool(){
       stock:(p.stock!=null?p.stock:null),
     });
   });
-  // 2) 재판매로 표시한 드랍샘플
+  // 2) 오픈 샘플 (발주 안 된 샘플 = 자동 포함. 사장님이 '제외'한 것만 빠짐)
   const tags=_loadDropTags();
-  (samples||[]).forEach(s=>{
+  _getDropSamples().forEach(s=>{
     const key=_dropKey(s);
     const tag=tags[key]||{};
-    if(tag.status!=='resale') return;   // '재판매 가능'으로 표시한 것만
+    if(tag.status==='hold') return;   // '보류'(독점 등)는 카탈로그에서 제외
     const img=(Array.isArray(s.imgs)&&s.imgs.length&&s.imgs[0].url)?s.imgs[0].url:'';
     pool.push({
       _src:'drop', _key:'D:'+key,
@@ -4752,7 +4750,7 @@ function renderProducts(){
   const subTabBar = `
   <div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--bdr)">
     <button onclick="pdSubTab='products';renderProducts()" style="padding:9px 16px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;border-bottom:2px solid ${pdSubTab==='products'?'var(--gold)':'transparent'};color:${pdSubTab==='products'?'var(--gold-lt)':'var(--t2)'};font-family:inherit">📦 전체 제품</button>
-    <button onclick="pdSubTab='drops';renderProducts()" style="padding:9px 16px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;border-bottom:2px solid ${pdSubTab==='drops'?'var(--gold)':'transparent'};color:${pdSubTab==='drops'?'var(--gold-lt)':'var(--t2)'};font-family:inherit">♻️ 드랍 샘플 재판매 ${dropCount?`<span style="display:inline-block;margin-left:4px;padding:1px 7px;border-radius:9px;background:var(--gold-bg);color:var(--gold-lt);font-size:11px">${dropCount}</span>`:''}</button>
+    <button onclick="pdSubTab='drops';renderProducts()" style="padding:9px 16px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;border-bottom:2px solid ${pdSubTab==='drops'?'var(--gold)':'transparent'};color:${pdSubTab==='drops'?'var(--gold-lt)':'var(--t2)'};font-family:inherit">🔓 오픈 샘플 ${dropCount?`<span style="display:inline-block;margin-left:4px;padding:1px 7px;border-radius:9px;background:var(--gold-bg);color:var(--gold-lt);font-size:11px">${dropCount}</span>`:''}</button>
     <button onclick="pdSubTab='catalog';renderProducts()" style="padding:9px 16px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;border-bottom:2px solid ${pdSubTab==='catalog'?'var(--gold)':'transparent'};color:${pdSubTab==='catalog'?'var(--gold-lt)':'var(--t2)'};font-family:inherit">📖 카탈로그</button>
   </div>`;
   if(pdSubTab==='drops'){ c.innerHTML = subTabBar + _renderDropSamples(); return; }
@@ -5119,9 +5117,6 @@ function _renderDropSamples(){
   let list=_getDropSamples();
   // 필터: 유형
   if(dropFilterType!=='전체') list=list.filter(s=>(s.type||'')===dropFilterType);
-  // 필터: 재판매 상태
-  if(dropResaleFilter==='resale') list=list.filter(s=>(tags[_dropKey(s)]||{}).status==='resale');
-  else if(dropResaleFilter==='hold') list=list.filter(s=>(tags[_dropKey(s)]||{}).status==='hold');
   // 검색
   if(dropSearch){
     const q=dropSearch.toLowerCase().trim();
@@ -5135,12 +5130,12 @@ function _renderDropSamples(){
   });
 
   const types=['전체','EARRING','RING','NECKLACE','BRACELET','BROOCH','기타'];
-  const resaleCount=list.filter(s=>(tags[_dropKey(s)]||{}).status==='resale').length;
+  const holdCount=(samples||[]).filter(s=>(tags[_dropKey(s)]||{}).status==='hold').length;
 
   const intro=`
   <div style="padding:11px 14px;background:rgba(180,140,40,.06);border:1px solid rgba(180,140,40,.22);border-radius:8px;font-size:12px;color:var(--t2);margin-bottom:14px;line-height:1.6">
-    💡 <b>발주로 이어지지 않은 확정·완료 샘플</b>입니다. 개발비를 이미 투자한 자산이라, 다른 고객사에 재판매하면 회수할 수 있어요.
-    <span style="color:var(--t3)">확정 후 ${DROP_DAYS}일간 발주가 없는 샘플을 자동으로 모았습니다. ‘재판매 가능’으로 표시하면 카탈로그에 넣을 수 있어요. 원개발 고객사 정보는 내부에서만 보입니다.</span>
+    🔓 <b>발주로 이어지지 않은 샘플(오픈 샘플)</b>입니다. EK가 개발비를 투자한 자산이라, 다른 고객사에 판매할 수 있어요. <b>자동으로 카탈로그에 포함</b>됩니다.
+    <span style="color:var(--t3)">확정 후 ${DROP_DAYS}일간 발주가 없으면 자동으로 오픈 샘플이 됩니다. 독점계약 등으로 팔면 안 되는 건 ‘보류’로 빼세요. 원개발 고객사 정보는 내부에서만 보이고 카탈로그엔 안 나갑니다.</span>
   </div>`;
 
   const filters=`
@@ -5150,16 +5145,13 @@ function _renderDropSamples(){
     <div style="display:flex;gap:4px;flex-wrap:wrap">
       ${types.map(t=>`<button onclick="dropFilterType='${t}';renderProducts()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${dropFilterType===t?'var(--gold)':'var(--bdr)'};background:${dropFilterType===t?'var(--gold-bg)':'var(--s1)'};color:${dropFilterType===t?'var(--gold-lt)':'var(--t2)'};cursor:pointer;font-family:inherit">${t}</button>`).join('')}
     </div>
-    <div style="display:flex;gap:4px;margin-left:auto">
-      ${[['all','전체'],['resale','✓ 재판매 가능'],['hold','보류']].map(([v,l])=>`<button onclick="dropResaleFilter='${v}';renderProducts()" style="padding:4px 11px;border-radius:14px;font-size:11px;border:1px solid ${dropResaleFilter===v?'var(--gold)':'var(--bdr)'};background:${dropResaleFilter===v?'var(--gold-bg)':'var(--s1)'};color:${dropResaleFilter===v?'var(--gold-lt)':'var(--t2)'};cursor:pointer;font-family:inherit;font-weight:600">${l}</button>`).join('')}
-    </div>
   </div>`;
 
   if(!list.length){
     return intro+filters+`<div style="text-align:center;padding:60px 20px;color:var(--t3)">
-      <div style="font-size:40px;margin-bottom:10px">♻️</div>
-      <div style="font-size:14px;font-weight:600;color:var(--t2);margin-bottom:6px">드랍 샘플이 없습니다</div>
-      <div style="font-size:12px">확정·완료됐지만 ${DROP_DAYS}일간 발주가 없는 샘플이 여기 모입니다.</div>
+      <div style="font-size:40px;margin-bottom:10px">🔓</div>
+      <div style="font-size:14px;font-weight:600;color:var(--t2);margin-bottom:6px">오픈 샘플이 없습니다</div>
+      <div style="font-size:12px">확정·완료됐지만 ${DROP_DAYS}일간 발주가 없는 샘플이 여기 자동으로 모입니다.</div>
     </div>`;
   }
 
@@ -5177,10 +5169,11 @@ function _renderDropSamples(){
     const ageDays=baseDate?Math.floor((Date.now()-new Date(baseDate).getTime())/86400000):null;
     const spec=[s.type,s.mat,s.plating].filter(Boolean).join(' · ');
     const priceVal=tag.price!=null?tag.price:'';
-    return `<div style="border:1px solid ${st==='resale'?'var(--gold)':'var(--bdr)'};border-radius:10px;overflow:hidden;background:var(--s1);${st==='hold'?'opacity:.62':''}">
+    const included = st!=='hold';   // 보류 아니면 카탈로그 자동 포함
+    return `<div style="border:1px solid ${included?'var(--gold)':'var(--bdr)'};border-radius:10px;overflow:hidden;background:var(--s1);${st==='hold'?'opacity:.62':''}">
       <div style="position:relative;background:var(--s2)" class="${img?'':'noimg2'}">
         ${thumb}
-        ${st==='resale'?`<span style="position:absolute;top:8px;left:8px;background:var(--gold);color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:8px">✓ 재판매 가능</span>`:''}
+        ${included?`<span style="position:absolute;top:8px;left:8px;background:var(--gold);color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:8px">🔓 오픈</span>`:''}
         ${st==='hold'?`<span style="position:absolute;top:8px;left:8px;background:#888;color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:8px">보류</span>`:''}
         ${s.status==='취소'||s.status==='취소보류'?`<span style="position:absolute;top:8px;right:8px;background:rgba(192,48,48,.85);color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:8px">고객취소</span>`:''}
       </div>
@@ -5192,21 +5185,21 @@ function _renderDropSamples(){
           🔒 원개발: ${s.manager||'미상'}${ageDays!=null?` · 확정 ${ageDays}일 경과`:''}
         </div>
         <div style="display:flex;align-items:center;gap:5px;margin-bottom:8px">
-          <span style="font-size:11px;color:var(--t3)">재판매가</span>
-          <input type="text" value="${priceVal}" placeholder="희망가" onchange="setDropPrice('${key}',this.value)"
+          <span style="font-size:11px;color:var(--t3)">판매가</span>
+          <input type="text" value="${priceVal}" placeholder="희망가(선택)" onchange="setDropPrice('${key}',this.value)"
             style="flex:1;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;background:var(--s2);color:var(--t1);font-family:inherit;text-align:right">
           <span style="font-size:11px;color:var(--t3)">원</span>
         </div>
         <div style="display:flex;gap:4px">
-          <button onclick="setDropStatus('${key}','${st==='resale'?'':'resale'}')" style="flex:1;padding:6px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid ${st==='resale'?'var(--gold)':'var(--bdr)'};background:${st==='resale'?'var(--gold-bg)':'var(--s2)'};color:${st==='resale'?'var(--gold-lt)':'var(--t2)'};cursor:pointer;font-family:inherit">${st==='resale'?'✓ 재판매':'재판매'}</button>
-          <button onclick="setDropStatus('${key}','${st==='hold'?'':'hold'}')" style="flex:1;padding:6px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid var(--bdr);background:${st==='hold'?'rgba(120,120,120,.15)':'var(--s2)'};color:var(--t2);cursor:pointer;font-family:inherit">보류</button>
-          <button onclick="setDropStatus('${key}','exclude')" title="드랍 아님 — 목록에서 제외" style="padding:6px 9px;border-radius:6px;font-size:11px;border:1px solid var(--bdr);background:var(--s2);color:var(--t3);cursor:pointer;font-family:inherit">✕</button>
+          <button onclick="setDropStatus('${key}','${st==='hold'?'':'hold'}')" title="독점계약 등 — 카탈로그에서 빼기" style="flex:1;padding:6px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid var(--bdr);background:${st==='hold'?'rgba(120,120,120,.2)':'var(--s2)'};color:var(--t2);cursor:pointer;font-family:inherit">${st==='hold'?'✓ 보류중':'보류(빼기)'}</button>
+          <button onclick="setDropStatus('${key}','exclude')" title="오픈 샘플 아님 — 목록에서 완전 제외" style="padding:6px 9px;border-radius:6px;font-size:11px;border:1px solid var(--bdr);background:var(--s2);color:var(--t3);cursor:pointer;font-family:inherit">✕</button>
         </div>
       </div>
     </div>`;
   }).join('');
 
-  const summary=`<div style="font-size:12px;color:var(--t2);margin-bottom:10px">총 <b>${list.length}건</b>${resaleCount?` · 재판매 가능 <b style="color:var(--gold-lt)">${resaleCount}건</b>`:''}</div>`;
+  const inclCount=list.filter(s=>(tags[_dropKey(s)]||{}).status!=='hold').length;
+  const summary=`<div style="font-size:12px;color:var(--t2);margin-bottom:10px">총 <b>${list.length}건</b> · 카탈로그 포함 <b style="color:var(--gold-lt)">${inclCount}건</b>${holdCount?` · 보류 ${holdCount}건`:''}</div>`;
   return intro+filters+summary+`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px">${cards}</div>`;
 }
 
@@ -5221,7 +5214,7 @@ function _renderCatalog(){
 
   const intro=`
   <div style="padding:11px 14px;background:rgba(70,120,180,.06);border:1px solid rgba(70,120,180,.2);border-radius:8px;font-size:12px;color:var(--t2);margin-bottom:14px;line-height:1.6">
-    📖 <b>고객사 카탈로그</b> — 양산품 ${prodN}개 + 재판매 기개발품 ${dropN}개를 한 곳에서. 고객이 "이 가격대 있나요?", "이 소재 팔찌 있나요?" 물으면 아래 필터로 즉석에서 좁혀 보여주거나, PDF·링크로 보내세요.
+    📖 <b>고객사 카탈로그</b> — 양산품 ${prodN}개 + 오픈 샘플 ${dropN}개를 한 곳에서. 고객이 "이 가격대 있나요?", "이 소재 팔찌 있나요?" 물으면 아래 필터로 즉석에서 좁혀 보여주거나, PDF·링크로 보내세요.
   </div>`;
 
   const chip=(active)=>`padding:4px 11px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid ${active?'var(--gold)':'var(--bdr)'};background:${active?'var(--gold-bg)':'var(--s1)'};color:${active?'var(--gold-lt)':'var(--t2)'}`;
@@ -5235,7 +5228,7 @@ function _renderCatalog(){
       <input placeholder="최대" value="${catPriceMax}" oninput="catPriceMax=this.value;renderProducts()" style="width:80px;padding:5px 8px;border:1px solid var(--bdr);border-radius:6px;background:var(--s1);color:var(--t1);font-size:12px;text-align:right;font-family:inherit">
       <span style="font-size:11px;color:var(--t3)">원</span>
       <div style="margin-left:auto;display:flex;gap:5px">
-        ${[['all','전체'],['product','양산품'],['drop','재판매']].map(([v,l])=>`<button onclick="catSource='${v}';renderProducts()" style="${chip(catSource===v)}">${l}</button>`).join('')}
+        ${[['all','전체'],['product','양산품'],['drop','오픈샘플']].map(([v,l])=>`<button onclick="catSource='${v}';renderProducts()" style="${chip(catSource===v)}">${l}</button>`).join('')}
       </div>
     </div>
     <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">
@@ -5274,7 +5267,7 @@ function _renderCatalog(){
     const img=x.img?`<img src="${x.img}" style="width:100%;height:160px;object-fit:cover" loading="lazy" onerror="this.style.display='none';this.parentNode.classList.add('noimg2')">`:'';
     const priceTxt=(catShowPrice&&x.price!=null)?`<div style="font-size:13px;font-weight:700;color:var(--gold-lt);margin-top:3px">${(+x.price).toLocaleString()}원</div>`:'';
     const spec=[x.type,x.mat,x.plating].filter(Boolean).join(' · ');
-    const badge=x._src==='drop'?`<span style="position:absolute;top:8px;left:8px;background:rgba(180,140,40,.9);color:#fff;font-size:9px;font-weight:700;padding:2px 7px;border-radius:7px">재판매</span>`:'';
+    const badge=x._src==='drop'?`<span style="position:absolute;top:8px;left:8px;background:rgba(180,140,40,.9);color:#fff;font-size:9px;font-weight:700;padding:2px 7px;border-radius:7px">오픈</span>`:'';
     return `<div style="border:1px solid var(--bdr);border-radius:10px;overflow:hidden;background:var(--s1)">
       <div style="position:relative;background:var(--s2)" class="${x.img?'':'noimg2'}">${img}${badge}</div>
       <div style="padding:10px 11px">
@@ -11727,8 +11720,8 @@ function _renderIoCommerce(){
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:90px">수령인</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:120px">연락처</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">품목</th>
-      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">주소</th>
-      <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:70px">매칭</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:130px">주소</th>
+      <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:78px;white-space:nowrap">매칭</th>
       <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:90px">출고 처리</th>
     </tr>`;
   } else if(_ioCommerceMode === 'ship'){
@@ -11773,9 +11766,9 @@ function _renderIoCommerce(){
         <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1);cursor:pointer" onclick="openIoDetail(${io.id})">${escHtml(io.brand||'-')}</td>
         <td style="padding:7px 10px;font-size:12px;font-weight:600;cursor:pointer" onclick="openIoDetail(${io.id})">${escHtml(io.recipient||'-')}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);font-family:monospace">${escHtml(io.phone||'-')}</td>
-        <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(io.items||'-')}</td>
-        <td style="padding:7px 10px;font-size:11px;color:var(--t3);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.address||'')}">${escHtml(io.address||'-')}</td>
-        <td style="padding:7px 10px;text-align:center">${io.matchStatus?`<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;${matchCls}">${escHtml(io.matchStatus)}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
+        <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(io.items||'-')}</td>
+        <td style="padding:7px 10px;font-size:11px;color:var(--t3);width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.address||'')}">${escHtml(io.address||'-')}</td>
+        <td style="padding:7px 10px;text-align:center">${io.matchStatus?`<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap;${matchCls}">${escHtml(io.matchStatus)}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
         <td style="padding:7px 10px;text-align:center"><button onclick="event.stopPropagation();_ioMarkShipped(${io.id})" style="padding:4px 11px;font-size:11px;background:var(--grn);border:1px solid var(--grn);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:700">📤 출고</button></td>
       </tr>`;
     } else if(_ioCommerceMode === 'ship'){
@@ -11878,7 +11871,7 @@ function _renderIoCommerce(){
           ${dateLabel} <span style="color:var(--t3);font-weight:500;margin-left:4px">${byDate[d].length}건</span>
         </div>
         <div style="background:var(--s1);border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden">
-          <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <table style="width:100%;border-collapse:collapse;font-size:12.5px;table-layout:fixed">
             <thead>${tableHeader}</thead>
             <tbody>${byDate[d].map(renderRow).join('')}</tbody>
           </table>
