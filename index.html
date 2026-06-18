@@ -9062,7 +9062,7 @@ async function callClaudeAPI(body) {
   }
 }
 let notionCfg = {
-  workerUrl: '',
+  workerUrl: 'https://notion-proxy.deun01.workers.dev', // 기본 워커 — 신규 사용자/새 PC에서도 자동 연결되도록 기본값 설정
   token: '',
   smpDb:   'dad8448577d74ea8bbbcb52f4419be3b', // 샘플의뢰
   ordDb:   '97ff79daa2c04b309df42a7a1a2c7b89', // 발주서
@@ -9087,6 +9087,12 @@ let notionCfg = {
 
 function loadNotionCfg(){
   try{ const s=localStorage.getItem(NOTION_CFG_KEY); if(s) notionCfg={...notionCfg,...JSON.parse(s)}; }catch(e){}
+  // 🔧 재발 방지: 저장된 설정에 workerUrl이 비어있으면 기본 워커로 자동 보정.
+  //    (빈 값이 localStorage에 저장돼 있던 기존 사용자/새 PC도 자동 연결 — 유효한 값은 건드리지 않음)
+  if(!notionCfg.workerUrl || !notionCfg.workerUrl.trim()){
+    notionCfg.workerUrl = 'https://notion-proxy.deun01.workers.dev';
+    try{ localStorage.setItem(NOTION_CFG_KEY, JSON.stringify(notionCfg)); }catch(e){}
+  }
   updateNotionNavLabel();
   // Realtime 연결 시도 (workerUrl 또는 realtimeUrl 있으면)
   if(typeof realtimeConnect === 'function') setTimeout(()=>realtimeConnect(), 500);
