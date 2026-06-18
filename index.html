@@ -1717,11 +1717,12 @@ window.addEventListener('message', function(ev){
   </div>
 
   <div class="form-sec">스펙</div>
-  <div class="fr4">
+  <div class="fr2">
     <div class="fg"><label>외경 / 길이</label><input class="fi" id="s_sz1" placeholder=""></div>
     <div class="fg"><label>호수</label><input class="fi" id="s_sz2" placeholder=""></div>
-    <div class="fg"><label>보조줄</label><input class="fi" id="s_sz3"></div>
-    <div class="fg"><label>장식</label><input class="fi" id="s_sz4"></div>
+    <!-- 보조줄·장식 필드 제거됨 (s_sz3/s_sz4) — 저장·동기화 로직은 호환을 위해 빈 값으로 유지 -->
+    <input type="hidden" id="s_sz3" value="">
+    <input type="hidden" id="s_sz4" value="">
   </div>
   <div class="fr3">
     <div class="fg"><label>소재 * <span style="font-size:9.5px;color:var(--t3);font-weight:400">(직접입력 가능)</span></label>
@@ -1744,6 +1745,11 @@ window.addEventListener('message', function(ev){
   <div class="fr2">
     <div class="fg"><label>각인 위치</label><input class="fi" id="s_engr" placeholder=""></div>
     <div class="fg"><label>카드파일 / 원본</label><input class="fi" id="s_card"></div>
+  </div>
+  <div style="margin-top:7px">
+    <div class="fg"><label>비고 <span style="font-size:9.5px;color:var(--t3);font-weight:400">— 주의사항·추가 요청사항 자유 입력</span></label>
+      <textarea class="fi" id="s_remark" rows="3" placeholder="예) 도금 두께 주의 / 각인 글씨체 지정 / 납기 협의 필요 등 자유롭게 작성" style="resize:vertical;min-height:64px;font-family:inherit;line-height:1.5"></textarea>
+    </div>
   </div>
 
   <div class="form-sec">📎 파일 첨부 <span style="font-size:10px;color:var(--t3);font-weight:400">— 이미지·PDF·엑셀·CAD 모두 한 곳에서</span></div>
@@ -9062,7 +9068,7 @@ async function callClaudeAPI(body) {
   }
 }
 let notionCfg = {
-  workerUrl: 'https://notion-proxy.deun01.workers.dev', // 기본 워커 — 신규 사용자/새 PC에서도 자동 연결되도록 기본값 설정
+  workerUrl: 'https://ek-proxy.deun01.workers.dev', // 기본 워커 — NOTION_TOKEN 보유한 ek-proxy. 신규 사용자/새 PC/브랜드커머스 전용링크에서도 자동 연결
   token: '',
   smpDb:   'dad8448577d74ea8bbbcb52f4419be3b', // 샘플의뢰
   ordDb:   '97ff79daa2c04b309df42a7a1a2c7b89', // 발주서
@@ -9087,10 +9093,12 @@ let notionCfg = {
 
 function loadNotionCfg(){
   try{ const s=localStorage.getItem(NOTION_CFG_KEY); if(s) notionCfg={...notionCfg,...JSON.parse(s)}; }catch(e){}
-  // 🔧 재발 방지: 저장된 설정에 workerUrl이 비어있으면 기본 워커로 자동 보정.
-  //    (빈 값이 localStorage에 저장돼 있던 기존 사용자/새 PC도 자동 연결 — 유효한 값은 건드리지 않음)
-  if(!notionCfg.workerUrl || !notionCfg.workerUrl.trim()){
-    notionCfg.workerUrl = 'https://notion-proxy.deun01.workers.dev';
+  // 🔧 재발 방지: workerUrl이 비어있거나, 노션 토큰이 없는 잘못된 워커(notion-proxy)로 저장돼 있으면
+  //    NOTION_TOKEN을 보유한 정상 워커(ek-proxy)로 자동 보정. (브랜드커머스 전용링크/새 PC 자동 연결)
+  //    — 사용자가 의도적으로 입력한 다른 정상 URL은 건드리지 않음
+  const _GOOD_WORKER = 'https://ek-proxy.deun01.workers.dev';
+  if(!notionCfg.workerUrl || !notionCfg.workerUrl.trim() || /notion-proxy\.deun01/.test(notionCfg.workerUrl)){
+    notionCfg.workerUrl = _GOOD_WORKER;
     try{ localStorage.setItem(NOTION_CFG_KEY, JSON.stringify(notionCfg)); }catch(e){}
   }
   updateNotionNavLabel();
@@ -23596,6 +23604,7 @@ function openSmpModal(idOrNull){
   sv('s_sz1',s?s.sz1:'');sv('s_sz2',s?s.sz2:'');sv('s_sz3',s?s.sz3:'');sv('s_sz4',s?s.sz4:'');
   sv('s_mat',s?s.mat:'');setSelect('s_plating',s?s.plating:'');
   sv('s_wt',s?s.wt:'');sv('s_engr',s?s.engr:'');sv('s_card',s?s.card:'');
+  sv('s_remark',s?s.remark||'':'');
   // 개발/주의 체크리스트 로드 (기존 devNote/caution은 자동으로 항목화)
   smpNotesBuf = loadSmpNotes(s);
   renderSmpNotes();
@@ -24706,6 +24715,7 @@ function saveSmp(){
     sz1:gv('s_sz1'), sz2:gv('s_sz2'), sz3:gv('s_sz3'), sz4:gv('s_sz4'),
     mat:gv('s_mat'), plating:gv('s_plating'), wt:gv('s_wt'),
     engr:gv('s_engr'), card:gv('s_card'),
+    remark:gv('s_remark'),
     notes: smpNotesBuf.map(n=>({text:String(n.text||'').trim(), checked:!!n.checked})).filter(n=>n.text),
     status:gv('s_status'),
     imgs:[...smpImgBuf], sourceDoc:[...(smpSrcBuf||[])], cadFiles:[...smpCadBuf],
