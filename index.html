@@ -4998,6 +4998,8 @@ function renderProducts(){
   const bulkBar=`
   <div id="pdBulkBar" style="display:none;position:sticky;bottom:0;background:var(--s1);border-top:2px solid var(--red);padding:10px 14px;align-items:center;gap:10px;z-index:10">
     <span id="pdBulkCount" style="font-size:12px;font-weight:600;color:var(--red)">0개 선택됨</span>
+    <button onclick="pdExportSelected('xlsx')" style="padding:5px 16px;background:var(--grn);color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">📊 엑셀(사진 포함)</button>
+    <button onclick="pdExportSelected('pdf')" style="padding:5px 16px;background:var(--gold);color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">📄 PDF(사진 포함)</button>
     <button onclick="pdDeleteSelected()" style="padding:5px 16px;background:var(--red);color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">🗑 선택 삭제</button>
     <button onclick="pdClearSelection()" style="padding:5px 12px;background:none;border:1px solid var(--bdr);border-radius:5px;font-size:12px;cursor:pointer;font-family:inherit;color:var(--t2)">취소</button>
     <span style="font-size:11px;color:var(--t3);margin-left:auto">전체 DB 삭제: <button onclick="pdDeleteAll()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:11px;text-decoration:underline;font-family:inherit">전체 삭제</button></span>
@@ -5040,6 +5042,106 @@ function pdClearSelection(){
   const allChk=document.getElementById('pdCheckAll');
   if(allChk) allChk.checked=false;
   pdUpdateBulkBar();
+}
+// ── 선택 항목 내보내기 (엑셀/PDF, 사진 포함) ──
+function _pdGetSelectedProducts(){
+  const ids=Array.from(document.querySelectorAll('.pd-chk:checked')).map(cb=>+cb.value);
+  if(!ids.length) return [];
+  return productDB.filter(p=>ids.includes(+p.id));
+}
+function _pdFirstImg(p){
+  if(Array.isArray(p.imgs)&&p.imgs.length){
+    const f=p.imgs[0];
+    return typeof f==='string'?f:((f&&f.url)||'');
+  }
+  return '';
+}
+async function pdExportSelected(fmt){
+  const sel=_pdGetSelectedProducts();
+  if(!sel.length){ if(typeof showToast==='function') showToast('선택된 항목이 없습니다','var(--red)'); return; }
+  if(fmt==='xlsx') return _pdExportXlsx(sel);
+  if(fmt==='pdf')  return _pdExportPdf(sel);
+}
+// 엑셀: 품목 정보 + 이미지 URL. 이미지 임베드는 SheetJS 기본 빌드가 미지원이라,
+//       사진은 클릭 가능한 URL 하이퍼링크로 넣고 별도 '사진' 열에 썸네일 링크 제공.
+async function _pdExportXlsx(sel){
+  try{
+    if(typeof showToast==='function') showToast(`엑셀 생성 중… (${sel.length}건)`,'var(--gold)');
+    const aoa=[['품목코드','품목명','유형','소재','도금','재고','출고단가','입고원가','최종수정일','사진URL']];
+    sel.forEach(p=>{
+      aoa.push([
+        p.code||'', p.name||'', p.type||'', p.mat||'', p.plating||'',
+        (+p.stock||0), (p.price!=null?+p.price:''), (p.costPrice!=null?+p.costPrice:''),
+        p.lastModified||'', _pdFirstImg(p)
+      ]);
+    });
+    const ws=XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols']=[{wch:16},{wch:28},{wch:12},{wch:12},{wch:10},{wch:8},{wch:12},{wch:12},{wch:14},{wch:40}];
+    // 사진URL 열을 하이퍼링크로
+    for(let r=1;r<aoa.length;r++){
+      const url=aoa[r][9];
+      if(url){ const addr=XLSX.utils.encode_cell({r:r,c:9}); if(ws[addr]) ws[addr].l={Target:url,Tooltip:'사진 열기'}; }
+    }
+    const wb=XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb,ws,'제품목록');
+    const fn=`제품목록_${sel.length}건_${new Date().toISOString().slice(0,10)}.xlsx`;
+    XLSX.writeFile(wb,fn);
+    if(typeof showToast==='function') showToast(`✓ 엑셀 다운로드 (${sel.length}건)`,'var(--grn)');
+  }catch(e){ console.error('[xlsx export]',e); if(typeof showToast==='function') showToast('엑셀 생성 실패: '+(e.message||e),'var(--red)'); }
+}
+// PDF: 새 창에 사진 포함 카탈로그 HTML을 렌더 → 브라우저 인쇄(PDF로 저장).
+//      라이브러리 불필요, 한글 폰트 그대로, 사진 직접 표시.
+function _pdExportPdf(sel){
+  try{
+    const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+    const rows=sel.map(p=>{
+      const img=_pdFirstImg(p);
+      const cell=img?`<img src="${esc(img)}" style="width:54px;height:54px;object-fit:cover;border-radius:5px;border:1px solid #ddd">`:`<div style="width:54px;height:54px;border-radius:5px;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:18px">📷</div>`;
+      return `<tr>
+        <td style="text-align:center">${cell}</td>
+        <td style="font-family:monospace;font-size:11px;color:#666">${esc(p.code)||'—'}</td>
+        <td style="font-weight:600">${esc(p.name)}</td>
+        <td>${esc(p.type)||'—'}</td>
+        <td>${esc(p.mat)||'—'}</td>
+        <td>${esc(p.plating)||'—'}</td>
+        <td style="text-align:center">${(+p.stock||0).toLocaleString()}</td>
+        <td style="text-align:right">${p.price?(+p.price).toLocaleString()+'원':'—'}</td>
+      </tr>`;
+    }).join('');
+    const html=`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>제품목록</title>
+    <style>
+      *{box-sizing:border-box} body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;margin:24px;color:#222}
+      h1{font-size:18px;margin:0 0 4px} .sub{color:#888;font-size:12px;margin-bottom:16px}
+      table{width:100%;border-collapse:collapse;font-size:12px}
+      th{background:#f4f2ec;border-bottom:2px solid #ddd;padding:8px 6px;text-align:left;font-weight:600}
+      td{border-bottom:1px solid #eee;padding:6px;vertical-align:middle}
+      img{display:block}
+      @media print{ @page{margin:14mm} thead{display:table-header-group} tr{break-inside:avoid} }
+    </style></head><body>
+      <h1>제품 목록</h1>
+      <div class="sub">총 ${sel.length}건 · ${new Date().toLocaleString('ko-KR')}</div>
+      <table>
+        <thead><tr><th style="width:64px">사진</th><th>품목코드</th><th>품목명</th><th>유형</th><th>소재</th><th>도금</th><th style="text-align:center">재고</th><th style="text-align:right">출고단가</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <script>
+        // 이미지 로딩 완료 후 인쇄 (사진 누락 방지)
+        (function(){
+          var imgs=Array.prototype.slice.call(document.images);
+          var left=imgs.length;
+          if(!left){ setTimeout(function(){window.print()},300); return; }
+          imgs.forEach(function(im){
+            if(im.complete){ if(--left===0) setTimeout(function(){window.print()},300); }
+            else { im.onload=im.onerror=function(){ if(--left===0) setTimeout(function(){window.print()},300); }; }
+          });
+        })();
+      <\/script>
+    </body></html>`;
+    const w=window.open('','_blank');
+    if(!w){ if(typeof showToast==='function') showToast('팝업이 차단되었습니다 — 팝업 허용 후 다시 시도','var(--red)',4000); return; }
+    w.document.write(html); w.document.close();
+    if(typeof showToast==='function') showToast(`PDF 인쇄창 열림 (${sel.length}건) — '대상'을 PDF로 저장`,'var(--gold)',4000);
+  }catch(e){ console.error('[pdf export]',e); if(typeof showToast==='function') showToast('PDF 생성 실패: '+(e.message||e),'var(--red)'); }
 }
 function pdDeleteSelected(){
   const ids=Array.from(document.querySelectorAll('.pd-chk:checked')).map(cb=>+cb.value);
