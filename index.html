@@ -4676,6 +4676,11 @@ function pdNameKey(name){
   do{ prev=s; s=s.replace(tails,'').trim(); }while(s!==prev && s.length>1);
   return s||String(name).trim();
 }
+// 품목명 옆 🔗 클릭 → 같은 기본이름끼리 묶어보기 토글 (같은 그룹 다시 누르면 해제)
+function pdGroupByName(key){
+  pdFilterName = (pdFilterName===key) ? '전체' : key;
+  pdPage=1; renderProducts();
+}
 
 // 헤더 클릭 시 정렬 토글: 1번 클릭 → 정렬 시작, 2번 클릭 → 역순, 3번 클릭 → 원래 순서
 function pdToggleSort(key){
@@ -4860,6 +4865,12 @@ function renderProducts(){
         if(!va && !vb) return 0;
         const cmp = va.localeCompare(vb);
         return pdSortDir==='asc' ? cmp : -cmp;
+      } else if(pdSortKey==='name'){
+        // 품목명 정렬: 같은 기본이름끼리 묶이도록 정규화 키 우선, 그 다음 전체 이름
+        const ka=pdNameKey(a.name), kb=pdNameKey(b.name);
+        let cmp=ka.localeCompare(kb,'ko');
+        if(cmp===0) cmp=(a.name||'').localeCompare(b.name||'','ko');
+        return pdSortDir==='asc' ? cmp : -cmp;
       } else {
         // 문자열 정렬 (유형/소재/도금)
         va=(a[pdSortKey]||'').toString();
@@ -4871,6 +4882,22 @@ function renderProducts(){
         const cmp=va.localeCompare(vb,'ko');
         return pdSortDir==='asc' ? cmp : -cmp;
       }
+    });
+  } else if(pdFilterName!=='전체'){
+    // 품목명 그룹이 선택된 상태: 같은 기본이름끼리 모으고, 그 안에서는 최신 수정 순
+    list=[...list].sort((a,b)=>{
+      const ka=pdNameKey(a.name), kb=pdNameKey(b.name);
+      let cmp=ka.localeCompare(kb,'ko');
+      if(cmp!==0) return cmp;
+      return (b.lastModified||'').localeCompare(a.lastModified||'');
+    });
+  } else {
+    // 기본(정렬 미지정): 최종수정일 최신순 — 빈 값은 뒤로
+    list=[...list].sort((a,b)=>{
+      const va=a.lastModified||'', vb=b.lastModified||'';
+      if(!va && vb) return 1;
+      if(va && !vb) return -1;
+      return vb.localeCompare(va);
     });
   }
 
@@ -4939,7 +4966,7 @@ function renderProducts(){
           </th>
           <th style="padding:8px 6px;width:46px"></th>
           <th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap">품목코드</th>
-          <th style="padding:8px 10px;text-align:left;font-weight:600">품목명</th>
+          <th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" onclick="pdToggleSort('name')" title="클릭하여 비슷한 품목명끼리 묶어 정렬">품목명${pdSortKey==='name'?(pdSortDir==='asc'?' ▲':' ▼'):" <span style='color:var(--t3);opacity:.4'>⇅</span>"}</th>
           <th style="padding:8px 10px;text-align:center;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" onclick="pdToggleSort('type')" title="클릭하여 정렬">유형${pdSortKey==='type'?(pdSortDir==='asc'?' ▲':' ▼'):" <span style='color:var(--t3);opacity:.4'>⇅</span>"}</th>
           <th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" onclick="pdToggleSort('mat')" title="클릭하여 정렬">소재${pdSortKey==='mat'?(pdSortDir==='asc'?' ▲':' ▼'):" <span style='color:var(--t3);opacity:.4'>⇅</span>"}</th>
           <th style="padding:8px 10px;text-align:left;font-weight:600;white-space:nowrap;cursor:pointer;user-select:none" onclick="pdToggleSort('plating')" title="클릭하여 정렬">도금${pdSortKey==='plating'?(pdSortDir==='asc'?' ▲':' ▼'):" <span style='color:var(--t3);opacity:.4'>⇅</span>"}</th>
