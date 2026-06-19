@@ -4643,7 +4643,19 @@ function _debouncedPdSearch(val){
 // 최종수정일 필터: 'all' / 'today' / 'week' / 'month' / 'quarter' / 'year' / 'custom' (custom일 땐 pdDateFrom/To 사용)
 let pdDateFilter='all', pdDateFrom='', pdDateTo='';
 let pdSortKey=null, pdSortDir='asc'; // 정렬 상태: key=null이면 기본순서, dir='asc'(오름)/'desc'(내림)
-const PD_PAGE_SIZE=20;
+let PD_PAGE_SIZE = +(localStorage.getItem('ek3_pdPageSize')||20) || 20;  // 페이지당 표시 개수 (드롭다운으로 변경, 영구저장)
+function pdSetPageSize(v){ PD_PAGE_SIZE = +v||20; try{localStorage.setItem('ek3_pdPageSize',PD_PAGE_SIZE);}catch(e){} pdPage=1; renderProducts(); }
+let pdFilterName='전체';  // 품목명 그룹 필터 ('전체' 또는 정규화된 이름 그룹)
+// 품목명에서 색상/사이즈/번호 등 변형 접미사를 떼어내 "기본 이름"만 추출 → 비슷한 이름끼리 묶기
+function pdNameKey(name){
+  let s=String(name||'').trim();
+  if(!s) return '(이름없음)';
+  // 끝쪽의 색상/규격/번호/괄호 변형 제거 (반복)
+  const tails=/(\s*[\(\[][^\)\]]*[\)\]]\s*$)|(\s*[-_/]\s*\S+$)|(\s*\d+\s*호$)|(\s*\d+(\.\d+)?\s*(mm|cm|MM|CM)$)|(\s*(골드|실버|로즈골드|로즈|silver|gold|rosegold|블랙|화이트|옐로우|핑크|레드|블루|그린|골드도금|로듐)\s*$)|(\s*\d{1,3}\s*$)/;
+  let prev;
+  do{ prev=s; s=s.replace(tails,'').trim(); }while(s!==prev && s.length>1);
+  return s||String(name).trim();
+}
 
 // 헤더 클릭 시 정렬 토글: 1번 클릭 → 정렬 시작, 2번 클릭 → 역순, 3번 클릭 → 원래 순서
 function pdToggleSort(key){
@@ -4806,6 +4818,10 @@ function renderProducts(){
       return safety>0&&stock<=safety;
     });
   }
+  // 품목명 그룹 필터 (비슷한 이름끼리)
+  if(pdFilterName!=='전체'){
+    list=list.filter(p=>pdNameKey(p.name)===pdFilterName);
+  }
 
   // ── 헤더 클릭 정렬 ──
   if(pdSortKey){
@@ -4869,6 +4885,20 @@ function renderProducts(){
     <div style="display:flex;gap:4px;flex-wrap:wrap">
       ${mats.map(m=>`<button onclick="pdFilterMat='${m}';pdPage=1;renderProducts()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdFilterMat===m?'var(--blu)':'var(--bdr)'};background:${pdFilterMat===m?'var(--blu-bg)':'var(--s1)'};color:${pdFilterMat===m?'var(--blu)':'var(--t2)'};cursor:pointer;font-family:inherit">${m}</button>`).join('')}
     </div>
+    ${(()=>{
+      // 품목명 그룹: 현재 유형/소재 필터가 적용된 모집단 기준으로 그룹별 개수 집계
+      const _e=s=>String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+      let base=productDB;
+      if(pdFilterType!=='전체') base=base.filter(p=>p.type===pdFilterType);
+      if(pdFilterMat!=='전체') base=base.filter(p=>p.mat===pdFilterMat);
+      const grp={};
+      base.forEach(p=>{ const k=pdNameKey(p.name); grp[k]=(grp[k]||0)+1; });
+      const entries=Object.entries(grp).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'ko'));
+      const opts=['<option value="전체">📂 품목명 전체</option>']
+        .concat(entries.map(([k,n])=>`<option value="${_e(k)}" ${pdFilterName===k?'selected':''}>${_e(k)} (${n})</option>`)).join('');
+      return `<select onchange="pdFilterName=this.value;pdPage=1;renderProducts()" title="비슷한 품목명끼리 묶어서 보기" style="padding:4px 8px;border:1px solid ${pdFilterName!=='전체'?'var(--gold)':'var(--bdr)'};border-radius:14px;font-size:11px;font-family:inherit;background:${pdFilterName!=='전체'?'var(--gold-bg)':'var(--s1)'};color:${pdFilterName!=='전체'?'var(--gold-lt)':'var(--t2)'};max-width:200px;cursor:pointer">${opts}</select>
+      ${pdFilterName!=='전체'?`<button onclick="pdFilterName='전체';pdPage=1;renderProducts()" title="품목명 필터 해제" style="padding:4px 9px;border-radius:14px;font-size:11px;border:1px solid var(--bdr);background:var(--s1);color:var(--t3);cursor:pointer;font-family:inherit">✕</button>`:''}`;
+    })()}
     <button onclick="pdShowLowStock()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdLowOnly?'var(--red)':'var(--bdr)'};background:${pdLowOnly?'rgba(192,48,48,.1)':'var(--s1)'};color:${pdLowOnly?'var(--red)':'var(--t2)'};cursor:pointer;font-family:inherit;margin-left:auto;font-weight:600">${pdLowOnly?'✓ ':''}⚠ 재고부족만</button>
   </div>`;
 
@@ -4985,8 +5015,8 @@ function renderProducts(){
       <button onclick="if(pdPage<totalPages){pdPage++;renderProducts()}" style="padding:4px 8px;border:1px solid var(--bdr);border-radius:4px;background:var(--s1);cursor:pointer;font-size:12px;color:var(--t2);font-family:inherit">›</button>
       <button onclick="pdPage=totalPages;renderProducts()" ${pdPage===totalPages?'disabled':''} style="padding:4px 8px;border:1px solid var(--bdr);border-radius:4px;background:var(--s1);cursor:pointer;font-size:12px;color:var(--t2);font-family:inherit">»</button>
     </div>
-    <select onchange="window.PD_PAGE_SIZE_VAL=+this.value;renderProducts()" style="padding:3px 7px;border:1px solid var(--bdr);border-radius:4px;font-size:11.5px;font-family:inherit;background:var(--s1);color:var(--t2)">
-      <option value="20">20개씩</option><option value="50">50개씩</option><option value="100">100개씩</option>
+    <select onchange="pdSetPageSize(this.value)" style="padding:3px 7px;border:1px solid var(--bdr);border-radius:4px;font-size:11.5px;font-family:inherit;background:var(--s1);color:var(--t2)">
+      ${[20,50,100,500,1000].map(n=>`<option value="${n}" ${PD_PAGE_SIZE===n?'selected':''}>${n.toLocaleString()}개씩</option>`).join('')}
     </select>
   </div>` : `<div style="padding:48px;text-align:center;color:var(--t3);font-size:13px">
     <div style="font-size:36px;margin-bottom:12px">📦</div>
