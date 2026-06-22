@@ -37126,7 +37126,15 @@ function renderFinPlan(){
 function _finRenderOutflows(){
   var tb=document.getElementById('fin-outflow-body'); if(!tb) return;
   var rows='';
-  (FIN.outflows||[]).forEach(function(o,i){
+  var _ordered=(FIN.outflows||[]).map(function(o,i){return {o:o,i:i};}).sort(function(a,b){
+    var da=(a.o.month||''), db=(b.o.month||'');
+    if(!da && !db) return a.i-b.i;
+    if(!da) return 1; if(!db) return -1;   // 날짜 없는 항목은 맨 뒤
+    if(da<db) return -1; if(da>db) return 1;
+    return a.i-b.i;
+  });
+  _ordered.forEach(function(row){
+    var o=row.o, i=row.i;
     var mult=(_FIN_CYCLE.hasOwnProperty(o.cycle)?_FIN_CYCLE[o.cycle]:1);
     var annual=_finNum(o.amount)*mult;
     var isOnce=(o.cycle==='일회성');
@@ -37145,10 +37153,25 @@ function _finRenderOutflows(){
   if(!rows) rows='<tr><td colspan="8" style="text-align:center;color:var(--mu);padding:18px">+ 항목 추가 버튼으로 연간 고정·대형 지출을 등록하세요</td></tr>';
   tb.innerHTML=rows
     +'<datalist id="finOutflowCat"><option value="임대료"><option value="인건비"><option value="4대보험"><option value="공과금"><option value="통신/구독"><option value="보험료"><option value="외주비"><option value="원자재"><option value="마케팅"><option value="세금"><option value="상환"><option value="기타"></datalist>';
-  var annualTot=(FIN.outflows||[]).reduce(function(s,o){return s+_finNum(o.amount)*(_FIN_CYCLE.hasOwnProperty(o.cycle)?_FIN_CYCLE[o.cycle]:1);},0);
+  var annualTot=0, onceTot=0;
+  (FIN.outflows||[]).forEach(function(o){
+    if(o.cycle==='일회성'){ onceTot+=_finNum(o.amount); }
+    else { annualTot+=_finNum(o.amount)*(_FIN_CYCLE.hasOwnProperty(o.cycle)?_FIN_CYCLE[o.cycle]:1); }
+  });
   var monthlyTot=annualTot/12;
   var ft=document.getElementById('fin-outflow-foot');
-  if(ft) ft.innerHTML='<tr><td colspan="5">합계</td><td style="text-align:right">연 '+won(annualTot)+'</td><td colspan="2" style="font-weight:600;color:var(--mu)">월평균 '+won(monthlyTot)+'</td></tr>';
+  if(ft){
+    var totalCash=annualTot+onceTot;
+    var right='';
+    if(annualTot>0 && onceTot>0){
+      right='<td style="text-align:right">연 '+won(annualTot)+' <span style="font-weight:600;color:var(--hi);font-size:11px">+ 일회성 '+won(onceTot)+'</span></td><td colspan="2" style="font-weight:700;color:var(--ac)">실지출 합계 '+won(totalCash)+'</td>';
+    } else if(onceTot>0){
+      right='<td style="text-align:right;font-weight:700;color:var(--ac)">일회성 합계 '+won(onceTot)+'</td><td colspan="2" style="font-weight:600;color:var(--mu)">'+( (FIN.outflows||[]).filter(function(o){return o.cycle==='일회성';}).length )+'건</td>';
+    } else {
+      right='<td style="text-align:right">연 '+won(annualTot)+'</td><td colspan="2" style="font-weight:600;color:var(--mu)">월평균 '+won(monthlyTot)+'</td>';
+    }
+    ft.innerHTML='<tr><td colspan="5">합계</td>'+right+'</tr>';
+  }
 }
 
 function _finRenderReceivables(){
