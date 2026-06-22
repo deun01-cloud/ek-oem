@@ -7317,14 +7317,34 @@ function renderInvoiceHistory(){
   //    더 작은(부분집합) 합본은 잘못된 잔재이므로 제거하고 큰 합본만 남긴다.
   {
     const consList = invoiceHistory.filter(v=>v && v._isConsolidated);
-    const _childIdSet = (c)=>{
+    // 🔑 기기 독립 안정키 집합: 로컬에 자식이 실재하든 말든 합본 자신이 들고 있는
+    //    includedChildKeys(우선) / includedInvoiceIds 를 그대로 키로 쓴다.
+    //    (이전 버전은 '현재 기기에 받아진 자식 id'만 담아서, 스냅샷이 덜 받아진 기기에서
+    //     집합 크기가 작아지고 → 부분집합 오판 → 기기마다 다른 합본을 삭제하는 버그가 있었음)
+    const _childKeySet = (c)=>{
       const s = new Set();
-      (c.includedInvoiceIds||[]).forEach(id=>s.add(String(id)));
-      (c.includedChildKeys||[]).forEach(k=>{
-        const ch = invoiceHistory.find(x=>!x._isConsolidated && typeof _invStableKey==='function' && _invStableKey(x)===k);
-        if(ch) s.add(String(ch.id));
+      if(Array.isArray(c.includedChildKeys) && c.includedChildKeys.length){
+        c.includedChildKeys.forEach(k=>{ if(k) s.add('k:'+k); });
+      }
+      // childKeys가 비어 있는 구(舊) 합본은 자식 id를 안정키로 환산해서라도 채운다
+      (c.includedInvoiceIds||[]).forEach(id=>{
+        var ch = invoiceHistory.find(x=>!x._isConsolidated && String(x.id)===String(id));
+        if(ch && typeof _invStableKey==='function'){ s.add('k:'+_invStableKey(ch)); }
+        else { s.add('id:'+String(id)); } // 로컬에 없으면 id 자체를 키로 (집합 크기 보존)
       });
       return s;
+    };
+    // 이 합본의 자식 안정키가 '현재 기기에서 전부 해석 가능한지' — 삭제 안전 가드용
+    const _allChildrenResolvableLocally = (c)=>{
+      var keys = Array.isArray(c.includedChildKeys) ? c.includedChildKeys.filter(Boolean) : [];
+      if(!keys.length){
+        // childKeys 없는 구 합본: includedInvoiceIds 전부가 로컬에 있어야 안전
+        var ids = (c.includedInvoiceIds||[]).map(String);
+        if(!ids.length) return false;
+        return ids.every(function(id){ return invoiceHistory.some(function(x){ return !x._isConsolidated && String(x.id)===id; }); });
+      }
+      if(typeof _invStableKey!=='function') return false;
+      return keys.every(function(k){ return invoiceHistory.some(function(x){ return !x._isConsolidated && _invStableKey(x)===k; }); });
     };
     const _toDropCons = [];
     for(let i=0;i<consList.length;i++){
@@ -7333,13 +7353,20 @@ function renderInvoiceHistory(){
         const a=consList[i], b=consList[j];
         if((a.vendor||'')!==(b.vendor||'')) continue;
         if(_toDropCons.includes(a) || _toDropCons.includes(b)) continue;
-        const sa=_childIdSet(a), sb=_childIdSet(b);
+        const sa=_childKeySet(a), sb=_childKeySet(b);
         if(sa.size===0||sb.size===0) continue;
-        // a가 b의 진부분집합(자식 전부가 b에 있고 b가 더 큼)이면 a 제거
+        // a가 b의 진부분집합(자식 전부가 b에 있고 b가 더 큼)이면 a 제거 후보
         const aSubsetOfB = [...sa].every(x=>sb.has(x)) && sb.size>sa.size;
         if(aSubsetOfB){
           // 청구/완료 단계로 이미 청구된 합본은 함부로 지우지 않음(돈 데이터 보호) — draft만 정리
           if(a._invStage==='done' || a._consBilled){ continue; }
+          // 🛡️ 기기 간 안전 가드: 부분집합 a의 자식과 상위집합 b의 자식이
+          //    '현재 기기에서 전부 해석 가능'할 때만 삭제한다. 스냅샷이 덜 받아진
+          //    상태에서 삭제하면 다른 기기와 숫자가 갈리고 돈 데이터가 사라진다.
+          if(!_allChildrenResolvableLocally(a) || !_allChildrenResolvableLocally(b)){
+            console.warn('[invoice] ⏸️ 부분집합 의심이나 자식이 로컬에서 완전 해석되지 않아 삭제 보류:', a.vendor, a.consolidationMonth, '— 동기화 완료 후 재평가');
+            continue;
+          }
           _toDropCons.push(a);
           console.warn('[invoice] 🧹 부분집합 중복 합본 제거:', a.vendor, a.consolidationMonth, '(자식', sa.size, '건) ⊂', b.consolidationMonth, '(자식', sb.size, '건)');
         }
@@ -7398,12 +7425,27 @@ function renderInvoiceHistory(){
         }
         if(_rebuiltIds.indexOf(ch.id) < 0) _rebuiltIds.push(ch.id);
       });
-      // includedInvoiceIds는 항상 실제 자식 id 집합으로 정규화 (다른 기기 로컬id/중복 잔재 제거)
-      //   단, 해석된 자식이 한 건이라도 있을 때만 덮어쓴다 (전부 일시적으로 못 찾는 경우 기존 보존)
+      // includedInvoiceIds는 실제 자식 id 집합으로 정규화 (다른 기기 로컬id/중복 잔재 제거)
+      //   🛡️ 단, '자식 묶음을 현재 기기에서 전부 해석했을 때만' 덮어쓴다.
+      //   includedChildKeys(기기 독립 기준)가 있으면 그 개수만큼 해석돼야 안전.
+      //   일부만 해석된 상태에서 덮어쓰면 includedInvoiceIds가 줄어들고, 그게 전파돼
+      //   다른 기기에서 부분집합 오판/중복삭제를 일으킨다(기기 간 숫자 불일치의 2차 원인).
       if(_rebuiltIds.length){
-        var _old = (c.includedInvoiceIds||[]).map(String).sort().join(',');
-        var _new = _rebuiltIds.map(String).sort().join(',');
-        if(_old !== _new){ c.includedInvoiceIds = _rebuiltIds; _reconciled++; }
+        var _expectedCount = (Array.isArray(c.includedChildKeys) && c.includedChildKeys.filter(Boolean).length)
+          ? c.includedChildKeys.filter(Boolean).length
+          : (c.includedInvoiceIds||[]).length;
+        var _fullyResolved = _expectedCount > 0 && _rebuiltIds.length >= _expectedCount;
+        if(_fullyResolved){
+          var _old = (c.includedInvoiceIds||[]).map(String).sort().join(',');
+          var _new = _rebuiltIds.map(String).sort().join(',');
+          if(_old !== _new){ c.includedInvoiceIds = _rebuiltIds; _reconciled++; }
+        } else {
+          // 부분 해석: 기존 id에 새로 해석된 id를 '합집합'으로만 보강 (절대 줄이지 않음)
+          var _merged = (c.includedInvoiceIds||[]).map(String);
+          var _grew = false;
+          _rebuiltIds.forEach(function(id){ if(_merged.indexOf(String(id))<0){ _merged.push(String(id)); _grew=true; } });
+          if(_grew){ c.includedInvoiceIds = _merged; _reconciled++; }
+        }
       }
     });
     if(_reconciled > 0){
