@@ -37265,13 +37265,21 @@ function _finRenderSummary(){
   var loanMonthly=(FIN.loans||[]).reduce(function(s,l){return s+_finNum(l.monthly);},0);
   var taxTot=(FIN.taxes||[]).filter(function(t){return !t.done;}).reduce(function(s,t){return s+_finNum(t.amount);},0);
   var annualTotal=annualOut + onceOut + loanMonthly*12 + taxTot;
+  // 해당(현재) 월 출금 예상 — 지급일이 이번 달인 항목 합계
+  var _now=new Date();
+  var curYM=_now.getFullYear()+'-'+String(_now.getMonth()+1).padStart(2,'0'); // YYYY-MM
+  var curMonLabel=(_now.getMonth()+1)+'월';
+  var monthOut=0, monthCnt=0;
+  (FIN.outflows||[]).forEach(function(o){
+    if(o.month && String(o.month).slice(0,7)===curYM){ monthOut+=_finNum(o.amount); monthCnt++; }
+  });
   var recvOpen=(FIN.receivables||[]).filter(function(r){return r.status!=='입금완료';}).reduce(function(s,r){return s+_finNum(r.amount);},0);
   var overdue=(FIN.receivables||[]).filter(function(r){return r.status!=='입금완료'&&r.due&&r.due<today;}).reduce(function(s,r){return s+_finNum(r.amount);},0);
   var cash=_finNum(FIN.cash), reserve=_finNum(FIN.reserveTarget);
   var reservePct=reserve>0?Math.min(100,Math.round(cash/reserve*100)):0;
   function card(lbl,val,sub,color){ return '<div class="fcard"><div class="flbl">'+lbl+'</div><div class="fval"'+(color?(' style="color:'+color+'"'):'')+'>'+val+'</div>'+(sub?'<div class="fsub">'+sub+'</div>':'')+'</div>'; }
   box.innerHTML =
-     card('연간 총 출금 예상', won(annualTotal), '월평균 '+won(annualTotal/12))
+     card(curMonLabel+' 출금 예상', won(monthOut), monthCnt>0?(monthCnt+'건 · 연 총 '+won(annualTotal)):('이번 달 예정 없음 · 연 총 '+won(annualTotal)))
     +card('미수금(미입금)', won(recvOpen), overdue>0?('<span style="color:var(--rd)">연체 '+won(overdue)+'</span>'):'연체 없음', overdue>0?'var(--rd)':'')
     +card('현재 현금 보유', won(cash), reserve>0?('비상자금 목표 대비 '+reservePct+'%'):'비상자금 목표 미설정', (cash<loanMonthly&&loanMonthly>0)?'var(--rd)':'')
     +card('월 고정 상환', won(loanMonthly), '대출·리스');
