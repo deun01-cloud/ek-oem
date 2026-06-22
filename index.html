@@ -37162,13 +37162,14 @@ function _finRenderOutflows(){
   var ft=document.getElementById('fin-outflow-foot');
   if(ft){
     var totalCash=annualTot+onceTot;
+    var onceCnt=(FIN.outflows||[]).filter(function(o){return o.cycle==='일회성';}).length;
     var right='';
     if(annualTot>0 && onceTot>0){
-      right='<td style="text-align:right">연 '+won(annualTot)+' <span style="font-weight:600;color:var(--hi);font-size:11px">+ 일회성 '+won(onceTot)+'</span></td><td colspan="2" style="font-weight:700;color:var(--ac)">실지출 합계 '+won(totalCash)+'</td>';
+      right='<td style="text-align:right;white-space:nowrap">연 '+won(annualTot)+' <span style="font-weight:600;color:var(--hi);font-size:11px">+ '+won(onceTot)+'</span></td><td colspan="2" style="font-weight:700;color:var(--ac);white-space:nowrap">합계 '+won(totalCash)+'</td>';
     } else if(onceTot>0){
-      right='<td style="text-align:right;font-weight:700;color:var(--ac)">일회성 합계 '+won(onceTot)+'</td><td colspan="2" style="font-weight:600;color:var(--mu)">'+( (FIN.outflows||[]).filter(function(o){return o.cycle==='일회성';}).length )+'건</td>';
+      right='<td style="text-align:right;font-weight:700;color:var(--ac);white-space:nowrap">'+won(onceTot)+'</td><td colspan="2" style="font-weight:600;color:var(--mu)">'+onceCnt+'건</td>';
     } else {
-      right='<td style="text-align:right">연 '+won(annualTot)+'</td><td colspan="2" style="font-weight:600;color:var(--mu)">월평균 '+won(monthlyTot)+'</td>';
+      right='<td style="text-align:right;white-space:nowrap">연 '+won(annualTot)+'</td><td colspan="2" style="font-weight:600;color:var(--mu);white-space:nowrap">월평균 '+won(monthlyTot)+'</td>';
     }
     ft.innerHTML='<tr><td colspan="5">합계</td>'+right+'</tr>';
   }
@@ -37256,10 +37257,14 @@ function _finRenderLoans(){
 function _finRenderSummary(){
   var box=document.getElementById('fin-summary'); if(!box) return;
   var today=new Date().toISOString().slice(0,10);
-  var annualOut=(FIN.outflows||[]).reduce(function(s,o){return s+_finNum(o.amount)*(_FIN_CYCLE.hasOwnProperty(o.cycle)?_FIN_CYCLE[o.cycle]:1);},0);
+  var annualOut=0, onceOut=0;
+  (FIN.outflows||[]).forEach(function(o){
+    if(o.cycle==='일회성'){ onceOut+=_finNum(o.amount); }
+    else { annualOut+=_finNum(o.amount)*(_FIN_CYCLE.hasOwnProperty(o.cycle)?_FIN_CYCLE[o.cycle]:1); }
+  });
   var loanMonthly=(FIN.loans||[]).reduce(function(s,l){return s+_finNum(l.monthly);},0);
   var taxTot=(FIN.taxes||[]).filter(function(t){return !t.done;}).reduce(function(s,t){return s+_finNum(t.amount);},0);
-  var annualTotal=annualOut + loanMonthly*12 + taxTot;
+  var annualTotal=annualOut + onceOut + loanMonthly*12 + taxTot;
   var recvOpen=(FIN.receivables||[]).filter(function(r){return r.status!=='입금완료';}).reduce(function(s,r){return s+_finNum(r.amount);},0);
   var overdue=(FIN.receivables||[]).filter(function(r){return r.status!=='입금완료'&&r.due&&r.due<today;}).reduce(function(s,r){return s+_finNum(r.amount);},0);
   var cash=_finNum(FIN.cash), reserve=_finNum(FIN.reserveTarget);
