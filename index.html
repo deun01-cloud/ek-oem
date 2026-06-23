@@ -7414,7 +7414,12 @@ function renderInvoiceHistory(){
         }
         // 📌 자식 단계를 합본 단계와 일치시킨다 (합본이 청구/완료로 갔는데 자식이 출고완료에 남아
         //    탭이 분리돼 보이는 문제 방지). done은 입금 동기화 로직이 따로 관리하므로 건드리지 않음.
-        if(_consStage !== 'done' && ch._invStage !== _consStage){
+        // 🛡️ 합본이 아직 draft(청구 전)이면 자식 단계를 건드리지 않는다.
+        //    자식은 _consolidatedInvoiceId 만으로 모든 탭에서 합본 아래로 흡수되므로
+        //    단계를 draft로 끌어내릴 필요가 없다. (이 강제 변경 + realtimePublish 가
+        //    _invStage 자동 재계산 로직과 서로 반대로 자식 단계를 계속 바꿔
+        //    무한 reconcile 루프 → 출고완료 건수 깜빡임을 유발했음)
+        if(_consStage !== 'done' && _consStage !== 'draft' && ch._invStage !== _consStage){
           ch._invStage = _consStage;
           ch._ts = Date.now();
           _reconciled++;
