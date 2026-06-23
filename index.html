@@ -11164,7 +11164,9 @@ async function notionCall(method, path, body, opts){
           return notionCall(method, path, newBody2, {...opts, _stripCount: _stripCount+1});
         }
         // 어느 속성인지 못 짚으면 실제 사유를 사용자에게 노출 (디버깅용)
-        if(typeof showToast==='function'){
+        // 단, archive(보관) 관련 400은 nUpdate가 자동으로 unarchive 후 재시도하므로 토스트로 겁주지 않는다.
+        var _isArchiveErr = /archiv/i.test(bodyText||'');
+        if(typeof showToast==='function' && !_isArchiveErr){
           showToast('⚠ Notion 거부(400): '+bodyText.slice(0,180), 'var(--red)', 8000);
         }
       }
