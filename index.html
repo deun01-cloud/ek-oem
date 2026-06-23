@@ -6142,6 +6142,7 @@ function saveProduct(){
         when: new Date().toISOString()
       };
       stockHistory.push(_stkH);
+      try{ if(typeof realtimePublish==='function') realtimePublish('stockhist', _stkH); }catch(e){}
       try{ if(typeof syncStockHistToNotion==='function') syncStockHistToNotion(_stkH).then(()=>{ if(typeof save==='function') save(); }).catch(()=>{}); }catch(e){}
     }
     // 출고단가 변경 시: 출고완료/입금완료 안 된 거래명세서의 같은 품번 행 단가 자동 동기화
@@ -9813,7 +9814,7 @@ function _rtOnOpen(){
   _rtSend({
     op: 'subscribe',
     clientId: _rtClientId,
-    types: ['invoice','order','sample','product','client','customer','task','quote','proposal','as','proc','io','inquiry','checklist'],
+    types: ['invoice','order','sample','product','client','customer','task','quote','proposal','as','proc','io','stockhist','inquiry','checklist'],
   });
   // 큐에 있던 outbound 메시지 flush
   if(_rtOutboundQueue.length){
@@ -10030,6 +10031,7 @@ function _rtGetLocalArray(type){
   if(type === 'as')       return (typeof asItems !== 'undefined') ? asItems : null;
   if(type === 'proc')     return (typeof procItems !== 'undefined') ? procItems : null;
   if(type === 'io')       return (typeof ioItems !== 'undefined') ? ioItems : null;
+  if(type === 'stockhist')return (typeof stockHistory !== 'undefined') ? stockHistory : null;
   if(type === 'inquiry')  return (typeof inquiries !== 'undefined') ? inquiries : null;
   if(type === 'checklist'){
     // checklist는 주간/월간 두 배열로 나뉘어 있음 — kind로 구분
@@ -10285,6 +10287,7 @@ function _rtAllTypes(){
     {type:'as',       arr: (typeof asItems        !== 'undefined') ? asItems        : null},
     {type:'proc',     arr: (typeof procItems      !== 'undefined') ? procItems      : null},
     {type:'io',       arr: (typeof ioItems        !== 'undefined') ? ioItems        : null},
+    {type:'stockhist',arr: (typeof stockHistory   !== 'undefined') ? stockHistory   : null},
     {type:'inquiry',  arr: (typeof inquiries      !== 'undefined') ? inquiries      : null},
   ];
 }
@@ -16731,6 +16734,7 @@ function applyStockChange({productId, delta, type, refId, refLabel, note}){
     when: new Date().toISOString()
   };
   stockHistory.push(h);
+  try{ if(typeof realtimePublish==='function') realtimePublish('stockhist', h); }catch(e){}
   // 📊 Notion 재고변동이력 DB에 즉시 기록 (협업: 다른 사람도 변동 내역을 봄)
   try{ if(typeof syncStockHistToNotion==='function') syncStockHistToNotion(h).then(()=>{ if(typeof save==='function') save(); }).catch(()=>{}); }catch(e){}
   return true;
@@ -20417,8 +20421,8 @@ function renderTab(){
   const c=document.getElementById('content');c.innerHTML='';
   if(currentTab==='sales'){ try{ if(typeof refreshTypeFromServer==='function'){ refreshTypeFromServer('invoice'); refreshTypeFromServer('order'); } }catch(e){} renderSalesTab();return;}
   if(currentTab==='as'){ try{ if(typeof refreshTypeFromServer==='function') refreshTypeFromServer('as'); }catch(e){} renderAS();return;}
-  if(currentTab==='io'){renderIo();return;}
-  if(currentTab==='products'){renderProducts();return;}
+  if(currentTab==='io'){ try{ if(typeof refreshTypeFromServer==='function'){ refreshTypeFromServer('io'); refreshTypeFromServer('stockhist'); } }catch(e){} renderIo();return;}
+  if(currentTab==='products'){ try{ if(typeof refreshTypeFromServer==='function') refreshTypeFromServer('product'); }catch(e){} renderProducts();return;}
   if(currentTab==='invoices'){
     renderInvoiceHistory();
     // 📡 거래명세서 탭 진입 시 서버 최신 데이터 자동 동기화 (기기 간 화면 불일치 방지)
