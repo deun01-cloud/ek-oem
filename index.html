@@ -10001,7 +10001,7 @@ async function _rtHttpFallback(payload){
 //    활성화 방법(콘솔): enableServerSSOT('order')  → 정본 업로드 검증 후 실행
 //    비활성화(되돌리기): disableServerSSOT('order')
 // ────────────────────────────────────────────────
-var RT_SSOT_TYPES = new Set(['invoice','order','io','task']);
+var RT_SSOT_TYPES = new Set(['invoice','order','io','task','sample']);
 
 // SSOT 활성화/비활성화 — 정본 업로드 검증 후 안전하게 켠다.
 window.enableServerSSOT = function(type){
@@ -10083,6 +10083,7 @@ try{
   RT_SSOT_TYPES.add('order');
   RT_SSOT_TYPES.add('io');
   RT_SSOT_TYPES.add('task');
+  RT_SSOT_TYPES.add('sample');
 }catch(_){}
 
 // ────────────────────────────────────────────────
@@ -10471,21 +10472,39 @@ function refreshTypeFromServer(type, force){
 }
 window.refreshTypeFromServer = refreshTypeFromServer;
 
-// 서버 스냅샷 요청 후 N초 안에 응답(_rtSnapshotReceived 등록)이 없으면 노션 폴백 발동
+// 서버 스냅샷 요청 후 N초 안에 응답이 없으면 — '동기화 안 됨' 경고만 표시.
+//   ⚠ 노션 폴백은 의도적으로 비활성화했다.
+//   이유: 서버가 느릴 때 기기A는 서버(49건), 기기B는 노션(47건)을 받으면
+//         두 기기가 다른 숫자를 보게 됨 → "모두 같은 숫자" 목표에 정면 위배.
+//   서버가 안 되면 차라리 '동기화 안 됨'을 솔직히 알리고,
+//   모든 기기가 똑같이 '로컬 마지막 상태'를 본다(적어도 일관성은 유지).
 var _notionFallbackTimers = {};
+var ENABLE_NOTION_FALLBACK = false; // ← 모두 같은 숫자 보장 위해 폴백 끔
 function _armNotionFallbackTimer(type){
-  if(!RT_NOTION_FALLBACK_MAP[type]) return; // 폴백 대상 타입만
+  if(!RT_NOTION_FALLBACK_MAP[type]) return;
   if(_notionFallbackTimers[type]) clearTimeout(_notionFallbackTimers[type]);
-  // 요청 직전 스냅샷 수신 기록을 지워, '이번 요청'에 대한 응답만 카운트
   try{ if(typeof _rtSnapshotReceived!=='undefined' && _rtSnapshotReceived.delete) _rtSnapshotReceived.delete(type); }catch(_){}
   _notionFallbackTimers[type]=setTimeout(function(){
     var got=false;
     try{ got = (typeof _rtSnapshotReceived!=='undefined' && _rtSnapshotReceived.has) ? _rtSnapshotReceived.has(type) : false; }catch(_){}
     if(!got){
-      console.warn('[sync] ⏱ 서버 스냅샷 무응답('+type+') → 노션 폴백');
-      if(typeof _tryNotionFallback==='function') _tryNotionFallback(type);
+      console.warn('[sync] ⏱ 서버 스냅샷 무응답('+type+') — 서버 동기화 불가');
+      _showSyncDownWarning();
+      if(ENABLE_NOTION_FALLBACK && typeof _tryNotionFallback==='function'){
+        _tryNotionFallback(type); // (기본 비활성)
+      }
     }
-  }, 6000); // 6초 대기
+  }, 6000);
+}
+// 서버 동기화 불가 경고 배너 (모든 기기가 같은 상태 못 받는 상황을 솔직히 알림)
+var _syncDownWarnAt = 0;
+function _showSyncDownWarning(){
+  var now=Date.now();
+  if(now - _syncDownWarnAt < 20000) return; // 20초 쿨다운
+  _syncDownWarnAt = now;
+  if(typeof showToast==='function'){
+    showToast('⚠ 서버 동기화 불가 — 지금 보는 숫자는 마지막 동기화 시점 기준입니다. 잠시 후 자동 재시도됩니다.', 'var(--org)', 6000);
+  }
 }
 
 // 디버그: 현재 폴링 정책 + 상태 점검
@@ -11378,6 +11397,62 @@ function _printSampleItems(list, keys, type){
   keys.slice(0,10).forEach(function(k){ console.log('       -', labelFn(map[k]), '  ['+k.slice(0,12)+']'); });
   if(keys.length>10) console.log('       ... 외 '+(keys.length-10)+'건');
 }
+
+// ═══════════════════════════════════════════════════
+// 🖥🖥 기기 간 일치 검증 — "모두 같은 숫자를 보는가"
+//   원리: 모든 기기가 같은 서버를 보면, 각 기기가 서버에서 받는 '지문'이 같아야 한다.
+//   사용법: 두 컴퓨터에서 각각 serverFingerprint() 실행 → 출력된 값이 같으면 일치.
+//   지문 = 타입별 [건수 + ID들의 정렬 해시]. 한 건이라도 다르면 값이 달라진다.
+// ═══════════════════════════════════════════════════
+function _hashStr(s){
+  // 간단한 결정적 해시 (djb2)
+  var h=5381; for(var i=0;i<s.length;i++){ h=((h<<5)+h+s.charCodeAt(i))>>>0; }
+  return h.toString(16);
+}
+window.serverFingerprint = async function(){
+  var types = Array.from(RT_SSOT_TYPES);
+  console.log('%c═══ 서버 지문 (이 값이 모든 기기에서 같아야 함) ═══','font-weight:bold;color:#5040A0;font-size:13px');
+  var lines = [];
+  var combined = '';
+  for(var i=0;i<types.length;i++){
+    var t=types[i];
+    var server = await _fetchServerList(t);
+    if(server===null){ console.log('  ['+t+'] 서버 조회 실패'); continue; }
+    var keys = server.map(_idKeyOf).filter(Boolean).sort();
+    var fp = _hashStr(keys.join(','));
+    var line = t+': '+server.length+'건  지문='+fp;
+    lines.push({타입:t, 건수:server.length, 지문:fp});
+    combined += t+':'+server.length+':'+fp+'|';
+    console.log('  '+line);
+  }
+  var total = _hashStr(combined);
+  console.log('%c전체 지문: '+total,'font-weight:bold;color:#2E8B2C;font-size:14px');
+  console.log('%c→ 다른 컴퓨터에서도 serverFingerprint() 실행해서 이 「전체 지문」이 같으면 = 모두 같은 숫자를 봅니다.','color:#1A6DB5');
+  console.table(lines);
+  return {total:total, detail:lines};
+};
+
+// 🖥 이 기기가 서버와 완전히 일치하는지 한 번에 (모든 SSOT 타입)
+window.amISynced = async function(){
+  console.log('%c═══ 이 기기 ↔ 서버 일치 점검 ═══','font-weight:bold;color:#1A6DB5;font-size:13px');
+  var types = Array.from(RT_SSOT_TYPES);
+  var allOk = true; var rows=[];
+  for(var i=0;i<types.length;i++){
+    var t=types[i];
+    var arr=_rtGetLocalArray(t);
+    var server=await _fetchServerList(t);
+    if(!Array.isArray(arr)||server===null){ rows.push({타입:t, 로컬:arr?arr.length:'?', 서버:'조회실패', 일치:'?'}); allOk=false; continue; }
+    var lk=new Set(arr.map(_idKeyOf).filter(Boolean));
+    var sk=new Set(server.map(_idKeyOf).filter(Boolean));
+    var same = (lk.size===sk.size) && Array.from(lk).every(function(k){return sk.has(k);});
+    if(!same) allOk=false;
+    rows.push({타입:t, 로컬:arr.length, 서버:server.length, 일치: same?'✅':'❌'});
+  }
+  console.table(rows);
+  if(allOk) console.log('%c✅ 이 기기는 서버와 완전히 일치합니다.','color:#2E8B2C;font-weight:bold');
+  else console.log('%c❌ 일부 불일치 — 탭을 한번 열어 서버 스냅샷을 받거나, 새로고침 후 재확인하세요.','color:#A11A1A;font-weight:bold');
+  return allOk;
+};
 
 
 
