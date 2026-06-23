@@ -11148,34 +11148,25 @@ function _openNotionCircuit(reason){
 }
 async function nCreate(dbId,props){ return notionCall('POST','/pages',{parent:{database_id:dbId.replace(/-/g,'')},properties:props},{bypassCircuit:true}); }
 async function nUpdate(pageId,props){
+  // 📌 청구/수정 시 Notion 페이지가 archive(보관) 상태면 400 거부됨.
+  //    notionCall은 실패해도 throw 없이 null을 반환하므로(try/catch로 못 잡음),
+  //    반환값을 확인해 실패 시 unarchive(보관 해제) 후 1회 재시도한다.
+  var r = await notionCall('PATCH','/pages/'+pageId,{properties:props},{bypassCircuit:true});
+  if(r) return r; // 성공
+  // 실패 → archive 때문일 수 있으니 보관 해제 후 재시도
   try{
-    return await notionCall('PATCH','/pages/'+pageId,{properties:props},{bypassCircuit:true});
-  }catch(e){
-    // 📌 근본 해결: 페이지가 archive(보관) 상태면 Notion이 400 "Can't edit block that is archived"로 거부.
-    //    → 먼저 보관 해제(unarchive)한 뒤 properties 수정을 재시도한다.
-    //    (정본 정리 과정에서 archive된 페이지를 다시 살려 쓸 때 청구/수정이 막히던 문제 해결)
-    var msg = (e && (e.message||'')) + '';
-    var isArchived = msg.indexOf('archived') >= 0 || msg.indexOf('archive') >= 0 || msg.indexOf('400') >= 0;
-    if(isArchived){
+    var un = await notionCall('PATCH','/pages/'+pageId,{archived:false},{bypassCircuit:true});
+    if(un){
+      // 묘비에서도 제거 (다음 동기화에서 다시 지우지 않게)
       try{
-        // 1) 보관 해제
-        await notionCall('PATCH','/pages/'+pageId,{archived:false},{bypassCircuit:true});
-        // 2) 묘비에서도 제거 (다음 동기화에서 다시 지우지 않게)
-        try{
-          var ts = (typeof _loadTombstones==='function') ? _loadTombstones() : null;
-          if(ts && ts[pageId]){ delete ts[pageId]; if(typeof _saveTombstones==='function') _saveTombstones(ts); }
-        }catch(_){}
-        // 3) properties 수정 재시도
-        var r = await notionCall('PATCH','/pages/'+pageId,{properties:props},{bypassCircuit:true});
-        console.log('[invoice] ♻ archive된 Notion 페이지 보관 해제 후 수정 성공:', String(pageId).slice(-6));
-        return r;
-      }catch(e2){
-        console.warn('[invoice] unarchive 후 재시도 실패:', String(pageId).slice(-6), (e2&&e2.message)||'');
-        throw e2;
-      }
+        var ts = (typeof _loadTombstones==='function') ? _loadTombstones() : null;
+        if(ts && ts[pageId]){ delete ts[pageId]; if(typeof _saveTombstones==='function') _saveTombstones(ts); }
+      }catch(_){}
+      var r2 = await notionCall('PATCH','/pages/'+pageId,{properties:props},{bypassCircuit:true});
+      if(r2){ console.log('[invoice] ♻ archive된 Notion 페이지 보관 해제 후 수정 성공:', String(pageId).slice(-6)); return r2; }
     }
-    throw e;
-  }
+  }catch(e){ console.warn('[invoice] unarchive 재시도 중 오류:', (e&&e.message)||''); }
+  return r; // 여전히 실패면 null
 }
 async function nDelete(pageId){
   if(!notionCfg.workerUrl||!pageId) return;
