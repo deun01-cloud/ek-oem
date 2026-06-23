@@ -9983,7 +9983,7 @@ function _rtHandleSnapshot(msg){
   console.log(RT_LOG_PREFIX, `스냅샷 수신: ${msg.type} ${msg.items.length}건`);
   _rtSnapshotReceived.add(msg.type);
   // 각 타입별로 로컬 배열에 머지 (Last-Write-Wins by _ts)
-  msg.items.forEach(item => _applyRemoteItem(msg.type, item, msg.ts || Date.now(), null));
+  msg.items.forEach(item => _applyRemoteItem(msg.type, item, msg.ts || Date.now(), null, true));
   // 📌 invoice 스냅샷이면 소수점 id 정규화 (다른 기기가 소수점 id를 밀어넣어 깜빡이는 것 방지)
   if(msg.type === 'invoice'){ try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); }catch(_){} if(typeof markInvoiceDirty==='function') markInvoiceDirty(); }
   // 화면 갱신
@@ -10040,7 +10040,7 @@ function _rtGetLocalArray(type){
   return null;
 }
 
-function _applyRemoteItem(type, item, ts, fromClient){
+function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
   if(!item) return;
   const arr = _rtGetLocalArray(type);
   if(!arr) return;
@@ -10053,7 +10053,19 @@ function _applyRemoteItem(type, item, ts, fromClient){
   //       (이 핑퐁이 도는 동안 합본/명세서가 계속 복제됐다.)
   //    그냥 조용히 무시만 한다. 노션 archive 정리는 nDelete/재시도 큐가 별도로 처리.
   if(typeof _isNotionIdDeleted === 'function' && item._notionId && _isNotionIdDeleted(item._notionId)){
-    return;
+    // 🔄 스냅샷(전체 동기화) 수신 시: 서버가 이 항목을 '살아있는 것'으로 보내줬다는 뜻.
+    //    로컬 묘비가 이를 막으면 서버의 진짜 데이터가 영영 안 들어온다(기기마다 데이터 달라짐의 근본 원인).
+    //    → 스냅샷이면 잘못된 묘비로 보고 제거하고 항목을 수용한다.
+    //    (단, 실시간 단건 change는 아래 차단 유지 — 방금 내가 지운 걸 상대가 되살리는 핑퐁 방지)
+    if(isSnapshot){
+      try{
+        var _ts2 = (typeof _loadTombstones==='function') ? _loadTombstones() : null;
+        if(_ts2 && _ts2[item._notionId]){ delete _ts2[item._notionId]; if(typeof _saveTombstones==='function') _saveTombstones(_ts2); }
+      }catch(_){}
+      // 묘비 제거 후 계속 진행 (return 안 함)
+    } else {
+      return;
+    }
   }
   const idx = arr.findIndex(x => {
     const k = x._notionId || (x.id !== undefined ? String(x.id) : null);
