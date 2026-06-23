@@ -10919,6 +10919,56 @@ window.cleanServerInvoice = async function(execute){
   console.log('  5초 후 ssotAudit()로 서버 invoice 건수 재확인 (정본 수에 가까워야 함)');
 };
 
+// 🔄 서버 전체 교체 — 서버 invoice를 '통째로 비우고' 현재 로컬(정본)을 새로 올린다.
+//   전제: Notion DB가 원본 보관소로 그대로 있으므로, 서버를 비워도 원본은 안전.
+//   고르지 않고 전부 지운 뒤 깨끗한 정본만 올리므로 '무엇을 지킬지' 판단이 불필요 → 가장 단순/안전.
+//   resetServerInvoice()      → 미리보기 (몇 건 지우고 몇 건 올릴지)
+//   resetServerInvoice(true)  → 실행 (서버 전량 삭제 → 정본 업로드)
+window.resetServerInvoice = async function(execute){
+  // 1) 서버 현재 항목 읽기 (삭제 대상 = 전부)
+  var serverList=[];
+  try{ var base=realtimeHttpUrl(); for(var p of ['/api/snapshot/invoice','/snapshot/invoice','/api/invoice']){ try{ var r=await fetch(base+p); if(r.ok){ var d=await r.json(); serverList=d.items||d.rows||(Array.isArray(d)?d:[]); break; } }catch(e){} } }catch(e){}
+  // 2) 올릴 정본 = 현재 로컬
+  var uploadList = invoiceHistory.slice();
+  // 큰돈 보호 확인 (올릴 목록에 큰돈이 다 있는지)
+  var bigUpload = uploadList.filter(function(m){ return (+(m.total||m.chargeAmount||0))>=10000000; });
+  console.log('%c=== 서버 전체 교체 '+(execute?'실행':'미리보기')+' ===','font-weight:bold;font-size:13px');
+  console.log('서버 현재', serverList.length, '건 → 전량 삭제 예정');
+  console.log('업로드할 정본(현재 로컬):', uploadList.length, '건');
+  console.log('  └ 합본', uploadList.filter(function(m){return m._isConsolidated;}).length, '| 1천만원+', bigUpload.length, '건:', bigUpload.map(function(m){return (m.vendor||'')+' '+Math.round(m.total||0);}));
+  console.log('  ℹ Notion DB는 원본 보관 — 서버를 비워도 원본 안전');
+  if(!execute){
+    console.log('%c→ 실행: resetServerInvoice(true)','color:orange');
+    console.log('%c⚠ 실행 전 반드시: 현재 화면(거래명세서 탭)이 깨끗한지 눈으로 확인','color:red');
+    return {serverDel:serverList.length, upload:uploadList.length};
+  }
+  // 3) 실행: 서버 전량 삭제
+  console.log('서버 비우는 중...');
+  var delDone=0;
+  for(var i=0;i<serverList.length;i++){
+    var m=serverList[i];
+    var key = m._notionId || (m.id!==undefined?String(m.id):null);
+    if(key && typeof realtimeDelete==='function'){ try{ realtimeDelete('invoice', key); delDone++; }catch(e){} }
+    if(i%10===9) await new Promise(function(r){setTimeout(r,150);});
+  }
+  console.log('  서버 삭제 요청', delDone, '건 전송');
+  // 4) 잠시 대기 후 정본 업로드
+  await new Promise(function(r){setTimeout(r,1500);});
+  console.log('정본 업로드 중...');
+  var now=Date.now();
+  uploadList.forEach(function(m){ m._ts=now; });
+  try{
+    var res = await fetch(realtimeHttpUrl()+'/api/snapshot/invoice', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ items: uploadList, ts: now })
+    });
+    var d = res.ok ? await res.json() : {error:res.status};
+    console.log('%c✓ 정본 업로드','color:green;font-weight:bold', JSON.stringify(d));
+  }catch(e){ console.warn('업로드 실패:', e.message); }
+  console.log('%c→ 5초 후 ssotAudit()로 서버 invoice 확인 (정본 수와 같아야 함)','color:green');
+  console.log('  서버가 정본 수와 같으면 → 다른 컴퓨터 새로고침하면 일치화 완료');
+};
+
 // 페이지 시작 시 자동 연결 (loadNotionCfg에서 호출되도록 등록)
 // (즉시 연결하지 않고 notionCfg 로드 후에 호출됨)
 console.log(RT_LOG_PREFIX, '모듈 로드됨, clientId:', _rtClientId);
