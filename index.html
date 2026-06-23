@@ -10581,6 +10581,22 @@ window.cleanInvoiceCanonical = function(){
   });
   log.push('✓ 부모 없는 고아 자식 '+freed+'건 → 개별 명세서로 (더블유비엘 등)');
 
+  // --- 4) 빈 합본 제거 — 자식이 정본에 하나도 남지 않은 합본(유령 껍데기) ---
+  var topIdSet = new Set(arr.filter(function(m){return !m._isConsolidated;}).map(function(m){return String(m.id);}));
+  var removedEmpty = [];
+  arr = arr.filter(function(m){
+    if(!m._isConsolidated) return true;
+    // 이 합본을 실제로 가리키는 자식이 정본에 있는지
+    var hasChild = arr.some(function(x){ return !x._isConsolidated && String(x._consolidatedInvoiceId)===String(m.id); });
+    if(!hasChild){
+      removedEmpty.push((m.vendor||'')+' '+(m.consolidationMonth||'')+' (id:'+String(m.id).slice(-6)+')');
+      return false; // 빈 합본 제거
+    }
+    return true;
+  });
+  if(removedEmpty.length) log.push('✓ 빈 합본(자식 없음) '+removedEmpty.length+'건 제거: '+removedEmpty.join(', '));
+  else log.push('· 빈 합본 없음');
+
   window._invCanonicalClean = arr;
   // 미리보기
   var cons = arr.filter(function(m){return m._isConsolidated;}).length;
