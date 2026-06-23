@@ -10928,13 +10928,14 @@ window.resetServerInvoice = async function(execute){
   // 1) 서버 현재 항목 읽기 (삭제 대상 = 전부)
   var serverList=[];
   try{ var base=realtimeHttpUrl(); for(var p of ['/api/snapshot/invoice','/snapshot/invoice','/api/invoice']){ try{ var r=await fetch(base+p); if(r.ok){ var d=await r.json(); serverList=d.items||d.rows||(Array.isArray(d)?d:[]); break; } }catch(e){} } }catch(e){}
-  // 2) 올릴 정본 = 현재 로컬
-  var uploadList = invoiceHistory.slice();
+  // 2) 올릴 정본 = 검증된 _canonV2 (로컬은 서버 머지로 오염될 수 있으므로 정본 변수를 직접 사용)
+  var uploadList = (window._canonV2 && window._canonV2.length) ? window._canonV2.slice() : invoiceHistory.slice();
+  var usingCanon = !!(window._canonV2 && window._canonV2.length);
   // 큰돈 보호 확인 (올릴 목록에 큰돈이 다 있는지)
   var bigUpload = uploadList.filter(function(m){ return (+(m.total||m.chargeAmount||0))>=10000000; });
   console.log('%c=== 서버 전체 교체 '+(execute?'실행':'미리보기')+' ===','font-weight:bold;font-size:13px');
   console.log('서버 현재', serverList.length, '건 → 전량 삭제 예정');
-  console.log('업로드할 정본(현재 로컬):', uploadList.length, '건');
+  console.log('업로드할 정본('+(usingCanon?'_canonV2 검증본':'현재 로컬')+'):', uploadList.length, '건');
   console.log('  └ 합본', uploadList.filter(function(m){return m._isConsolidated;}).length, '| 1천만원+', bigUpload.length, '건:', bigUpload.map(function(m){return (m.vendor||'')+' '+Math.round(m.total||0);}));
   console.log('  ℹ Notion DB는 원본 보관 — 서버를 비워도 원본 안전');
   if(!execute){
@@ -10965,6 +10966,14 @@ window.resetServerInvoice = async function(execute){
     var d = res.ok ? await res.json() : {error:res.status};
     console.log('%c✓ 정본 업로드','color:green;font-weight:bold', JSON.stringify(d));
   }catch(e){ console.warn('업로드 실패:', e.message); }
+  // 로컬도 정본으로 확정 (서버 머지 오염 제거)
+  try{
+    invoiceHistory = uploadList.map(function(m){ return JSON.parse(JSON.stringify(m)); });
+    invoiceHistory.forEach(function(m){ m._ts=now; });
+    if(typeof save==='function') save();
+    if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+    console.log('  로컬도 정본', invoiceHistory.length, '건으로 확정');
+  }catch(e){}
   console.log('%c→ 5초 후 ssotAudit()로 서버 invoice 확인 (정본 수와 같아야 함)','color:green');
   console.log('  서버가 정본 수와 같으면 → 다른 컴퓨터 새로고침하면 일치화 완료');
 };
