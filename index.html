@@ -9846,6 +9846,8 @@ function _rtOnOpen(){
   // 주기적 ping (연결 유지)
   if(_rtPingTimer) clearInterval(_rtPingTimer);
   _rtPingTimer = setInterval(()=>{ if(_rtConnected) _rtSend({ op: 'ping' }); }, 30000);
+  // 🛟→🏛️ 서버 복구: 노션 폴백으로 받았던 데이터가 있으면 서버에 재업로드
+  try{ if(typeof _rtRestorePendingToServer==='function') setTimeout(_rtRestorePendingToServer, 2000); }catch(_){}
   // 라벨 갱신
   if(typeof updateNotionNavLabel === 'function') updateNotionNavLabel();
   // 🌐 Realtime 연결됨 → 폴링 주기를 늘려 부하 감소 (Realtime이 안전망 역할)
@@ -9990,6 +9992,185 @@ async function _rtHttpFallback(payload){
 }
 
 // ────────────────────────────────────────────────
+// 🏛️ 서버 단일 진실원천(SSOT) 타입 집합
+//    여기에 포함된 타입은 서버 스냅샷이 오면 LWW 머지가 아니라
+//    로컬을 서버 것으로 '통째 교체'한다. (어느 기기서 보든 같은 데이터 보장)
+//    ⚠ 타입을 추가하기 전 반드시 replaceServerType(type, true)로
+//      로컬 정본을 서버에 먼저 올려 서버를 완전하게 만들 것.
+//      서버가 불완전한 상태에서 추가하면 로컬 데이터가 사라진다.
+//    활성화 방법(콘솔): enableServerSSOT('order')  → 정본 업로드 검증 후 실행
+//    비활성화(되돌리기): disableServerSSOT('order')
+// ────────────────────────────────────────────────
+var RT_SSOT_TYPES = new Set(['invoice','order']);
+
+// SSOT 활성화/비활성화 — 정본 업로드 검증 후 안전하게 켠다.
+window.enableServerSSOT = function(type){
+  if(!type){ console.log('사용법: enableServerSSOT("order")'); return; }
+  var arr = (typeof _rtGetLocalArray==='function') ? _rtGetLocalArray(type) : null;
+  var localCnt = (arr && arr.length) || 0;
+  console.log('%c⚠ '+type+' SSOT 활성화 전 확인','color:orange;font-weight:bold');
+  console.log('  로컬 '+type+' 건수:', localCnt);
+  console.log('  → 서버가 이보다 적으면 활성화 시 로컬 데이터가 사라집니다.');
+  console.log('  → 아직 서버에 정본을 안 올렸다면 먼저: replaceServerType("'+type+'", true)');
+  console.log('%c  계속 활성화하려면: enableServerSSOT("'+type+'", true)','color:orange');
+  if(arguments[1]===true){
+    RT_SSOT_TYPES.add(type);
+    try{ localStorage.setItem('ek_ssot_types', JSON.stringify(Array.from(RT_SSOT_TYPES))); }catch(_){}
+    console.log('%c✅ '+type+' 서버 SSOT 활성화됨. 탭 재진입 시 서버 기준으로 로드됩니다.','color:green;font-weight:bold');
+  }
+};
+
+// 🏛️ 원스텝 안전 전환: 정본 업로드 → 검증 → SSOT 켜기를 한 번에.
+//    로컬이 서버보다 많을 때만 진행(데이터 손실 방지). 부족하면 중단.
+//    switchToServerSSOT('order') 로 실행.
+window.switchToServerSSOT = async function(type){
+  if(!type){ console.log('사용법: switchToServerSSOT("order")'); return; }
+  var arr = (typeof _rtGetLocalArray==='function') ? _rtGetLocalArray(type) : null;
+  if(!Array.isArray(arr)){ console.log('❌ 이 타입의 로컬 배열을 찾을 수 없음:', type); return; }
+  var localCnt = arr.length;
+  console.log('%c=== '+type+' 서버 기준(SSOT) 전환 시작 ===','font-weight:bold;color:#1A6DB5');
+  console.log('  로컬 '+type+':', localCnt, '건');
+  if(localCnt === 0){
+    console.log('%c❌ 로컬에 '+type+' 데이터가 없습니다. 전환 중단(빈 데이터로 서버를 덮으면 안 됨).','color:#A11A1A;font-weight:bold');
+    return;
+  }
+  // 1) 서버 현재 건수 확인
+  var serverCnt = -1;
+  try{
+    var r = await fetch(realtimeHttpUrl()+'/api/snapshot/'+type);
+    if(r.ok){ var d=await r.json(); var it=d.items||d.rows||(Array.isArray(d)?d:[]); serverCnt=it.length; }
+  }catch(e){}
+  console.log('  서버 '+type+' (전환 전):', serverCnt, '건');
+  // 2) 로컬 정본을 서버에 통째 업로드 (서버를 완전하게)
+  console.log('  → 1단계: 로컬 정본을 서버에 업로드...');
+  if(typeof replaceServerType !== 'function'){ console.log('❌ replaceServerType 없음'); return; }
+  await replaceServerType(type, true);
+  // 3) 업로드 검증
+  await new Promise(function(r){ setTimeout(r, 800); });
+  var serverCnt2 = -1;
+  try{
+    var r2 = await fetch(realtimeHttpUrl()+'/api/snapshot/'+type);
+    if(r2.ok){ var d2=await r2.json(); var it2=d2.items||d2.rows||(Array.isArray(d2)?d2:[]); serverCnt2=it2.length; }
+  }catch(e){}
+  console.log('  서버 '+type+' (업로드 후):', serverCnt2, '건');
+  if(serverCnt2 < localCnt){
+    console.log('%c⚠ 업로드 후 서버('+serverCnt2+')가 로컬('+localCnt+')보다 적습니다.','color:#A85A10;font-weight:bold');
+    console.log('  → 안전을 위해 SSOT를 켜지 않았습니다. 원인 확인 후 다시 시도하세요.');
+    return;
+  }
+  // 4) SSOT 켜기
+  RT_SSOT_TYPES.add(type);
+  try{ localStorage.setItem('ek_ssot_types', JSON.stringify(Array.from(RT_SSOT_TYPES))); }catch(_){}
+  console.log('%c✅ '+type+' 서버 기준(SSOT) 전환 완료!','color:#2E8B2C;font-weight:bold');
+  console.log('  이제 '+type+' 탭은 어느 기기서 보든 서버의 같은 '+serverCnt2+'건을 보여줍니다.');
+  console.log('  → 다른 기기에서도 한 번 실행하면 두 기기가 완전히 일치합니다: switchToServerSSOT("'+type+'")');
+  // 5) 즉시 서버 스냅샷 재요청해 화면 동기화
+  try{ if(typeof refreshTypeFromServer==='function') refreshTypeFromServer(type, true); }catch(e){}
+};
+window.disableServerSSOT = function(type){
+  RT_SSOT_TYPES.delete(type);
+  try{ localStorage.setItem('ek_ssot_types', JSON.stringify(Array.from(RT_SSOT_TYPES))); }catch(_){}
+  console.log('↩ '+type+' SSOT 비활성화 — 기존 LWW 머지 방식으로 복귀.');
+};
+window.ssotStatus = function(){
+  console.log('현재 서버 SSOT 타입:', Array.from(RT_SSOT_TYPES).join(', '));
+};
+// 저장된 SSOT 설정 복원 (invoice는 항상 포함)
+try{
+  var _savedSsot = JSON.parse(localStorage.getItem('ek_ssot_types')||'[]');
+  if(Array.isArray(_savedSsot)) _savedSsot.forEach(function(t){ RT_SSOT_TYPES.add(t); });
+  RT_SSOT_TYPES.add('invoice');
+  RT_SSOT_TYPES.add('order');
+}catch(_){}
+
+// ────────────────────────────────────────────────
+// 🛟 노션 폴백 — 서버(ek-realtime)가 죽었을 때만 등판하는 2차 안전망
+//   원칙:
+//     1) 서버 정상이면 절대 발동 안 함 (평소엔 100% 서버 기준)
+//     2) 서버 연결 실패 또는 서버 0건일 때만 노션에서 읽음
+//     3) 노션을 '끝까지 완전 수신'했을 때만 화면 반영 (부분 수신이면 폐기 → 로컬 유지)
+//     4) 폴백으로 받은 데이터는 서버에도 올려 다음부턴 서버가 다시 기준이 되게 함
+//   → 여러 기기가 같은 노션을 보므로, 서버 장애 시에도 기기 간 데이터가 일치한다.
+// ────────────────────────────────────────────────
+// 타입 → {db: notionCfg 키, mapper: 변환함수명}
+var RT_NOTION_FALLBACK_MAP = {
+  invoice:   { db:'invDb',       mapper:'mapNotionInvoice' },
+  order:     { db:'ordDb',       mapper:'mapNotionOrder' },
+  sample:    { db:'smpDb',       mapper:'mapNotionSample' },
+  product:   { db:'productDb',   mapper:'mapNotionProduct' },
+  as:        { db:'asDb',        mapper:'mapNotionAS' },
+  io:        { db:'ioDb',        mapper:'mapNotionIO' },
+  stockhist: { db:'stockHistDb', mapper:'mapNotionStockHist' }
+};
+
+// 노션을 '완전하게' 받아오기 — 중간에 끊기면 ok:false 반환(부분 결과 폐기)
+async function _notionFetchComplete(dbId){
+  if(!notionCfg.workerUrl || !dbId) return { ok:false, rows:[] };
+  var results=[], cursor=undefined, safety=0, truncated=false;
+  try{
+    do {
+      var body={ page_size:100, archived:false };
+      if(cursor) body.start_cursor=cursor;
+      var data = await notionCall('POST', '/databases/'+dbId.replace(/-/g,'')+'/query', body, {});
+      if(!data || !data.results){ return { ok:false, rows:[] }; } // 응답 이상 → 폐기
+      results.push.apply(results, data.results);
+      cursor = data.has_more ? data.next_cursor : null;
+      safety++;
+    } while(cursor && safety<300);
+    if(cursor){ truncated=true; } // 한계 도달 = 불완전
+  }catch(e){ return { ok:false, rows:[] }; } // 네트워크/429 등 → 폐기
+  if(truncated) return { ok:false, rows:results };
+  return { ok:true, rows:results };
+}
+
+// 서버 죽었을 때 노션에서 해당 타입 복구
+var _rtNotionFallbackTried = {};   // 타입별 1회만(쿨다운)
+var _rtPendingServerRestore = {};  // 서버 복구 시 재업로드 대기
+async function _tryNotionFallback(type){
+  var cfg = RT_NOTION_FALLBACK_MAP[type];
+  if(!cfg) return false;
+  var dbId = notionCfg[cfg.db];
+  var mapper = window[cfg.mapper];
+  if(!dbId || typeof mapper!=='function'){ return false; }
+  var now=Date.now();
+  if(now - (_rtNotionFallbackTried[type]||0) < 30000) return false; // 30초 쿨다운
+  _rtNotionFallbackTried[type]=now;
+  console.warn(RT_LOG_PREFIX, '🛟 서버 사용 불가 → 노션 폴백 시도:', type);
+  var res = await _notionFetchComplete(dbId);
+  if(!res.ok){
+    console.warn(RT_LOG_PREFIX, '🛟 노션 불완전 수신 → 폴백 취소(로컬 유지):', type, res.rows.length, '건');
+    return false;
+  }
+  if(!res.rows.length){ console.warn(RT_LOG_PREFIX, '🛟 노션도 비어있음 → 폴백 취소:', type); return false; }
+  var mapped=[];
+  res.rows.forEach(function(r){ try{ var m=mapper(r); if(m) mapped.push(m); }catch(e){} });
+  if(!mapped.length){ console.warn(RT_LOG_PREFIX,'🛟 변환 결과 0건 → 폴백 취소:',type); return false; }
+  var arr=_rtGetLocalArray(type);
+  if(arr){ arr.length=0; mapped.forEach(function(it){ arr.push(it); }); }
+  if(type==='invoice'){ try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); if(typeof markInvoiceDirty==='function') markInvoiceDirty(); }catch(_){} }
+  if(typeof save==='function') save();
+  if(typeof renderTab==='function'){ try{ renderTab(); updateBadges(); }catch(_){} }
+  console.log(RT_LOG_PREFIX, '🛟✅ 노션 폴백 복구 완료:', type, mapped.length, '건 (서버 복구되면 자동 재업로드)');
+  _rtPendingServerRestore[type]=true;
+  return true;
+}
+// 서버 연결이 복구되면 호출 — 폴백으로 받았던 타입을 서버에 재업로드
+async function _rtRestorePendingToServer(){
+  var types=Object.keys(_rtPendingServerRestore).filter(function(t){return _rtPendingServerRestore[t];});
+  for(var i=0;i<types.length;i++){
+    var t=types[i];
+    try{
+      if(typeof replaceServerType==='function'){
+        await replaceServerType(t, true);
+        console.log(RT_LOG_PREFIX,'🛟→🏛️ 서버 복구: 노션폴백 데이터를 서버에 재업로드:', t);
+      }
+    }catch(e){}
+    _rtPendingServerRestore[t]=false;
+  }
+}
+
+
+// ────────────────────────────────────────────────
 // 수신 핸들러 — 다른 기기 변경을 로컬에 반영
 // ────────────────────────────────────────────────
 
@@ -10002,20 +10183,24 @@ function _rtHandleSnapshot(msg){
   }
   console.log(RT_LOG_PREFIX, `스냅샷 수신: ${msg.type} ${msg.items.length}건`);
   _rtSnapshotReceived.add(msg.type);
-  // 🏛️ 골격: 거래명세서(invoice)는 '서버가 단일 기준점'.
+  // 🏛️ 골격: SSOT 타입(거래명세서·공장발주 등)은 '서버가 단일 기준점'.
   //    서버 스냅샷이 오면 머지(LWW)하지 않고 로컬을 서버 것으로 통째 교체한다.
-  //    → 자식-합본 연결 등 골격이 서버에 저장된 그대로 들어오므로, 로컬 옛 데이터가 섞이지 않는다.
+  //    → 골격(자식-합본 연결 등)이 서버에 저장된 그대로 들어오므로 로컬 옛 데이터가 섞이지 않는다.
   //    (한 건씩 머지하면 로컬의 더 최신 _ts가 옛 데이터를 살려내 기기마다 달라지는 문제를 원천 차단)
-  if(msg.type === 'invoice'){
+  if(RT_SSOT_TYPES.has(msg.type)){
     try{
       var serverList = msg.items.map(function(it){ return JSON.parse(JSON.stringify(it)); });
-      invoiceHistory = serverList;
-      if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds();
-      if(typeof markInvoiceDirty==='function') markInvoiceDirty();
+      var arr = _rtGetLocalArray(msg.type);
+      if(arr){ arr.length = 0; serverList.forEach(function(it){ arr.push(it); }); }
+      // invoice 전용 후처리
+      if(msg.type === 'invoice'){
+        if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds();
+        if(typeof markInvoiceDirty==='function') markInvoiceDirty();
+      }
       if(typeof save==='function') save();
       if(typeof renderTab==='function'){ try{ renderTab(); updateBadges(); }catch(_){} }
-      console.log(RT_LOG_PREFIX, '🏛️ 거래명세서 서버 기준 로드:', invoiceHistory.length, '건 (로컬 교체)');
-    }catch(e){ console.warn('invoice 스냅샷 교체 실패:', e.message); }
+      console.log(RT_LOG_PREFIX, '🏛️ '+msg.type+' 서버 기준 로드:', serverList.length, '건 (로컬 교체)');
+    }catch(e){ console.warn(msg.type+' 스냅샷 교체 실패:', e.message); }
     return;
   }
   // 그 외 타입: 기존 머지 방식 (타입별 로컬 배열에 LWW 머지)
@@ -10269,15 +10454,37 @@ function refreshTypeFromServer(type, force){
     if(typeof _rtConnected !== 'undefined' && _rtConnected && typeof _rtSend === 'function'){
       _rtSend({ op:'subscribe', clientId:(typeof _rtClientId!=='undefined'?_rtClientId:null), types:[type] });
       console.log('[sync] 🔄 서버 스냅샷 요청:', type, '— 서버 기준 동기화');
+      _armNotionFallbackTimer(type); // 무응답이면 노션 폴백
       return true;
     } else if(typeof realtimeConnect === 'function'){
       realtimeConnect(); // 끊겨 있으면 재연결 → onopen에서 전체 스냅샷 수신
+      _armNotionFallbackTimer(type); // 재연결도 실패하면 노션 폴백
       return true;
+    } else {
+      // 실시간 모듈 자체가 없음 → 즉시 노션 폴백
+      if(typeof _tryNotionFallback==='function') _tryNotionFallback(type);
     }
   }catch(e){ console.warn('[sync] 서버 스냅샷 요청 실패:', type, e); }
   return false;
 }
 window.refreshTypeFromServer = refreshTypeFromServer;
+
+// 서버 스냅샷 요청 후 N초 안에 응답(_rtSnapshotReceived 등록)이 없으면 노션 폴백 발동
+var _notionFallbackTimers = {};
+function _armNotionFallbackTimer(type){
+  if(!RT_NOTION_FALLBACK_MAP[type]) return; // 폴백 대상 타입만
+  if(_notionFallbackTimers[type]) clearTimeout(_notionFallbackTimers[type]);
+  // 요청 직전 스냅샷 수신 기록을 지워, '이번 요청'에 대한 응답만 카운트
+  try{ if(typeof _rtSnapshotReceived!=='undefined' && _rtSnapshotReceived.delete) _rtSnapshotReceived.delete(type); }catch(_){}
+  _notionFallbackTimers[type]=setTimeout(function(){
+    var got=false;
+    try{ got = (typeof _rtSnapshotReceived!=='undefined' && _rtSnapshotReceived.has) ? _rtSnapshotReceived.has(type) : false; }catch(_){}
+    if(!got){
+      console.warn('[sync] ⏱ 서버 스냅샷 무응답('+type+') → 노션 폴백');
+      if(typeof _tryNotionFallback==='function') _tryNotionFallback(type);
+    }
+  }, 6000); // 6초 대기
+}
 
 // 디버그: 현재 폴링 정책 + 상태 점검
 window.pollingStatus = ()=>{
