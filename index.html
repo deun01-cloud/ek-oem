@@ -16019,14 +16019,21 @@ const _syncFnMap = {
 };
 
 function debouncedSync(type, obj, isUpdate){
-  if(!notionCfg.workerUrl) return;
   if(!obj || obj.id==null) return;
+  // ═══════════════════════════════════════════════
+  // 🏛️ 서버 우선(SSOT): 서버에는 '즉시' 반영한다.
+  //   노션 push 성공을 기다리지 않는다. 노션이 느리거나 막혀도 서버는 즉시 갱신됨.
+  //   → "플랫폼에서 변경하면 서버에 실시간 반영"을 보장.
+  //   (SSOT 타입은 id로도 매칭되므로 _notionId 없어도 안전)
+  // ═══════════════════════════════════════════════
+  try{ obj._syncedAt = new Date().toISOString(); }catch(e){}
+  if(typeof realtimePublish === 'function'){
+    try{ realtimePublish(type, obj); }catch(e){ console.warn('[rt] 즉시 publish 실패:', e); }
+  }
+  // ── 이하: 노션 백업 동기화 (뒤따라옴, 디바운스) ──
+  if(!notionCfg.workerUrl) return; // 노션 설정 없으면 서버 반영만 하고 종료
   const fn = _syncFnMap[type];
   if(!fn){ console.warn('debouncedSync: unknown type', type); return; }
-  // 🔒 race condition 즉시 보호: 디바운스 대기(800ms) + 노션 push 시간(1~2초) 동안
-  // pull이 들어와도 로컬 값이 우선시되도록 즉시 _syncedAt 기록
-  // (노션 push 끝나면 syncFn 안에서 다시 한 번 찍히지만, 그 전에라도 보호 효력 발생)
-  try{ obj._syncedAt = new Date().toISOString(); }catch(e){}
   const key = type+':'+obj.id;
   const existing = _syncDebounceTimers.get(key);
   if(existing && existing.timer) clearTimeout(existing.timer);
@@ -16039,15 +16046,15 @@ function debouncedSync(type, obj, isUpdate){
     _syncDebounceTimers.delete(key);
     Promise.resolve(fn(merged.obj, merged.isUpdate))
       .then(()=>{
-        // 🌐 노션 push 성공 → 실시간 브로드캐스트
-        // (이 시점엔 _notionId가 확실히 채워져 있음 → 다른 기기와 매칭 가능)
+        // 🌐 노션 push 성공 → _notionId가 채워졌으면 서버에도 한 번 더 반영
+        //   (서버는 이미 즉시 반영됨. 여기선 _notionId 보강분만 갱신)
         if(typeof realtimePublish === 'function'){
           try{ realtimePublish(type, merged.obj); }catch(e){ console.warn('[rt] publish 실패:', e); }
         }
       })
       .catch(e=>{
-        console.warn('[debouncedSync] '+type+' 실패:', e);
-        // 🔁 실패 시 재시도 큐에 등록 (노션이 일시적으로 막혔다 풀리면 자동 재시도)
+        console.warn('[debouncedSync] '+type+' 노션 동기화 실패(서버는 이미 반영됨):', e);
+        // 🔁 노션 실패 시 재시도 큐에 등록 (노션이 풀리면 자동 재시도)
         _enqueueSyncRetry(type, merged.obj, merged.isUpdate);
       });
   }, SYNC_DEBOUNCE_MS);
@@ -16627,6 +16634,8 @@ function requireNotion(dbKey, label){
 // - useUnshift=true면 push 대신 unshift (거래명세서 같은 흐름)
 async function createWithNotion(localArray, newObj, syncFn, label, opts){
   opts = opts || {};
+  // 🏛️ 서버 우선: 타입 추론 (syncFn 라벨 기반)
+  var _rtType = opts.rtType || ({'발주서':'order','샘플의뢰':'sample','AS':'as','거래명세서':'invoice'})[label] || null;
   try{
     if(typeof showToast === 'function'){
       showToast(`🔄 Notion에 ${label||'항목'} 등록 중...`, 'var(--blu)', 1500);
@@ -16639,16 +16648,34 @@ async function createWithNotion(localArray, newObj, syncFn, label, opts){
     } else {
       localArray.push(newObj);
     }
+    // 🌐 서버 즉시 발행 (노션 성공 후 — _notionId 포함된 상태)
+    if(_rtType && typeof realtimePublish === 'function'){
+      try{ realtimePublish(_rtType, newObj); }catch(e){ console.warn('[rt] create publish 실패:', e); }
+    }
     return true;
   } catch(e){
     console.error(`[notion-first] ${label||'항목'} 등록 실패:`, e);
-    if(typeof showToast === 'function'){
-      showToast(
-        `❌ ${label||'항목'} 등록 실패: Notion에 저장할 수 없습니다 (${e.message||'네트워크/권한 오류'}) — 다시 시도해주세요`,
-        'var(--red)', 7000
-      );
+    // 🏛️ 노션이 막혀도 서버 기준 운영: 로컬에 추가하고 서버에 발행한다.
+    //   (노션은 재시도 큐가 나중에 따라옴 — 데이터 유실 방지)
+    try{
+      newObj._syncedAt = new Date().toISOString();
+      if(opts.useUnshift){ localArray.unshift(newObj); } else { localArray.push(newObj); }
+      if(_rtType && typeof realtimePublish === 'function'){
+        try{ realtimePublish(_rtType, newObj); }catch(_){}
+      }
+      if(_rtType && typeof _enqueueSyncRetry === 'function'){
+        try{ _enqueueSyncRetry(_rtType, newObj, false); }catch(_){}
+      }
+      if(typeof showToast === 'function'){
+        showToast(`⚠ ${label||'항목'} — 서버엔 저장됨, 노션 동기화는 나중에 재시도 (${e.message||'네트워크 오류'})`, 'var(--org)', 6000);
+      }
+      return true; // 서버·로컬엔 저장됐으므로 성공으로 처리
+    }catch(e2){
+      if(typeof showToast === 'function'){
+        showToast(`❌ ${label||'항목'} 등록 실패 (${e2.message||'오류'}) — 다시 시도해주세요`, 'var(--red)', 7000);
+      }
+      return false;
     }
-    return false;
   }
 }
 
@@ -26514,6 +26541,11 @@ function deleteOrd(){
     if(o) deleteOrderFromNotion(o);
     // 연결된 공정 항목들도 Notion에서 삭제
     procItems.filter(x=>x.orderId==id).forEach(p=>{ if(p._notionId) deleteProcFromNotion(p); });
+    // 🌐 서버 실시간 삭제 (노션과 무관하게 즉시 — 다른 기기에서도 즉시 사라짐)
+    if(typeof realtimeDelete === 'function'){
+      try{ if(o) realtimeDelete('order', o); }catch(e){}
+      procItems.filter(x=>x.orderId==id).forEach(p=>{ try{ realtimeDelete('proc', p); }catch(e){} });
+    }
     orders=orders.filter(x=>x.id!=id);
     procItems=procItems.filter(x=>x.orderId!=id);
     save();closeM('mOrd');renderTab();updateBadges();
@@ -26525,6 +26557,8 @@ function deleteProc(){
   const p=procItems.find(x=>x.id==id);
   showConfirm(`"${p?.name||'공정 항목'}"을 삭제합니다.`, ()=>{
     if(p) deleteProcFromNotion(p);
+    // 🌐 서버 실시간 삭제
+    if(typeof realtimeDelete === 'function' && p){ try{ realtimeDelete('proc', p); }catch(e){} }
     procItems=procItems.filter(x=>x.id!=id);
     save();closeM('mProc');renderTab();updateBadges();
   });
