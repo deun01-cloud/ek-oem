@@ -10208,6 +10208,29 @@ function refreshInvoicesFromServer(force){
 }
 window.refreshInvoicesFromServer = refreshInvoicesFromServer;
 
+// 🔄 단계4 확장: 임의 타입을 '서버 기준'으로 새로고침 (생산/영업 탭 공용).
+//   탭 진입 시 ek-realtime 서버에 해당 타입 스냅샷을 재요청 → 최신 데이터 수신.
+//   Notion 429와 무관하게 동작하며 LWW 위에서 안전(로컬 미전송 변경 보존).
+var _lastTypeSnapshotReq = {};
+function refreshTypeFromServer(type, force){
+  if(!type) return false;
+  try{
+    var now = Date.now();
+    if(!force && (now - (_lastTypeSnapshotReq[type]||0)) < 3000) return false; // 3초 쿨다운
+    _lastTypeSnapshotReq[type] = now;
+    if(typeof _rtConnected !== 'undefined' && _rtConnected && typeof _rtSend === 'function'){
+      _rtSend({ op:'subscribe', clientId:(typeof _rtClientId!=='undefined'?_rtClientId:null), types:[type] });
+      console.log('[sync] 🔄 서버 스냅샷 요청:', type, '— 서버 기준 동기화');
+      return true;
+    } else if(typeof realtimeConnect === 'function'){
+      realtimeConnect(); // 끊겨 있으면 재연결 → onopen에서 전체 스냅샷 수신
+      return true;
+    }
+  }catch(e){ console.warn('[sync] 서버 스냅샷 요청 실패:', type, e); }
+  return false;
+}
+window.refreshTypeFromServer = refreshTypeFromServer;
+
 // 디버그: 현재 폴링 정책 + 상태 점검
 window.pollingStatus = ()=>{
   const want = (typeof _pickSyncInterval==='function') ? _pickSyncInterval() : 0;
@@ -20392,8 +20415,8 @@ function renderTab(){
     if(mgtEl) mgtEl.style.display='none';
   }
   const c=document.getElementById('content');c.innerHTML='';
-  if(currentTab==='sales'){renderSalesTab();return;}
-  if(currentTab==='as'){renderAS();return;}
+  if(currentTab==='sales'){ try{ if(typeof refreshTypeFromServer==='function'){ refreshTypeFromServer('invoice'); refreshTypeFromServer('order'); } }catch(e){} renderSalesTab();return;}
+  if(currentTab==='as'){ try{ if(typeof refreshTypeFromServer==='function') refreshTypeFromServer('as'); }catch(e){} renderAS();return;}
   if(currentTab==='io'){renderIo();return;}
   if(currentTab==='products'){renderProducts();return;}
   if(currentTab==='invoices'){
@@ -20417,6 +20440,9 @@ function renderTab(){
     }catch(e){}
     return;
   }
+  // 🔄 생산 탭(샘플/발주) 진입 시 서버 기준 동기화 (기기 간 최신 반영)
+  if(currentTab==='sample'){ try{ if(typeof refreshTypeFromServer==='function') refreshTypeFromServer('sample'); }catch(e){} }
+  else if(currentTab==='order'){ try{ if(typeof refreshTypeFromServer==='function') refreshTypeFromServer('order'); }catch(e){} }
   ({dash:renderDash,sample:renderSample,order:renderOrder,schedule:renderSchedule}[currentTab]||renderDash)();
   {const sm=document.getElementById('salesModalArea');if(sm)sm.style.display='none';const dp=document.getElementById('slDp');if(dp)dp.style.display='none';}
 }
