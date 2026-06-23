@@ -10831,11 +10831,31 @@ window.applyCanonicalV2Local = function(){
   var before=invoiceHistory.length;
   invoiceHistory = window._canonV2.map(function(m){ return JSON.parse(JSON.stringify(m)); });
   var now=Date.now(); invoiceHistory.forEach(function(m){ m._ts=now; });
-  if(typeof markInvoiceDirty==='function') markInvoiceDirty();
+  // 🛡 정본 항목이 과거 묘비/최근삭제에 잘못 올라 있으면 제거 — 안 그러면 maintainInvoiceData가 되살린 정본을 다시 지움(돈 손실!)
+  try{
+    var ts = (typeof _loadTombstones==='function') ? _loadTombstones() : null;
+    var changed=false;
+    if(ts){
+      invoiceHistory.forEach(function(m){
+        [m._notionId, (m.id!==undefined?String(m.id):null)].forEach(function(k){
+          if(k && ts[k]){ delete ts[k]; changed=true; }
+        });
+      });
+      if(changed && typeof _saveTombstones==='function') _saveTombstones(ts);
+    }
+    // in-memory 최근삭제 set도 정리
+    if(typeof _recentlyDeletedConsolidationIds!=='undefined' && _recentlyDeletedConsolidationIds && _recentlyDeletedConsolidationIds.delete){
+      invoiceHistory.forEach(function(m){
+        _recentlyDeletedConsolidationIds.delete(String(m.id));
+        if(m._notionId) _recentlyDeletedConsolidationIds.delete(m._notionId);
+      });
+    }
+  }catch(e){ console.warn('묘비 정리 중:', e.message); }
   if(typeof save==='function') save();
+  // ⚠ markInvoiceDirty(→maintainInvoiceData)를 부르지 않는다 — 정본은 이미 깨끗하므로 좀비제거가 정본을 망가뜨리지 않게.
   if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
   var tl=invoiceHistory.filter(function(v){return !v._consolidatedInvoiceId;});
-  console.log('%c✓ v2 로컬 적용','color:green;font-weight:bold', before,'→',invoiceHistory.length);
+  console.log('%c✓ v2 로컬 적용 (정리 스킵)','color:green;font-weight:bold', before,'→',invoiceHistory.length);
   console.log('  출고완료:',tl.filter(function(v){return v._invStage==='draft';}).length,'| 청구:',tl.filter(function(v){return v._invStage==='billing';}).length,'| 완료:',tl.filter(function(v){return v._invStage==='done';}).length,'| 합본:',invoiceHistory.filter(function(v){return v._isConsolidated;}).length);
   console.log('  문제 있으면 rollbackCanonical()');
 };
