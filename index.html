@@ -7224,8 +7224,10 @@ function maintainInvoiceData(){
           console.warn('[invoice] 삭제된 합본/명세서 부활 감지 — 재제거:', v.id, v.vendor, v.consolidationMonth||v.ordNo, '_notionId:', v._notionId||'(없음)', byNotion?'[묘비]':'[최근삭제]');
           invoiceHistory.splice(i, 1);
           _zombiesRemoved++;
-          // 노션에서도 다시 archive 시도 (묘비 confirmed 아니면 재시도)
-          if(v._notionId && typeof nDelete === 'function'){
+          // 노션에서도 다시 archive 시도 — 단, 묘비가 '미확정'일 때만 (이미 확정된 건 재호출 안 함)
+          //    정합 작업이 매번 nDelete를 쏘면 Notion 호출이 폭주하므로, 확정 전 1회성으로 제한.
+          if(v._notionId && typeof nDelete === 'function'
+             && (typeof _isNotionArchiveConfirmed!=='function' || !_isNotionArchiveConfirmed(v._notionId))){
             nDelete(v._notionId)
               .then(()=>{ if(typeof _markNotionArchiveConfirmed==='function') _markNotionArchiveConfirmed(v._notionId); })
               .catch(e=>console.warn('좀비 합본 노션 재삭제 실패:',e));
@@ -7448,18 +7450,15 @@ function maintainInvoiceData(){
         // 📌 자식 단계를 합본 단계와 일치시킨다 (합본이 청구/완료로 갔는데 자식이 출고완료에 남아
         //    탭이 분리돼 보이는 문제 방지). done은 입금 동기화 로직이 따로 관리하므로 건드리지 않음.
         // 🛡️ 합본이 아직 draft(청구 전)이면 자식 단계를 건드리지 않는다.
-        //    자식은 _consolidatedInvoiceId 만으로 모든 탭에서 합본 아래로 흡수되므로
-        //    단계를 draft로 끌어내릴 필요가 없다. (이 강제 변경 + realtimePublish 가
-        //    _invStage 자동 재계산 로직과 서로 반대로 자식 단계를 계속 바꿔
-        //    무한 reconcile 루프 → 출고완료 건수 깜빡임을 유발했음)
+        //    자식은 _consolidatedInvoiceId 만으로 모든 탭에서 합본 아래로 흡수된다.
+        // 🚨 핵심: 정합 유지(maintainInvoiceData)는 '로컬 표시'만 맞추고 절대 전파하지 않는다.
+        //    여기서 realtimePublish/syncNotion/_ts갱신을 하면 → 변경이 상대 기기로 전파 →
+        //    상대도 같은 reconcile로 되쏨 → 무한 핑퐁(변경수신↔전파)이 된다.
+        //    단계 일치는 화면 표시용이므로 로컬 _invStage만 조용히 맞추고 끝낸다.
+        //    (전파는 오직 사용자 액션 — 청구/합본/해제 — 에서만 일어나야 한다.)
         if(_consStage !== 'done' && _consStage !== 'draft' && ch._invStage !== _consStage){
-          ch._invStage = _consStage;
-          ch._ts = Date.now();
+          ch._invStage = _consStage;   // 로컬 표시만 맞춤 (전파 X, _ts 갱신 X)
           _reconciled++;
-          if(typeof realtimePublish === 'function') realtimePublish('invoice', ch);
-          if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && ch._notionId && typeof syncInvoiceToNotion==='function'){
-            syncInvoiceToNotion(ch, true).catch(function(e){ console.warn('자식 단계 정규화 동기화 실패:', e); });
-          }
         }
         if(_rebuiltIds.indexOf(ch.id) < 0) _rebuiltIds.push(ch.id);
       });
@@ -7531,7 +7530,6 @@ function maintainInvoiceData(){
     if(typeof save === 'function') save();
   }
 }
-// ───────────────────────────────────────────────────────────────
 // 거래명세서 렌더 (순수 그리기). 데이터 변형은 maintainInvoiceData()가 담당하며,
 // 여기서는 'dirty 예약된 경우에만' 1회 보정한 뒤 화면을 그린다.
 function renderInvoiceHistory(){
@@ -7558,6 +7556,7 @@ function renderInvoiceHistory(){
       // 출고완료 탭: _invStage='draft'
       // 📑 합본 청구서도 아직 청구 전(draft)이면 여기 표시 (묶인 명세서는 합본 아래 아코디언으로)
       //    → 합본을 만들어도 '청구하기' 누르기 전까지는 출고완료 탭에 남는다.
+      //    (출고완료 단계에서도 명세서를 합쳐 '출하지시서 겸 합본'을 작성하므로 합본이 정상 존재)
       if(v._consolidatedInvoiceId) return false; // 묶인 개별 명세서는 합본 행 아래로
       if(v._invStage !== 'draft') return false;
     } else if(subTab==='billing'){
@@ -8710,6 +8709,12 @@ function _isNotionIdDeleted(notionId){
   if(!notionId) return false;
   const ts = _loadTombstones();
   return !!ts[notionId];
+}
+// archive(노션 삭제)가 이미 확정된 묘비인지 — 좀비 재삭제 중복 호출 방지용
+function _isNotionArchiveConfirmed(notionId){
+  if(!notionId) return false;
+  const ts = _loadTombstones();
+  return !!(ts[notionId] && ts[notionId].confirmed);
 }
 // 외부 디버그용
 window.tombstones = ()=>{ const t=_loadTombstones(); console.table(t); return t; };
@@ -30860,9 +30865,13 @@ function inferInvStage(v){
     const consTaxIssued = (v._taxInvoiceIssued === true);
     if(consPaid && consTaxIssued) return 'done';
     // 📌 '청구하기'(_consBilled=true)를 눌러야 청구 단계로. 그 전엔 미청구(draft).
-    //    (단, 이미 입금/계산서 진행됐으면 billing으로 본다. 옛 데이터 _consBilled 미설정 시 billing 유지)
-    if(v._consBilled === false && !consPaid && !consTaxIssued) return 'draft';
-    return 'billing';
+    //    🔑 기기 독립성: _consBilled가 undefined(필드 없음)든 false든 '아직 안 누름'으로 동일 취급한다.
+    //       (이전엔 undefined면 billing으로 빠져서, 같은 합본이 필드 받은 기기=draft / 못 받은 기기=billing 으로
+    //        갈려 출고완료 건수가 기기마다 달라지는 버그가 있었음.)
+    //    단, 입금·계산서가 실제로 진행된 합본은 _consBilled 값과 무관하게 billing(청구 진행 중)으로 본다.
+    if(consPaid || consTaxIssued) return 'billing';
+    if(v._consBilled === true) return 'billing';
+    return 'draft';
   }
   // 📌 done(완료) 판정 원칙: "입금 + 계산서" 둘 다 완료된 경우만 done.
   //    출고 여부는 stage 분류에 영향 없음 (출고는 별도 트래킹).
