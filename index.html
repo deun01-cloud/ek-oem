@@ -10182,6 +10182,32 @@ window.realtimeStatus = ()=>{
 };
 window.realtimeReconnect = ()=>{ realtimeDisconnect(); _rtReconnectDelay=1000; realtimeConnect(); };
 
+// 🔄 단계4(SSOT): 거래명세서를 '서버 기준'으로 새로고침.
+//   탭을 열 때 서버(ek-realtime)에 invoice 스냅샷을 다시 요청 → 최신 데이터를 받아 화면 반영.
+//   이렇게 하면 어느 기기에서 열든 '서버가 들고 있는 같은 데이터'를 보게 된다.
+//   (LWW 위에서 동작하므로, 아직 서버에 못 올린 로컬 변경을 덮어쓰지 않는다 — 안전.)
+//   연결이 끊겨 있으면 재연결하면서 자동으로 스냅샷이 따라온다.
+var _lastInvSnapshotReq = 0;
+function refreshInvoicesFromServer(force){
+  try{
+    var now = Date.now();
+    // 과도한 재요청 방지: 3초 이내 중복 요청은 무시 (force면 무시 안 함)
+    if(!force && (now - _lastInvSnapshotReq) < 3000) return false;
+    _lastInvSnapshotReq = now;
+    if(typeof _rtConnected !== 'undefined' && _rtConnected && typeof _rtSend === 'function'){
+      // invoice 타입만 다시 구독 요청 → 서버가 invoice 전체 스냅샷을 푸시함
+      _rtSend({ op: 'subscribe', clientId: (typeof _rtClientId!=='undefined'?_rtClientId:null), types: ['invoice'] });
+      console.log('[invoice] 🔄 서버에 최신 스냅샷 요청 — 거래명세서를 서버 기준으로 동기화');
+      return true;
+    } else {
+      // 연결이 없으면 재연결(끝나면 onopen에서 전체 스냅샷 자동 수신)
+      if(typeof realtimeConnect === 'function'){ realtimeConnect(); console.log('[invoice] 🔄 실시간 미연결 → 재연결로 서버 스냅샷 수신 시도'); return true; }
+    }
+  }catch(e){ console.warn('[invoice] 서버 스냅샷 요청 실패:', e); }
+  return false;
+}
+window.refreshInvoicesFromServer = refreshInvoicesFromServer;
+
 // 디버그: 현재 폴링 정책 + 상태 점검
 window.pollingStatus = ()=>{
   const want = (typeof _pickSyncInterval==='function') ? _pickSyncInterval() : 0;
@@ -20372,9 +20398,13 @@ function renderTab(){
   if(currentTab==='products'){renderProducts();return;}
   if(currentTab==='invoices'){
     renderInvoiceHistory();
-    // 📡 거래명세서 탭 진입 시 Notion 최신 데이터 자동 동기화
-    //    → 다른 기기에서 만든/바꾼 명세서가 즉시 반영 (기기 간 화면 불일치 방지)
-    //    (탭 진입 직후 1회만 — 너무 잦은 호출 방지로 6초 쿨다운)
+    // 📡 거래명세서 탭 진입 시 서버 최신 데이터 자동 동기화 (기기 간 화면 불일치 방지)
+    //    경로 2개를 병행한다 — 하나가 막혀도 다른 하나가 받아온다:
+    //    (A) 실시간 서버(ek-realtime) invoice 스냅샷 재요청 — Notion 429에도 영향 없음, 즉시 반영
+    //    (B) Notion pull — 영구 저장소 기준 보강 (6초 쿨다운, 429면 자동 보류)
+    // 🔄 (A) 단계4 SSOT: 서버 스냅샷을 먼저 요청해 '서버가 가진 같은 데이터'로 맞춘다.
+    try{ if(typeof refreshInvoicesFromServer==='function') refreshInvoicesFromServer(); }catch(e){}
+    // (B) Notion 보강
     try{
       var _now = Date.now();
       if(notionCfg.workerUrl && notionCfg.invDb && typeof pullFromNotion==='function'
