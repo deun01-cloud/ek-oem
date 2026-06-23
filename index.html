@@ -10002,10 +10002,24 @@ function _rtHandleSnapshot(msg){
   }
   console.log(RT_LOG_PREFIX, `스냅샷 수신: ${msg.type} ${msg.items.length}건`);
   _rtSnapshotReceived.add(msg.type);
-  // 각 타입별로 로컬 배열에 머지 (Last-Write-Wins by _ts)
+  // 🏛️ 골격: 거래명세서(invoice)는 '서버가 단일 기준점'.
+  //    서버 스냅샷이 오면 머지(LWW)하지 않고 로컬을 서버 것으로 통째 교체한다.
+  //    → 자식-합본 연결 등 골격이 서버에 저장된 그대로 들어오므로, 로컬 옛 데이터가 섞이지 않는다.
+  //    (한 건씩 머지하면 로컬의 더 최신 _ts가 옛 데이터를 살려내 기기마다 달라지는 문제를 원천 차단)
+  if(msg.type === 'invoice'){
+    try{
+      var serverList = msg.items.map(function(it){ return JSON.parse(JSON.stringify(it)); });
+      invoiceHistory = serverList;
+      if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds();
+      if(typeof markInvoiceDirty==='function') markInvoiceDirty();
+      if(typeof save==='function') save();
+      if(typeof renderTab==='function'){ try{ renderTab(); updateBadges(); }catch(_){} }
+      console.log(RT_LOG_PREFIX, '🏛️ 거래명세서 서버 기준 로드:', invoiceHistory.length, '건 (로컬 교체)');
+    }catch(e){ console.warn('invoice 스냅샷 교체 실패:', e.message); }
+    return;
+  }
+  // 그 외 타입: 기존 머지 방식 (타입별 로컬 배열에 LWW 머지)
   msg.items.forEach(item => _applyRemoteItem(msg.type, item, msg.ts || Date.now(), null, true));
-  // 📌 invoice 스냅샷이면 소수점 id 정규화 (다른 기기가 소수점 id를 밀어넣어 깜빡이는 것 방지)
-  if(msg.type === 'invoice'){ try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); }catch(_){} if(typeof markInvoiceDirty==='function') markInvoiceDirty(); }
   // 화면 갱신
   if(typeof save === 'function') save();
   if(typeof renderTab === 'function'){ try{ renderTab(); updateBadges(); }catch(_){} }
