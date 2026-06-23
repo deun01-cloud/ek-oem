@@ -10345,6 +10345,57 @@ window.realtimeMigrateForce = ()=>{
   return realtimeMigrateLocalData(true);
 };
 
+// ═══════════════════════════════════════════════════════════════
+// 📊 S0: 서버 단일 진실원천 재설계 — 신뢰성 측정 도구 (읽기 전용, 데이터 변경 없음)
+//   서버(ek-realtime) / 로컬(localStorage) / Notion 세 곳이 각 타입을 몇 건씩
+//   들고 있는지 비교한다. "서버가 항상 정확한 전체를 주는가"를 며칠 측정해
+//   서버를 유일 기준으로 전환해도 되는지 판단하는 근거를 모은다.
+//   콘솔에서 ssotAudit() 실행. 양쪽 기기에서 같은 결과가 나와야 이상적.
+window.ssotAudit = async function(opts){
+  opts = opts || {};
+  var types = opts.types || ['invoice','order','sample','as','io','stockhist','product'];
+  var rows = [];
+  console.log('%c=== SSOT 감사 (서버/로컬/Notion 3자 비교) ===','font-weight:bold;font-size:13px');
+  for(var i=0;i<types.length;i++){
+    var type = types[i];
+    var local = -1, server = -1, notion = -1, serverErr='';
+    // 1) 로컬
+    try{ var arr = (typeof _rtGetLocalArray==='function') ? _rtGetLocalArray(type) : null; if(Array.isArray(arr)) local = arr.length; }catch(e){}
+    // 2) 서버 — GET 시도 (여러 경로 호환)
+    try{
+      var base = realtimeHttpUrl();
+      var paths = ['/api/snapshot/'+type, '/snapshot/'+type, '/api/'+type];
+      for(var p=0;p<paths.length;p++){
+        try{
+          var res = await fetch(base+paths[p], {method:'GET'});
+          if(res.ok){
+            var d = await res.json();
+            var items = d.items || d.rows || (Array.isArray(d)?d:null);
+            if(Array.isArray(items)){ server = items.length; break; }
+          } else { serverErr = 'HTTP '+res.status; }
+        }catch(e2){ serverErr = e2.message; }
+      }
+    }catch(e){ serverErr = e.message; }
+    rows.push({타입:type, 로컬:local, 서버:(server<0?('?'+(serverErr?' '+serverErr:'')):server), Notion:'(별도조회)'});
+  }
+  console.table(rows);
+  console.log('※ 서버가 "?"면 GET 미지원 — 측정은 WebSocket 스냅샷 수신 로그로 대체 필요');
+  console.log('※ Notion 건수는 각 DB가 달라 ssotAuditNotion(type)로 개별 조회');
+  return rows;
+};
+// Notion 쪽 개별 조회 (invoice 예시) — 무거우니 필요한 타입만
+window.ssotAuditNotion = async function(type){
+  type = type || 'invoice';
+  var dbMap = { invoice: (typeof notionCfg!=='undefined'?notionCfg.invDb:null) };
+  var db = dbMap[type];
+  if(!db){ console.log('이 타입의 Notion DB 미등록:', type); return; }
+  try{
+    var rows = await nQueryAll(db);
+    console.log('Notion', type, ':', rows.length, '건');
+    return rows.length;
+  }catch(e){ console.log('Notion 조회 실패:', e.message); }
+};
+
 // 페이지 시작 시 자동 연결 (loadNotionCfg에서 호출되도록 등록)
 // (즉시 연결하지 않고 notionCfg 로드 후에 호출됨)
 console.log(RT_LOG_PREFIX, '모듈 로드됨, clientId:', _rtClientId);
