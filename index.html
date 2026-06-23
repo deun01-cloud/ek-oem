@@ -12422,10 +12422,12 @@ async function pullFromNotion(opts){
     tasks         = mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
     asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        ['repairs','files'], 'AS',       notionCfg.asDb);
     productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['imgs','importSource','createdAt'], '제품DB',   notionCfg.productDb);
-    invoiceHistory= mergeRows(invRows,  invoiceHistory, mapNotionInvoice,   ['items','ordId'], '청구이력', notionCfg.invDb);
-    // 📌 pull 직후 소수점 id 정규화 (다른 기기/옛 데이터가 소수점 id를 다시 들여올 수 있음 — 깜빡임 방지)
-    try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); }catch(_){}
-    if(typeof markInvoiceDirty==='function') markInvoiceDirty();
+    // 🏛️ 골격: 거래명세서는 '서버(ek-realtime)가 유일 기준점'.
+    //    Notion 풀(mergeRows)을 적용하지 않는다 — 적용하면 Notion의 옛 합본 연결이
+    //    서버 골격을 덮어써 고아 복구/자식 흔들림이 재발한다(데이터 소스 이중화 충돌).
+    //    Notion은 거래명세서의 백업/회계 기록용으로만 두고, 화면/동기화 기준은 서버 스냅샷.
+    //    invoiceHistory= mergeRows(invRows, invoiceHistory, mapNotionInvoice, ['items','ordId'], '청구이력', notionCfg.invDb);
+    if(invRows && invRows.length){ console.log('[invoice] ℹ Notion 풀', invRows.length, '건 수신했으나 적용 안 함 (서버가 기준점)'); }
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
     ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files'], '입출고',   notionCfg.ioDb);
