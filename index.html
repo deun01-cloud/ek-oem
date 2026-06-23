@@ -10581,20 +10581,25 @@ window.cleanInvoiceCanonical = function(){
   });
   log.push('✓ 부모 없는 고아 자식 '+freed+'건 → 개별 명세서로 (더블유비엘 등)');
 
-  // --- 4) 빈 합본 제거 — 자식이 정본에 하나도 남지 않은 합본(유령 껍데기) ---
-  var topIdSet = new Set(arr.filter(function(m){return !m._isConsolidated;}).map(function(m){return String(m.id);}));
+  // --- 4) 빈 합본 제거 — 자식이 정본에 하나도 남지 않은 합본(유령 껍데기)만 ---
+  //   ⚠ 정상 합본 오삭제 방지: includedInvoiceIds가 가리키는 자식이 정본에 실제로 있으면 보존.
+  //   자식 매칭은 (a) 자식의 _consolidatedInvoiceId == 합본 id, 또는
+  //              (b) 합본 includedInvoiceIds 중 하나가 정본의 톱레벨 항목 id와 일치
+  var topIds = new Set(arr.filter(function(m){return !m._isConsolidated;}).map(function(m){return String(m.id);}));
   var removedEmpty = [];
   arr = arr.filter(function(m){
     if(!m._isConsolidated) return true;
-    // 이 합본을 실제로 가리키는 자식이 정본에 있는지
-    var hasChild = arr.some(function(x){ return !x._isConsolidated && String(x._consolidatedInvoiceId)===String(m.id); });
-    if(!hasChild){
-      removedEmpty.push((m.vendor||'')+' '+(m.consolidationMonth||'')+' (id:'+String(m.id).slice(-6)+')');
-      return false; // 빈 합본 제거
-    }
-    return true;
+    var mid = String(m.id);
+    // (a) 역참조로 가리키는 자식
+    var hasBackref = arr.some(function(x){ return !x._isConsolidated && String(x._consolidatedInvoiceId)===mid; });
+    // (b) includedInvoiceIds가 정본 톱레벨 항목과 매칭
+    var inclHit = (m.includedInvoiceIds||[]).some(function(cid){ return topIds.has(String(cid)); });
+    if(hasBackref || inclHit) return true; // 자식이 실제로 있음 → 보존
+    // 둘 다 없을 때만 빈 합본으로 제거
+    removedEmpty.push((m.vendor||'')+' '+(m.consolidationMonth||'')+' (id:'+mid.slice(-6)+', 자식표시:'+((m.includedInvoiceIds||[]).length)+')');
+    return false;
   });
-  if(removedEmpty.length) log.push('✓ 빈 합본(자식 없음) '+removedEmpty.length+'건 제거: '+removedEmpty.join(', '));
+  if(removedEmpty.length) log.push('✓ 빈 합본(자식 정본에 없음) '+removedEmpty.length+'건 제거: '+removedEmpty.join(', '));
   else log.push('· 빈 합본 없음');
 
   window._invCanonicalClean = arr;
@@ -10677,6 +10682,162 @@ window.applyCanonicalToServer = async function(){
     console.log('%c✓ 서버 적용 시도','color:green;font-weight:bold', JSON.stringify(d));
     console.log('  ⚠ 서버가 정말 교체(replace)했는지 ssotAudit()로 재확인 필요');
   }catch(e){ console.warn('서버 적용 실패:', e.message); }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 🎯 내용 기반 정본 v2 — id가 저장소마다 깨져 있으므로 '내용 지문'으로 매칭한다.
+//   명세서 지문 = 발주번호 + 합계금액 + 발행일(또는 출고일).  같은 지문 = 같은 거래.
+//   합본 지문  = 고객사 + 청구월(정규화) + 합계금액.  (id/notionId 안 믿음)
+//   합본-자식 연결 = 합본의 includedChildKeys(안정키) 또는 자식의 _consUid 역참조,
+//                    그래도 안 되면 '같은 고객사 + 합본 청구월에 속하는 명세서'로 내용 추론.
+//   buildCanonicalV2() → window._canonV2 에 담고 미리보기. 적용은 applyCanonicalV2Local().
+function _invFingerprint(m){
+  if(!m) return null;
+  var ord = (m.ordNo||'').trim();
+  var total = Math.round(+(m.total||m.chargeAmount||0));
+  var date = (m.shipDate||m.issuedAt||'').slice(0,10);
+  if(ord) return 'F:'+ord+'|'+total+'|'+date;
+  // 발주번호 없으면 고객사+금액+날짜
+  return 'G:'+(m.vendor||'')+'|'+total+'|'+date;
+}
+function _consFingerprint(c){
+  if(!c) return null;
+  var month = (c.consolidationMonth||'').trim();
+  var total = Math.round(+(c.total||c.chargeAmount||0));
+  return 'C:'+(c.vendor||'')+'|'+month+'|'+total;
+}
+window.buildCanonicalV2 = async function(){
+  var stageRank = { done:3, billing:2, draft:1 };
+  function better(a,b){
+    var ra=stageRank[a._invStage]||0, rb=stageRank[b._invStage]||0;
+    if(ra!==rb) return ra>rb?a:b;
+    return (+a._ts||0)>=(+b._ts||0)?a:b;
+  }
+  // ---- 3개 저장소 수집 ----
+  var sources = [ (invoiceHistory||[]).slice() ];
+  var serverList=[];
+  try{ var base=realtimeHttpUrl(); for(var p of ['/api/snapshot/invoice','/snapshot/invoice','/api/invoice']){ try{ var r=await fetch(base+p); if(r.ok){ var d=await r.json(); serverList=d.items||d.rows||(Array.isArray(d)?d:[]); break; } }catch(e){} } }catch(e){}
+  sources.push(serverList);
+  var notionList=[];
+  try{ var nr=await nQueryAll(notionCfg.invDb); notionList=nr.map(function(x){return mapNotionInvoice(x);}).filter(Boolean); }catch(e){}
+  sources.push(notionList);
+  var srcName=['로컬','서버','Notion'];
+
+  // ---- 1) 개별 명세서: 지문으로 병합 ----
+  var indivByFp = {};       // 지문 → 대표 명세서
+  var consByFp = {};        // 합본 지문 → 대표 합본
+  var fpProvenance = {};
+  sources.forEach(function(list, si){
+    (list||[]).forEach(function(m){
+      if(!m) return;
+      if(m._isConsolidated){
+        var cf = _consFingerprint(m); if(!cf) return;
+        fpProvenance[cf]=(fpProvenance[cf]||new Set()); fpProvenance[cf].add(srcName[si]);
+        if(!consByFp[cf]) consByFp[cf]=m; else consByFp[cf]=better(consByFp[cf],m);
+      } else {
+        var f=_invFingerprint(m); if(!f) return;
+        fpProvenance[f]=(fpProvenance[f]||new Set()); fpProvenance[f].add(srcName[si]);
+        if(!indivByFp[f]) indivByFp[f]=m; else indivByFp[f]=better(indivByFp[f],m);
+      }
+    });
+  });
+
+  // ---- 2) 합본-자식 연결을 '내용'으로 복원 ----
+  //   각 합본에 대해: 그 합본에 속해야 할 자식을, includedChildKeys/_consUid가 아니라
+  //   '같은 고객사 + 청구월 범위'로는 부정확하므로,
+  //   원본 소스에서 그 합본 id/notionId/_consUid를 가리키던 자식들의 '지문'을 모아
+  //   정본 개별 명세서와 지문 매칭한다.
+  var consChildFps = {};  // 합본지문 → Set(자식지문)
+  sources.forEach(function(list){
+    var consInList = (list||[]).filter(function(m){return m._isConsolidated;});
+    var indivInList = (list||[]).filter(function(m){return !m._isConsolidated;});
+    consInList.forEach(function(c){
+      var cf=_consFingerprint(c); if(!cf) return;
+      consChildFps[cf]=consChildFps[cf]||new Set();
+      // 이 소스에서 이 합본을 가리키던 자식들
+      var cidset = new Set([String(c.id), String(c._notionId||''), String(c._consUid||'')].filter(Boolean));
+      indivInList.forEach(function(ch){
+        var ref = String(ch._consolidatedInvoiceId||'');
+        if(ref && cidset.has(ref)){
+          var f=_invFingerprint(ch); if(f) consChildFps[cf].add(f);
+        }
+      });
+      // includedChildKeys/includedInvoiceIds가 가리키는 자식도 — 그 소스 안에서 지문화
+      (c.includedInvoiceIds||[]).forEach(function(iid){
+        var ch=indivInList.find(function(x){return String(x.id)===String(iid)||String(x._notionId||'')===String(iid);});
+        if(ch){ var f=_invFingerprint(ch); if(f) consChildFps[cf].add(f); }
+      });
+    });
+  });
+
+  // ---- 3) 정본 조립 ----
+  var canonCons = Object.keys(consByFp).map(function(cf){ return Object.assign({}, consByFp[cf], {_cf:cf}); });
+  var canonIndiv = Object.keys(indivByFp).map(function(f){ return Object.assign({}, indivByFp[f], {_fp:f}); });
+  // 각 개별 명세서를 어느 합본 자식으로 붙일지 결정 (지문이 어떤 합본의 childFp에 속하면)
+  var childFpToCons = {};
+  canonCons.forEach(function(c){
+    var set=consChildFps[c._cf]||new Set();
+    set.forEach(function(childFp){ childFpToCons[childFp]=c; });
+  });
+  // 연결 적용 + 합본 includedInvoiceIds 재구성
+  canonCons.forEach(function(c){ c.includedInvoiceIds=[]; });
+  canonIndiv.forEach(function(m){
+    var parent = childFpToCons[m._fp];
+    if(parent){
+      m._consolidatedInvoiceId = String(parent.id);
+      parent.includedInvoiceIds.push(m.id);
+    } else {
+      // 합본 소속 아니면 개별
+      delete m._consolidatedInvoiceId;
+      if(typeof inferInvStage==='function') m._invStage=inferInvStage(m);
+    }
+  });
+  // 빈 합본(자식 0) 제거
+  var removedEmpty=[];
+  canonCons = canonCons.filter(function(c){
+    if((c.includedInvoiceIds||[]).length>0) return true;
+    removedEmpty.push((c.vendor||'')+' '+(c.consolidationMonth||'')+' ('+Math.round(c.total||0)+'원)');
+    return false;
+  });
+
+  var all = canonCons.concat(canonIndiv);
+  // 정리 필드 제거
+  all.forEach(function(m){ delete m._cf; delete m._fp; });
+  window._canonV2 = all;
+
+  // ---- 미리보기 ----
+  var top = canonIndiv.filter(function(m){return !m._consolidatedInvoiceId;});
+  console.log('%c=== 내용 기반 정본 v2 (미리보기) ===','font-weight:bold;font-size:14px');
+  console.log('수집: 로컬',sources[0].length,'/ 서버',sources[1].length,'/ Notion',sources[2].length);
+  console.log('정본 총', all.length, '건 | 합본:', canonCons.length, '| 묶인자식:', canonIndiv.filter(function(m){return m._consolidatedInvoiceId;}).length, '| 개별:', top.length);
+  console.log('빈 합본 제거:', removedEmpty.length, removedEmpty);
+  console.log('%c합본별 자식:','font-weight:bold');
+  canonCons.forEach(function(c){
+    console.log('  ▶', c.vendor, c.consolidationMonth, '| total:', Math.round(c.total||0), '| 자식:', (c.includedInvoiceIds||[]).length, '| stage:', (typeof inferInvStage==='function'?inferInvStage(c):c._invStage));
+  });
+  console.log('톱레벨 — 출고완료:', top.filter(function(m){return (typeof inferInvStage==='function'?inferInvStage(m):m._invStage)==='draft';}).length,
+              '| 청구:', top.filter(function(m){return (typeof inferInvStage==='function'?inferInvStage(m):m._invStage)==='billing';}).length,
+              '| 완료:', top.filter(function(m){return (typeof inferInvStage==='function'?inferInvStage(m):m._invStage)==='done';}).length);
+  // 큰 금액 자식 확인 (VT0507 등)
+  var big = canonIndiv.filter(function(m){return (m.total||0)>=10000000;});
+  if(big.length){ console.log('%c1천만원+ 명세서 위치:','color:purple'); big.forEach(function(m){ console.log('  ', m.ordNo||m.id, Math.round(m.total), '| 묶임:', m._consolidatedInvoiceId?'합본':'개별'); }); }
+  console.log('%c→ window._canonV2 저장됨. 확인 후 applyCanonicalV2Local()','color:green');
+  return all;
+};
+// v2 적용 — 백업 후 로컬 교체
+window.applyCanonicalV2Local = function(){
+  if(!window._canonV2){ console.log('❌ buildCanonicalV2() 먼저'); return; }
+  if(!window._invBackup){ console.log('❌ applyCanonicalBackup() 먼저 (백업 필수)'); return; }
+  var before=invoiceHistory.length;
+  invoiceHistory = window._canonV2.map(function(m){ return JSON.parse(JSON.stringify(m)); });
+  var now=Date.now(); invoiceHistory.forEach(function(m){ m._ts=now; });
+  if(typeof markInvoiceDirty==='function') markInvoiceDirty();
+  if(typeof save==='function') save();
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+  var tl=invoiceHistory.filter(function(v){return !v._consolidatedInvoiceId;});
+  console.log('%c✓ v2 로컬 적용','color:green;font-weight:bold', before,'→',invoiceHistory.length);
+  console.log('  출고완료:',tl.filter(function(v){return v._invStage==='draft';}).length,'| 청구:',tl.filter(function(v){return v._invStage==='billing';}).length,'| 완료:',tl.filter(function(v){return v._invStage==='done';}).length,'| 합본:',invoiceHistory.filter(function(v){return v._isConsolidated;}).length);
+  console.log('  문제 있으면 rollbackCanonical()');
 };
 
 // 페이지 시작 시 자동 연결 (loadNotionCfg에서 호출되도록 등록)
