@@ -10616,6 +10616,69 @@ window.cleanInvoiceCanonical = function(){
   return arr;
 };
 
+// ═══════════════════════════════════════════════════════════════
+// ✅ 정본 적용 — _invCanonicalClean 을 실제 저장소에 반영. 돈 데이터이므로 단계 분리 + 백업.
+//   순서: applyCanonicalBackup() → applyCanonicalToLocal() → (확인) → applyCanonicalToServer()
+//   각 단계는 독립. 백업 없이는 적용 거부. 롤백: rollbackCanonical()
+window._invBackup = null;
+window.applyCanonicalBackup = function(){
+  if(!window._invCanonicalClean){ console.log('❌ 먼저 cleanInvoiceCanonical() 실행'); return false; }
+  // 현재 로컬 invoiceHistory 전체를 백업 (localStorage에도 영구 저장)
+  window._invBackup = JSON.parse(JSON.stringify(invoiceHistory));
+  try{
+    localStorage.setItem('ek_inv_backup_'+Date.now(), JSON.stringify(window._invBackup));
+    // 최근 백업 키 기록
+    localStorage.setItem('ek_inv_backup_latest', JSON.stringify({ts:Date.now(), count:window._invBackup.length}));
+  }catch(e){ console.warn('localStorage 백업 실패(메모리엔 있음):', e.message); }
+  console.log('%c✓ 백업 완료','color:green;font-weight:bold', window._invBackup.length, '건 (메모리 + localStorage)');
+  console.log('  롤백하려면: rollbackCanonical()');
+  return true;
+};
+window.rollbackCanonical = function(){
+  if(!window._invBackup){ console.log('❌ 백업 없음 — 롤백 불가'); return; }
+  invoiceHistory = JSON.parse(JSON.stringify(window._invBackup));
+  if(typeof markInvoiceDirty==='function') markInvoiceDirty();
+  if(typeof save==='function') save();
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+  console.log('%c✓ 롤백 완료 — 백업 상태로 복원','color:orange;font-weight:bold', invoiceHistory.length, '건');
+};
+window.applyCanonicalToLocal = function(){
+  if(!window._invCanonicalClean){ console.log('❌ 먼저 cleanInvoiceCanonical()'); return; }
+  if(!window._invBackup){ console.log('❌ 먼저 applyCanonicalBackup() — 백업 없이는 적용 거부'); return; }
+  var before = invoiceHistory.length;
+  // 정본으로 교체 (깊은 복사로 원본 정본 보존)
+  invoiceHistory = window._invCanonicalClean.map(function(m){ return JSON.parse(JSON.stringify(m)); });
+  // _ts 갱신해서 이 상태가 최신임을 보장 (다른 기기가 옛 데이터로 덮지 못하게)
+  var now = Date.now();
+  invoiceHistory.forEach(function(m){ m._ts = now; });
+  if(typeof markInvoiceDirty==='function') markInvoiceDirty();
+  if(typeof save==='function') save();
+  if(typeof renderInvoiceHistory==='function') renderInvoiceHistory();
+  var tl = invoiceHistory.filter(function(v){return !v._consolidatedInvoiceId;});
+  console.log('%c✓ 로컬 적용 완료','color:green;font-weight:bold', before, '→', invoiceHistory.length, '건');
+  console.log('  출고완료:', tl.filter(function(v){return v._invStage==='draft';}).length,
+              '| 청구:', tl.filter(function(v){return v._invStage==='billing';}).length,
+              '| 완료:', tl.filter(function(v){return v._invStage==='done';}).length,
+              '| 합본:', invoiceHistory.filter(function(v){return v._isConsolidated;}).length);
+  console.log('  화면 확인 후 문제없으면: applyCanonicalToServer()');
+  console.log('  문제 있으면: rollbackCanonical()');
+};
+window.applyCanonicalToServer = async function(){
+  if(!window._invBackup){ console.log('❌ 백업 없이 서버 적용 거부 — applyCanonicalBackup() 먼저'); return; }
+  // 현재 로컬(=정본 적용된 상태)을 서버에 전량 올림 (서버의 중복/좀비를 정본으로 교체)
+  var items = invoiceHistory.map(function(m){ return m; });
+  try{
+    var res = await fetch(realtimeHttpUrl() + '/api/snapshot/invoice', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ items: items, ts: Date.now(), replace: true })
+    });
+    if(!res.ok){ console.warn('서버 응답:', res.status); console.log('  (replace 미지원일 수 있음 — 서버가 누적만 하면 중복 청소 안 됨. 서버측 작업 필요)'); return; }
+    var d = await res.json();
+    console.log('%c✓ 서버 적용 시도','color:green;font-weight:bold', JSON.stringify(d));
+    console.log('  ⚠ 서버가 정말 교체(replace)했는지 ssotAudit()로 재확인 필요');
+  }catch(e){ console.warn('서버 적용 실패:', e.message); }
+};
+
 // 페이지 시작 시 자동 연결 (loadNotionCfg에서 호출되도록 등록)
 // (즉시 연결하지 않고 notionCfg 로드 후에 호출됨)
 console.log(RT_LOG_PREFIX, '모듈 로드됨, clientId:', _rtClientId);
