@@ -10840,6 +10840,65 @@ window.applyCanonicalV2Local = function(){
   console.log('  문제 있으면 rollbackCanonical()');
 };
 
+// 🧹 서버 청소 — 서버가 정본 외 항목(중복/좀비)을 누적했을 때, 정본에 없는 것만 골라 서버에서 삭제.
+//   정본(_canonV2 또는 현재 invoiceHistory)의 지문 집합을 만들고,
+//   서버 항목 중 그 지문에 없는 것을 realtimeDelete로 제거.
+//   cleanServerInvoice()  → 미리보기 (무엇을 지울지)
+//   cleanServerInvoice(true) → 실제 삭제 실행
+window.cleanServerInvoice = async function(execute){
+  // 정본 지문 집합 (현재 로컬이 정본이라고 가정 — applyCanonicalV2Local 이후)
+  var canonSet = new Set();
+  (invoiceHistory||[]).forEach(function(m){
+    var fp = m._isConsolidated ? _consFingerprint(m) : _invFingerprint(m);
+    if(fp) canonSet.add(fp);
+  });
+  // 서버 항목 읽기
+  var serverList=[];
+  try{ var base=realtimeHttpUrl(); for(var p of ['/api/snapshot/invoice','/snapshot/invoice','/api/invoice']){ try{ var r=await fetch(base+p); if(r.ok){ var d=await r.json(); serverList=d.items||d.rows||(Array.isArray(d)?d:[]); break; } }catch(e){} } }catch(e){}
+  // 서버에서 정본에 없는 항목 = 삭제 대상. 단, 같은 지문이 여러 개면(서버 중복) 1개만 남기고 삭제.
+  var seen = new Set();
+  var toDelete = [];
+  var keep = [];
+  serverList.forEach(function(m){
+    var fp = m._isConsolidated ? _consFingerprint(m) : _invFingerprint(m);
+    if(!fp){ toDelete.push({m:m, why:'지문없음'}); return; }
+    if(!canonSet.has(fp)){ toDelete.push({m:m, why:'정본에 없음'}); return; }
+    // 정본에 있는 지문 — 첫 번째만 유지, 나머지(서버 중복) 삭제
+    if(seen.has(fp)){ toDelete.push({m:m, why:'서버 중복'}); return; }
+    seen.add(fp); keep.push(m);
+  });
+  console.log('%c=== 서버 청소 '+(execute?'실행':'미리보기')+' ===','font-weight:bold;font-size:13px');
+  console.log('서버', serverList.length, '건 | 유지', keep.length, '| 삭제 대상', toDelete.length);
+  // 삭제 대상 요약
+  var byReason = {};
+  toDelete.forEach(function(x){ byReason[x.why]=(byReason[x.why]||0)+1; });
+  console.log('삭제 사유별:', JSON.stringify(byReason));
+  // 큰 금액(1천만+)이 삭제 대상에 있으면 경고
+  var bigDel = toDelete.filter(function(x){ return (+(x.m.total||x.m.chargeAmount||0))>=10000000; });
+  if(bigDel.length){
+    console.warn('⚠ 1천만원+ 항목이 삭제 대상에 있음! 확인 필요:');
+    bigDel.forEach(function(x){ console.warn('   ', x.m.vendor, x.m.ordNo||'', Math.round(x.m.total||0), '|', x.why); });
+  } else {
+    console.log('✓ 1천만원+ 항목은 삭제 대상에 없음 (큰돈 안전)');
+  }
+  if(!execute){
+    console.log('%c→ 실제 삭제하려면 cleanServerInvoice(true)','color:orange');
+    window._serverDeleteList = toDelete;
+    return {keep:keep.length, del:toDelete.length, byReason:byReason};
+  }
+  // 실행
+  var done=0;
+  for(var i=0;i<toDelete.length;i++){
+    var m = toDelete[i].m;
+    var key = m._notionId || (m.id!==undefined?String(m.id):null);
+    if(key && typeof realtimeDelete==='function'){ try{ realtimeDelete('invoice', key); done++; }catch(e){} }
+    // 너무 빠른 연속 호출 방지
+    if(i%10===9) await new Promise(function(r){setTimeout(r,200);});
+  }
+  console.log('%c✓ 서버 삭제 요청 '+done+'건 전송','color:green;font-weight:bold');
+  console.log('  5초 후 ssotAudit()로 서버 invoice 건수 재확인 (정본 수에 가까워야 함)');
+};
+
 // 페이지 시작 시 자동 연결 (loadNotionCfg에서 호출되도록 등록)
 // (즉시 연결하지 않고 notionCfg 로드 후에 호출됨)
 console.log(RT_LOG_PREFIX, '모듈 로드됨, clientId:', _rtClientId);
