@@ -10396,6 +10396,64 @@ window.ssotAuditNotion = async function(type){
   }catch(e){ console.log('Notion 조회 실패:', e.message); }
 };
 
+// 🔬 invoice 정본 대조 — 로컬/서버/Notion 세 저장소를 안정키로 맞춰 차이를 보여준다 (읽기 전용).
+//   목적: 유령(한 곳에만 있음)/중복/누락을 가려내 '진짜 거래' 정본을 확정하기 위한 근거 수집.
+//   콘솔에서 reconcileInvoiceAudit() 실행.
+window.reconcileInvoiceAudit = async function(){
+  function keyOf(m){
+    if(!m) return null;
+    if(m._isConsolidated){
+      return 'CONS:'+(m.vendor||'')+'|'+(m.consolidationMonth||'')+'|'+((m.includedInvoiceIds||[]).length);
+    }
+    if(m._notionId) return 'N:'+m._notionId;
+    if(m.ordNo) return 'O:'+m.ordNo+'|'+(m.shipDate||m.issuedAt||'');
+    return 'L:'+String(m.id);
+  }
+  function summarize(list){
+    var map = {};
+    (list||[]).forEach(function(m){ if(!m) return; var k=keyOf(m); if(!k) return; if(!map[k]) map[k]=[]; map[k].push(m); });
+    return map;
+  }
+  // 1) 로컬
+  var localList = (invoiceHistory||[]).map(function(v){return v;});
+  // 2) 서버
+  var serverList = [];
+  try{
+    var base = realtimeHttpUrl();
+    var paths = ['/api/snapshot/invoice','/snapshot/invoice','/api/invoice'];
+    for(var p=0;p<paths.length;p++){
+      try{ var res = await fetch(base+paths[p],{method:'GET'}); if(res.ok){ var d=await res.json(); var items=d.items||d.rows||(Array.isArray(d)?d:null); if(Array.isArray(items)){ serverList=items; break; } } }catch(e){}
+    }
+  }catch(e){}
+  // 3) Notion
+  var notionList = [];
+  try{ var nrows = await nQueryAll(notionCfg.invDb); notionList = nrows.map(function(p){return mapNotionInvoice(p);}).filter(Boolean); }catch(e){}
+
+  var L=summarize(localList), S=summarize(serverList), N=summarize(notionList);
+  var allKeys = {};
+  [L,S,N].forEach(function(mp){ Object.keys(mp).forEach(function(k){ allKeys[k]=1; }); });
+  var keys = Object.keys(allKeys);
+
+  var onlyLocal=[], onlyServer=[], onlyNotion=[], dupAnywhere=[], all3=[];
+  keys.forEach(function(k){
+    var inL=!!L[k], inS=!!S[k], inN=!!N[k];
+    var dup = (L[k]&&L[k].length>1)||(S[k]&&S[k].length>1)||(N[k]&&N[k].length>1);
+    if(dup) dupAnywhere.push(k+' (L'+((L[k]||[]).length)+'/S'+((S[k]||[]).length)+'/N'+((N[k]||[]).length)+')');
+    if(inL&&!inS&&!inN) onlyLocal.push(k);
+    else if(!inL&&inS&&!inN) onlyServer.push(k);
+    else if(!inL&&!inS&&inN) onlyNotion.push(k);
+    else if(inL&&inS&&inN) all3.push(k);
+  });
+  console.log('%c=== invoice 정본 대조 ===','font-weight:bold;font-size:13px');
+  console.log('고유 키 수:', keys.length, '| 로컬:', localList.length, '서버:', serverList.length, 'Notion:', notionList.length);
+  console.log('%c세 곳 모두 일치:','color:green', all3.length, '건');
+  console.log('%c로컬에만:','color:orange', onlyLocal.length, '건', onlyLocal.slice(0,20));
+  console.log('%c서버에만:','color:red', onlyServer.length, '건', onlyServer.slice(0,20));
+  console.log('%cNotion에만:','color:blue', onlyNotion.length, '건', onlyNotion.slice(0,20));
+  console.log('%c중복(같은 키 2개+):','color:purple', dupAnywhere.length, '건', dupAnywhere.slice(0,20));
+  return {all3:all3.length, onlyLocal:onlyLocal, onlyServer:onlyServer, onlyNotion:onlyNotion, dup:dupAnywhere};
+};
+
 // 페이지 시작 시 자동 연결 (loadNotionCfg에서 호출되도록 등록)
 // (즉시 연결하지 않고 notionCfg 로드 후에 호출됨)
 console.log(RT_LOG_PREFIX, '모듈 로드됨, clientId:', _rtClientId);
