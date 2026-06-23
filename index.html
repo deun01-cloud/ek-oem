@@ -4484,6 +4484,7 @@ async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
   }
 
   invoiceHistory.unshift(invRec);
+  if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   if(typeof realtimePublish === 'function') realtimePublish('invoice', invRec);
   // 명세서 단계: 출고일이 이미 있으니 청구 단계로 (월말 합본 대상)
   invRec._invStage = (typeof inferInvStage === 'function') ? inferInvStage(invRec) : 'billing';
@@ -6721,6 +6722,7 @@ function confirmOrdDoc(){
       status:'발행완료',memo:''
     };
     invoiceHistory.unshift(invRec);
+    if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   if(typeof realtimePublish === 'function') realtimePublish('invoice', invRec);
     // ⚠ 단계 3: 거래명세서 발행 시 출고완료 자동 처리하던 로직 제거
     // 이제 출고완료는 거래명세서 입금 100% 도달 시점에 자동 처리됨 (checkAutoCompleteShipment)
@@ -7137,8 +7139,39 @@ function invDropOnMonth(ev, month){
   if(id) moveInvoiceToSettleMonth(id, month);
 }
 
-function renderInvoiceHistory(){
-  slLoad();
+// 🔒 단계1(SSOT): 데이터 정합 유지가 필요함을 예약하는 플래그.
+//   데이터가 바뀌는 이벤트(스냅샷 수신, 합본 생성/해제, 청구 등)에서 markInvoiceDirty()를 부르면
+//   다음 렌더 때 maintainInvoiceData()가 '1회' 돈다. 같은 데이터를 반복 렌더할 때는
+//   변형이 돌지 않으므로, '그릴 때마다 데이터가 바뀌어 기기 간 숫자가 갈리던' 구조가 끊긴다.
+var _invMaintainPending = true; // 최초 1회는 정합 보정 수행
+function markInvoiceDirty(){ _invMaintainPending = true; }
+// 🔬 단계1 검증: 렌더를 N번 반복해도 invoiceHistory가 안 바뀌는지 확인.
+//    콘솔에서 verifyRenderPurity() 실행 → '✅ 순수' 가 나오면 분리 성공.
+window.verifyRenderPurity = function(n){
+  n = n || 5;
+  var snap = function(){ return JSON.stringify((invoiceHistory||[]).map(function(v){
+    return [v.id, v._invStage, v._consolidatedInvoiceId, (v.includedInvoiceIds||[]).join('|'), v._isConsolidated]; })); };
+  // 먼저 정합을 한 번 안정화시킨 뒤(보정 dirty 소진) 순수성 측정
+  if(typeof markInvoiceDirty==='function') markInvoiceDirty();
+  renderInvoiceHistory();
+  var before = snap();
+  var changedAt = -1;
+  for(var i=0;i<n;i++){
+    renderInvoiceHistory();
+    if(snap() !== before){ changedAt = i+1; break; }
+  }
+  if(changedAt < 0){
+    console.log('%c✅ 순수 — 렌더 '+n+'회 반복에도 데이터 불변 (단계1 정상 작동)','color:green;font-weight:bold');
+    return true;
+  } else {
+    console.warn('⚠ 렌더 '+changedAt+'회째에 데이터가 바뀜 — 변형이 아직 렌더에 남아있음. 콘솔 로그 확인 필요');
+    return false;
+  }
+};
+
+// 렌더에서 분리한 '데이터 정합 유지' 작업 (좀비 제거 / 역참조 / 고아 복구 / 단계 재계산).
+// renderInvoiceHistory()는 더 이상 이 작업을 매번 하지 않는다 — 순수 렌더로 남는다.
+function maintainInvoiceData(){
   // 📌 0-A단계: 삭제된 합본이 Realtime/Notion pull로 부활했으면 자동 재제거
   //    (1) in-memory 최근삭제 set — 같은 세션 내 빠른 차단 (v.id 기준)
   //    (2) localStorage 묘비 — 새로고침/다른 기기 pull로 부활한 것까지 영구 차단 (_notionId 기준)
@@ -7496,6 +7529,17 @@ function renderInvoiceHistory(){
   if(_stageChanged > 0){
     console.log('[invoice] _invStage 자동 재계산:', _stageChanged, '건 갱신');
     if(typeof save === 'function') save();
+  }
+}
+// ───────────────────────────────────────────────────────────────
+// 거래명세서 렌더 (순수 그리기). 데이터 변형은 maintainInvoiceData()가 담당하며,
+// 여기서는 'dirty 예약된 경우에만' 1회 보정한 뒤 화면을 그린다.
+function renderInvoiceHistory(){
+  slLoad();
+  if(_invMaintainPending){
+    _invMaintainPending = false;
+    try{ maintainInvoiceData(); }
+    catch(e){ console.warn('[invoice] 정합 보정 중 오류(렌더는 계속):', e); }
   }
   var c=document.getElementById('content');
   var st=invFilter.status;
@@ -8607,6 +8651,7 @@ function deleteInvRecord(id){
     }
     // 2) 로컬에서 제거
     invoiceHistory=invoiceHistory.filter(function(x){return x.id!=id;});
+    if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
     save();renderInvoiceHistory();
     // 🌐 실시간 동기화 — _notionId 기반으로 다른 기기에서도 즉시 삭제
     if(typeof realtimeDelete === 'function') realtimeDelete('invoice', v);
@@ -9934,7 +9979,7 @@ function _rtHandleSnapshot(msg){
   // 각 타입별로 로컬 배열에 머지 (Last-Write-Wins by _ts)
   msg.items.forEach(item => _applyRemoteItem(msg.type, item, msg.ts || Date.now(), null));
   // 📌 invoice 스냅샷이면 소수점 id 정규화 (다른 기기가 소수점 id를 밀어넣어 깜빡이는 것 방지)
-  if(msg.type === 'invoice'){ try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); }catch(_){} }
+  if(msg.type === 'invoice'){ try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); }catch(_){} if(typeof markInvoiceDirty==='function') markInvoiceDirty(); }
   // 화면 갱신
   if(typeof save === 'function') save();
   if(typeof renderTab === 'function'){ try{ renderTab(); updateBadges(); }catch(_){} }
@@ -9949,7 +9994,7 @@ function _rtHandleChange(msg){
   } else if(msg.action === 'delete'){
     _applyRemoteDelete(msg.type, msg.item?.id || msg.id, msg.ts);
   }
-  if(msg.type === 'invoice'){ try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); }catch(_){} }
+  if(msg.type === 'invoice'){ try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); }catch(_){} if(typeof markInvoiceDirty==='function') markInvoiceDirty(); }
   if(typeof save === 'function') save();
   if(typeof renderTab === 'function'){ try{ renderTab(); updateBadges(); }catch(_){} }
 }
@@ -11559,6 +11604,7 @@ async function pullFromNotion(opts){
     invoiceHistory= mergeRows(invRows,  invoiceHistory, mapNotionInvoice,   ['items','ordId'], '청구이력', notionCfg.invDb);
     // 📌 pull 직후 소수점 id 정규화 (다른 기기/옛 데이터가 소수점 id를 다시 들여올 수 있음 — 깜빡임 방지)
     try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); }catch(_){}
+    if(typeof markInvoiceDirty==='function') markInvoiceDirty();
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
     ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files'], '입출고',   notionCfg.ioDb);
@@ -16074,6 +16120,7 @@ function load(){
   if((v=loadKey(SK.a,'AS'))!==undefined) asItems=v;
   if((v=loadKey(SK.pd,'제품DB'))!==undefined) productDB=v;
   if((v=loadKey(SK.iv,'청구이력'))!==undefined) invoiceHistory=v;
+  if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   if((v=loadKey(SK.sh,'재고이력'))!==undefined) stockHistory=v;
   if((v=loadKey(SK.io,'입출고'))!==undefined) ioItems=v;
   try{
@@ -23422,6 +23469,7 @@ function completeOrd(ordId){
             _invStage: 'draft',     // 미청구 탭에 표시
           };
           invoiceHistory.unshift(newInv);
+          if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
           _autoInvCreated = true;
           // 노션 동기화
           if(notionCfg.workerUrl && notionCfg.invDb && typeof syncInvoiceToNotion==='function'){
@@ -25462,6 +25510,7 @@ function _createSampleDraftInvoice(s){
     _invStage: 'draft',    // 미청구 탭
   };
   invoiceHistory.unshift(inv);
+  if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   // 샘플에 명세서 번호 연결
   s.invNo = invNo;
   // 노션 동기화
@@ -27593,6 +27642,7 @@ async function printInvoice(opts){
       invoiceHistory[existingIdx] = invRec;
     } else {
       invoiceHistory.unshift(invRec);
+      if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   if(typeof realtimePublish === 'function') realtimePublish('invoice', invRec);
     }
     save();
@@ -31816,6 +31866,7 @@ function createConsolidatedInvoice(vendor, month, options){
   });
   // invoiceHistory 맨 앞에 추가
   invoiceHistory.unshift(invRec);
+  if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   if(typeof realtimePublish === 'function') realtimePublish('invoice', invRec);
   if(typeof save==='function') save();
   // 노션 동기화 — 합본 + 묶인 명세서들 모두
@@ -31945,6 +31996,7 @@ function unwindConsolidatedInvoice(consolidatedId){
     } catch(e){ console.warn('[합본 해제] Realtime 삭제 실패:', e); }
   }
   _unwindingNow = null;   // 명시적 해제 종료 — 이후 합본은 다시 절대 보존 모드
+  if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   return true;
 }
 
@@ -34195,6 +34247,7 @@ async function saveStandaloneInvoice(){
     }
 
     invoiceHistory.unshift(invRec);
+    if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   if(typeof realtimePublish === 'function') realtimePublish('invoice', invRec);
 
     // 4-A: 명세서 단계 자동 분류 (draft/billing/done)
@@ -34422,6 +34475,7 @@ function deleteStandaloneInvoice(){
       try{ nUpdate(v._notionId, {}, true).catch(e=>console.warn('노션 archive 실패:',e)); }catch(e){}
     }
     invoiceHistory = invoiceHistory.filter(x=>String(x.id)!==String(id));
+    if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
     save();
     closeM('mStandaloneInv');
     let toastMsg = '✓ 거래명세서 삭제됨';
