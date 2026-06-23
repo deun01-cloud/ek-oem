@@ -7388,6 +7388,9 @@ function maintainInvoiceData(){
         if(i===j) continue;
         const a=consList[i], b=consList[j];
         if((a.vendor||'')!==(b.vendor||'')) continue;
+        // 🛡️ 청구월이 다르면 부분집합 판정 안 함 — 06과 05는 별개 합본(다른 달 거래)인데
+        //    자식 키가 우연히 겹쳐 부분집합으로 오판→삭제되던 버그 방지.
+        if((a.consolidationMonth||'')!==(b.consolidationMonth||'')) continue;
         if(_toDropCons.includes(a) || _toDropCons.includes(b)) continue;
         const sa=_childKeySet(a), sb=_childKeySet(b);
         if(sa.size===0||sb.size===0) continue;
