@@ -10990,6 +10990,69 @@ window.resetServerInvoice = async function(execute){
   console.log('  서버가 정본 수와 같으면 → 다른 컴퓨터 새로고침하면 일치화 완료');
 };
 
+// 🗃 현재 로컬 명세서들의 Notion 페이지 중 archive(보관)된 것을 일괄 보관 해제.
+//    정본 정리로 archive된 페이지를 살려, 청구하기 등 수정 시 archive 에러가 안 나게 한다.
+//    unarchiveLiveInvoices() 실행.
+window.unarchiveLiveInvoices = async function(){
+  var withNotion = invoiceHistory.filter(function(v){ return v._notionId; });
+  console.log('Notion 연결된 명세서:', withNotion.length, '건 — 보관 해제 시도');
+  var done=0, skip=0, fail=0;
+  for(var i=0;i<withNotion.length;i++){
+    var v = withNotion[i];
+    try{
+      // archived:false 로 보관 해제 (이미 살아있으면 무해)
+      await notionCall('PATCH','/pages/'+v._notionId,{archived:false},{bypassCircuit:true});
+      // 묘비에서도 제거
+      try{
+        var ts=(typeof _loadTombstones==='function')?_loadTombstones():null;
+        if(ts && ts[v._notionId]){ delete ts[v._notionId]; if(typeof _saveTombstones==='function') _saveTombstones(ts); }
+      }catch(_){}
+      done++;
+    }catch(e){
+      var m=(e&&e.message)||'';
+      if(m.indexOf('already')>=0 || m.indexOf('not archived')>=0){ skip++; }
+      else { fail++; if(fail<=3) console.warn('  실패:', (v.ordNo||v.id), m.slice(0,60)); }
+    }
+    if(i%5===4) await new Promise(function(r){setTimeout(r,200);}); // 속도제한 회피
+  }
+  console.log('%c✓ 보관 해제 완료','color:green;font-weight:bold', '성공', done, '| 스킵', skip, '| 실패', fail);
+  console.log('  이제 청구하기가 archive 에러 없이 작동해야 함');
+};
+
+// 🔄 범용: 임의 타입의 현재 로컬 데이터를 서버에 통째로 교체(replace).
+//    워커의 /api/replace/{type} 사용 — 서버를 비우고 로컬로 교체하므로 중복/좀비 청소됨.
+//    replaceServerType('order') 식으로 미리보기, replaceServerType('order', true)로 실행.
+window.replaceServerType = async function(type, execute){
+  if(!type){ console.log('타입 필요 (order/sample/as/io/stockhist/product 등)'); return; }
+  var arr = (typeof _rtGetLocalArray==='function') ? _rtGetLocalArray(type) : null;
+  if(!Array.isArray(arr)){ console.log('이 타입의 로컬 배열을 찾을 수 없음:', type); return; }
+  // 서버 현재 건수
+  var serverCount = -1;
+  try{
+    var base=realtimeHttpUrl();
+    var r=await fetch(base+'/api/snapshot/'+type); if(r.ok){ var d=await r.json(); var it=d.items||d.rows||(Array.isArray(d)?d:[]); serverCount=it.length; }
+  }catch(e){}
+  console.log('%c=== '+type+' 서버 교체 '+(execute?'실행':'미리보기')+' ===','font-weight:bold');
+  console.log('로컬', arr.length, '건 →  서버(현재', serverCount, '건)를 로컬로 교체');
+  if(!execute){
+    console.log('%c→ 실행: replaceServerType("'+type+'", true)','color:orange');
+    return {local:arr.length, server:serverCount};
+  }
+  var now=Date.now();
+  var items = arr.map(function(m){ return Object.assign({}, m, {_ts: m._ts||now}); });
+  try{
+    var res=await fetch(realtimeHttpUrl()+'/api/replace/'+type, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ items: items, ts: now })
+    });
+    var d2 = res.ok ? await res.json() : {error:res.status};
+    console.log('%c✓ '+type+' 서버 교체','color:green;font-weight:bold', JSON.stringify(d2));
+    console.log('  다른 컴퓨터 새로고침하면 같은', arr.length, '건 받음');
+  }catch(e){ console.warn('교체 실패:', e.message); }
+};
+
+
+
 // 페이지 시작 시 자동 연결 (loadNotionCfg에서 호출되도록 등록)
 // (즉시 연결하지 않고 notionCfg 로드 후에 호출됨)
 console.log(RT_LOG_PREFIX, '모듈 로드됨, clientId:', _rtClientId);
