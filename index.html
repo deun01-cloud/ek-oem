@@ -11292,6 +11292,91 @@ window.replaceServerType = async function(type, execute){
   }catch(e){ console.warn('교체 실패:', e.message); }
 };
 
+// ═══════════════════════════════════════════════════
+// 🔍 데이터 일치 확인 — 로컬 vs 서버 (vs 노션) 비교
+//   서버 기준 운영 전, 세 곳 데이터가 맞는지 콘솔에서 확인하는 진단.
+//   사용법:
+//     checkDataMatch('order')   → order 한 타입 비교
+//     checkDataMatch()          → 전체 SSOT 타입 한 번에 비교
+//   결과: 건수 비교 + ID 기준으로 '어디에만 있는 항목' 목록
+// ═══════════════════════════════════════════════════
+async function _fetchServerList(type){
+  try{
+    var r = await fetch(realtimeHttpUrl()+'/api/snapshot/'+type);
+    if(r.ok){ var d=await r.json(); return d.items||d.rows||(Array.isArray(d)?d:[]); }
+  }catch(e){}
+  return null; // 서버 조회 실패
+}
+function _idKeyOf(it){
+  // 비교 키: _notionId 우선, 없으면 id
+  return String((it && (it._notionId || it.id)) || '');
+}
+window.checkDataMatch = async function(type, opts){
+  opts = opts || {};
+  var types = type ? [type] : Array.from(RT_SSOT_TYPES);
+  console.log('%c═══ 데이터 일치 확인 시작 ═══','font-weight:bold;color:#1A6DB5;font-size:13px');
+  var summary = [];
+  for(var ti=0; ti<types.length; ti++){
+    var t = types[ti];
+    var arr = (typeof _rtGetLocalArray==='function') ? _rtGetLocalArray(t) : null;
+    if(!Array.isArray(arr)){ console.log('  ['+t+'] 로컬 배열 없음 — 건너뜀'); continue; }
+    var server = await _fetchServerList(t);
+    var localN = arr.length;
+    var serverN = (server===null) ? -1 : server.length;
+
+    console.log('%c\n● '+t,'font-weight:bold;font-size:13px');
+    if(server===null){
+      console.log('   ⚠ 서버 조회 실패 (연결/네트워크 문제). 로컬만 '+localN+'건.');
+      summary.push({타입:t, 로컬:localN, 서버:'조회실패', 일치:'?'});
+      continue;
+    }
+    // ID 집합 비교
+    var localKeys = new Set(arr.map(_idKeyOf).filter(Boolean));
+    var serverKeys = new Set(server.map(_idKeyOf).filter(Boolean));
+    var onlyLocal = [], onlyServer = [];
+    localKeys.forEach(function(k){ if(!serverKeys.has(k)) onlyLocal.push(k); });
+    serverKeys.forEach(function(k){ if(!localKeys.has(k)) onlyServer.push(k); });
+    var match = (onlyLocal.length===0 && onlyServer.length===0 && localN===serverN);
+
+    console.log('   로컬 '+localN+'건  /  서버 '+serverN+'건  → '+
+      (match ? '%c✅ 일치' : '%c❌ 불일치'),
+      match ? 'color:#2E8B2C;font-weight:bold' : 'color:#A11A1A;font-weight:bold');
+    if(onlyLocal.length){
+      console.log('   📍 로컬에만 있음('+onlyLocal.length+'건) — 서버에 누락됨:');
+      _printSampleItems(arr, onlyLocal, t);
+    }
+    if(onlyServer.length){
+      console.log('   📍 서버에만 있음('+onlyServer.length+'건) — 로컬에 없음(유령/타기기 추가?):');
+      _printSampleItems(server, onlyServer, t);
+    }
+    if(localKeys.size < localN){
+      console.log('   ⚠ 로컬에 ID 없는 항목 '+(localN-localKeys.size)+'건 (비교 불가 — ID 부여 필요)');
+    }
+    summary.push({타입:t, 로컬:localN, 서버:serverN, 로컬에만:onlyLocal.length, 서버에만:onlyServer.length, 일치: match?'✅':'❌'});
+  }
+  console.log('%c\n═══ 요약 ═══','font-weight:bold;color:#1A6DB5;font-size:13px');
+  console.table(summary);
+  console.log('%c판단 기준:','font-weight:bold');
+  console.log('  ✅ 전부 일치 → 서버 기준 운영 안전. 바로 사용 가능.');
+  console.log('  ❌ 로컬에만 있음 多 → 서버가 불완전. replaceServerType("타입", true)로 로컬을 서버에 올린 뒤 재확인.');
+  console.log('  ❌ 서버에만 있음 多 → 서버에 유령/구데이터. 원인 확인 후 정리 필요.');
+  return summary;
+};
+function _printSampleItems(list, keys, type){
+  var map={}; list.forEach(function(it){ map[_idKeyOf(it)]=it; });
+  var labelFn = function(it){
+    if(!it) return '(없음)';
+    if(type==='order')  return (it.ordNo||it.id)+' / '+(it.vendor||it.client||'')+' / '+(it.itemName||it.product||'');
+    if(type==='invoice')return (it.client||it.vendor||'')+' / '+(it.invoiceNo||it.id)+' / '+(it.totalAmount||it.supplyAmount||'');
+    if(type==='io')     return (it.date||'')+' / '+(it.client||'')+' / '+(it.itemName||'');
+    if(type==='sample') return (it.sampleNo||it.id)+' / '+(it.client||'')+' / '+(it.itemName||'');
+    if(type==='product')return (it.itemCode||it.id)+' / '+(it.itemName||'');
+    return (it.id||'')+' / '+(it.name||it.itemName||'');
+  };
+  keys.slice(0,10).forEach(function(k){ console.log('       -', labelFn(map[k]), '  ['+k.slice(0,12)+']'); });
+  if(keys.length>10) console.log('       ... 외 '+(keys.length-10)+'건');
+}
+
 
 
 // 페이지 시작 시 자동 연결 (loadNotionCfg에서 호출되도록 등록)
