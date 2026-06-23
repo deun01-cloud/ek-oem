@@ -10454,6 +10454,72 @@ window.reconcileInvoiceAudit = async function(){
   return {all3:all3.length, onlyLocal:onlyLocal, onlyServer:onlyServer, onlyNotion:onlyNotion, dup:dupAnywhere};
 };
 
+// 🏗️ invoice 합집합 정본 생성 — 로컬/서버/Notion 세 곳을 모아 '누락 없이' 정본 한 벌을 만든다.
+//   원칙: (1) 어디든 있으면 살린다(합집합) — 진짜 거래 누락 방지
+//         (2) 같은 키 중복은 1개로 병합하되, 가장 '진행된' 항목을 채택 (done>billing>draft, _ts 최신)
+//         (3) 금액은 채택된 항목 그대로 — 합산/변형 절대 안 함
+//   buildInvoiceCanonical()는 정본을 만들어 window._invCanonical 에 담고 미리보기만 출력.
+//   적용(서버/로컬/Notion 반영)은 별도 명령에서 — 확인 후에만.
+window.buildInvoiceCanonical = async function(){
+  function keyOf(m){
+    if(!m) return null;
+    if(m._isConsolidated) return 'CONS:'+(m.vendor||'')+'|'+(m.consolidationMonth||'')+'|'+((m.includedInvoiceIds||[]).length);
+    if(m._notionId) return 'N:'+m._notionId;
+    if(m.ordNo) return 'O:'+m.ordNo+'|'+(m.shipDate||m.issuedAt||'');
+    return 'L:'+String(m.id);
+  }
+  var stageRank = { done:3, billing:2, draft:1 };
+  function better(a, b){
+    // 더 진행된 단계 우선, 같으면 _ts 최신 우선
+    var ra = stageRank[a._invStage]||0, rb = stageRank[b._invStage]||0;
+    if(ra !== rb) return ra > rb ? a : b;
+    var ta = +a._ts||0, tb = +b._ts||0;
+    return ta >= tb ? a : b;
+  }
+  // 1) 로컬
+  var sources = [ (invoiceHistory||[]).slice() ];
+  // 2) 서버
+  var serverList=[];
+  try{ var base=realtimeHttpUrl(); for(var p of ['/api/snapshot/invoice','/snapshot/invoice','/api/invoice']){ try{ var res=await fetch(base+p); if(res.ok){ var d=await res.json(); serverList=d.items||d.rows||(Array.isArray(d)?d:[]); break; } }catch(e){} } }catch(e){}
+  sources.push(serverList);
+  // 3) Notion
+  var notionList=[];
+  try{ var nr=await nQueryAll(notionCfg.invDb); notionList=nr.map(function(x){return mapNotionInvoice(x);}).filter(Boolean); }catch(e){}
+  sources.push(notionList);
+
+  var canon = {};
+  var srcLabel = ['로컬','서버','Notion'];
+  var provenance = {};
+  sources.forEach(function(list, si){
+    (list||[]).forEach(function(m){
+      if(!m) return;
+      var k = keyOf(m); if(!k) return;
+      if(!provenance[k]) provenance[k] = new Set();
+      provenance[k].add(srcLabel[si]);
+      if(!canon[k]) canon[k] = m;
+      else canon[k] = better(canon[k], m);
+    });
+  });
+  var keys = Object.keys(canon);
+  var arr = keys.map(function(k){ return canon[k]; });
+  window._invCanonical = arr;
+  // 통계
+  var cons = arr.filter(function(m){return m._isConsolidated;}).length;
+  var child = arr.filter(function(m){return !m._isConsolidated && m._consolidatedInvoiceId;}).length;
+  var top = arr.filter(function(m){return !m._consolidatedInvoiceId;});
+  console.log('%c=== invoice 합집합 정본 (미리보기) ===','font-weight:bold;font-size:13px');
+  console.log('정본 총', arr.length, '건 | 합본:', cons, '| 묶인자식:', child);
+  console.log('톱레벨 기준 — 출고완료:', top.filter(function(m){return (typeof inferInvStage==='function'?inferInvStage(m):m._invStage)==='draft';}).length,
+              '| 청구:', top.filter(function(m){return (typeof inferInvStage==='function'?inferInvStage(m):m._invStage)==='billing';}).length,
+              '| 완료:', top.filter(function(m){return (typeof inferInvStage==='function'?inferInvStage(m):m._invStage)==='done';}).length);
+  // 출처별 분포
+  var p3=0,p2=0,p1=0;
+  keys.forEach(function(k){ var n=provenance[k].size; if(n===3)p3++; else if(n===2)p2++; else p1++; });
+  console.log('출처: 세곳모두', p3, '| 두곳', p2, '| 한곳만', p1, '(한곳만=다른 두 곳에서 누락된 진짜거래일 수 있음)');
+  console.log('%c→ 정본이 window._invCanonical 에 저장됨. 내용 확인 후 적용 명령 실행.','color:green');
+  return arr;
+};
+
 // 페이지 시작 시 자동 연결 (loadNotionCfg에서 호출되도록 등록)
 // (즉시 연결하지 않고 notionCfg 로드 후에 호출됨)
 console.log(RT_LOG_PREFIX, '모듈 로드됨, clientId:', _rtClientId);
