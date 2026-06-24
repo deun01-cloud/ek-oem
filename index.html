@@ -3726,18 +3726,18 @@ function setASVendorFilter(v){ _asVendorFilter=v||''; renderAS(); }
 let _asSelected = new Set();
 function toggleASSelect(id, ev){
   if(ev) ev.stopPropagation();
-  id = +id;
+  id = String(id);
   if(_asSelected.has(id)) _asSelected.delete(id);
   else _asSelected.add(id);
   renderAS();
 }
 function toggleASSelectAll(idArray, ev){
   if(ev) ev.stopPropagation();
-  const allSelected = idArray.every(id=>_asSelected.has(+id));
+  const allSelected = idArray.every(id=>_asSelected.has(String(id)));
   if(allSelected){
-    idArray.forEach(id=>_asSelected.delete(+id));
+    idArray.forEach(id=>_asSelected.delete(String(id)));
   } else {
-    idArray.forEach(id=>_asSelected.add(+id));
+    idArray.forEach(id=>_asSelected.add(String(id)));
   }
   renderAS();
 }
@@ -3755,7 +3755,7 @@ function deleteSelectedAS(){
     const toDelete=[..._asSelected];
     // 로컬 삭제
     toDelete.forEach(id=>{
-      const item=asItems.find(x=>x.id===id);
+      const item=asItems.find(x=>String(x.id)===String(id));
       // Notion에서도 삭제
       if(item && item._notionId && notionCfg.workerUrl){
         setTimeout(()=>{
@@ -3763,7 +3763,7 @@ function deleteSelectedAS(){
         }, 50);
       }
     });
-    asItems = asItems.filter(x=>!_asSelected.has(+x.id));
+    asItems = asItems.filter(x=>!_asSelected.has(String(x.id)));
     _asSelected.clear();
     save();
     renderAS();
@@ -3893,8 +3893,8 @@ function renderAS(){
   };
 
   const asRow=a=>`
-    <tr onclick="openASModal(${a.id})" style="cursor:pointer" class="${a.status==='완료'||a.status==='반송'?'':'row-'+(dday(a.due)!==null&&dday(a.due)<=0?'u':dday(a.due)<=3?'w':'')}" ${_asSelected.has(+a.id)?'style="background:var(--gold-bg)"':''}>
-      <td style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" ${_asSelected.has(+a.id)?'checked':''} onclick="toggleASSelect(${a.id},event)" style="cursor:pointer;width:14px;height:14px"></td>
+    <tr onclick="openASModal('${a.id}')" style="cursor:pointer" class="${a.status==='완료'||a.status==='반송'?'':'row-'+(dday(a.due)!==null&&dday(a.due)<=0?'u':dday(a.due)<=3?'w':'')}" ${_asSelected.has(String(a.id))?'style="background:var(--gold-bg)"':''}>
+      <td style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" ${_asSelected.has(String(a.id))?'checked':''} onclick="toggleASSelect('${a.id}',event)" style="cursor:pointer;width:14px;height:14px"></td>
       <td style="font-size:11.5px">${a.date||'—'}</td>
       <td title="${(a.client||'').replace(/"/g,'&quot;')}">${vendorInitHtml(a.client, true)}</td>
       <td style="font-size:11.5px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.item||'—'}</td>
@@ -3946,7 +3946,7 @@ function renderAS(){
 
   ${_asSelected.size>0?(()=>{
     // 선택된 항목 청구 가능 여부 미리 계산
-    const _selItems = asItems.filter(a => _asSelected.has(+a.id));
+    const _selItems = asItems.filter(a => _asSelected.has(String(a.id)));
     const _billable = _selItems.filter(a => a.defectType === '고객불량');
     const _factoryFault = _selItems.filter(a => a.defectType === '입고불량');
     const _unclassified = _selItems.filter(a => !a.defectType || (a.defectType !== '고객불량' && a.defectType !== '입고불량'));
@@ -3989,7 +3989,7 @@ function renderAS(){
     </div>
     <div style="overflow-x:auto"><table>
       <thead><tr>
-        <th style="text-align:center;width:30px"><input type="checkbox" ${active.length&&active.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${active.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
+        <th style="text-align:center;width:30px"><input type="checkbox" ${active.length&&active.every(a=>_asSelected.has(String(a.id)))?'checked':''} onclick="toggleASSelectAll(${JSON.stringify(active.map(a=>String(a.id)))},event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
         <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
         <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th>
         <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
@@ -4002,7 +4002,7 @@ function renderAS(){
     <div class="ch"><div class="ch-t">✅ 완료 / 반송 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${done.length}건${currentGroupName?` · ${currentGroupName} 필터`:''})</span></div></div>
     <div style="overflow-x:auto"><table>
       <thead><tr>
-        <th style="text-align:center;width:30px"><input type="checkbox" ${done.length&&done.every(a=>_asSelected.has(+a.id))?'checked':''} onclick="toggleASSelectAll([${done.map(a=>a.id).join(',')}],event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
+        <th style="text-align:center;width:30px"><input type="checkbox" ${done.length&&done.every(a=>_asSelected.has(String(a.id)))?'checked':''} onclick="toggleASSelectAll(${JSON.stringify(done.map(a=>String(a.id)))},event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
         <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
         <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th>
         <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
@@ -4027,7 +4027,7 @@ function issueSelectedASInvoice(){
     return;
   }
   // 선택된 항목 모으기
-  const selItems = asItems.filter(a => _asSelected.has(+a.id));
+  const selItems = asItems.filter(a => _asSelected.has(String(a.id)));
   // 청구 대상: 고객불량 + 미청구 또는 청구예정
   const billable = selItems.filter(a =>
     a.defectType === '고객불량' &&
@@ -6597,7 +6597,7 @@ function _showOrdInvoiceChooser(o, linked){
     </div>
     <div style="display:flex;gap:6px;justify-content:flex-end">
       <button class="btn" onclick="closeM('mOrdInvChoose')">닫기</button>
-      <button class="btn bp bs" onclick="closeM('mOrdInvChoose');openInvoiceForOrder(${o.id})">+ 새 거래명세서 작성</button>
+      <button class="btn bp bs" onclick="closeM('mOrdInvChoose');openInvoiceForOrder('${o.id}')">+ 새 거래명세서 작성</button>
     </div>
   `;
   let m = document.getElementById('mOrdInvChoose');
@@ -9175,7 +9175,7 @@ function _resolveInvItems(inv){
   if(inv._isConsolidated && Array.isArray(inv.includedInvoiceIds)){
     const merged = [];
     inv.includedInvoiceIds.forEach(invId=>{
-      const child = invoiceHistory.find(x=>x.id===invId);
+      const child = invoiceHistory.find(x=>String(x.id)===String(invId));
       if(child) merged.push(..._resolveInvItems(child));
     });
     return merged;
@@ -13263,7 +13263,7 @@ function _renderIoGeneral(){
                             io.kind==='반품'?'background:rgba(168,90,16,.10);color:var(--org)':'background:var(--s2);color:var(--t3)';
             const init = _ioInitial(io.vendor);
             const hasPhotos = (io.files||[]).filter(f=>f&&f.url).length;
-            return `<tr style="border-bottom:1px solid var(--bdr-lt);cursor:pointer" onclick="openIoDetail(${io.id})" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
+            return `<tr style="border-bottom:1px solid var(--bdr-lt);cursor:pointer" onclick="openIoDetail('${io.id}')" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
               <td style="padding:8px 10px;text-align:center;color:var(--t2);font-size:11.5px;font-family:monospace">${escHtml(io.date||'-')}</td>
               <td style="padding:8px 10px;text-align:center"><span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:700;${kindCls}">${escHtml(io.kind||'-')}</span></td>
               <td style="padding:8px 10px;font-weight:600">${escHtml(io.title||'-')}${io.flow?`<span style="font-size:10px;color:var(--t3);font-weight:400;margin-left:6px">${escHtml(io.flow)}</span>`:''}</td>
@@ -13488,7 +13488,7 @@ function _renderIoCommerce(){
   // ── 테이블 헤더 (모드별로 다름) ──
   let tableHeader;
   if(_ioCommerceMode === 'order'){
-    const allChecked = list.length>0 && list.every(io => _ioCommerceChecked.has(io.id));
+    const allChecked = list.length>0 && list.every(io => _ioCommerceChecked.has(String(io.id)));
     tableHeader = `
     <tr style="background:var(--s2);border-bottom:1px solid var(--bdr)">
       <th style="padding:8px 10px;text-align:center;width:34px"><input type="checkbox" ${allChecked?'checked':''} onclick="_ioToggleAllChecked(this.checked)" style="width:auto;margin:0;cursor:pointer"></th>
@@ -13536,29 +13536,29 @@ function _renderIoCommerce(){
 
     if(_ioCommerceMode === 'order'){
       // ── 주문 모드 행 (체크박스 + 출고 버튼) ──
-      const checked = _ioCommerceChecked.has(io.id);
+      const checked = _ioCommerceChecked.has(String(io.id));
       return `<tr style="border-bottom:1px solid var(--bdr-lt);${checked?'background:rgba(168,118,49,.07)':''}" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${checked?'rgba(168,118,49,.07)':''}'">
-        <td style="padding:7px 10px;text-align:center"><input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation();_ioToggleChecked(${io.id},this.checked)" style="width:auto;margin:0;cursor:pointer"></td>
-        <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1);cursor:pointer" onclick="openIoDetail(${io.id})">${escHtml(io.brand||'-')}</td>
-        <td style="padding:7px 10px;font-size:12px;font-weight:600;cursor:pointer" onclick="openIoDetail(${io.id})">${escHtml(io.recipient||'-')}</td>
+        <td style="padding:7px 10px;text-align:center"><input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation();_ioToggleChecked('${io.id}',this.checked)" style="width:auto;margin:0;cursor:pointer"></td>
+        <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1);cursor:pointer" onclick="openIoDetail('${io.id}')">${escHtml(io.brand||'-')}</td>
+        <td style="padding:7px 10px;font-size:12px;font-weight:600;cursor:pointer" onclick="openIoDetail('${io.id}')">${escHtml(io.recipient||'-')}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);font-family:monospace">${escHtml(io.phone||'-')}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(io.items||'-')}</td>
         <td style="padding:7px 10px;font-size:11px;color:var(--t3);width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.address||'')}">${escHtml(io.address||'-')}</td>
         <td style="padding:7px 10px;text-align:center">${io.matchStatus?`<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap;${matchCls}">${escHtml(io.matchStatus)}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
-        <td style="padding:7px 10px;text-align:center"><button onclick="event.stopPropagation();_ioMarkShipped(${io.id})" style="padding:4px 11px;font-size:11px;background:var(--grn);border:1px solid var(--grn);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:700">📤 출고</button></td>
+        <td style="padding:7px 10px;text-align:center"><button onclick="event.stopPropagation();_ioMarkShipped('${io.id}')" style="padding:4px 11px;font-size:11px;background:var(--grn);border:1px solid var(--grn);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:700">📤 출고</button></td>
       </tr>`;
     } else if(_ioCommerceMode === 'ship'){
       // ── 출고 모드 행 (송장번호·출고일 표시 + 교환환불 등록 + 주문으로 되돌리기) ──
       const actionCell = `<div style="display:flex;gap:3px;justify-content:center;flex-wrap:nowrap">
-        <button onclick="event.stopPropagation();openReturnModal(${io.id})" style="padding:3px 7px;font-size:10px;background:var(--s1);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2);white-space:nowrap">🔄/↩ 교환·환불</button>
-        <button onclick="event.stopPropagation();_ioUnship(${io.id})" style="padding:3px 7px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3);white-space:nowrap" title="출고를 취소하고 주문 단계로 되돌립니다">↶ 주문</button>
+        <button onclick="event.stopPropagation();openReturnModal('${io.id}')" style="padding:3px 7px;font-size:10px;background:var(--s1);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2);white-space:nowrap">🔄/↩ 교환·환불</button>
+        <button onclick="event.stopPropagation();_ioUnship('${io.id}')" style="padding:3px 7px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3);white-space:nowrap" title="출고를 취소하고 주문 단계로 되돌립니다">↶ 주문</button>
       </div>`;
-      return `<tr style="border-bottom:1px solid var(--bdr-lt);cursor:pointer" onclick="openIoDetail(${io.id})" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
+      return `<tr style="border-bottom:1px solid var(--bdr-lt);cursor:pointer" onclick="openIoDetail('${io.id}')" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
         <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1)">${escHtml(io.brand||'-')}</td>
         <td style="padding:7px 10px;font-size:12px;font-weight:600">${escHtml(io.recipient||'-')}</td>
         <td style="padding:7px 10px;font-size:11px;color:var(--t2);font-family:monospace">${escHtml(io.phone||'-')}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(io.items||'-')}</td>
-        <td style="padding:7px 10px;font-size:11px;font-family:monospace;color:${io.invoice?'var(--t2)':'var(--t3)'}">${io.invoice?escHtml(io.invoice):`<button onclick="event.stopPropagation();_ioEditInvoice(${io.id})" style="padding:2px 7px;font-size:10px;background:none;border:1px dashed var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)">+ 입력</button>`}</td>
+        <td style="padding:7px 10px;font-size:11px;font-family:monospace;color:${io.invoice?'var(--t2)':'var(--t3)'}">${io.invoice?escHtml(io.invoice):`<button onclick="event.stopPropagation();_ioEditInvoice('${io.id}')" style="padding:2px 7px;font-size:10px;background:none;border:1px dashed var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)">+ 입력</button>`}</td>
         <td style="padding:7px 10px;font-size:10.5px;color:var(--t3);font-family:monospace">${escHtml(io.shipDate||io.date||'-')}</td>
         <td style="padding:7px 10px;text-align:center">${actionCell}</td>
       </tr>`;
@@ -13579,18 +13579,18 @@ function _renderIoCommerce(){
         stageActionCell = `<div style="display:flex;flex-direction:column;gap:3px;align-items:stretch">
           <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(168,90,16,.15);color:var(--org)">⏳ 입고대기</span>
           <div style="display:flex;gap:3px;justify-content:center">
-            <button onclick="event.stopPropagation();confirmReturnComplete(${io.id})" style="flex:1;padding:3px 6px;font-size:10px;background:var(--grn);border:1px solid var(--grn);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:600">✓ 입고확인</button>
-            <button onclick="event.stopPropagation();cancelReturn(${io.id})" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="요청 취소">✕</button>
+            <button onclick="event.stopPropagation();confirmReturnComplete('${io.id}')" style="flex:1;padding:3px 6px;font-size:10px;background:var(--grn);border:1px solid var(--grn);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:600">✓ 입고확인</button>
+            <button onclick="event.stopPropagation();cancelReturn('${io.id}')" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="요청 취소">✕</button>
           </div>
         </div>`;
       } else {
         // 완료
         stageActionCell = `<div style="display:flex;flex-direction:column;gap:3px;align-items:stretch">
           <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(46,139,44,.12);color:var(--grn)">✓ 완료${io.returnCompletedAt?` ${escHtml(io.returnCompletedAt.slice(5))}`:''}</span>
-          <button onclick="event.stopPropagation();undoReturnComplete(${io.id})" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="입고 확인을 취소하고 요청 상태로 되돌립니다">↶ 되돌리기</button>
+          <button onclick="event.stopPropagation();undoReturnComplete('${io.id}')" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="입고 확인을 취소하고 요청 상태로 되돌립니다">↶ 되돌리기</button>
         </div>`;
       }
-      return `<tr style="${rowStyle}" onclick="openIoDetail(${io.id})" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${isReturnPending&&!isReturnDone?'rgba(168,90,16,.05)':''}'">
+      return `<tr style="${rowStyle}" onclick="openIoDetail('${io.id}')" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${isReturnPending&&!isReturnDone?'rgba(168,90,16,.05)':''}'">
         <td style="padding:7px 10px"><span style="display:inline-block;padding:2px 7px;border-radius:3px;font-size:10.5px;font-weight:700;${typeCls}">${typeIcon} ${typeLabel}</span></td>
         <td style="padding:7px 10px;font-size:11px;font-weight:600;color:${isReturnDone?'var(--t3)':'var(--t1)'}">${escHtml(io.brand||'-')}</td>
         <td style="padding:7px 10px;font-size:12px;font-weight:600">${escHtml(io.recipient||'-')}</td>
@@ -13685,13 +13685,14 @@ function _ioUnship(id){
 
 // ── 체크박스 ──
 function _ioToggleChecked(id, on){
+  id=String(id);
   if(on) _ioCommerceChecked.add(id); else _ioCommerceChecked.delete(id);
   _renderIoCommerce();
 }
 function _ioToggleAllChecked(on){
   const normalItems = ioItems.filter(io => !!io.brand && (!io.returnStatus || io.returnStatus==='정상') && _ioStage(io)==='order');
   const filtered = _ioCommerceBrand!=='all' ? normalItems.filter(io=>(io.brand||'미지정')===_ioCommerceBrand) : normalItems;
-  if(on) filtered.forEach(io=>_ioCommerceChecked.add(io.id));
+  if(on) filtered.forEach(io=>_ioCommerceChecked.add(String(io.id)));
   else _ioCommerceChecked = new Set();
   _renderIoCommerce();
 }
@@ -13795,7 +13796,7 @@ function openIoModal(idOrNull){
       </div>
     </div>
     <div class="mb" style="display:flex;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px;align-items:center">
-      ${isEdit?`<button class="btn br bs" onclick="deleteIo(${io.id})">🗑 삭제</button>`:'<span></span>'}
+      ${isEdit?`<button class="btn br bs" onclick="deleteIo('${io.id}')">🗑 삭제</button>`:'<span></span>'}
       <div style="display:flex;gap:8px">
         <button class="btn bg bs" onclick="closeM('mIo')">취소</button>
         <button class="btn bp bs" onclick="saveIo(${isEdit?io.id:'null'})">${isEdit?'저장':'등록'}</button>
@@ -14116,10 +14117,10 @@ function _showCommerceDetail(io){
           <div style="font-weight:700;font-size:13px">${icon} ${escHtml(rs)}</div>
           ${isReturnPending ? `
             <div style="display:flex;gap:6px">
-              <button onclick="confirmReturnComplete(${io.id});closeM('mIoDetail')" style="padding:5px 12px;font-size:11.5px;background:var(--grn);border:1px solid var(--grn);border-radius:5px;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">✓ 입고확인</button>
-              <button onclick="cancelReturn(${io.id});closeM('mIoDetail')" style="padding:5px 8px;font-size:11.5px;background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--t3);cursor:pointer;font-family:inherit">요청 취소</button>
+              <button onclick="confirmReturnComplete('${io.id}');closeM('mIoDetail')" style="padding:5px 12px;font-size:11.5px;background:var(--grn);border:1px solid var(--grn);border-radius:5px;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">✓ 입고확인</button>
+              <button onclick="cancelReturn('${io.id}');closeM('mIoDetail')" style="padding:5px 8px;font-size:11.5px;background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--t3);cursor:pointer;font-family:inherit">요청 취소</button>
             </div>` : isReturnDone ? `
-            <button onclick="undoReturnComplete(${io.id});closeM('mIoDetail')" style="padding:5px 10px;font-size:11.5px;background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--t3);cursor:pointer;font-family:inherit">↶ 되돌리기</button>` : ''}
+            <button onclick="undoReturnComplete('${io.id}');closeM('mIoDetail')" style="padding:5px 10px;font-size:11.5px;background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--t3);cursor:pointer;font-family:inherit">↶ 되돌리기</button>` : ''}
         </div>
         <div style="font-size:11.5px;color:var(--t2);line-height:1.6">
           ${io.returnRequestedAt ? `<div><span style="color:var(--t3)">요청일:</span> ${escHtml(io.returnRequestedAt)}</div>` : ''}
@@ -14133,7 +14134,7 @@ function _showCommerceDetail(io){
     returnSection = `
       <div style="margin-top:14px;padding:10px 14px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
         <div style="font-size:11.5px;color:var(--t3)">정상 출고 상태입니다</div>
-        <button onclick="openReturnModal(${io.id});closeM('mIoDetail')" style="padding:5px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;color:var(--t2);cursor:pointer;font-family:inherit">🔄/↩ 교환·환불 등록</button>
+        <button onclick="openReturnModal('${io.id}');closeM('mIoDetail')" style="padding:5px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;color:var(--t2);cursor:pointer;font-family:inherit">🔄/↩ 교환·환불 등록</button>
       </div>
     `;
   }
@@ -14171,7 +14172,7 @@ function _showCommerceDetail(io){
       ${returnSection}
     </div>
     <div class="mb" style="display:flex;justify-content:space-between;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px">
-      <button class="btn br bs" onclick="deleteIo(${io.id});closeM('mIoDetail')">🗑 삭제</button>
+      <button class="btn br bs" onclick="deleteIo('${io.id}');closeM('mIoDetail')">🗑 삭제</button>
       <button class="btn bg bs" onclick="closeM('mIoDetail')">닫기</button>
     </div>
   </div>`;
@@ -14747,7 +14748,7 @@ function _renderCommercePick(idx){
   if(!el) return;
   el.innerHTML = list.slice(0,200).map(p=>{
     const img = p.imgs && p.imgs.length ? (typeof p.imgs[0]==='string'?p.imgs[0]:(p.imgs[0].url||'')) : '';
-    return `<div onclick="_setCommerceMatch(${idx}, ${p.id})" style="display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--bdr-lt)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
+    return `<div onclick="_setCommerceMatch(${idx}, '${p.id}')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--bdr-lt)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
       <div style="width:32px;height:32px;border-radius:4px;background:var(--s2);border:1px solid var(--bdr-lt);overflow:hidden;display:flex;align-items:center;justify-content:center;flex-shrink:0">${img?`<img src="${img}" style="width:100%;height:100%;object-fit:cover">`:'📦'}</div>
       <div style="flex:1;min-width:0">
         <div style="font-size:12px;font-weight:600">${escHtml(p.name||'')}</div>
@@ -14849,7 +14850,7 @@ function openReturnModal(ioId){
     </div>
     <div class="mb" style="display:flex;justify-content:flex-end;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px">
       <button class="btn bg bs" onclick="closeM('mReturn')">취소</button>
-      <button class="btn bp bs" onclick="saveReturn(${io.id})">등록</button>
+      <button class="btn bp bs" onclick="saveReturn('${io.id}')">등록</button>
     </div>
   </div>`;
   openM('mReturn');
@@ -15748,7 +15749,7 @@ function _relTime(ts){
 }
 
 function _openNotif(id){
-  const n = _notifs.find(x=>x.id===id);
+  const n = _notifs.find(x=>String(x.id)===String(id));
   if(!n) return;
   n.read = true;
   _saveNotifs();
@@ -21741,7 +21742,7 @@ function renderTodayTasksPanel(){
     const escCont=String(t.cont||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     const escNote=String(t.note||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     return `<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 12px;border-bottom:1px solid var(--bdr-lt);background:${t.done?'var(--s2)':'transparent'};transition:background .15s">
-      <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask(${t.id})" style="width:17px;height:17px;cursor:pointer;accent-color:var(--gold);flex-shrink:0;margin-top:2px">
+      <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${t.id}')" style="width:17px;height:17px;cursor:pointer;accent-color:var(--gold);flex-shrink:0;margin-top:2px">
       <div style="flex:1;min-width:0;cursor:pointer" onclick="switchTab('schedule',getTabBtn('schedule'))">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap">
           <span style="font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:3px;background:${bg};color:${clr};letter-spacing:.2px">${t.cat||''}</span>
@@ -21865,7 +21866,7 @@ function renderCalWidget(){
         done: isDone,
         canceled: isOrderCanceled(st),
         t:`${initBadge}<span style="margin-left:4px">발주: ${(o.vendor||'').substring(0,6)}</span>`,
-        click:`calGoOrder(${o.id})`,
+        click:`calGoOrder('${o.id}')`,
         title: `${o.vendor||''} — 발주 요청출고일 · 품목 ${(o.rows||[]).length}개 · ${st}`
       });
     });
@@ -21882,7 +21883,7 @@ function renderCalWidget(){
         done: isDone,
         canceled: isOrderCanceled(st),
         t:`${initBadge}<span style="margin-left:4px">샘플: ${(s.name||'').substring(0,6)}</span>`,
-        click:`calGoSample(${s.id})`,
+        click:`calGoSample('${s.id}')`,
         title: `${s.name||''} — ${s.manager||''} · 샘플 납기일 (${st})`
       });
     });
@@ -21897,7 +21898,7 @@ function renderCalWidget(){
         done: isDone,
         canceled: isOrderCanceled(st),
         t:`<span style="margin-right:3px">🇨🇳→</span><span>샘플: ${(s.name||'').substring(0,8)}</span>`,
-        click:`calGoSample(${s.id})`,
+        click:`calGoSample('${s.id}')`,
         title: `${s.name||''} — 공장 출고일 (${st})`
       });
     });
@@ -21912,7 +21913,7 @@ function renderCalWidget(){
         done: isDone,
         canceled: isOrderCanceled(st),
         t:`<span style="margin-right:3px">🇨🇳→</span><span>발주: ${(o.vendor||'').substring(0,8)}</span>`,
-        click:`calGoOrder(${o.id})`,
+        click:`calGoOrder('${o.id}')`,
         title: `${o.vendor||''} — 발주 공장출고일 · 품목 ${(o.rows||[]).length}개 (${st})`
       });
     });
@@ -22019,7 +22020,7 @@ function renderCalWidget(){
 function calGoOrder(ordId){
   switchTab('order',getTabBtn('order'));
   setTimeout(()=>{
-    const o=orders.find(x=>x.id===ordId);
+    const o=orders.find(x=>String(x.id)===String(ordId));
     if(o){
       ordRowsBuf=(o.rows||[]).map(r=>({...r}));
       openOrdModal(ordId);
@@ -22032,14 +22033,14 @@ function calGoProc(procId){
   // 공정 단독(발주와 연결 안 됨) — 발주 탭으로 이동
   switchTab('order',getTabBtn('order'));
   setTimeout(()=>{
-    const p=procItems.find(x=>x.id===procId);
+    const p=procItems.find(x=>String(x.id)===String(procId));
     if(p){ showToast(`공정 "${p.name}" — ${p.vendor||''}`,'var(--blu)',3000); }
   },120);
 }
 function calGoSample(smpId){
   switchTab('sample',getTabBtn('sample'));
   setTimeout(()=>{
-    const s=samples.find(x=>x.id===smpId);
+    const s=samples.find(x=>String(x.id)===String(smpId));
     if(s){ openSmpModal(smpId); }
     else { showToast('⚠ 샘플을 찾을 수 없습니다','var(--org)'); }
   },120);
@@ -22319,10 +22320,10 @@ function renderSample(){
             const srcKey='_smpSrc_'+s.id;
             window[imgsKey]=imgs;
             window[srcKey]=sourceDocs;
-            const isChk=window._smpChecked.has(s.id);
-            return`<tr class="${rc}${isChk?' checked-row':''}" onclick="openSmpModal(${s.id})" style="${isChk?'background:rgba(139,105,20,.06)':''}">
+            const isChk=window._smpChecked.has(String(s.id));
+            return`<tr class="${rc}${isChk?' checked-row':''}" onclick="openSmpModal('${s.id}')" style="${isChk?'background:rgba(139,105,20,.06)':''}">
               <td onclick="event.stopPropagation()" style="text-align:center">
-                <input type="checkbox" ${isChk?'checked':''} onchange="toggleSmpChk(${s.id},this.checked)">
+                <input type="checkbox" ${isChk?'checked':''} onchange="toggleSmpChk('${s.id}',this.checked)">
               </td>
               <td onclick="event.stopPropagation()">
                 ${imgs.length
@@ -22356,7 +22357,7 @@ function renderSample(){
               <td><span class="chip" style="font-size:9.5px">${s.type||'—'}</span></td>
               <td onclick="event.stopPropagation()" style="position:relative">
                 <span class="chip ${SMP_CLS[s.status]||''}" style="font-size:9.5px;cursor:pointer;user-select:none"
-                  onclick="openSmpStatusDropdown(event,${s.id})" title="클릭하여 상태 변경">${smpStatusLabel(s.status)} ▾</span>
+                  onclick="openSmpStatusDropdown(event,'${s.id}')" title="클릭하여 상태 변경">${smpStatusLabel(s.status)} ▾</span>
               </td>
               <td style="font-size:10.5px;color:var(--t2);white-space:nowrap">${s.reqDate||'—'}</td>
               <td style="font-size:10.5px;white-space:nowrap;${s.factShip?'color:var(--t2)':missFs?'color:var(--red);font-weight:600':'color:var(--t3)'}">${s.factShip||'—'}</td>
@@ -22372,7 +22373,7 @@ function renderSample(){
               <td style="font-size:11px;color:var(--t2)">${s.mat||'—'} / ${s.plating||'—'}</td>
               <td style="font-size:11px;color:var(--t2)">${s.sz1||'—'}${s.sz2?` (${s.sz2})`:''}</td>
               <td onclick="event.stopPropagation()">
-                <button class="btn bgo bs" onclick="openInvoice(${s.id})" style="font-size:10px;padding:3px 8px">🧾</button>
+                <button class="btn bgo bs" onclick="openInvoice('${s.id}')" style="font-size:10px;padding:3px 8px">🧾</button>
               </td>
             </tr>`;
           }).join(''):
@@ -22609,7 +22610,7 @@ function changeOrdStatusInline(oid, newStatus){
       if(p && p._notionId) changedProdIds.add(p.id);
     });
     changedProdIds.forEach(pid => {
-      const p = productDB.find(x=>x.id===pid);
+      const p = productDB.find(x=>String(x.id)===String(pid));
       if(p) syncProductToNotion(p, true).catch(e => console.warn('재고 노션 sync 실패:', p.code, e));
     });
   }
@@ -22621,6 +22622,7 @@ function changeOrdStatusInline(oid, newStatus){
 // ── 체크박스 토글
 function toggleSmpChk(id,chk){
   if(!window._smpChecked)window._smpChecked=new Set();
+  id=String(id);
   if(chk)window._smpChecked.add(id);else window._smpChecked.delete(id);
   // 발주서와 동일하게 전체 재렌더 — 색상·비활성 상태 정확히 반영
   renderSample();
@@ -22658,12 +22660,12 @@ function deleteBulkSamples(){
   const ids=[...window._smpChecked];
   showConfirm(`선택한 ${ids.length}개 샘플을 삭제합니다.\n이 작업은 되돌릴 수 없습니다.`,()=>{
     ids.forEach(id=>{
-      const s=samples.find(x=>x.id===id);
+      const s=samples.find(x=>String(x.id)===String(id));
       if(s&&s._notionId) nDelete(s._notionId);
       // 🌐 서버 실시간 삭제 (다른 기기에서도 즉시 사라짐)
       if(s && typeof realtimeDelete==='function'){ try{ realtimeDelete('sample', s); }catch(_){} }
     });
-    samples=samples.filter(s=>!ids.includes(s.id));
+    samples=samples.filter(s=>!ids.includes(String(s.id)));
     window._smpChecked.clear();
     save();updateBadges();renderTab();
     showToast(`✓ ${ids.length}개 삭제됨`,'var(--grn)');
@@ -23969,6 +23971,7 @@ function setOrdSubTab(v){
 // ── 발주 체크박스 토글 ──
 function toggleOrdChk(id,chk){
   if(!window._ordChecked) window._ordChecked=new Set();
+  id=String(id);
   if(chk) window._ordChecked.add(id);
   else window._ordChecked.delete(id);
   // 전체 재렌더 (액션 바 색상/활성화 상태도 업데이트)
@@ -23981,21 +23984,21 @@ function toggleAllOrdChk(){
   // 현재 화면에 보이는 발주 ID들 — renderOrder가 노출한 list에서 직접 조회
   // (DOM querySelector 의존 안 함 — 더 견고)
   const renderedList = window._ordRenderedList || [];
-  const visibleIds = renderedList.map(o => o.id).filter(id => id != null);
+  const visibleIds = renderedList.map(o => String(o.id)).filter(id => id != null && id !== 'null');
   if(visibleIds.length === 0){
     // 폴백: list 노출 안 됐으면 DOM에서 추출
     document.querySelectorAll('input[type="checkbox"]').forEach(cb=>{
       const onch = cb.getAttribute('onchange') || cb.getAttribute('onclick') || '';
-      const m = onch.match(/toggleOrdChk\((\d+)/);
-      if(m) visibleIds.push(+m[1]);
+      const m = onch.match(/toggleOrdChk\('?([^',)]+)'?/);
+      if(m) visibleIds.push(String(m[1]));
     });
   }
   if(visibleIds.length===0) return;
-  const allChecked = visibleIds.every(id=>window._ordChecked.has(id));
+  const allChecked = visibleIds.every(id=>window._ordChecked.has(String(id)));
   if(allChecked){
-    visibleIds.forEach(id=>window._ordChecked.delete(id));
+    visibleIds.forEach(id=>window._ordChecked.delete(String(id)));
   } else {
-    visibleIds.forEach(id=>window._ordChecked.add(id));
+    visibleIds.forEach(id=>window._ordChecked.add(String(id)));
   }
   renderOrder();
 }
@@ -24452,7 +24455,7 @@ function renderOrder(){
           <tr>
             <th style="width:32px">${(()=>{
               const filtered=list||[];
-              const checked=filtered.length>0 && filtered.every(o=>window._ordChecked&&window._ordChecked.has(o.id));
+              const checked=filtered.length>0 && filtered.every(o=>window._ordChecked&&window._ordChecked.has(String(o.id)));
               return `<input type="checkbox" onclick="event.stopPropagation();toggleAllOrdChk()" ${checked?'checked':''} title="전체선택/해제 토글">`;
             })()}</th>
             <th>업체</th>
@@ -24480,7 +24483,7 @@ function renderOrder(){
             const ordStatus = normalizeOrderStatus(o.status);
             const isOrdDone = isOrderShipped(ordStatus);
             const isOrdCanceled = isOrderCanceled(ordStatus);
-            const isOrdChecked=window._ordChecked&&window._ordChecked.has(o.id);
+            const isOrdChecked=window._ordChecked&&window._ordChecked.has(String(o.id));
             const missFs=!isOrdDone&&!isOrdCanceled&&!o.factShip;
             const active=!isOrdDone&&!isOrdCanceled;
             const rowCls=[
@@ -24537,11 +24540,11 @@ function renderOrder(){
             const statusBadge = (()=>{
               const ordChip = isOrdDone
                 ? (ordSubTab==='done'
-                   ? `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">✓ 완료</span>`
-                   : `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">✓ 완료</span>${completedDateStr?`<span style="font-size:9.5px;color:var(--t3);white-space:nowrap;display:block;margin-top:1px" title="완료일자">${completedDateStr}</span>`:''}`)
+                   ? `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,'${o.id}')" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">✓ 완료</span>`
+                   : `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,'${o.id}')" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(46,139,44,.15);color:var(--grn);border:1px solid rgba(46,139,44,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">✓ 완료</span>${completedDateStr?`<span style="font-size:9.5px;color:var(--t3);white-space:nowrap;display:block;margin-top:1px" title="완료일자">${completedDateStr}</span>`:''}`)
                 : isOrdCanceled
-                ? `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(120,120,120,.12);color:var(--t3);border:1px solid rgba(120,120,120,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">취소보류</span>`
-                : `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,${o.id})" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">${ordStatus}</span>`;
+                ? `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,'${o.id}')" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(120,120,120,.12);color:var(--t3);border:1px solid rgba(120,120,120,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">취소보류</span>`
+                : `<span onclick="event.stopPropagation();openOrdStatusDropdown(event,'${o.id}')" title="클릭해서 상태 변경" style="font-size:9.5px;background:rgba(168,90,16,.1);color:var(--org);border:1px solid rgba(168,90,16,.3);padding:1px 7px;border-radius:10px;font-weight:700;white-space:nowrap;cursor:pointer">${ordStatus}</span>`;
               // 거래명세서 칩이 있으면 두 줄로
               if(invBadge){
                 return `<div style="display:flex;flex-direction:column;align-items:flex-start;gap:3px">${ordChip}${invBadge}</div>`;
@@ -24555,10 +24558,10 @@ function renderOrder(){
             </span>`).join('');
             // 한 발주를 2행으로 표시: 1행 메타정보 + 2행 품목내역(전체 너비)
             // border-bottom 처리로 시각적으로 묶음 표현
-            const openModal = `ordRowsBuf=[...(orders.find(x=>x.id===${o.id})?.rows||[])].map(r=>({...r}));openOrdModal(${o.id})`;
+            const openModal = `ordRowsBuf=[...(orders.find(x=>String(x.id)==='${o.id}')?.rows||[])].map(r=>({...r}));openOrdModal('${o.id}')`;
             return `<tr class="${rowCls} ord-row-top" style="${rowStyle};cursor:pointer" onclick="${openModal}">
               <td onclick="event.stopPropagation()" style="text-align:center;vertical-align:middle;border-bottom:none">
-                <input type="checkbox" ${isOrdChecked?'checked':''} onchange="toggleOrdChk(${o.id},this.checked)" style="width:14px;height:14px;cursor:pointer;accent-color:var(--gold)">
+                <input type="checkbox" ${isOrdChecked?'checked':''} onchange="toggleOrdChk('${o.id}',this.checked)" style="width:14px;height:14px;cursor:pointer;accent-color:var(--gold)">
               </td>
               <td style="white-space:nowrap;vertical-align:middle;border-bottom:none">
                 <div style="display:flex;align-items:center;gap:6px">
@@ -24585,12 +24588,12 @@ function renderOrder(){
               `}
               <td style="vertical-align:middle;border-bottom:none">${statusBadge}</td>
               <td style="text-align:center;white-space:nowrap;vertical-align:middle;border-bottom:none" onclick="event.stopPropagation()">
-                ${(o.files&&o.files.length)?`<span style="font-size:10.5px;color:var(--blu);cursor:pointer" onclick="showOrdFiles(${o.id})" title="첨부파일 보기">📎 ${o.files.length}</span>`:'<span style="font-size:10.5px;color:var(--t3)">—</span>'}
+                ${(o.files&&o.files.length)?`<span style="font-size:10.5px;color:var(--blu);cursor:pointer" onclick="showOrdFiles('${o.id}')" title="첨부파일 보기">📎 ${o.files.length}</span>`:'<span style="font-size:10.5px;color:var(--t3)">—</span>'}
               </td>
               <td style="text-align:right;white-space:nowrap;vertical-align:middle;border-bottom:none" onclick="event.stopPropagation()">
                 ${isOrdDone
-                  ? `<button onclick="revertOrdComplete(${o.id})" title="완료 취소" style="padding:3px 7px;font-size:10px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--t2);font-family:inherit;white-space:nowrap">↺ 되돌리기</button>`
-                  : `<button onclick="completeOrd(${o.id})" title="출고 완료 처리" style="padding:3px 9px;font-size:10px;background:var(--grn);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;white-space:nowrap;font-weight:600">✓ 완료</button>`}
+                  ? `<button onclick="revertOrdComplete('${o.id}')" title="완료 취소" style="padding:3px 7px;font-size:10px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--t2);font-family:inherit;white-space:nowrap">↺ 되돌리기</button>`
+                  : `<button onclick="completeOrd('${o.id}')" title="출고 완료 처리" style="padding:3px 9px;font-size:10px;background:var(--grn);color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:inherit;white-space:nowrap;font-weight:600">✓ 완료</button>`}
               </td>
             </tr>
             <tr class="${rowCls} ord-row-bottom" style="${rowStyle};cursor:pointer" onclick="${openModal}">
@@ -24657,7 +24660,7 @@ function completeOrd(ordId){
           if(p && p._notionId) changedProdIds.add(p.id);
         });
         changedProdIds.forEach(pid => {
-          const p = productDB.find(x=>x.id===pid);
+          const p = productDB.find(x=>String(x.id)===String(pid));
           if(p) syncProductToNotion(p, true).catch(e => console.warn('재고 노션 sync 실패:', p.code, e));
         });
       }
@@ -24760,7 +24763,7 @@ function revertOrdComplete(ordId){
           if(p && p._notionId) changedProdIds.add(p.id);
         });
         changedProdIds.forEach(pid => {
-          const p = productDB.find(x=>x.id===pid);
+          const p = productDB.find(x=>String(x.id)===String(pid));
           if(p) syncProductToNotion(p, true).catch(e => console.warn('재고 복원 노션 sync 실패:', p.code, e));
         });
       }
@@ -24918,7 +24921,7 @@ async function renderExcelPreview(f, body){
   }
 }
 
-function setProcStg(id,idx){const p=procItems.find(x=>x.id===id);if(!p||p.shipped)return;p.stageIdx=idx;save();renderTab();}
+function setProcStg(id,idx){const p=procItems.find(x=>String(x.id)===String(id));if(!p||p.shipped)return;p.stageIdx=idx;save();renderTab();}
 
 // Returns onclick string for inline stage click (avoids template literal nesting)
 
@@ -25027,10 +25030,10 @@ function renderDayView(sc){
           <span class="tt ${it.done?'done':''}" style="font-size:11px;flex:1;margin-left:${it.badge?'2px':'0'}">${it.cont}</span>
         </div>`).join('')}
       ${manualTasks.map(t=>`
-        <div class="task-it" draggable="true" ondragstart="taskDragStart(event,${t.id})" ondragend="taskDragEnd(event)" style="margin-bottom:2px" title="드래그로 이동 가능">
-          <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask(${t.id})">
-          <span class="tt ${t.done?'done':''}" onclick="openEditTask(${t.id})" style="cursor:pointer;flex:1;font-size:11.5px">${t.cont}</span>
-          ${t.files&&t.files.length?`<span onclick="openEditTask(${t.id})" title="${t.files.length}개 첨부" style="font-size:10px;cursor:pointer;color:var(--t3);flex-shrink:0">📎${t.files.length}</span>`:''}
+        <div class="task-it" draggable="true" ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" style="margin-bottom:2px" title="드래그로 이동 가능">
+          <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${t.id}')">
+          <span class="tt ${t.done?'done':''}" onclick="openEditTask('${t.id}')" style="cursor:pointer;flex:1;font-size:11.5px">${t.cont}</span>
+          ${t.files&&t.files.length?`<span onclick="openEditTask('${t.id}')" title="${t.files.length}개 첨부" style="font-size:10px;cursor:pointer;color:var(--t3);flex-shrink:0">📎${t.files.length}</span>`:''}
         </div>`).join('')}
     </div>`;
   }
@@ -25095,7 +25098,7 @@ function getAutoItems(ds, cat){
         badge: initBadge(cl, p.vendor),
         done:p.shipped,
         id:'proc_'+p.id,
-        click: p.orderId ? `calGoOrder(${p.orderId})` : `calGoProc(${p.id})`
+        click: p.orderId ? `calGoOrder(${p.orderId})` : `calGoProc('${p.id}')`
       });
     });
     // orderId가 없는 발주 — 공정 연결 안 된 발주 (완료/취소 제외)
@@ -25108,7 +25111,7 @@ function getAutoItems(ds, cat){
           badge: initBadge(cl, o.vendor),
           done:false,
           id:'ord_'+o.id,
-          click: `calGoOrder(${o.id})`
+          click: `calGoOrder('${o.id}')`
         });
       }
     });
@@ -25121,7 +25124,7 @@ function getAutoItems(ds, cat){
         badge: initBadge(cl, s.manager),
         done:isOrderShipped(s.status),
         id:'smp_'+s.id,
-        click: `calGoSample(${s.id})`
+        click: `calGoSample('${s.id}')`
       });
     });
   } else if(cat==='중국출고'){
@@ -25134,7 +25137,7 @@ function getAutoItems(ds, cat){
         badge: initBadge(cl, s.manager),
         done:isOrderShipped(s.status),
         id:'smpfs_'+s.id,
-        click: `calGoSample(${s.id})`
+        click: `calGoSample('${s.id}')`
       });
     });
     // 발주의 공장 출고일
@@ -25146,7 +25149,7 @@ function getAutoItems(ds, cat){
         badge: initBadge(cl, o.vendor),
         done:isOrderShipped(o.status),
         id:'ordfs_'+o.id,
-        click: `calGoOrder(${o.id})`
+        click: `calGoOrder('${o.id}')`
       });
     });
   }
@@ -25196,10 +25199,10 @@ function renderWeekView(sc){
               ${it.badge||''}
               <span class="tt ${it.done?'done':''}" style="font-size:10.5px;flex:1;margin-left:${it.badge?'2px':'0'}">${it.cont}</span>
             </div>`).join('')}
-            ${manualTasks.map(t=>`<div class="task-it" draggable="true" ondragstart="taskDragStart(event,${t.id})" ondragend="taskDragEnd(event)" title="드래그로 이동 가능">
-              <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask(${t.id})">
-              <span class="tt ${t.done?'done':''}" onclick="openEditTask(${t.id})" style="cursor:pointer;flex:1">${t.cont}</span>
-              ${t.files&&t.files.length?`<span title="${t.files.length}개 첨부" style="font-size:10px;cursor:pointer" onclick="openEditTask(${t.id})">📎${t.files.length}</span>`:''}
+            ${manualTasks.map(t=>`<div class="task-it" draggable="true" ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" title="드래그로 이동 가능">
+              <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${t.id}')">
+              <span class="tt ${t.done?'done':''}" onclick="openEditTask('${t.id}')" style="cursor:pointer;flex:1">${t.cont}</span>
+              ${t.files&&t.files.length?`<span title="${t.files.length}개 첨부" style="font-size:10px;cursor:pointer" onclick="openEditTask('${t.id}')">📎${t.files.length}</span>`:''}
             </div>`).join('')}
             <button class="add-t" onclick="openTaskFull('${ds}','오전','${cat}')">＋</button>
           </div>`;
@@ -28319,7 +28322,7 @@ async function saveOrd(forceOverwrite){
           if(p && p._notionId) changedProdIds.add(p.id);
         });
         changedProdIds.forEach(pid => {
-          const p = productDB.find(x=>x.id===pid);
+          const p = productDB.find(x=>String(x.id)===String(pid));
           if(p) syncProductToNotion(p, true).catch(e => console.warn('상태변경 재고 sync 실패:', p.code, e));
         });
       }
@@ -28331,7 +28334,7 @@ async function saveOrd(forceOverwrite){
   }
   // 저장된 최신 order를 _notionId 포함해서 정확히 찾아서 sync — 수정만 디바운싱
   // (신규는 위에서 createWithNotion이 이미 동기 처리함)
-  const so=orders.find(x=>x.id===ordId);
+  const so=orders.find(x=>String(x.id)===String(ordId));
   if(so){
     if(!isNew) debouncedSync('order', so, true);
     // 충돌 감지 스냅샷 정리 (다음 편집 시 새로 기록되도록)
@@ -28352,7 +28355,7 @@ async function saveOrd(forceOverwrite){
           if(p && p._notionId) changedProdIds.add(p.id);
         });
         changedProdIds.forEach(pid => {
-          const p = productDB.find(x=>x.id===pid);
+          const p = productDB.find(x=>String(x.id)===String(pid));
           if(p) syncProductToNotion(p, true).catch(e => console.warn('입고 재고 sync 실패:', p.code, e));
         });
       }
@@ -29576,7 +29579,7 @@ function showClientPropDp(id){
   document.getElementById('slDpT').innerHTML=(cl.initials?`<span class="cl-lbl">${clInitHtml(cl)}<span>${cl.name} 영업이력</span></span>`:cl.name+' 영업이력');
   document.getElementById('slDpB').innerHTML=`
     <div style="display:flex;flex-direction:column;gap:4px">
-      ${cp.map(p=>`<div style="padding:8px;background:var(--s2);border-radius:6px;border:1px solid var(--bdr);cursor:pointer" onclick="editPropModal(${p.id})">
+      ${cp.map(p=>`<div style="padding:8px;background:var(--s2);border-radius:6px;border:1px solid var(--bdr);cursor:pointer" onclick="editPropModal('${p.id}')">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <span style="font-size:12px;font-weight:600">${p.name}</span>
           <span class="chip ${RC[p.reaction]||'chip'}" style="font-size:10px">${p.reaction}</span>
@@ -29814,7 +29817,7 @@ function renderNdTable(tab){
     const pct=weeksElapsed!==null?Math.min(weeksElapsed/cycle*100,100):100;
     const rc=RC[last?.reaction||'대기중']||'chip';
     const isNew=cl.grade==='신규'||(sorted.length>0&&elapsed(sorted[sorted.length-1]?.date||'2000')<60);
-    return`<tr onclick="showClientPropDp(${cl.id})" style="${over?'background:rgba(192,48,48,.02)':''}">
+    return`<tr onclick="showClientPropDp('${cl.id}')" style="${over?'background:rgba(192,48,48,.02)':''}">
       <td><div class="cl-lbl">${clInitHtml(cl)} <div><div class="cn" title="${cl.name}">${cl.name}</div><div class="csub">${cl.cat}</div></div></div></td>
       <td><span class="chip ${cl.grade==='VIP'?'cgold':cl.grade==='우수'?'cg':''}">${cl.grade}</span></td>
       <td>${isNew?'<span class="chip cb" style="font-size:10px">🆕 신규</span>':'<span class="chip" style="font-size:10px">기존</span>'}</td>
@@ -30283,7 +30286,7 @@ function vMonthly(c){
 function vClients(c){
   c.innerHTML=`<div class="card"><div class="ch"><div><div class="ch-t">고객사 관리</div></div><button class="btn bp bs" onclick="openM('mCl')">+ 등록</button></div>
   <div class="tbl-wrap"><table><thead><tr><th>고객사</th><th>담당자</th><th>카테고리</th><th>등급</th><th>브랜드 성향</th><th>선호 소재</th><th>가격대</th><th>상태</th><th></th></tr></thead>
-  <tbody>${clients.map(cl=>`<tr><td onclick="showClientDp(${cl.id})" style="cursor:pointer"><span class="cl-lbl">${clInitHtml(cl)}<span class="cn" title="${cl.name}">${cl.name}</span></span></td><td>${cl.contact||''}<br><span class="csub">${cl.phone||''}</span></td><td>${cl.cat||''}</td><td><span class="chip ${cl.grade==='VIP'?'cgold':cl.grade==='우수'?'cg':''}">${cl.grade||''}</span></td><td style="color:var(--t2);font-size:11.5px">${cl.brandStyle||'-'}</td><td style="font-size:11px">${(cl.materials||'').split(',').map(m=>m.trim()).filter(Boolean).map(m=>`<span class="chip" style="font-size:9.5px;margin:1px">${m}</span>`).join('')||'-'}</td><td><span class="chip co" style="font-size:10px">${cl.priceRange||'-'}</span></td><td><span class="chip ${cl.status==='inactive'?'cr':'cg'}">${cl.status==='inactive'?'미활성':'활성'}</span></td><td style="text-align:center"><button onclick="openClModal(${cl.id})" style="padding:3px 8px;font-size:11px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'">수정</button></td></tr>`).join('')}
+  <tbody>${clients.map(cl=>`<tr><td onclick="showClientDp('${cl.id}')" style="cursor:pointer"><span class="cl-lbl">${clInitHtml(cl)}<span class="cn" title="${cl.name}">${cl.name}</span></span></td><td>${cl.contact||''}<br><span class="csub">${cl.phone||''}</span></td><td>${cl.cat||''}</td><td><span class="chip ${cl.grade==='VIP'?'cgold':cl.grade==='우수'?'cg':''}">${cl.grade||''}</span></td><td style="color:var(--t2);font-size:11.5px">${cl.brandStyle||'-'}</td><td style="font-size:11px">${(cl.materials||'').split(',').map(m=>m.trim()).filter(Boolean).map(m=>`<span class="chip" style="font-size:9.5px;margin:1px">${m}</span>`).join('')||'-'}</td><td><span class="chip co" style="font-size:10px">${cl.priceRange||'-'}</span></td><td><span class="chip ${cl.status==='inactive'?'cr':'cg'}">${cl.status==='inactive'?'미활성':'활성'}</span></td><td style="text-align:center"><button onclick="openClModal('${cl.id}')" style="padding:3px 8px;font-size:11px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'">수정</button></td></tr>`).join('')}
   </tbody></table></div></div>`;
 }
 
@@ -33795,7 +33798,7 @@ function openConsDetail(consId){
     const prepaid = getInvoicePrepaid(v);
     const isSample = v._fromSample;
     const ordLabel = isSample ? '🧪 샘플' : (v.ordNo || '—');
-    return `<div style="display:grid;grid-template-columns:90px 1fr 110px 110px;gap:8px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--bdr);font-size:11.5px;cursor:pointer" onclick="closeM('mConsDetail');openInvDetail(${v.id})">
+    return `<div style="display:grid;grid-template-columns:90px 1fr 110px 110px;gap:8px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--bdr);font-size:11.5px;cursor:pointer" onclick="closeM('mConsDetail');openInvDetail('${v.id}')">
       <span style="color:var(--t3)">${v.issuedAt}</span>
       <span style="color:${isSample?'#7A4DB5':'var(--t2)'};font-family:monospace;font-size:10.5px">${ordLabel}</span>
       <span style="text-align:right;font-weight:600">₩${(+v.total||0).toLocaleString()}</span>
@@ -33817,7 +33820,7 @@ function openConsDetail(consId){
   body += includedInvs.length ? includedInvs.map(v => {
     const isSample = v._fromSample;
     const ordLabel = isSample ? '🧪 샘플' : (v.ordNo || '—');
-    return `<span style="display:inline-block;margin:2px 6px 2px 0;padding:3px 8px;background:#F0E6FA;border-radius:9px;cursor:pointer;font-family:monospace;font-size:10px" onclick="if(typeof _rawCloseM===\\'function\\')_rawCloseM(\\'mConsDetail\\');else closeM(\\'mConsDetail\\');openInvDetail(${v.id})" title="개별 명세서 보기">${ordLabel} · ₩${(+v.total||0).toLocaleString()}${v.issuedAt?' · '+v.issuedAt:''}</span>`;
+    return `<span style="display:inline-block;margin:2px 6px 2px 0;padding:3px 8px;background:#F0E6FA;border-radius:9px;cursor:pointer;font-family:monospace;font-size:10px" onclick="if(typeof _rawCloseM===\\'function\\')_rawCloseM(\\'mConsDetail\\');else closeM(\\'mConsDetail\\');openInvDetail('${v.id}')" title="개별 명세서 보기">${ordLabel} · ₩${(+v.total||0).toLocaleString()}${v.issuedAt?' · '+v.issuedAt:''}</span>`;
   }).join('') : '<span style="color:var(--red)">묶인 명세서가 없습니다 (이미 삭제됨?)</span>';
   body += '</div>';
 
@@ -35913,14 +35916,14 @@ function vInquiry(c){
       ${list.map(q=>{
         const isDone=q.status==='완료'||q.status==='취소';
         const stColor=STATUS_COLORS[q.status]||'var(--t3)';
-        return `<tr style="cursor:pointer;${isDone?'opacity:.65':''}" onclick="openInqModal(${q.id})">
+        return `<tr style="cursor:pointer;${isDone?'opacity:.65':''}" onclick="openInqModal('${q.id}')">
           <td style="font-size:11px;color:var(--t3);white-space:nowrap">${q.receivedAt||''}</td>
           <td><span class="cl-lbl">${vendorInitHtml(q.vendor,true)}<span class="cn">${q.vendor||'-'}</span></span></td>
           <td style="font-size:12px">${(q.content||'').slice(0,80)}${(q.content||'').length>80?'…':''}${(()=>{const n=((q.imgs||[]).length+(q.files||[]).length);return n?` <span style="font-size:10px;color:var(--gold-lt);margin-left:4px">📎${n}</span>`:''})()}</td>
           <td><span class="chip" style="font-size:10px">${q.category||'일반'}</span></td>
           <td style="font-size:11.5px;color:var(--t2)">${q.manager||'-'}</td>
           <td><span class="chip" style="font-size:10.5px;background:${stColor}15;border-color:${stColor}40;color:${stColor};font-weight:600">${q.status||'접수'}</span></td>
-          <td style="text-align:center"><button onclick="event.stopPropagation();deleteInq(${q.id})" style="padding:2px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;color:var(--t3);font-family:inherit">삭제</button></td>
+          <td style="text-align:center"><button onclick="event.stopPropagation();deleteInq('${q.id}')" style="padding:2px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;color:var(--t3);font-family:inherit">삭제</button></td>
         </tr>`;
       }).join('')}
       </tbody>
@@ -36390,7 +36393,7 @@ function vNewProposals(c){
       ${list.map(p=>{
         const stColor=STATUS_COLORS[p.status]||'var(--t3)';
         const thumb = (p.imgs && p.imgs.length) ? p.imgs[0].url : '';
-        return `<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;background:var(--s1);cursor:pointer;transition:.15s" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'" onclick="openNdModal(${p.id})">
+        return `<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;background:var(--s1);cursor:pointer;transition:.15s" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'" onclick="openNdModal('${p.id}')">
           <div style="height:130px;background:var(--s2);display:flex;align-items:center;justify-content:center;overflow:hidden;border-bottom:1px solid var(--bdr)">
             ${thumb ? `<img src="${thumb}" style="width:100%;height:100%;object-fit:cover">` : `<span style="font-size:32px;opacity:.3">💎</span>`}
           </div>
@@ -36958,7 +36961,7 @@ function renderNdCellDetail(){
       ${items.map(p=>{
         const stColor=STATUS_COLORS[p.status]||'var(--t3)';
         const thumb = (p.imgs && p.imgs.length) ? p.imgs[0].url : '';
-        return `<div style="border:1px solid var(--bdr);border-radius:7px;overflow:hidden;background:var(--s1);cursor:pointer" onclick="openNdModal(${p.id})" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'">
+        return `<div style="border:1px solid var(--bdr);border-radius:7px;overflow:hidden;background:var(--s1);cursor:pointer" onclick="openNdModal('${p.id}')" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'">
           <div style="height:110px;background:var(--s2);display:flex;align-items:center;justify-content:center;overflow:hidden">
             ${thumb ? `<img src="${thumb}" style="width:100%;height:100%;object-fit:cover">` : `<span style="font-size:28px;opacity:.3">💎</span>`}
           </div>
@@ -37591,7 +37594,7 @@ async function saveProp(){
   } else {
     clientId=parseInt(gv('prop_cl'));
     if(!clientId)return showToast('⚠ 고객사를 선택해 주세요','var(--red)');
-    clientName=(clients.find(c=>c.id===clientId)||{}).name||'';
+    clientName=(clients.find(c=>String(c.id)===String(clientId))||{}).name||'';
   }
   const obj={
     clientId,clientName,date:gv('prop_date'),name:nm,
