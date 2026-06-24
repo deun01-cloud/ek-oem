@@ -7927,11 +7927,14 @@ function renderInvoiceHistory(){
       var consExpandedHere = isCons && _consExpanded.has(String(v.id));
       // 📌 합본 행 클릭 — billing/done/all 모든 탭에서 펼침 토글로 통일
       //    (이전엔 billing만 펼침, 나머지는 상세 모달이었음)
+      // id가 숫자/문자열(UUID) 모두 안전하도록 따옴표로 감싼다.
+      //   (노션에서 온 명세서는 id가 UUID 문자열일 수 있어 따옴표 없으면 onclick이 SyntaxError로 깨짐)
+      var _idArg = "'" + String(v.id).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + "'";
       var clickFn;
       if(isCons){
-        clickFn = 'toggleConsExpand('+v.id+', event)';
+        clickFn = 'toggleConsExpand('+_idArg+', event)';
       } else {
-        clickFn = 'openInvDetail('+v.id+')';
+        clickFn = 'openInvDetail('+_idArg+')';
       }
       var rowBg = isCons ? 'background:rgba(122,77,181,.05);' : '';
       // 단계 칩 (4-B): "모든 명세서" 탭에서만 표시 (다른 탭은 단계로 필터됨)
@@ -7945,7 +7948,7 @@ function renderInvoiceHistory(){
           stageChip = '<span style="display:inline-block;margin-top:3px;padding:1px 6px;font-size:9.5px;font-weight:600;background:'+stageBg+';color:'+stageColor+';border:1px solid '+stageBd+';border-radius:8px">'+stageLabel+'</span>';
         }
       }
-      var _dragAttrs = (subTab==='done' && !isCons) ? ' draggable="true" ondragstart="invDragStart(event,'+v.id+')" title="드래그해서 다른 결산월 탭에 놓으면 이동합니다"' : '';
+      var _dragAttrs = (subTab==='done' && !isCons) ? ' draggable="true" ondragstart="invDragStart(event,'+_idArg+')" title="드래그해서 다른 결산월 탭에 놓으면 이동합니다"' : '';
       h+='<tr'+_dragAttrs+' style="'+rowBg+'border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background=\'var(--s2)\'" onmouseout="this.style.background=\''+(isCons?'rgba(122,77,181,.05)':'')+'\'">';
       // 📌 billing 탭: 첫 컬럼에 체크박스
       //    - 일반 명세서 (합본 안 됨): 합본 만들기용
@@ -8019,7 +8022,7 @@ function renderInvoiceHistory(){
           var ccol = cBilled ? 'var(--blu)' : 'var(--t3)';
           var ctxt = cBilled ? '✓ 청구함' : '청구하기';
           var ctitle = cBilled ? '클릭하면 출고완료(청구 전)로 되돌립니다' : '청구 단계로 이동 (합본)';
-          h+='<button onclick="markConsolidationBilled('+v.id+','+(!cBilled)+')" title="'+ctitle+'" style="padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid '+cbd+';background:'+cbg+';color:'+ccol+';cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">'+ctxt+'</button>';
+          h+='<button onclick="markConsolidationBilled('+_idArg+','+(!cBilled)+')" title="'+ctitle+'" style="padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid '+cbd+';background:'+cbg+';color:'+ccol+';cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">'+ctxt+'</button>';
         } else if(v._consolidatedInvoiceId){
           h+='<span style="font-size:13px" title="합본에 묶여있어 변경 불가">🔒</span>';
         } else {
@@ -8029,7 +8032,7 @@ function renderInvoiceHistory(){
           var btnColor = isShipped ? 'var(--blu)' : 'var(--t3)';
           var btnText = isShipped ? '✓ 청구함' : '청구하기';
           var btnTitle = isShipped ? '클릭하면 출고완료(청구 전)로 되돌립니다' : '청구 단계로 이동';
-          h+='<button onclick="markInvoiceShipped('+v.id+','+(!isShipped)+')" title="'+btnTitle+'" style="padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid '+btnBorder+';background:'+btnBg+';color:'+btnColor+';cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">'+btnText+'</button>';
+          h+='<button onclick="markInvoiceShipped('+_idArg+','+(!isShipped)+')" title="'+btnTitle+'" style="padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid '+btnBorder+';background:'+btnBg+';color:'+btnColor+';cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">'+btnText+'</button>';
         }
         h+='</td>';
       } else if(subTab === 'billing' || subTab === 'billed'){
@@ -8039,19 +8042,19 @@ function renderInvoiceHistory(){
         var taxIssued = (v._taxInvoiceIssued === true);
         h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center">';
         h+='<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11.5px;color:'+(paid?'var(--grn)':'var(--t3)')+';font-weight:'+(paid?'700':'500')+'" title="'+(isCons?'합본 입금 완료 — 묶인 명세서 전체에 적용':'입금 받았는지')+'">'
-          +'<input type="checkbox" '+(paid?'checked':'')+' onchange="toggleInvPaid('+v.id+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--grn)">'
+          +'<input type="checkbox" '+(paid?'checked':'')+' onchange="toggleInvPaid('+_idArg+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--grn)">'
           +(paid?'완료':'대기')+'</label>';
         h+='</td>';
         h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center">';
         h+='<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11.5px;color:'+(taxIssued?'var(--blu)':'var(--t3)')+';font-weight:'+(taxIssued?'700':'500')+'" title="'+(isCons?'합본 세금계산서 발행 — 묶인 명세서 전체에 적용':'세금계산서 발행 여부')+'">'
-          +'<input type="checkbox" '+(taxIssued?'checked':'')+' onchange="toggleInvTaxIssued('+v.id+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blu)">'
+          +'<input type="checkbox" '+(taxIssued?'checked':'')+' onchange="toggleInvTaxIssued('+_idArg+',this.checked)" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blu)">'
           +(taxIssued?'발행':'대기')+'</label>';
         // 📌 출고완료로 되돌리기 — 청구→출고완료(draft)로 복귀.
         if(!isCons && !v._consolidatedInvoiceId){
-          h+='<button onclick="if(confirm(\'이 명세서를 출고완료(청구 전) 탭으로 되돌립니다.\\n청구 표시가 해제됩니다.\\n\\n계속할까요?\')){markInvoiceShipped('+v.id+',false);renderInvoiceHistory();}" title="청구를 취소하고 출고완료 탭으로 되돌립니다" style="margin-left:8px;padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">↩ 출고완료로</button>';
+          h+='<button onclick="if(confirm(\'이 명세서를 출고완료(청구 전) 탭으로 되돌립니다.\\n청구 표시가 해제됩니다.\\n\\n계속할까요?\')){markInvoiceShipped('+_idArg+',false);renderInvoiceHistory();}" title="청구를 취소하고 출고완료 탭으로 되돌립니다" style="margin-left:8px;padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">↩ 출고완료로</button>';
         } else if(isCons){
           // 합본도 출고완료(청구 전)로 되돌리기 가능 — 입금/계산서 미완 상태일 때만 의미 있음
-          h+='<button onclick="if(confirm(\'이 합본 청구서를 해제합니다.\\n\\n· 합본 청구서는 삭제됩니다.\\n· 묶여 있던 세부 명세서들은 출고완료 탭으로 돌아갑니다.\\n· 다시 합본 청구서를 만들 수 있습니다.\\n\\n계속할까요?\')){if(unwindConsolidatedInvoice('+v.id+')){showToast(\'✓ 합본 해제됨 — 세부 명세서가 출고완료로 돌아갔습니다\',\'var(--grn)\',3000);}renderInvoiceHistory();}" title="합본을 해제하고 세부 명세서를 출고완료 탭으로 되돌립니다" style="margin-left:8px;padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">↩ 합본 해제</button>';
+          h+='<button onclick="if(confirm(\'이 합본 청구서를 해제합니다.\\n\\n· 합본 청구서는 삭제됩니다.\\n· 묶여 있던 세부 명세서들은 출고완료 탭으로 돌아갑니다.\\n· 다시 합본 청구서를 만들 수 있습니다.\\n\\n계속할까요?\')){if(unwindConsolidatedInvoice('+_idArg+')){showToast(\'✓ 합본 해제됨 — 세부 명세서가 출고완료로 돌아갔습니다\',\'var(--grn)\',3000);}renderInvoiceHistory();}" title="합본을 해제하고 세부 명세서를 출고완료 탭으로 되돌립니다" style="margin-left:8px;padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">↩ 합본 해제</button>';
         }
         // 📅 청구 탭 — 청구월 지정 드롭다운 (일반=결산월 / 합본=청구월)
         if(subTab==='billing'){
@@ -8065,7 +8068,7 @@ function renderInvoiceHistory(){
         var paid2 = (v._paid === true) || v.status === '입금완료';
         var taxIssued2 = (v._taxInvoiceIssued === true);
         if(isCons){
-          h+='<select onchange="updateInvStatus('+v.id+',this.value)" style="font-size:10.5px;padding:2px 6px;border-radius:12px;border:1px solid var(--bdr);background:var(--s1);color:'+sc+';font-family:inherit;cursor:pointer">'
+          h+='<select onchange="updateInvStatus('+_idArg+',this.value)" style="font-size:10.5px;padding:2px 6px;border-radius:12px;border:1px solid var(--bdr);background:var(--s1);color:'+sc+';font-family:inherit;cursor:pointer">'
             +'<option value="발행완료"'+(v.status==='발행완료'?' selected':'')+'>발행완료</option>'
             +'<option value="입금완료"'+(v.status==='입금완료'?' selected':'')+'>입금완료</option>'
             +'</select>';
@@ -8088,12 +8091,12 @@ function renderInvoiceHistory(){
       // 액션 버튼 — 합본은 다르게 (🖨 인쇄 / ✏️ 수정 / 🗑 해제 / 일반: 카피/삭제)
       h+='<td onclick="event.stopPropagation()" style="padding:8px 4px;text-align:center;white-space:nowrap">';
       if(isCons){
-        h+='<button onclick="printConsolidatedInvoice('+v.id+')" title="합본 청구서 인쇄/PDF" style="background:none;border:none;color:#7A4DB5;cursor:pointer;font-size:14px;padding:2px 4px">🖨</button>';
-        h+='<button onclick="openConsDetail('+v.id+')" title="합본 수정 — 추가/할인 행 입력, 비고 작성" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'#7A4DB5\'" onmouseout="this.style.color=\'var(--t3)\'">✏️</button>';
-        h+='<button onclick="confirmUnwindConsolidation('+v.id+')" title="합본 해제 — 합본만 삭제하고 묶인 명세서들은 개별로 되돌립니다" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button>';
+        h+='<button onclick="printConsolidatedInvoice('+_idArg+')" title="합본 청구서 인쇄/PDF" style="background:none;border:none;color:#7A4DB5;cursor:pointer;font-size:14px;padding:2px 4px">🖨</button>';
+        h+='<button onclick="openConsDetail('+_idArg+')" title="합본 수정 — 추가/할인 행 입력, 비고 작성" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'#7A4DB5\'" onmouseout="this.style.color=\'var(--t3)\'">✏️</button>';
+        h+='<button onclick="confirmUnwindConsolidation('+_idArg+')" title="합본 해제 — 합본만 삭제하고 묶인 명세서들은 개별로 되돌립니다" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button>';
       } else {
-        h+='<button onclick="showInvoiceCopy('+v.id+')" title="명세서 카피 보기" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--gold-lt)\'" onmouseout="this.style.color=\'var(--t3)\'">📄</button>';
-        h+='<button onclick="deleteInvRecord('+v.id+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button>';
+        h+='<button onclick="showInvoiceCopy('+_idArg+')" title="명세서 카피 보기" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--gold-lt)\'" onmouseout="this.style.color=\'var(--t3)\'">📄</button>';
+        h+='<button onclick="deleteInvRecord('+_idArg+')" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button>';
       }
       h+='</td>';
       h+='</tr>';
@@ -8127,7 +8130,7 @@ function renderInvoiceHistory(){
         h+='<tr style="background:rgba(122,77,181,.03)"><td colspan="'+colSpan+'" style="padding:6px 10px 4px '+(canConsolidate?'50px':'20px')+';font-size:10.5px;color:#7A4DB5;border-bottom:1px solid rgba(122,77,181,.15)">⤷ 이 합본에 포함된 명세서 '+childInvs.length+'건 (편집은 합본 해제 후 가능)</td></tr>';
         childInvs.forEach(function(cv){
           var cBg = 'background:rgba(122,77,181,.025)';
-          var cClick = 'openInvDetail('+cv.id+')';
+          var cClick = 'openInvDetail(' + "'" + String(cv.id).replace(/\\/g,'\\\\').replace(/'/g,"\\'") + "'" + ')';
           h+='<tr style="'+cBg+';border-bottom:1px solid rgba(122,77,181,.10);cursor:pointer" onmouseover="this.style.background=\'rgba(122,77,181,.06)\'" onmouseout="this.style.background=\'rgba(122,77,181,.025)\'">';
           // 체크박스 셀(있으면) 비움
           if(canConsolidate){
@@ -17473,8 +17476,12 @@ function normalizeInvoiceIds(){
   invoiceHistory.forEach(v => {
     if(!v || v.id == null) return;
     const isFloat = (typeof v.id === 'number' && !Number.isInteger(v.id));
-    // 소수점 id이고 _notionId가 있으면 결정적 정수 id로 교정
-    if(isFloat && v._notionId){
+    // 🆔 UUID 문자열 id 감지: 노션 _notionId가 그대로 id로 들어온 경우
+    //    (예: "38985ab8-0321-8118-..." → onclick에 따옴표 없이 박히면 SyntaxError로 행 클릭이 죽음)
+    //    문자열이면서 하이픈/16진수 포함 → UUID로 간주하고 결정적 정수 id로 교정
+    const isUuidStr = (typeof v.id === 'string' && /[a-f]/i.test(v.id) && v.id.indexOf('-') >= 0);
+    // 소수점 id 또는 UUID 문자열 id이고 _notionId가 있으면 결정적 정수 id로 교정
+    if((isFloat || isUuidStr) && v._notionId){
       const oldKey = String(v.id);
       const newId = _detIdFromNotion(v._notionId);
       if(oldKey !== String(newId)){
@@ -17482,6 +17489,14 @@ function normalizeInvoiceIds(){
         v.id = newId;
         _fixed++;
       }
+    } else if(isUuidStr && !v._notionId){
+      // _notionId가 없는데 id만 UUID인 경우: id 자체를 키로 결정적 정수 생성
+      const oldKey = String(v.id);
+      const newId = _detIdFromNotion(v.id);
+      _idRemap[oldKey] = newId;
+      v._notionId = v._notionId || oldKey;  // 원래 UUID는 _notionId로 보존(노션 매칭용)
+      v.id = newId;
+      _fixed++;
     }
   });
   if(_fixed > 0){
@@ -17498,7 +17513,7 @@ function normalizeInvoiceIds(){
         });
       }
     });
-    console.log('[invoice] 부동소수점 id', _fixed, '건 정규화됨 — 깜빡임/중복 방지');
+    console.log('[invoice] 비정상 id(부동소수점/UUID문자열)', _fixed, '건 정규화됨 — 클릭불가/깜빡임/중복 방지');
     try{ localStorage.setItem(SK.iv, JSON.stringify(invoiceHistory)); }catch(e){}
   }
   return _fixed;
