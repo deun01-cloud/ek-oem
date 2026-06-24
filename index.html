@@ -2854,6 +2854,28 @@ function genId(){
   _idCounter = (_idCounter + 1) % 1e6;
   return Date.now() * 1000 + _idCounter;
 }
+// 🆔 배열 항목 id 보장 — 클릭 핸들러가 openXxx(undefined)가 되어 모달이 안 열리는 문제 방지.
+//   Realtime/Notion pull로 들어온 항목이 id 부여 단계를 안 거친 경우를 대비해
+//   각 탭 렌더 직전에 호출한다. id가 이미 있으면 건드리지 않는다.
+//   반환: 보정된 건수 (0이면 변경 없음)
+function _ensureIds(arr, label){
+  if(!Array.isArray(arr)) return 0;
+  var fixed = 0;
+  for(var i=0;i<arr.length;i++){
+    var v = arr[i];
+    if(!v) continue;
+    if(v.id===undefined || v.id===null || String(v.id)==='undefined' || String(v.id)===''){
+      v.id = (typeof genId==='function') ? genId() : (Date.now()*1000 + Math.floor(Math.random()*1000));
+      v._ts = Date.now();
+      fixed++;
+    }
+  }
+  if(fixed>0){
+    console.log('[id가드] '+(label||'')+' '+fixed+'건 id 보정');
+    if(typeof save==='function') save();
+  }
+  return fixed;
+}
 const SMP_CATS=[
   {key:'의뢰',   label:'의뢰'},
   {key:'제작중',  label:'제작중'},
@@ -3806,6 +3828,7 @@ function setASSubtab(sub){
 }
 
 function renderAS(){
+  _ensureIds(asItems, 'AS');
   const c=document.getElementById('content');
 
   // ── 이니셜 추출 헬퍼 (vendorInitHtml과 동일 로직) ──
@@ -4561,7 +4584,43 @@ function _getDropSamples(){
     return _isDropCandidate(s);   // 발주 안 된 샘플은 자동 오픈
   });
 }
-function _dropKey(s){ return s._notionId || ('local:'+s.id); }
+function _dropKey(s){ if(s && s._opSrc) return 'OP:' + (s._notionId || s.itemCode || s.id); return s._notionId || ('local:'+s.id); }
+
+// 📦 품목코드가 OP로 시작하는 제품(productDB) → 오픈 샘플로 편입
+//   OP = Open Product. 제품DB에 OP 코드로 등록된 건 오픈 샘플 목록/카탈로그에 함께 노출.
+//   샘플 객체와 호환되도록 필드를 매핑한다. (_opSrc 플래그로 구분)
+function _isOpCode(code){
+  return /^OP/i.test(String(code||'').trim());
+}
+function _getOpProducts(){
+  const tags = _loadDropTags();
+  return (productDB||[]).filter(p => _isOpCode(p.code)).filter(p=>{
+    const key = 'OP:' + (p._notionId || p.code || p.id);
+    return !(tags[key] && tags[key].status === 'exclude');
+  }).map(p => ({
+    // 샘플 객체 호환 매핑
+    id: p.id,
+    _notionId: p._notionId,
+    _opSrc: true,                 // 🔖 OP 제품 출신 표시
+    _opProduct: p,                // 원본 제품 참조
+    name: p.name || p.code || '(무제)',
+    itemCode: p.code || '',
+    type: p.type || '',
+    mat: p.mat || '',
+    plating: p.plating || '',
+    sz1: p.size || '',
+    costPrice: p.costPrice != null ? p.costPrice : '',
+    devCost: p.devCost != null ? p.devCost : '',
+    unitPrice: p.price != null ? p.price : null,
+    manager: p.devVendor || p.manager || '제품DB',
+    status: '확정',
+    imgs: Array.isArray(p.imgs) ? p.imgs : [],
+    reqDate: p.createdDate || '',
+    createdAt: p.createdAt || p.createdDate || '',
+  }));
+}
+// OP 제품용 dropKey (제품 코드 기준 — 샘플 키와 충돌 방지 prefix)
+function _opDropKey(p){ return 'OP:' + (p._notionId || p.code || p.id); }
 function setDropStatus(key, status){
   const tags=_loadDropTags();
   tags[key]=Object.assign({}, tags[key], {status});
@@ -4797,7 +4856,13 @@ function _getPdDateFilterLabel(){
 function renderProducts(){
   const c=document.getElementById('content');
   // 🗂 서브탭 바 (전체 제품 | 드랍 샘플 재판매)
-  const dropCount = _getDropSamples().length;
+  const dropCount = (function(){
+    const base=_getDropSamples();
+    const keys=new Set(base.map(s=>_dropKey(s)));
+    let n=base.length;
+    _getOpProducts().forEach(op=>{ if(!keys.has(_dropKey(op))) n++; });
+    return n;
+  })();
   const subTabBar = `
   <div style="display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid var(--bdr)">
     <button onclick="pdSubTab='products';renderProducts()" style="padding:9px 16px;font-size:13px;font-weight:600;border:none;background:none;cursor:pointer;border-bottom:2px solid ${pdSubTab==='products'?'var(--gold)':'transparent'};color:${pdSubTab==='products'?'var(--gold-lt)':'var(--t2)'};font-family:inherit">📦 전체 제품</button>
@@ -5535,12 +5600,15 @@ function pdDeleteAll(){
 function _renderDropSamples(){
   const tags=_loadDropTags();
   let list=_getDropSamples();
+  // 📦 품목코드가 OP로 시작하는 제품도 오픈 샘플 목록에 합침 (중복 _notionId 제거)
+  const _existKeys = new Set(list.map(s=>_dropKey(s)));
+  _getOpProducts().forEach(op=>{ if(!_existKeys.has(_dropKey(op))) list.push(op); });
   // 필터: 유형
   if(dropFilterType!=='전체') list=list.filter(s=>(s.type||'')===dropFilterType);
   // 검색
   if(dropSearch){
     const q=dropSearch.toLowerCase().trim();
-    list=list.filter(s=>[s.name,s.mat,s.type,s.plating,s.manager].filter(Boolean).join(' ').toLowerCase().includes(q));
+    list=list.filter(s=>[s.name,s.itemCode,s.mat,s.type,s.plating,s.manager].filter(Boolean).join(' ').toLowerCase().includes(q));
   }
   // 최신순 (확정/의뢰일 기준)
   list=[...list].sort((a,b)=>{
@@ -5550,7 +5618,8 @@ function _renderDropSamples(){
   });
 
   const types=['전체','EARRING','RING','NECKLACE','BRACELET','BROOCH','기타'];
-  const holdCount=(samples||[]).filter(s=>(tags[_dropKey(s)]||{}).status==='hold').length;
+  const _holdPool=[..._getDropSamples(), ..._getOpProducts()];
+  const holdCount=_holdPool.filter(s=>(tags[_dropKey(s)]||{}).status==='hold').length;
 
   const intro=`
   <div style="padding:11px 14px;background:rgba(180,140,40,.06);border:1px solid rgba(180,140,40,.22);border-radius:8px;font-size:12px;color:var(--t2);margin-bottom:14px;line-height:1.6">
@@ -5595,9 +5664,10 @@ function _renderDropSamples(){
     return `<tr style="border-bottom:1px solid var(--bdr);${st==='hold'?'opacity:.6':''}">
       <td style="padding:8px 10px;vertical-align:middle">${thumb}</td>
       <td style="padding:8px 10px;vertical-align:middle">
-        <div style="font-size:13px;font-weight:700;color:var(--t1);line-height:1.3">${(s.name||'(무제)').replace(/</g,'&lt;')}${cancelled?` <span style="font-size:10px;color:var(--red)">· 고객취소</span>`:''}</div>
+        <div style="font-size:13px;font-weight:700;color:var(--t1);line-height:1.3">${(s.name||'(무제)').replace(/</g,'&lt;')}${cancelled?` <span style="font-size:10px;color:var(--red)">· 고객취소</span>`:''}${s._opSrc?` <span style="font-size:9.5px;color:var(--gold-lt);background:var(--gold-bg);padding:1px 5px;border-radius:5px;font-weight:600">제품DB</span>`:''}</div>
         <div style="font-size:10.5px;color:var(--t3);margin-top:2px">🔒 ${s.manager||'미상'}${ageDays!=null?` · 확정 ${ageDays}일 경과`:''}</div>
       </td>
+      <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap;font-family:ui-monospace,monospace">${s.itemCode?`<span style="color:var(--t1);font-weight:600">${String(s.itemCode).replace(/</g,'&lt;')}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
       <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap">${s.type||'-'}</td>
       <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap">${s.mat||'-'}</td>
       <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap">${s.plating||'-'}</td>
@@ -5620,10 +5690,11 @@ function _renderDropSamples(){
   const inclCount=list.filter(s=>(tags[_dropKey(s)]||{}).status!=='hold').length;
   const summary=`<div style="font-size:12px;color:var(--t2);margin-bottom:10px">총 <b>${list.length}건</b> · 카탈로그 포함 <b style="color:var(--gold-lt)">${inclCount}건</b>${holdCount?` · 보류 ${holdCount}건`:''}</div>`;
   const table=`<div style="overflow-x:auto;border:1px solid var(--bdr);border-radius:10px;background:var(--s1)">
-    <table style="width:100%;border-collapse:collapse;min-width:880px">
+    <table style="width:100%;border-collapse:collapse;min-width:960px">
       <thead><tr style="background:var(--s2);border-bottom:1px solid var(--bdr);text-align:left">
         <th style="padding:9px 10px;font-size:11px;font-weight:600;color:var(--t2);width:54px">이미지</th>
         <th style="padding:9px 10px;font-size:11px;font-weight:600;color:var(--t2)">샘플명 · 원개발</th>
+        <th style="padding:9px 10px;font-size:11px;font-weight:600;color:var(--t2)">품목코드</th>
         <th style="padding:9px 10px;font-size:11px;font-weight:600;color:var(--t2)">유형</th>
         <th style="padding:9px 10px;font-size:11px;font-weight:600;color:var(--t2)">소재</th>
         <th style="padding:9px 10px;font-size:11px;font-weight:600;color:var(--t2)">도금</th>
@@ -7568,6 +7639,26 @@ function renderInvoiceHistory(){
   if(subTab === 'inprogress') subTab = 'billing';
   if(subTab === 'paid') subTab = 'done';
   invFilter.subTab = subTab;
+  // 🆔 렌더 직전 id 가드 (근본 수정)
+  //   id가 undefined/null/빈값이면 onclick="openInvDetail(undefined)" 이 되어
+  //   행을 클릭해도 find()가 엉뚱한 항목을 잡거나 못 잡아 모달이 안 열림.
+  //   Realtime/Notion pull로 들어온 항목이 maintainInvoiceData를 안 거친 경우를 대비해
+  //   매 렌더마다 무조건 보장한다. (id 있으면 건드리지 않음)
+  {
+    var _idFixedR = 0;
+    invoiceHistory.forEach(function(v){
+      if(!v) return;
+      if(v.id===undefined || v.id===null || String(v.id)==='undefined' || String(v.id)===''){
+        v.id = (typeof genId==='function') ? genId() : (Date.now()*1000 + Math.floor(Math.random()*1000));
+        v._ts = Date.now();
+        _idFixedR++;
+      }
+    });
+    if(_idFixedR>0){
+      console.log('[invoice] 🆔 렌더 직전 id 보정', _idFixedR, '건');
+      if(typeof save==='function') save();
+    }
+  }
   var list=invoiceHistory.filter(function(v){
     if(invFilter.month && v.issuedAt.indexOf(invFilter.month)!==0) return false;
     if(invFilter.vendor && v.vendor.toLowerCase().indexOf(invFilter.vendor.toLowerCase())<0) return false;
@@ -13107,6 +13198,7 @@ function _ioStage(io){
 }
 
 function renderIo(){
+  _ensureIds(ioItems, '입출고');
   const c = document.getElementById('content');
   c.innerHTML = `
     <div style="display:flex;gap:0;border-bottom:1px solid var(--bdr);margin-bottom:14px">
@@ -22082,6 +22174,7 @@ function setSmpSubTab(t){
   renderSample();
 }
 function renderSample(){
+  _ensureIds(samples, '샘플');
   const c=document.getElementById('content');
 
   // 서브탭 상태 (기본: list) — 새로고침 후 복원
@@ -24168,6 +24261,7 @@ function buildOrderExcel(orderList){
 }
 
 function renderOrder(){
+  _ensureIds(orders, '발주');
   const c=document.getElementById('content');
   // 자동 보정: 서브탭과 ordAdvFilter.status가 충돌하면 status 비움
   // (예: 출고완료 탭인데 status=inprogress 같은 모순 방지)
@@ -24942,6 +25036,7 @@ function setProcStg(id,idx){const p=procItems.find(x=>String(x.id)===String(id))
 // SCHEDULE TAB
 // ════════════════════════════════
 function renderSchedule(){
+  _ensureIds(tasks, '업무'); _ensureIds(procItems, '공정');
   const c=document.getElementById('content');
   c.innerHTML=`<div class="card" style="overflow:visible">
     <div style="display:flex;border-bottom:1px solid var(--bdr);background:var(--s2)">
@@ -29823,6 +29918,7 @@ function deleteClient(){
 // ── Sales view/modal functions ──
 
 function renderNdTable(tab){
+  _ensureIds(clients, '고객사'); _ensureIds(proposals, '영업제안');
   const tbody=document.getElementById('ndTbody');if(!tbody)return;
   const RC={'대기중':'chip','긍정':'cg','검토중':'co','성사':'cgold','거절':'cr'};
   let list=clients;
