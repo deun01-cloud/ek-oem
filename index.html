@@ -13911,13 +13911,22 @@ async function saveIo(idOrNull){
     }
   }
   save();
+  // 🌐 서버 즉시 발행 (SSOT) — 노션 응답을 기다리지 않고 바로 반영해 다른 기기에서 즉시 보이게 함
+  if(typeof realtimePublish === 'function'){
+    try{ realtimePublish('io', updated); }catch(e){ console.warn('[rt] io publish 실패:', e); }
+  }
   closeMAfterSave('mIo');
   showToast(`✓ ${isEdit?'수정':'등록'} 완료${stockMsg}`,'var(--grn)',2500);
   renderIo();
-  // 노션 동기화 (백그라운드)
+  // 노션 동기화 (백그라운드) — 성공 시 _notionId 보강분 서버에 한 번 더 반영
   if(notionCfg.workerUrl && notionCfg.ioDb){
     syncIOToNotion(updated).then(ok=>{
-      if(ok) save();
+      if(ok){
+        save();
+        if(typeof realtimePublish === 'function'){
+          try{ realtimePublish('io', updated); }catch(e){}
+        }
+      }
     });
   }
 }
@@ -16094,6 +16103,8 @@ const _syncFnMap = {
   product:   (o,u)=>syncProductToNotion(o,u),
   inquiry:   (o,u)=>syncInqToNotion(o,u),
   invoice:   (o,u)=>syncInvoiceToNotion(o,u),
+  quote:     (o,u)=>syncQuoteToNotion(o,u),
+  io:        (o,u)=>syncIOToNotion(o),
 };
 
 function debouncedSync(type, obj, isUpdate){
@@ -16713,7 +16724,7 @@ function requireNotion(dbKey, label){
 async function createWithNotion(localArray, newObj, syncFn, label, opts){
   opts = opts || {};
   // 🏛️ 서버 우선: 타입 추론 (syncFn 라벨 기반)
-  var _rtType = opts.rtType || ({'발주서':'order','샘플의뢰':'sample','AS':'as','거래명세서':'invoice','업무일지':'task'})[label] || null;
+  var _rtType = opts.rtType || ({'발주서':'order','샘플의뢰':'sample','AS':'as','거래명세서':'invoice','업무일지':'task','공정':'proc','영업제안':'proposal','고객사':'client','견적서':'quote','문의':'inquiry'})[label] || null;
   try{
     if(typeof showToast === 'function'){
       showToast(`🔄 Notion에 ${label||'항목'} 등록 중...`, 'var(--blu)', 1500);
@@ -26344,6 +26355,10 @@ async function saveSmpMulti(){
       await syncSampleToNotion(smpObj, false);
       smpObj._syncedAt = new Date().toISOString();
       samples.push(smpObj);
+      // 🌐 서버 즉시 발행 (SSOT) — 다중 등록도 각 건이 바로 서버에 반영됨
+      if(typeof realtimePublish === 'function'){
+        try{ realtimePublish('sample', smpObj); }catch(_){}
+      }
       success++;
       // 🔗 제품DB 자동 동기화 (품번 있을 때)
       if(smpObj.itemNo){
@@ -26355,8 +26370,17 @@ async function saveSmpMulti(){
       }
     } catch(e){
       console.error(`샘플 등록 실패 [${row.name}]:`, e);
-      failedItems.push({name: row.name, error: e.message});
-      failed++;
+      // 🏛️ 노션이 막혀도 서버 기준 운영: 로컬에 넣고 서버에 발행 (데이터 유실 방지)
+      try{
+        smpObj._syncedAt = new Date().toISOString();
+        samples.push(smpObj);
+        if(typeof realtimePublish === 'function'){ try{ realtimePublish('sample', smpObj); }catch(_){} }
+        if(typeof _enqueueSyncRetry === 'function'){ try{ _enqueueSyncRetry('sample', smpObj, false); }catch(_){} }
+        success++;
+      }catch(e2){
+        failedItems.push({name: row.name, error: e.message});
+        failed++;
+      }
     }
     // 노션 API 속도 제한 대비
     if(i < validRows.length - 1){
@@ -31874,11 +31898,22 @@ async function saveQuote(forceOverwrite){
     }
   }
 
-  // 노션 동기화 (백그라운드)
+  // 🌐 서버 즉시 발행 (SSOT) — 노션을 기다리지 않고 바로 반영해 다른 기기에서 즉시 보이게 함
+  if(target && typeof realtimePublish === 'function'){
+    try{ realtimePublish('quote', target); }catch(e){ console.warn('[rt] quote publish 실패:', e); }
+  }
+
+  // 노션 동기화 (백그라운드) — 성공 시 _notionId 보강분 서버에 한 번 더 반영
   if(target && notionCfg.workerUrl && notionCfg.quoteDb){
     syncQuoteToNotion(target, !isNew).then(()=>{
       if(target._notionId) delete window._editStartSnapshots[target._notionId];
-    }).catch(e=>console.warn('견적 노션 sync 실패:',e));
+      if(typeof realtimePublish === 'function'){
+        try{ realtimePublish('quote', target); }catch(e){}
+      }
+    }).catch(e=>{
+      console.warn('견적 노션 sync 실패:',e);
+      if(typeof _enqueueSyncRetry === 'function'){ try{ _enqueueSyncRetry('quote', target, !isNew); }catch(_){} }
+    });
   }
 
   closeMAfterSave('mQuote');
