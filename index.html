@@ -1441,6 +1441,7 @@ window.addEventListener('message', function(ev){
           <th style="text-align:center">지급일</th>
           <th style="text-align:right">연환산</th>
           <th style="text-align:left">메모</th>
+          <th style="text-align:center">지급완료</th>
           <th></th>
         </tr></thead>
         <tbody id="fin-outflow-body"></tbody>
@@ -12461,10 +12462,20 @@ async function pullFromNotion(opts){
   try{
     // 증분 동기화 결정: 풀 동기화 강제 시점이거나 처음이면 since=null (전체)
     // 🔒 strict 모드면 항상 전체 풀 — 로컬 전용 데이터가 살아남지 않도록
-    // 🔒 모든 데이터가 노션-우선이므로 항상 전체 풀
-    // (증분 모드는 일부 옛 로컬 데이터가 화면에서 안 사라지는 위험이 있어 비활성화)
+    // 🔒 대부분 데이터는 노션-우선이므로 전체 풀 유지
+    //    (증분 모드는 노션에서 삭제된 항목이 화면에서 안 사라지는 위험이 있어 기본 비활성화)
     const useIncremental = false;
-    const sinceFor = (dbId)=> (useIncremental && dbId) ? getDbSyncTime(dbId) : null;
+    // 📦 제품DB 전용 증분: 6,000건이 넘어 매 폴링마다 전체를 받으면 부담이 크다.
+    //    자동 폴링(silent)일 때만 제품DB는 "마지막 동기화 이후 바뀐 것만" 받는다.
+    //    삭제 정리는 사용자가 직접 새로고침(silent=false)하거나 force일 때 전체 풀로 보장.
+    const _productIncremental = silent && !opts.force;
+    const sinceFor = (dbId)=>{
+      // 제품DB만 증분 (자동 폴링 시) — 나머지는 기존 정책(useIncremental) 따름
+      if(dbId && dbId === notionCfg.productDb && _productIncremental){
+        return getDbSyncTime(dbId);
+      }
+      return (useIncremental && dbId) ? getDbSyncTime(dbId) : null;
+    };
     // 사용자 액션은 회로차단기 우회 — 한 번의 일시적 실패로 영구 차단되지 않게
     const callOpts = silent ? undefined : {bypassCircuit:true};
     if(!silent){
@@ -12731,9 +12742,14 @@ async function pullFromNotion(opts){
     function isSafePull(remoteRows, localArr, label){
       if(remoteRows.length>0){
         // 🛡 데이터 급감 감지: remote가 local의 80% 미만이면 의심 상황
+        // ⚠ 예외: 재고이력은 "생성 전용 불변 기록 + 서버(Realtime) 실시간 발행" 타입.
+        //    입출고 때마다 로컬/서버에 먼저 쌓이고 노션은 보조 백업이라, 노션이 로컬보다
+        //    적은 것이 '정상'이다. 따라서 이 타입은 급감 감지에서 제외한다.
+        //    (노션 206 / 로컬 267 같은 정상 상황에서 가짜 경고가 뜨던 문제 해결)
+        const _isAppendOnlyServerType = (label === '재고이력');
         const localCount = localArr.length;
         const remoteCount = remoteRows.length;
-        if(localCount >= 50 && remoteCount < localCount * 0.8){
+        if(!_isAppendOnlyServerType && localCount >= 50 && remoteCount < localCount * 0.8){
           const msg = `⚠ ${label}: 노션 ${remoteCount}건 / 로컬 ${localCount}건 — 데이터 급감 감지! 안전을 위해 동기화 스킵 (페이지네이션 한계나 권한 문제 의심)`;
           console.error('[pull]', msg);
           try{ if(typeof showToast==='function') showToast(msg,'var(--red)',10000); }catch(e){}
@@ -12847,7 +12863,9 @@ async function pullFromNotion(opts){
         }
       }
       // 증분 모드: remote가 비어있으면 변경 없음 → 그대로 두고 sync time만 그대로 유지
-      if(useIncremental){
+      // 📦 제품DB도 자동 폴링 시 증분 처리 (전역 useIncremental과 별개로 판정)
+      var _thisIsIncremental = useIncremental || (dbId && dbId === notionCfg.productDb && _productIncremental);
+      if(_thisIsIncremental){
         if(!remoteRows.length){
           // 변경 없음 — DB sync time은 그대로 유지 (현재 시각으로 갱신해도 무방하나, 안전을 위해 유지)
           return localArr;
@@ -12894,7 +12912,15 @@ async function pullFromNotion(opts){
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
     ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files'], '입출고',   notionCfg.ioDb);
-    stockHistory  = mergeRows(stkhRows, stockHistory,   mapNotionStockHist, [], '재고이력', notionCfg.stockHistDb);
+    // 🏛️ 재고이력: SSOT(서버 기준)로 전환된 경우 노션 머지를 건너뛴다.
+    //    서버 스냅샷이 화면/동기화의 유일 기준점이므로, 노션 풀을 또 머지하면
+    //    이중 소스 충돌(서버가 받은 걸 노션 옛 데이터가 덮어씀)이 발생한다.
+    //    (거래명세서와 동일한 원칙) 노션은 회계 백업용으로만 둔다.
+    if(typeof RT_SSOT_TYPES !== 'undefined' && RT_SSOT_TYPES.has('stockhist')){
+      if(stkhRows && stkhRows.length){ console.log('[stockhist] ℹ Notion 풀', stkhRows.length, '건 수신했으나 적용 안 함 (서버가 기준점)'); }
+    } else {
+      stockHistory  = mergeRows(stkhRows, stockHistory,   mapNotionStockHist, [], '재고이력', notionCfg.stockHistDb);
+    }
 
     // 풀 모드를 성공적으로 마쳤다면 마지막 풀 동기화 시각 기록
     if(!useIncremental){
@@ -38638,18 +38664,20 @@ function _finRenderOutflows(){
     var annual=_finNum(o.amount)*mult;
     var isOnce=(o.cycle==='일회성');
     var annualCell=isOnce?('<span style="color:var(--mu)">'+won(_finNum(o.amount))+'</span><span style="font-size:10px;color:var(--hi);margin-left:3px">1회</span>'):won(annual);
-    rows+='<tr>'
-      +'<td><input value="'+_finEsc(o.name)+'" placeholder="예: 임대료" onchange="MGT.finEdit(\'outflows\','+i+',\'name\',this.value)"></td>'
+    var _paid = !!o.paid;
+    rows+='<tr'+(_paid?' style="opacity:.55"':'')+'>'
+      +'<td><input value="'+_finEsc(o.name)+'" placeholder="예: 임대료" onchange="MGT.finEdit(\'outflows\','+i+',\'name\',this.value)"'+(_paid?' style="text-decoration:line-through"':'')+'></td>'
       +'<td><input value="'+_finEsc(o.cat)+'" list="finOutflowCat" placeholder="분류" onchange="MGT.finEdit(\'outflows\','+i+',\'cat\',this.value)"></td>'
       +'<td><input type="number" value="'+(o.amount||'')+'" placeholder="0" onchange="MGT.finEdit(\'outflows\','+i+',\'amount\',this.value)"></td>'
       +'<td><select onchange="MGT.finEdit(\'outflows\','+i+',\'cycle\',this.value)">'+['월','분기','반기','연','일회성'].map(function(c){return '<option'+(o.cycle===c?' selected':'')+'>'+c+'</option>';}).join('')+'</select></td>'
       +'<td><input type="date" value="'+_finEsc(o.month)+'" onchange="MGT.finEdit(\'outflows\','+i+',\'month\',this.value)" style="font-variant-numeric:tabular-nums"></td>'
       +'<td style="text-align:right;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap">'+annualCell+'</td>'
       +'<td><input value="'+_finEsc(o.memo)+'" placeholder="메모" onchange="MGT.finEdit(\'outflows\','+i+',\'memo\',this.value)"></td>'
+      +'<td style="text-align:center"><label style="display:inline-flex;align-items:center;justify-content:center;cursor:pointer" title="'+(_paid?'지급 완료됨 — 클릭하면 해제':'지급 완료로 표시')+'"><input type="checkbox"'+(_paid?' checked':'')+' onchange="MGT.finEdit(\'outflows\','+i+',\'paid\',this.checked)" style="width:17px;height:17px;cursor:pointer;accent-color:var(--ac)"></label></td>'
       +'<td style="text-align:center"><button class="fin-del" onclick="MGT.finDel(\'outflows\','+i+')" title="삭제">×</button></td>'
       +'</tr>';
   });
-  if(!rows) rows='<tr><td colspan="8" style="text-align:center;color:var(--mu);padding:18px">+ 항목 추가 버튼으로 연간 고정·대형 지출을 등록하세요</td></tr>';
+  if(!rows) rows='<tr><td colspan="9" style="text-align:center;color:var(--mu);padding:18px">+ 항목 추가 버튼으로 연간 고정·대형 지출을 등록하세요</td></tr>';
   tb.innerHTML=rows
     +'<datalist id="finOutflowCat"><option value="임대료"><option value="인건비"><option value="4대보험"><option value="공과금"><option value="통신/구독"><option value="보험료"><option value="외주비"><option value="원자재"><option value="마케팅"><option value="세금"><option value="상환"><option value="기타"></datalist>';
   var annualTot=0, onceTot=0;
@@ -38664,11 +38692,11 @@ function _finRenderOutflows(){
     var onceCnt=(FIN.outflows||[]).filter(function(o){return o.cycle==='일회성';}).length;
     var right='';
     if(annualTot>0 && onceTot>0){
-      right='<td style="text-align:right;white-space:nowrap">연 '+won(annualTot)+' <span style="font-weight:600;color:var(--hi);font-size:11px">+ '+won(onceTot)+'</span></td><td colspan="2" style="font-weight:700;color:var(--ac);white-space:nowrap">합계 '+won(totalCash)+'</td>';
+      right='<td style="text-align:right;white-space:nowrap">연 '+won(annualTot)+' <span style="font-weight:600;color:var(--hi);font-size:11px">+ '+won(onceTot)+'</span></td><td colspan="3" style="font-weight:700;color:var(--ac);white-space:nowrap">합계 '+won(totalCash)+'</td>';
     } else if(onceTot>0){
-      right='<td style="text-align:right;font-weight:700;color:var(--ac);white-space:nowrap">'+won(onceTot)+'</td><td colspan="2" style="font-weight:600;color:var(--mu)">'+onceCnt+'건</td>';
+      right='<td style="text-align:right;font-weight:700;color:var(--ac);white-space:nowrap">'+won(onceTot)+'</td><td colspan="3" style="font-weight:600;color:var(--mu)">'+onceCnt+'건</td>';
     } else {
-      right='<td style="text-align:right;white-space:nowrap">연 '+won(annualTot)+'</td><td colspan="2" style="font-weight:600;color:var(--mu);white-space:nowrap">월평균 '+won(monthlyTot)+'</td>';
+      right='<td style="text-align:right;white-space:nowrap">연 '+won(annualTot)+'</td><td colspan="3" style="font-weight:600;color:var(--mu);white-space:nowrap">월평균 '+won(monthlyTot)+'</td>';
     }
     ft.innerHTML='<tr><td colspan="5">합계</td>'+right+'</tr>';
   }
