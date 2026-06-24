@@ -28254,7 +28254,7 @@ async function saveOrd(forceOverwrite){
           for(let h=prevHist.length;h<newHist.length;h++){
             const hist=newHist[h];
             if(!hist||!+hist.qty)continue;
-            const tempOrder={id:+id||ordId, vendor, no:obj.no, rows:cleanRows};
+            const tempOrder={id:id||ordId, vendor, no:obj.no, rows:cleanRows};
             if(applyOrderReceiveToStock(tempOrder, ri, hist)){
               stockReceiveResult.matched++;
             } else {
@@ -28265,9 +28265,9 @@ async function saveOrd(forceOverwrite){
       });
       orders[i]={...orders[i],...obj};
     }
-    ordId=+id;
+    ordId=id; // ⚠ +id 금지: UUID id면 NaN이 되어 서버 발행·proc매칭이 깨짐
     // Update ship date on linked procs
-    if(obj.ship){procItems.filter(p=>p.orderId===ordId).forEach(p=>{p.due=obj.ship;});}
+    if(obj.ship){procItems.filter(p=>String(p.orderId)===String(ordId)).forEach(p=>{p.due=obj.ship;});}
   } else {
     ordId=Date.now();
     const newOrd = {id:ordId,createdAt:now,...obj};
@@ -28334,11 +28334,15 @@ async function saveOrd(forceOverwrite){
   }
   // 저장된 최신 order를 _notionId 포함해서 정확히 찾아서 sync — 수정만 디바운싱
   // (신규는 위에서 createWithNotion이 이미 동기 처리함)
-  const so=orders.find(x=>String(x.id)===String(ordId));
+  let so=orders.find(x=>String(x.id)===String(ordId));
+  // 🛡 폴백: ordId로 못 찾으면 원본 id로 한 번 더 (id 타입 불일치 방어)
+  if(!so && id) so=orders.find(x=>String(x.id)===String(id));
   if(so){
     if(!isNew) debouncedSync('order', so, true);
     // 충돌 감지 스냅샷 정리 (다음 편집 시 새로 기록되도록)
     if(so._notionId) delete window._editStartSnapshots[so._notionId];
+  } else if(!isNew){
+    console.warn('[saveOrd] 저장 대상 order를 못 찾아 서버 발행 누락 위험 — id:', id, 'ordId:', ordId);
   }
   // 입고로 인한 재고 자동 증가 알림
   if(stockReceiveResult.matched){
