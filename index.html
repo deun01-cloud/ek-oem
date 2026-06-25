@@ -4591,7 +4591,8 @@ function _dropKey(s){ if(s && s._opSrc) return 'OP:' + (s._notionId || s.itemCod
 //   OP = Open Product. 제품DB에 OP 코드로 등록된 건 오픈 샘플 목록/카탈로그에 함께 노출.
 //   샘플 객체와 호환되도록 필드를 매핑한다. (_opSrc 플래그로 구분)
 function _isOpCode(code){
-  return /^OP/i.test(String(code||'').trim());
+  // 오픈 샘플 목록에 편입할 제품 코드 접두사: OP(오픈제품), VV·VI(비비케이트 자체개발)
+  return /^(OP|VV|VI)/i.test(String(code||'').trim());
 }
 function _getOpProducts(){
   const tags = _loadDropTags();
@@ -4615,6 +4616,7 @@ function _getOpProducts(){
     unitPrice: p.price != null ? p.price : null,
     manager: p.devVendor || p.manager || '제품DB',
     status: '확정',
+    memo: p.memo || p.note || '',
     imgs: Array.isArray(p.imgs) ? p.imgs : [],
     reqDate: p.createdDate || '',
     createdAt: p.createdAt || p.createdDate || '',
@@ -4632,6 +4634,101 @@ function setDropPrice(key, price){
   const v = parseInt(String(price).replace(/[^\d]/g,''),10);
   tags[key]=Object.assign({}, tags[key], {price: isNaN(v)?null:v});
   _saveDropTags(tags);
+}
+
+// 📖 오픈 샘플 상세 보기 — 사진 크게 + 정보, 사진 클릭 시 전체화면 확대
+function openDropDetail(key){
+  // 현재 목록(샘플 + OP/VV/VI 제품)에서 key로 항목 찾기
+  const pool=[..._getDropSamples(), ..._getOpProducts()];
+  const s=pool.find(x=>_dropKey(x)===key);
+  if(!s){ if(typeof showToast==='function') showToast('항목을 찾을 수 없습니다','var(--red)'); return; }
+  const tags=_loadDropTags();
+  const tag=tags[key]||{};
+  const imgs=(Array.isArray(s.imgs)?s.imgs:[]).filter(im=>im&&im.url);
+  const won=(n)=> (n==null||n==='')?'-':Number(n).toLocaleString()+'원';
+  const esc=(t)=>String(t==null?'':t).replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  // 메인 이미지 + 썸네일 스트립
+  const mainImg = imgs.length
+    ? `<img id="dropDetailMainImg" src="${imgs[0].url}" onclick="openDropLightbox(0)"
+         style="width:100%;max-height:380px;object-fit:contain;border-radius:10px;background:var(--s2);border:1px solid var(--bdr);cursor:zoom-in"
+         title="클릭하면 크게 보기" onerror="this.style.display='none'">`
+    : `<div style="width:100%;height:240px;border-radius:10px;background:var(--s2);border:1px solid var(--bdr);display:flex;align-items:center;justify-content:center;font-size:42px;color:var(--t3)">🔓</div>`;
+  const thumbs = imgs.length>1
+    ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${imgs.map((im,i)=>`<img src="${im.url}" onclick="openDropLightbox(${i})" style="width:54px;height:54px;object-fit:cover;border-radius:6px;border:1px solid var(--bdr);cursor:pointer" title="클릭 확대" onerror="this.style.display='none'">`).join('')}</div>`
+    : '';
+
+  // 이 항목의 이미지 URL들을 라이트박스가 쓰도록 전역에 저장
+  window._dropLightboxImgs = imgs.map(im=>im.url);
+
+  const info=[
+    ['품목코드', s.itemCode||'-'],
+    ['유형', s.type||'-'],
+    ['소재', s.mat||'-'],
+    ['도금', s.plating||'-'],
+    ['사이즈', s.sz1||s.size||'-'],
+    ['원개발 담당', s.manager||'-'],
+    ['투입원가', won(s.costPrice)],
+    ['개발비', won(s.devCost)],
+    ['판매희망가', won(tag.price)],
+  ];
+  const rows=info.map(([k,v])=>`<tr>
+    <td style="padding:7px 10px;font-size:12px;color:var(--t3);white-space:nowrap;border-bottom:1px solid var(--bdr);width:90px">${k}</td>
+    <td style="padding:7px 10px;font-size:13px;color:var(--t1);font-weight:600;border-bottom:1px solid var(--bdr)">${esc(v)}</td>
+  </tr>`).join('');
+
+  const memo = s.memo ? `<div style="margin-top:10px;padding:10px 12px;background:var(--s2);border-radius:8px;font-size:12.5px;color:var(--t2);line-height:1.5;white-space:pre-wrap">${esc(s.memo)}</div>` : '';
+  const opBadge = s._opSrc ? ` <span style="font-size:11px;color:var(--gold-lt);background:var(--gold-bg);padding:2px 8px;border-radius:6px;font-weight:600">제품DB</span>` : '';
+
+  let ov=document.getElementById('mDropDetail');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.id='mDropDetail'; ov.className='ov';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML=`<div class="modal" style="max-width:680px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div style="font-size:16px;font-weight:700;color:var(--t1)">🔓 ${esc(s.name||'(무제)')}${opBadge}</div>
+      <button onclick="closeM('mDropDetail')" style="background:none;border:none;font-size:22px;color:var(--t3);cursor:pointer;line-height:1">×</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
+      <div>${mainImg}${thumbs}</div>
+      <div><table style="width:100%;border-collapse:collapse">${rows}</table></div>
+    </div>
+    ${memo}
+  </div>`;
+  if(typeof openM==='function') openM('mDropDetail'); else ov.classList.add('open');
+}
+
+// 🔍 이미지 전체화면 라이트박스 (오픈샘플 상세에서 사진 클릭 시)
+function openDropLightbox(idx){
+  const imgs=window._dropLightboxImgs||[];
+  if(!imgs.length) return;
+  let cur=idx||0;
+  let lb=document.getElementById('dropLightbox');
+  if(!lb){
+    lb=document.createElement('div');
+    lb.id='dropLightbox';
+    lb.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;cursor:zoom-out';
+    document.body.appendChild(lb);
+  }
+  function draw(){
+    lb.innerHTML=`
+      <img src="${imgs[cur]}" style="max-width:94vw;max-height:90vh;object-fit:contain;border-radius:6px" onclick="event.stopPropagation()">
+      <button id="_lbClose" style="position:absolute;top:18px;right:24px;background:rgba(255,255,255,.15);border:none;color:#fff;font-size:30px;width:46px;height:46px;border-radius:50%;cursor:pointer;line-height:1">×</button>
+      ${imgs.length>1?`
+        <button id="_lbPrev" style="position:absolute;left:20px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.15);border:none;color:#fff;font-size:30px;width:50px;height:50px;border-radius:50%;cursor:pointer">‹</button>
+        <button id="_lbNext" style="position:absolute;right:20px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.15);border:none;color:#fff;font-size:30px;width:50px;height:50px;border-radius:50%;cursor:pointer">›</button>
+        <div style="position:absolute;bottom:22px;left:50%;transform:translateX(-50%);color:#fff;font-size:13px;background:rgba(0,0,0,.5);padding:4px 12px;border-radius:12px">${cur+1} / ${imgs.length}</div>
+      `:''}`;
+    const close=()=>{ lb.style.display='none'; };
+    lb.onclick=close;
+    const cb=document.getElementById('_lbClose'); if(cb) cb.onclick=(e)=>{e.stopPropagation();close();};
+    const pv=document.getElementById('_lbPrev'); if(pv) pv.onclick=(e)=>{e.stopPropagation();cur=(cur-1+imgs.length)%imgs.length;draw();};
+    const nx=document.getElementById('_lbNext'); if(nx) nx.onclick=(e)=>{e.stopPropagation();cur=(cur+1)%imgs.length;draw();};
+  }
+  lb.style.display='flex';
+  draw();
 }
 
 // ════════════════════════════════
@@ -5663,15 +5760,15 @@ function _renderDropSamples(){
       ? `<span style="background:var(--gold);color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:7px">🔓 오픈</span>`
       : `<span style="background:#888;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:7px">보류</span>`;
     return `<tr style="border-bottom:1px solid var(--bdr);${st==='hold'?'opacity:.6':''}">
-      <td style="padding:8px 10px;vertical-align:middle">${thumb}</td>
-      <td style="padding:8px 10px;vertical-align:middle">
+      <td style="padding:8px 10px;vertical-align:middle;cursor:pointer" onclick="openDropDetail('${key}')" title="클릭하면 상세 보기">${thumb}</td>
+      <td style="padding:8px 10px;vertical-align:middle;cursor:pointer" onclick="openDropDetail('${key}')" title="클릭하면 상세 보기">
         <div style="font-size:13px;font-weight:700;color:var(--t1);line-height:1.3">${(s.name||'(무제)').replace(/</g,'&lt;')}${cancelled?` <span style="font-size:10px;color:var(--red)">· 고객취소</span>`:''}${s._opSrc?` <span style="font-size:9.5px;color:var(--gold-lt);background:var(--gold-bg);padding:1px 5px;border-radius:5px;font-weight:600">제품DB</span>`:''}</div>
         <div style="font-size:10.5px;color:var(--t3);margin-top:2px">🔒 ${s.manager||'미상'}${ageDays!=null?` · 확정 ${ageDays}일 경과`:''}</div>
       </td>
-      <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap;font-family:ui-monospace,monospace">${s.itemCode?`<span style="color:var(--t1);font-weight:600">${String(s.itemCode).replace(/</g,'&lt;')}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
-      <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap">${s.type||'-'}</td>
-      <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap">${s.mat||'-'}</td>
-      <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap">${s.plating||'-'}</td>
+      <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap;font-family:ui-monospace,monospace;cursor:pointer" onclick="openDropDetail('${key}')">${s.itemCode?`<span style="color:var(--t1);font-weight:600">${String(s.itemCode).replace(/</g,'&lt;')}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
+      <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap;cursor:pointer" onclick="openDropDetail('${key}')">${s.type||'-'}</td>
+      <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap;cursor:pointer" onclick="openDropDetail('${key}')">${s.mat||'-'}</td>
+      <td style="padding:8px 10px;vertical-align:middle;font-size:12px;color:var(--t2);white-space:nowrap;cursor:pointer" onclick="openDropDetail('${key}')">${s.plating||'-'}</td>
       <td style="padding:8px 10px;vertical-align:middle;font-size:11px;color:var(--t2)">${costLine}</td>
       <td style="padding:8px 10px;vertical-align:middle;text-align:center">${badge}</td>
       <td style="padding:8px 10px;vertical-align:middle;white-space:nowrap">
@@ -24324,7 +24421,21 @@ function renderOrder(){
 
   // 고급 필터 적용
   const af=ordAdvFilter;
-  if(af.vendor) list=list.filter(o=>(o.vendor||'').trim()===af.vendor);
+  if(af.vendor){
+    // 🏢 업체 필터: 표기 변형(악시/AX 등)을 같은 고객사로 묶어 매칭한다.
+    //    선택된 업체의 고객사를 찾고, 각 발주도 같은 고객사로 매칭되면 통과.
+    const _selCl = findClientByVendor(af.vendor);
+    const _selKey = _selCl ? ('cl:'+(_selCl.id!=null?_selCl.id:(_selCl._notionId||_selCl.name)))
+                           : ('nm:'+normalizeVendorName(af.vendor));
+    list=list.filter(o=>{
+      const ov=(o.vendor||'').trim();
+      if(ov===af.vendor) return true;           // 정확히 같은 표기
+      const ocl=findClientByVendor(ov);
+      const okey = ocl ? ('cl:'+(ocl.id!=null?ocl.id:(ocl._notionId||ocl.name)))
+                       : ('nm:'+normalizeVendorName(ov));
+      return okey===_selKey;                     // 같은 고객사로 묶이면 통과
+    });
+  }
   if(af.dday){
     list=list.filter(o=>{
       const d=dday(o.ship);
@@ -24476,11 +24587,16 @@ function renderOrder(){
         // 현재 탭 필터 적용
         if(ordFilter && ordFilter!=='전체' && st!==ordFilter) return;
         const v=(o.vendor||'').trim(); if(!v) return;
-        if(!tally[v]){
-          const cl=findClientByVendor(v);
-          tally[v]={count:0, client:cl||null, vendorRaw:v};
+        // 🏢 같은 업체의 표기 변형(예: "악시" vs "AX")을 하나로 합친다.
+        //    고객사 마스터를 찾으면 그 고객사 id를, 못 찾으면 정규화된 업체명을 키로 사용.
+        //    (이전엔 o.vendor 원문을 키로 써서 같은 업체가 표기만 달라도 칩이 따로 떴음)
+        const cl=findClientByVendor(v);
+        const key = cl ? ('cl:'+(cl.id!=null?cl.id:(cl._notionId||cl.name)))
+                       : ('nm:'+normalizeVendorName(v));
+        if(!tally[key]){
+          tally[key]={count:0, client:cl||null, vendorRaw:(cl?cl.name:v)};
         }
-        tally[v].count++;
+        tally[key].count++;
       });
       const entries=Object.values(tally).sort((a,b)=>b.count-a.count);
       if(!entries.length) return '';
