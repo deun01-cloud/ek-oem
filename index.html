@@ -530,6 +530,14 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 #mgtRoot .arc-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #mgtRoot .arc-file{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;color:var(--ac);background:var(--acbg);padding:4px 9px;border-radius:6px;cursor:pointer;text-decoration:none;transition:.13s;max-width:240px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 #mgtRoot .arc-file:hover{filter:brightness(.95);text-decoration:underline}
+/* 파일 1개 = 1행 레이아웃 */
+#mgtRoot .arc-row-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#mgtRoot .arc-row-line .arc-title{flex:0 1 auto;min-width:80px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mgtRoot .arc-fcell{flex:1 1 200px;min-width:160px;display:flex;align-items:center}
+#mgtRoot .arc-fcell .arc-file{margin-top:0;max-width:100%}
+#mgtRoot .arc-up{font-size:11px;color:var(--mu);white-space:nowrap;font-family:var(--font-data,monospace)}
+#mgtRoot .arc-dl{width:30px;height:30px;border:1px solid var(--bd2);border-radius:7px;background:var(--s1);color:var(--ac);cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;transition:.13s;flex-shrink:0}
+#mgtRoot .arc-dl:hover{background:var(--acbg);border-color:var(--ac)}
 #mgtRoot .g2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
 #mgtRoot table{width:100%;border-collapse:collapse}
 #mgtRoot thead th{padding:9px 13px;font-size:11px;font-weight:700;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;text-align:left;border-bottom:1px solid var(--bd);background:var(--sf);white-space:nowrap}
@@ -1273,8 +1281,30 @@ window.addEventListener('message', function(ev){
   <div style="font-size:11px;color:var(--hi);margin-top:4px">* 매입 자료(공장 인보이스·지출내역)는 위 게시판에서 월별로 관리됩니다.</div>
 </div>
 
-<!-- ===== 📂 자료실 — 전체 기간 인보이스·지출내역서 통합 열람 ===== -->
+<!-- ===== 📂 자료실 — 전체 기간 인보이스·지출내역서 통합 열람 + 업로드 ===== -->
 <div class="pg" id="pg-archive">
+  <!-- 자료실 직접 업로드/입력 영역 -->
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-h"><div class="card-t">📤 자료 업로드 / 직접입력</div>
+      <span style="font-size:11px;color:var(--hi);margin-left:auto">여기서 올린 자료는 선택한 월의 <b>데이터 입력</b> 탭에도 함께 반영됩니다</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:4px 2px 12px">
+      <label style="font-size:12.5px;font-weight:600;color:var(--tx)">귀속 월</label>
+      <input type="month" id="arc-up-period" style="border:1px solid var(--bd2);border-radius:7px;padding:6px 10px;font-size:13px;font-family:inherit">
+      <label style="font-size:12px;color:var(--mu);display:inline-flex;align-items:center;gap:4px;cursor:pointer">
+        <span>종류</span>
+        <select id="arc-up-type" style="border:1px solid var(--bd2);border-radius:7px;padding:6px 9px;font-size:12.5px;font-family:inherit">
+          <option value="cn">🏭 공장 인보이스</option>
+          <option value="exp">🧾 지출내역서</option>
+        </select>
+      </label>
+      <button class="btn btn-ac btn-sm" onclick="MGT.arcPickFile()">📎 파일 업로드</button>
+      <button class="btn btn-sm" onclick="MGT.arcAddManual()">✏️ 직접입력</button>
+      <input type="file" id="arc-up-file" accept=".xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp" multiple style="display:none" onchange="MGT.arcUploadFiles(this)">
+      <span id="arc-up-stat" style="font-size:11.5px;color:var(--hi)"></span>
+    </div>
+  </div>
+
   <div class="card" style="margin-bottom:14px">
     <div class="card-h" style="flex-wrap:wrap;gap:8px">
       <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -1292,7 +1322,7 @@ window.addEventListener('message', function(ev){
       <div class="empty" style="padding:40px 24px"><div class="empty-ico">📂</div><div style="font-size:12.5px;color:var(--mu)">불러오는 중…</div></div>
     </div>
     <div style="padding:9px 16px;border-top:1px solid var(--bd);background:var(--sf);font-size:11px;color:var(--hi)">
-      모든 월의 공장 인보이스와 지출내역서를 한곳에 모아 봅니다. 파일을 누르면 미리보기가 열립니다. 업로드·편집은 <b>📥 데이터 입력</b> 탭에서 합니다.
+      모든 월의 공장 인보이스와 지출내역서를 한곳에 모아 봅니다. 파일을 누르면 미리보기, ⬇ 버튼으로 다운로드할 수 있습니다.
     </div>
   </div>
 </div>
@@ -39742,44 +39772,55 @@ async function renderArchive(forceReload){
   _renderArchiveBody();
 }
 
-// 자료실에 보여줄 통합 항목 빌드: {period, kind, title, sub, files:[{name,url,type}], amount, date}
+// 자료실 항목을 "파일 1개 = 1행"으로 평면화
+// 반환: {kind, period, title, invNo, date(입력/업로드일), usd, krw, file:{name,url,type}}
 function _arcBuildItems(){
   var rate = parseFloat((document.getElementById('usd-rate')||{}).value) || 1350;
   var out = [];
-  // 1) 공장 인보이스 — 인보이스 단위로 묶인 것 재사용
+  // 1) 공장 인보이스 — 인보이스 묶음에서 첨부 파일을 각각 한 줄로 펼침
   if(_arcFilter==='all' || _arcFilter==='cn'){
     var invs = (typeof _buildInvoiceItems==='function') ? _buildInvoiceItems() : [];
     invs.forEach(function(it){
-      var files = [];
-      (it.allFiles||[]).forEach(function(f){ if(f && (f.url||f.pageUrl)) files.push({name:f.name||'파일', url:f.url||f.pageUrl, type:f.type||''}); });
-      (it.files||[]).forEach(function(f){ if(f && (f.url||f.pageUrl)) files.push({name:f.name||'파일', url:f.url||f.pageUrl, type:f.type||''}); });
       var appliedRate = it.rate || it._rate || rate;
       var krw = it._manual ? (it.krw||0) : (it.usd ? Math.round(it.usd*appliedRate) : (it.krw||0));
-      out.push({
+      // 인보이스에 묶인 모든 파일 수집 (중복 url 제거)
+      var seen = {}; var files = [];
+      var collect = function(f){ if(!f) return; var u=f.url||f.pageUrl; if(!u||seen[u]) return; seen[u]=1; files.push({name:f.name||'파일', url:u, type:f.type||'', uploadedAt:f.uploadedAt||''}); };
+      (it.allFiles||[]).forEach(collect);
+      (it.files||[]).forEach(collect);
+      var base = {
         kind:'cn',
         period: it.period || (it.invDate||'').slice(0,7) || '',
         title: it.vendor || it.label || it.invNo || '공장 인보이스',
         invNo: it.invNo||'',
-        date: it.invDate || '',
-        usd: it.usd||0, krw: krw,
-        files: files,
-        uploadedAt: it.uploadedAt||''
-      });
+        usd: it.usd||0, krw: krw
+      };
+      if(!files.length){
+        out.push(Object.assign({}, base, {date: it.invDate||(it.uploadedAt||'').slice(0,10)||'', uploadedAt: it.uploadedAt||'', file:null}));
+      } else {
+        files.forEach(function(f){
+          out.push(Object.assign({}, base, {
+            date: (f.uploadedAt||'').slice(0,10) || it.invDate || (it.uploadedAt||'').slice(0,10) || '',
+            uploadedAt: f.uploadedAt || it.uploadedAt || '',
+            file: f
+          }));
+        });
+      }
     });
   }
-  // 2) 지출내역서 — 업로드된 엑셀 파일(_board.exp) 단위
+  // 2) 지출내역서 — 파일 1개 = 1행
   if(_arcFilter==='all' || _arcFilter==='exp'){
     (_board.exp||[]).forEach(function(f){
-      var files = (f.url||f.pageUrl) ? [{name:f.name||'지출내역서', url:f.url||f.pageUrl, type:f.type||''}] : [];
+      var file = (f.url||f.pageUrl) ? {name:f.name||'지출내역서', url:f.url||f.pageUrl, type:f.type||'', uploadedAt:f.uploadedAt||''} : null;
       out.push({
         kind:'exp',
         period: f.period || (f.uploadedAt||'').slice(0,7) || '',
         title: f.vendor || f.name || '지출내역서',
         invNo:'',
         date: (f.uploadedAt||'').slice(0,10) || '',
+        uploadedAt: f.uploadedAt||'',
         usd:0, krw: f.krw||0,
-        files: files,
-        uploadedAt: f.uploadedAt||''
+        file: file
       });
     });
   }
@@ -39787,7 +39828,7 @@ function _arcBuildItems(){
   var q = _arcSearch;
   if(q){
     out = out.filter(function(it){
-      var hay = (it.title||'')+' '+(it.invNo||'')+' '+(it.period||'')+' '+(it.date||'')+' '+(it.files.map(function(f){return f.name;}).join(' '));
+      var hay = (it.title||'')+' '+(it.invNo||'')+' '+(it.period||'')+' '+(it.date||'')+' '+((it.file&&it.file.name)||'');
       return hay.toLowerCase().indexOf(q)>=0;
     });
   }
@@ -39827,30 +39868,119 @@ function _renderArchiveBody(){
     html += '<div class="arc-group">'
       + '<div class="arc-gh"><span class="arc-gh-m">📅 '+label+'</span><span class="arc-gh-n">'+rows.length+'건 · '+won(gKRW)+'</span></div>';
     rows.forEach(function(it){
-      fileCnt += it.files.length;
+      if(it.file) fileCnt++;
       var badge = it.kind==='cn'
         ? '<span class="arc-badge arc-cn">🏭 인보이스</span>'
         : '<span class="arc-badge arc-exp">🧾 지출내역</span>';
       var amt = it.usd ? ('$'+_arcNum(it.usd)+' · '+won(it.krw)) : (it.krw?won(it.krw):'—');
-      var fileChips = it.files.length ? it.files.map(function(f){
-        var nm=f.name||'파일'; var disp=nm.length>22?nm.slice(0,20)+'…':nm;
-        var ico = /\.pdf$/i.test(nm)?'📄':(/\.(png|jpe?g|webp|gif)$/i.test(nm)?'🖼️':(/\.(xlsx|xls)$/i.test(nm)?'📊':'📎'));
-        return '<a class="arc-file" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url)+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm.replace(/"/g,'&quot;')+' 미리보기">'+ico+' '+disp+'</a>';
-      }).join('') : '<span style="font-size:11px;color:var(--mu)">첨부 없음</span>';
-      html += '<div class="arc-row">'
-        + '<div class="arc-row-top">'+badge
+      var nm = it.file ? (it.file.name||'파일') : '';
+      var disp = nm.length>30 ? nm.slice(0,28)+'…' : nm;
+      var ico = /\.pdf$/i.test(nm)?'📄':(/\.(png|jpe?g|webp|gif)$/i.test(nm)?'🖼️':(/\.(xlsx|xls)$/i.test(nm)?'📊':'📎'));
+      // 입력(업로드) 날짜·시각
+      var upRaw = it.uploadedAt || '';
+      var upDisp = '';
+      if(upRaw){
+        try{ var d=new Date(upRaw); if(!isNaN(d)){ upDisp = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); } }catch(e){}
+      }
+      if(!upDisp) upDisp = it.date || '—';
+
+      var fileCell = it.file
+        ? '<a class="arc-file" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(it.file.url)+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(it.file.type||'')+'\')" title="'+nm.replace(/"/g,'&quot;')+' 미리보기">'+ico+' '+disp+'</a>'
+        : '<span style="font-size:11.5px;color:var(--mu)">첨부 없음</span>';
+      var dlBtn = it.file
+        ? '<button class="arc-dl" onclick="MGT.arcDownload(\''+encodeURIComponent(it.file.url)+'\',\''+encodeURIComponent(nm)+'\')" title="다운로드">⬇</button>'
+        : '';
+
+      // 파일 1개 = 1행 (한 줄 레이아웃)
+      html += '<div class="arc-row arc-row-line">'
+        + badge
         + '<span class="arc-title">'+(it.title||'').replace(/</g,'&lt;')+'</span>'
         + (it.invNo?'<span class="arc-inv">#'+it.invNo+'</span>':'')
-        + (it.date?'<span class="arc-date">'+it.date+'</span>':'')
-        + '<span class="arc-amt">'+amt+'</span></div>'
-        + '<div class="arc-files">'+fileChips+'</div></div>';
+        + '<span class="arc-fcell">'+fileCell+'</span>'
+        + '<span class="arc-up" title="입력일시">🕓 '+upDisp+'</span>'
+        + '<span class="arc-amt">'+amt+'</span>'
+        + dlBtn
+        + '</div>';
     });
     html += '</div>';
   });
   body.innerHTML = html;
-  if(stat) stat.textContent = items.length+'건 · 파일 '+fileCnt+'개 · '+won(totalKRW);
+  if(stat) stat.textContent = items.length+'행 · 파일 '+fileCnt+'개 · '+won(totalKRW);
 }
 function _arcNum(n){ try{ return (Math.round((+n)*100)/100).toLocaleString(); }catch(e){ return n; } }
+
+// 📤 자료실 업로드 — 선택한 월(arc-up-period)·종류(arc-up-type)로 rf() 재사용
+function _arcUpType(){ var s=document.getElementById('arc-up-type'); return s?s.value:'cn'; }
+function _arcUpPeriod(){ var p=document.getElementById('arc-up-period'); return p&&p.value?p.value:''; }
+function _arcSetUpStat(msg, color){ var el=document.getElementById('arc-up-stat'); if(el){ el.textContent=msg||''; el.style.color=color||'var(--hi)'; } }
+
+function arcPickFile(){
+  if(!_arcUpPeriod()){ _arcSetUpStat('⚠ 귀속 월을 먼저 선택하세요','var(--rd)'); return; }
+  var t=_arcUpType();
+  var inp=document.getElementById('arc-up-file');
+  // 종류에 따라 허용 확장자 조정 (지출내역서는 엑셀만, 공장 인보이스는 엑셀/PDF/이미지)
+  inp.accept = (t==='exp') ? '.xlsx,.xls' : '.xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp';
+  inp.value='';
+  inp.click();
+}
+
+// 자료실 업로드는 상단 g-period가 아닌 arc-up-period 기준이어야 하므로,
+// rf() 호출 동안만 g-period를 임시로 바꿔치기한 뒤 복원한다.
+function arcUploadFiles(inp){
+  if(!inp.files||!inp.files.length) return;
+  var period=_arcUpPeriod();
+  if(!period){ _arcSetUpStat('⚠ 귀속 월을 먼저 선택하세요','var(--rd)'); return; }
+  var t=_arcUpType();
+  var gpEl=document.getElementById('g-period');
+  var prevGp = gpEl ? gpEl.value : '';
+  if(gpEl) gpEl.value = period;   // rf()가 참조하는 기간을 자료실 선택 월로
+  _arcSetUpStat('업로드 중… ('+inp.files.length+'개)','var(--ac)');
+  var files=[].slice.call(inp.files);
+  files.forEach(function(f){ try{ rf(f, t); }catch(e){ console.warn('자료실 업로드 실패:', e.message); } });
+  // rf()는 비동기(내부 fetch) → 잠시 후 g-period 복원 + 자료실 새로고침
+  setTimeout(function(){
+    if(gpEl) gpEl.value = prevGp;
+    _arcSetUpStat('✓ 업로드 요청 완료 — 곧 목록에 반영됩니다','#2E7D32');
+    // 데이터 입력 탭/집계도 갱신
+    try{ if(typeof renderPurchase==='function') renderPurchase(); }catch(e){}
+    try{ if(period) syncCogsToNotion(period); }catch(e){}
+    renderArchive(true);
+    setTimeout(function(){ _arcSetUpStat('',''); }, 4000);
+  }, 2500);
+  inp.value='';
+}
+
+// ✏️ 자료실 직접입력 — 선택 월로 데이터 입력 탭의 직접입력 항목을 생성 후 그 탭으로 이동
+function arcAddManual(){
+  var period=_arcUpPeriod();
+  if(!period){ _arcSetUpStat('⚠ 귀속 월을 먼저 선택하세요','var(--rd)'); return; }
+  var t=_arcUpType();
+  var gpEl=document.getElementById('g-period');
+  if(gpEl) gpEl.value=period;   // 직접입력 항목이 이 월로 귀속되도록
+  try{ if(typeof onPeriodChange==='function'){ /* 월 변경 부수효과가 필요하면 호출 */ } }catch(e){}
+  if(t==='exp'){ if(typeof addManualExp==='function') addManualExp(); }
+  else { if(typeof addManualInvoice==='function') addManualInvoice(); }
+  _arcSetUpStat('✓ '+period+' '+(t==='exp'?'지출내역':'공장 인보이스')+' 입력행을 추가했습니다 — 데이터 입력 탭에서 작성하세요','#2E7D32');
+  // 데이터 입력 탭으로 전환해 바로 작성하게
+  var salesBtn=document.querySelector('.tabs .tab[onclick*="\'sales\'"]');
+  if(salesBtn){ go('sales', salesBtn); }
+  setTimeout(function(){ _arcSetUpStat('',''); }, 5000);
+}
+
+// ⬇ 다운로드 — R2/노션 파일 URL을 받아 원본 파일명으로 저장
+function arcDownload(encUrl, encName){
+  var url='', name='파일';
+  try{ url=decodeURIComponent(encUrl||''); }catch(e){ url=encUrl||''; }
+  try{ name=decodeURIComponent(encName||'파일'); }catch(e){ name=encName||'파일'; }
+  if(!url){ if(typeof toast==='function') toast('파일 URL이 없습니다','err'); return; }
+  // a[download]로 시도 (동일 출처/CORS 허용 시 파일명 유지), 실패 시 새 탭
+  try{
+    var a=document.createElement('a');
+    a.href=url; a.download=name; a.target='_blank'; a.rel='noopener';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ document.body.removeChild(a); }, 100);
+  }catch(e){ window.open(url,'_blank'); }
+}
 
 async function deleteBoardFile(pageId){
   if(!confirm('이 파일을 삭제할까요?\n(원본 파일 + 기록 모두 삭제됩니다)')) return;
@@ -40394,7 +40524,13 @@ function go(id,el){
     try{ _initSalesAccordion(); }catch(e){}
   }
   if(id==='pnl') calcPnL();
-  if(id==='archive'){ try{ renderArchive(false); }catch(e){ console.warn('자료실 렌더 실패:', e.message); } }
+  if(id==='archive'){
+    try{
+      var aup=document.getElementById('arc-up-period');
+      if(aup && !aup.value){ var gp=(document.getElementById('g-period')||{}).value||''; aup.value = gp || (new Date().toISOString().slice(0,7)); }
+    }catch(e){}
+    try{ renderArchive(false); }catch(e){ console.warn('자료실 렌더 실패:', e.message); }
+  }
   if(id==='fin'){ try{ renderFinPlan(); }catch(e){ console.warn('재무계획 렌더 실패:', e.message); } }
 }
 
@@ -43579,6 +43715,10 @@ return {
   renderArchive: (typeof renderArchive!=="undefined"?renderArchive:undefined),
   arcFilter: (typeof arcFilter!=="undefined"?arcFilter:undefined),
   arcSearch: (typeof arcSearch!=="undefined"?arcSearch:undefined),
+  arcPickFile: (typeof arcPickFile!=="undefined"?arcPickFile:undefined),
+  arcUploadFiles: (typeof arcUploadFiles!=="undefined"?arcUploadFiles:undefined),
+  arcAddManual: (typeof arcAddManual!=="undefined"?arcAddManual:undefined),
+  arcDownload: (typeof arcDownload!=="undefined"?arcDownload:undefined),
   saveUsdRate: (typeof saveUsdRate!=="undefined"?saveUsdRate:undefined),
   restoreUsdRate: (typeof restoreUsdRate!=="undefined"?restoreUsdRate:undefined),
   addManualInvoice: (typeof addManualInvoice!=="undefined"?addManualInvoice:undefined),
