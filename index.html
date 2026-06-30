@@ -38855,8 +38855,13 @@ function _finRenderOutflows(){
     var mult=(_FIN_CYCLE.hasOwnProperty(o.cycle)?_FIN_CYCLE[o.cycle]:1);
     var annual=_finNum(o.amount)*mult;
     var isOnce=(o.cycle==='일회성');
-    var annualCell=isOnce?('<span style="color:var(--mu)">'+won(_finNum(o.amount))+'</span><span style="font-size:10px;color:var(--hi);margin-left:3px">1회</span>'):won(annual);
     var _paid = !!o.paid;
+    var annualCell;
+    if(_paid){
+      annualCell='<span style="color:var(--mu);text-decoration:line-through">'+won(isOnce?_finNum(o.amount):annual)+'</span><span style="font-size:10px;color:#2E7D32;margin-left:4px;font-weight:700">지급완료</span>';
+    } else {
+      annualCell=isOnce?('<span style="color:var(--mu)">'+won(_finNum(o.amount))+'</span><span style="font-size:10px;color:var(--hi);margin-left:3px">1회</span>'):won(annual);
+    }
     rows+='<tr'+(_paid?' style="opacity:.55"':'')+'>'
       +'<td><input value="'+_finEsc(o.name)+'" placeholder="예: 임대료" onchange="MGT.finEdit(\'outflows\','+i+',\'name\',this.value)"'+(_paid?' style="text-decoration:line-through"':'')+'></td>'
       +'<td><input value="'+_finEsc(o.cat)+'" list="finOutflowCat" placeholder="분류" onchange="MGT.finEdit(\'outflows\','+i+',\'cat\',this.value)"></td>'
@@ -38874,6 +38879,7 @@ function _finRenderOutflows(){
     +'<datalist id="finOutflowCat"><option value="임대료"><option value="인건비"><option value="4대보험"><option value="공과금"><option value="통신/구독"><option value="보험료"><option value="외주비"><option value="원자재"><option value="마케팅"><option value="세금"><option value="상환"><option value="기타"></datalist>';
   var annualTot=0, onceTot=0;
   (FIN.outflows||[]).forEach(function(o){
+    if(o.paid) return;  // 지급완료 항목은 합계에서 제외(차감)
     if(o.cycle==='일회성'){ onceTot+=_finNum(o.amount); }
     else { annualTot+=_finNum(o.amount)*(_FIN_CYCLE.hasOwnProperty(o.cycle)?_FIN_CYCLE[o.cycle]:1); }
   });
@@ -38881,7 +38887,7 @@ function _finRenderOutflows(){
   var ft=document.getElementById('fin-outflow-foot');
   if(ft){
     var totalCash=annualTot+onceTot;
-    var onceCnt=(FIN.outflows||[]).filter(function(o){return o.cycle==='일회성';}).length;
+    var onceCnt=(FIN.outflows||[]).filter(function(o){return o.cycle==='일회성' && !o.paid;}).length;
     var right='';
     if(annualTot>0 && onceTot>0){
       right='<td style="text-align:right;white-space:nowrap">연 '+won(annualTot)+' <span style="font-weight:600;color:var(--hi);font-size:11px">+ '+won(onceTot)+'</span></td><td colspan="3" style="font-weight:700;color:var(--ac);white-space:nowrap">합계 '+won(totalCash)+'</td>';
@@ -38978,18 +38984,20 @@ function _finRenderSummary(){
   var today=new Date().toISOString().slice(0,10);
   var annualOut=0, onceOut=0;
   (FIN.outflows||[]).forEach(function(o){
+    if(o.paid) return;  // 지급완료 항목은 출금 예상·연환산에서 제외
     if(o.cycle==='일회성'){ onceOut+=_finNum(o.amount); }
     else { annualOut+=_finNum(o.amount)*(_FIN_CYCLE.hasOwnProperty(o.cycle)?_FIN_CYCLE[o.cycle]:1); }
   });
   var loanMonthly=(FIN.loans||[]).reduce(function(s,l){return s+_finNum(l.monthly);},0);
   var taxTot=(FIN.taxes||[]).filter(function(t){return !t.done;}).reduce(function(s,t){return s+_finNum(t.amount);},0);
   var annualTotal=annualOut + onceOut + loanMonthly*12 + taxTot;
-  // 해당(현재) 월 출금 예상 — 지급일이 이번 달인 항목 합계
+  // 해당(현재) 월 출금 예상 — 지급일이 이번 달이면서 아직 지급 안 한 항목 합계
   var _now=new Date();
   var curYM=_now.getFullYear()+'-'+String(_now.getMonth()+1).padStart(2,'0'); // YYYY-MM
   var curMonLabel=(_now.getMonth()+1)+'월';
   var monthOut=0, monthCnt=0;
   (FIN.outflows||[]).forEach(function(o){
+    if(o.paid) return;  // 지급완료 제외
     if(o.month && String(o.month).slice(0,7)===curYM){ monthOut+=_finNum(o.amount); monthCnt++; }
   });
   var recvOpen=(FIN.receivables||[]).filter(function(r){return r.status!=='입금완료';}).reduce(function(s,r){return s+_finNum(r.amount);},0);
