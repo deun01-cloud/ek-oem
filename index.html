@@ -7749,24 +7749,30 @@ function maintainInvoiceData(){
     invoiceHistory.forEach(function(c){
       if(!c || !c._isConsolidated) return;
       var seenChildIds = {};
+      // 🛡 고객사 가드: 합본은 자기 고객사(vendor) 명세서만 자식으로 인정한다.
+      //    (childKeys 드리프트/역참조 오염으로 다른 고객사 명세서가 딸려 들어가 '섞인 합본'이
+      //     생기던 문제 차단 — pull마다 이 가드가 재오염을 막는다)
+      var _cv = (c.vendor||'');
+      var _vendorOk = function(ch){ return ch && (ch.vendor||'')===_cv; };
       // (1) includedInvoiceIds 로컬 id 매칭
       (c.includedInvoiceIds||[]).forEach(function(cid){
         var ch = invoiceHistory.find(function(x){ return !x._isConsolidated && String(x.id)===String(cid); });
-        if(ch){ seenChildIds[String(ch.id)] = ch; }
+        if(ch && _vendorOk(ch)){ seenChildIds[String(ch.id)] = ch; }
       });
       // (2) includedChildKeys 안정키 매칭 (id가 어긋난 자식까지)
       if(Array.isArray(c.includedChildKeys) && typeof _invStableKey==='function'){
         c.includedChildKeys.forEach(function(sk){
           var ch = invoiceHistory.find(function(x){ return !x._isConsolidated && _invStableKey(x)===sk; });
-          if(ch){ seenChildIds[String(ch.id)] = ch; }
+          if(ch && _vendorOk(ch)){ seenChildIds[String(ch.id)] = ch; }
         });
       }
       // (3) 🔑 역방향 신뢰: 자식이 _consolidatedInvoiceId로 '이 합본'을 가리키면 그것도 자식으로 인정.
       //    부모 목록(includedInvoiceIds)이 스냅샷마다 흔들려도, 자식의 부모 지목이 살아있으면 연결 유지.
       //    이게 없으면 수동으로 맞춘 자식 연결이 다음 스냅샷에서 사라진다(오늘 겪은 흔들림의 핵심).
+      //    ⚠ 단, 고객사가 다르면 신뢰하지 않는다(오염된 역참조가 되살아나는 것 방지).
       invoiceHistory.forEach(function(x){
         if(!x || x._isConsolidated) return;
-        if(String(x._consolidatedInvoiceId) === String(c.id)){ seenChildIds[String(x.id)] = x; }
+        if(String(x._consolidatedInvoiceId) === String(c.id) && _vendorOk(x)){ seenChildIds[String(x.id)] = x; }
       });
       // 역참조 설정 + includedInvoiceIds를 '실제 해석된 자식'으로 재구성(중복/유령 id 제거)
       var _rebuiltIds = [];
@@ -12559,6 +12565,7 @@ function mapNotionInvoice(row){
     _notionId:row.id,
     vendor:    np.title(p['고객사']),
     ordNo:     np.text(p['발주번호']),
+    _localKey: np.text(p['명세서키']) || undefined,
     itemSummary:np.text(p['품목내역']),
     // 품목 상세 (행 단위 — 카피본 렌더에 필요)
     items:     parseItems(np.text(p['품목JSON'])),
@@ -17315,6 +17322,8 @@ async function syncInvoiceToNotion(inv, update){
   const p={
     "고객사":{"title":[{"text":{"content":inv.vendor||''}}]},
     "발주번호":{"rich_text":[{"text":{"content":inv.ordNo||''}}]},
+    // 📌 명세서 고유키 — 같은 발주의 부분출고 명세서를 서로 구분 (발주번호만으로 dedup되어 덮어써지던 버그 방지)
+    "명세서키":{"rich_text":[{"text":{"content":(inv._localKey||_ensureInvLocalKey(inv)||'').slice(0,120)}}]},
     "품목내역":{"rich_text":chunkRichText(inv.itemSummary||'')},
     // 품목 상세 (행 단위 정보 — 카피본 렌더에서 사용)
     "품목JSON":{"rich_text":chunkRichText(JSON.stringify(cleanItems))},
@@ -17390,17 +17399,30 @@ async function syncInvoiceToNotion(inv, update){
     try{
       const rows=await nQueryAll(notionCfg.invDb);
       const targetSmpIdsKey = inv._fromSample ? JSON.stringify(inv.smpIds||[]) : '';
+      const myLocalKey = inv._localKey || _ensureInvLocalKey(inv);
       const existing=rows.find(r=>{
         const rp=r.properties||{};
         const rowVendor=np.title(rp['고객사']);
         if(rowVendor !== (inv.vendor||'')) return false;
+        // 🔑 1순위: 명세서키가 양쪽에 있으면 그것으로만 매칭 (부분출고 구분 — 발주번호 같아도 다른 명세서면 별도 페이지)
+        const rowKey = np.text(rp['명세서키']) || '';
+        if(rowKey && myLocalKey) return rowKey === myLocalKey;
+        // 2순위(레거시: 명세서키 없는 옛 페이지): 기존 방식으로 폴백
         if(inv._fromSample){
           const rowIsSample = !!np.check(rp['샘플명세서']);
           const rowSmpIds = np.text(rp['샘플IDs']) || '';
           return rowIsSample && rowSmpIds === targetSmpIdsKey;
         } else {
+          // 레거시 페이지(명세서키 없음)와 매칭될 때, 그 페이지가 이미 다른 로컬 명세서에
+          // 물려있지 않도록 발주번호로만 매칭하되, 로컬에 같은 발주 명세서가 2개 이상이면
+          // 레거시 매칭을 포기(신규 생성)해 부분출고 명세서가 안 겹치게 한다.
+          if(rowKey) return false; // 명세서키 있는데 내 키와 다르면 남의 명세서 → 매칭 금지
           const rowOrdNo=np.text(rp['발주번호']);
-          return rowOrdNo===inv.ordNo;
+          if(rowOrdNo!==inv.ordNo) return false;
+          const sameOrdLocal = (typeof invoiceHistory!=='undefined')
+            ? invoiceHistory.filter(x=>!x._isConsolidated && !x._fromSample && (x.vendor||'')===(inv.vendor||'') && (x.ordNo||'')===(inv.ordNo||'')).length
+            : 1;
+          return sameOrdLocal <= 1; // 같은 발주 명세서가 하나뿐일 때만 레거시 발주번호 매칭 허용
         }
       });
       if(existing){
@@ -33745,6 +33767,16 @@ function _invStableKey(v){
   if(v._notionId) return 'n:'+v._notionId;
   if(v.ordNo) return 'o:'+v.ordNo+'_'+(v.shipDate||v.issuedAt||'');
   return 'l:'+String(v.id);
+}
+// 📌 명세서 고유키 — 부분출고 등으로 같은 발주에 명세서가 여러 개일 때 각 명세서를 유일 식별.
+//    한 번 만들면 invoice에 저장돼 노션·pull·dedup에서 안정적으로 쓰인다.
+function _ensureInvLocalKey(inv){
+  if(!inv) return '';
+  if(inv._localKey) return inv._localKey;
+  // 고객사+발주번호+로컬id 조합으로 유일키 생성 (로컬id는 명세서마다 다름 → 부분출고 구분됨)
+  var base = (inv.vendor||'') + '|' + (inv.ordNo||'') + '|' + String(inv.id!=null?inv.id:Date.now());
+  inv._localKey = 'ik_' + base.replace(/\s+/g,'').slice(0,110);
+  return inv._localKey;
 }
 // 📑 합본의 기기 간 안정적 자연키 — 청구월 제외(월이 달라도 같은 묶음이면 동일키) + 거래처 + 자식 안정키 집합
 function _consNaturalUid(vendor, childStableKeys){
