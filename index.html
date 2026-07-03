@@ -286,6 +286,11 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .cl-init{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;font-size:11px;font-weight:800;letter-spacing:.5px;color:#fff;flex-shrink:0;vertical-align:middle}
 .cl-init-sm{width:20px;height:20px;border-radius:4px;font-size:9px}
 .cl-lbl{display:inline-flex;align-items:center;gap:5px}
+.cl-cat-tags{display:flex;flex-wrap:wrap;gap:6px}
+.cl-cat-tags .cct{padding:6px 14px;border:1.5px solid var(--bdr);border-radius:16px;background:var(--s1);color:var(--t2);font-size:12px;font-weight:600;cursor:pointer;transition:.13s;font-family:inherit}
+.cl-cat-tags .cct:hover{border-color:var(--gold-line)}
+.cl-cat-tags .cct.on{background:var(--gold-bg,#f5efe2);border-color:var(--gold-lt,#9a7b3f);color:var(--gold-lt,#9a7b3f)}
+.cl-cat-chip{display:inline-block;font-size:9.5px;font-weight:600;color:var(--gold-lt,#9a7b3f);background:var(--gold-bg,#f5efe2);padding:2px 8px;border-radius:9px;margin:1px 2px}
 
 /* ── Sales subtab buttons ── */
 .sl-subtab{padding:10px 18px;font-size:12.5px;font-weight:500;color:var(--t2);background:transparent;border:none;border-bottom:2px solid transparent;cursor:pointer;font-family:inherit;transition:.15s;white-space:nowrap}
@@ -1725,7 +1730,10 @@ window.addEventListener('message', function(ev){
   <div class="fr2"><div class="fg"><label>담당자</label><input class="fi" id="cl_ct"></div><div class="fg"><label>연락처</label><input class="fi" id="cl_ph"></div></div>
   <div class="fg"><label>이메일</label><input class="fi" id="cl_em"></div>
   <div class="fr3">
-    <div class="fg"><label>카테고리</label><select class="fs" id="cl_ca"><option>반지</option><option>목걸이</option><option>귀걸이</option><option>팔찌</option><option>브로치</option><option>종합</option></select></div>
+    <div class="fg"><label>카테고리 <span style="font-size:10px;color:var(--t3);font-weight:400">(복수 선택)</span></label>
+      <div id="cl_catTags" class="cl-cat-tags"></div>
+      <input type="hidden" id="cl_ca">
+    </div>
     <div class="fg"><label>등급</label><select class="fs" id="cl_gr"><option>신규</option><option>일반</option><option>우수</option><option>VIP</option></select></div>
     <div class="fg"><label>제안 주기 (주)</label><input class="fi" type="number" id="cl_cycle" value="4" placeholder="4"></div>
   </div>
@@ -12199,6 +12207,7 @@ const np={
   title:p=>p?.title?.map(t=>t.plain_text||t.text?.content||'').join('')||'',
   text: p=>p?.rich_text?.map(t=>t.plain_text||t.text?.content||'').join('')||'',
   select:p=>p?.select?.name||'',
+  multi:p=>Array.isArray(p?.multi_select)?p.multi_select.map(o=>o?.name||'').filter(Boolean).join(', '):'',
   number:p=>p?.number??0,
   date:  p=>p?.date?.start||'',
   check: p=>p?.checkbox||false,
@@ -12436,7 +12445,7 @@ function mapNotionClient(row){
     priceRange:np.text(p['가격대']),
     memo:      np.text(p['메모']),
     cycle:     np.number(p['제안주기_주'])||4,
-    cat:       np.select(p['카테고리']),
+    cat:       np.multi(p['카테고리']) || np.select(p['카테고리']),
     grade:     np.select(p['등급']),
     status:    np.select(p['상태'])==='미활성'?'inactive':'active',
     files,
@@ -16920,7 +16929,7 @@ async function syncClientToNotion(cl, update){
     "제안주기_주":{"number":+cl.cycle||4},
     "상태":{"select":{"name":cl.status==='inactive'?'미활성':'활성'}},
   };
-  if(cl.cat)   p["카테고리"]={"select":{"name":cl.cat}};
+  if(cl.cat){ p["카테고리"]={"multi_select": String(cl.cat).split(',').map(s=>s.trim()).filter(Boolean).map(n=>({name:n})) }; }
   if(cl.grade) p["등급"]={"select":{"name":cl.grade}};
   if(cl._notionId){
     await nUpdate(cl._notionId,p);
@@ -21942,7 +21951,7 @@ function switchTab(tab,el){
     }
   }
   else if(tab==='schedule') acts.innerHTML='<button class="btn bp bs" onclick="openTaskModal()">+ 업무 추가</button>';
-  else if(tab==='sales') acts.innerHTML='<button class="btn bp bs" onclick="openClModal(null)">+ 고객사 등록</button><button class="btn bgo bs" onclick="openPropModal(null)">+ 영업 등록</button><button class="btn bgo bs" onclick="openClientImport()">📥 고객사 엑셀 업로드</button>';
+  else if(tab==='sales') acts.innerHTML='<button class="btn bp bs" onclick="openClModal(null)">+ 고객사 등록</button><button class="btn bgo bs" onclick="openClientImport()">📥 고객사 엑셀 업로드</button>';
   else if(tab==='mgt') acts.innerHTML='';
   renderTab();updateBadges();
   // 탭 전환 시 silent 동기화 (마지막 동기화 후 30초 이상 지났을 때만)
@@ -22058,8 +22067,6 @@ function renderDash(){
     <div class="kpi k-g" onclick="switchTab('order',getTabBtn('order'))"><div class="kpi-l">발주 진행중</div><div class="kpi-v">${activeOrd}</div><div class="kpi-d">건</div></div>
     <div class="kpi k-p" onclick="switchTab('schedule',getTabBtn('schedule'))"><div class="kpi-l">오늘 업무</div><div class="kpi-v">${todayT}</div><div class="kpi-d">건</div></div>
   </div>
-
-  ${todayShip?`<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--red-bg);border:1px solid rgba(192,48,48,.3);border-radius:var(--r);font-size:12px"><span style="color:var(--red);font-weight:700;flex-shrink:0">🚨 오늘 출고</span><span>${procItems.filter(p=>!p.shipped&&p.due===todayStr).map(p=>`<b>${p.name}</b>`).join(' · ')}</span></div>`:''}
 
   ${(()=>{
     const low=getLowStockProducts();
@@ -29990,18 +29997,43 @@ function closeDp(){
   const dp=document.getElementById('slDp');
   if(dp) dp.style.display='none';
 }
+// 고객사 첨부파일 클릭 → 기존 파일 미리보기 모달로 열기
+function _clPreviewFile(clId, startIdx){
+  const cl=clients.find(c=>c.id==clId); if(!cl||!Array.isArray(cl.files)||!cl.files.length) return;
+  if(typeof openFilePreviewList==='function') openFilePreviewList(cl.files, startIdx||0);
+}
 function showClientDp(id){
   const cl=clients.find(c=>c.id==id); if(!cl) return;
   document.getElementById('slDpT').innerHTML=(cl.initials?`<span class="cl-lbl">${clInitHtml(cl)}<span>${cl.name}</span></span>`:cl.name);
   document.getElementById('slDpB').innerHTML=`
     <div style="display:flex;flex-direction:column;gap:6px;font-size:12px">
       ${[['담당자',cl.contact||'-'],['연락처',cl.phone||'-'],['이메일',cl.email||'-'],
+         ['카테고리',(cl.cat||'').split(',').map(t=>t.trim()).filter(Boolean).map(t=>`<span class="cl-cat-chip">${t}</span>`).join('')||'-'],
          ['등급',cl.grade||'-'],['제안주기',(cl.cycle||4)+'주'],['가격대',cl.priceRange||'-']]
         .map(([k,v])=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--bdr)"><span style="color:var(--t3)">${k}</span><span style="font-weight:500">${v}</span></div>`).join('')}
       ${cl.brandStyle?`<div style="margin-top:8px;font-size:11.5px;color:var(--t2)">${cl.brandStyle}</div>`:''}
       ${cl.memo?`<div style="background:var(--s2);border-radius:6px;padding:8px;font-size:11.5px;color:var(--t2);margin-top:6px">${cl.memo}</div>`:''}
+      ${(Array.isArray(cl.files)&&cl.files.length)?`
+        <div style="margin-top:12px">
+          <div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">📎 첨부파일 ${cl.files.length}</div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            ${cl.files.map((f,i)=>{
+              const ext=((f.name||'').split('.').pop()||'').toUpperCase().slice(0,4);
+              const type=(f.type||'').toLowerCase();
+              const isImg=type.startsWith('image/')||(f.url&&String(f.url).startsWith('data:image/'));
+              const isPdf=type==='application/pdf'||ext==='PDF';
+              let ico='📄'; if(isPdf)ico='📕'; else if(isImg)ico='🖼️'; else if(['XLSX','XLS','CSV'].includes(ext))ico='📊'; else if(['DOC','DOCX'].includes(ext))ico='📘';
+              return `<div onclick="_clPreviewFile('${String(id).replace(/'/g,"\\'")}',${i})" style="display:flex;align-items:center;gap:8px;padding:7px 9px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;cursor:pointer;font-size:11.5px" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'">
+                <span style="font-size:15px">${ico}</span>
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t1)" title="${(f.name||'파일').replace(/"/g,'&quot;')}">${f.name||'파일'}</span>
+                <span style="font-size:9.5px;color:var(--t3);font-weight:700">${ext||''}</span>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>`:''}
     </div>
     <div style="margin-top:14px;display:flex;gap:6px">
+      <button class="btn bgo" style="flex:1;font-size:11.5px" onclick="closeDp();openClModal('${String(id).replace(/'/g,"\\'")}')">✏️ 수정</button>
       <button class="btn bp" style="flex:1;font-size:11.5px" onclick="showClientPropDp('${String(id).replace(/'/g,"\\'")}')">영업이력 보기</button>
     </div>`;
   document.getElementById('slDp').style.display='block';
@@ -30027,6 +30059,26 @@ function showClientPropDp(id){
   document.getElementById('slDp').style.display='block';
 }
 
+// ── 고객사 카테고리 태그 (복수 선택: 주얼리·패션·굳즈·기타) ──
+const CL_CAT_TAGS = ['주얼리','패션','굳즈','기타'];
+function _renderClCatTags(catStr){
+  const el=document.getElementById('cl_catTags'); if(!el) return;
+  const sel = (catStr||'').split(',').map(s=>s.trim()).filter(Boolean);
+  el.innerHTML = CL_CAT_TAGS.map(t=>
+    `<button type="button" class="cct ${sel.includes(t)?'on':''}" data-tag="${t}" onclick="_toggleClCatTag('${t}')">${t}</button>`
+  ).join('');
+}
+function _toggleClCatTag(tag){
+  const hid=document.getElementById('cl_ca'); if(!hid) return;
+  let sel=(hid.value||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const i=sel.indexOf(tag);
+  if(i>=0) sel.splice(i,1); else sel.push(tag);
+  // CL_CAT_TAGS 순서 유지
+  sel = CL_CAT_TAGS.filter(t=>sel.includes(t));
+  hid.value = sel.join(', ');
+  _renderClCatTags(hid.value);
+}
+
 // ── 고객사 모달 열기 (신규/수정 통합) ──
 function openClModal(idOrNull){
   const cl=idOrNull?clients.find(c=>c.id==idOrNull):null;
@@ -30036,7 +30088,8 @@ function openClModal(idOrNull){
   sv('cl_ct',cl?cl.contact||'':'');
   sv('cl_ph',cl?cl.phone||'':'');
   sv('cl_em',cl?cl.email||'':'');
-  sv('cl_ca',cl?cl.cat||'종합':'종합');
+  sv('cl_ca', cl? (cl.cat||'') : '');
+  _renderClCatTags(cl? (cl.cat||'') : '');
   sv('cl_gr',cl?cl.grade||'일반':'일반');
   sv('cl_cycle',cl?cl.cycle||4:4);
   sv('cl_bs',cl?cl.brandStyle||'':'');
@@ -31016,7 +31069,7 @@ function vClients(c){
   _ensureIds(clients, '고객사');
   c.innerHTML=`<div class="card"><div class="ch"><div><div class="ch-t">고객사 관리</div></div><button class="btn bp bs" onclick="openM('mCl')">+ 등록</button></div>
   <div class="tbl-wrap"><table><thead><tr><th>고객사</th><th>담당자</th><th>카테고리</th><th>등급</th><th>브랜드 성향</th><th>선호 소재</th><th>가격대</th><th>상태</th><th></th></tr></thead>
-  <tbody>${clients.map(cl=>`<tr><td onclick="showClientDp('${cl.id}')" style="cursor:pointer"><span class="cl-lbl">${clInitHtml(cl)}<span class="cn" title="${cl.name}">${cl.name}</span></span></td><td>${cl.contact||''}<br><span class="csub">${cl.phone||''}</span></td><td>${cl.cat||''}</td><td><span class="chip ${cl.grade==='VIP'?'cgold':cl.grade==='우수'?'cg':''}">${cl.grade||''}</span></td><td style="color:var(--t2);font-size:11.5px">${cl.brandStyle||'-'}</td><td style="font-size:11px">${(cl.materials||'').split(',').map(m=>m.trim()).filter(Boolean).map(m=>`<span class="chip" style="font-size:9.5px;margin:1px">${m}</span>`).join('')||'-'}</td><td><span class="chip co" style="font-size:10px">${cl.priceRange||'-'}</span></td><td><span class="chip ${cl.status==='inactive'?'cr':'cg'}">${cl.status==='inactive'?'미활성':'활성'}</span></td><td style="text-align:center"><button onclick="openClModal('${cl.id}')" style="padding:3px 8px;font-size:11px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'">수정</button></td></tr>`).join('')}
+  <tbody>${clients.map(cl=>`<tr onclick="showClientDp('${String(cl.id).replace(/'/g,"\\'")}')" style="cursor:pointer" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''"><td><span class="cl-lbl">${clInitHtml(cl)}<span class="cn" title="${cl.name}">${cl.name}</span></span></td><td>${cl.contact||''}<br><span class="csub">${cl.phone||''}</span></td><td>${(cl.cat||'').split(',').map(t=>t.trim()).filter(Boolean).map(t=>`<span class="cl-cat-chip">${t}</span>`).join('')||'-'}</td><td><span class="chip ${cl.grade==='VIP'?'cgold':cl.grade==='우수'?'cg':''}">${cl.grade||''}</span></td><td style="color:var(--t2);font-size:11.5px">${cl.brandStyle||'-'}</td><td style="font-size:11px">${(cl.materials||'').split(',').map(m=>m.trim()).filter(Boolean).map(m=>`<span class="chip" style="font-size:9.5px;margin:1px">${m}</span>`).join('')||'-'}</td><td><span class="chip co" style="font-size:10px">${cl.priceRange||'-'}</span></td><td><span class="chip ${cl.status==='inactive'?'cr':'cg'}">${cl.status==='inactive'?'미활성':'활성'}</span></td><td style="text-align:center"><button onclick="event.stopPropagation();openClModal('${String(cl.id).replace(/'/g,"\\'")}')" style="padding:3px 8px;font-size:11px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)" onmouseover="this.style.borderColor='var(--gold-line)'" onmouseout="this.style.borderColor='var(--bdr)'">수정</button></td></tr>`).join('')}
   </tbody></table></div></div>`;
 }
 
