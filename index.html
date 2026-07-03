@@ -34205,11 +34205,11 @@ function _refreshConsolidationPreview(){
   if(_consSelectedIds === null){
     _consSelectedIds = new Set(candidates.map(v => String(v.id)));
   } else {
-    // 후보 목록이 바뀌었을 수 있으니 — 이전 선택 중 후보에 없는 건 제거
+    // 후보 목록에서 사라진 명세서만 선택에서 제거(정리).
+    // ⚠ 후보에 있는데 미선택인 건 '사용자가 의도적으로 해제한 것'이므로 다시 추가하지 않는다.
+    //    (예전엔 여기서 미선택 후보를 전부 재추가해 → 체크 해제가 즉시 되돌려지는 버그가 있었음)
     const candIds = new Set(candidates.map(v => String(v.id)));
     [..._consSelectedIds].forEach(id => { if(!candIds.has(id)) _consSelectedIds.delete(id); });
-    // 후보에 새로 들어온 건 자동 추가 (vendor/month 동일)
-    candidates.forEach(v => { if(!_consSelectedIds.has(String(v.id))) _consSelectedIds.add(String(v.id)); });
   }
   // 선택된 것만 합산
   const selected = candidates.filter(v => _consSelectedIds.has(String(v.id)));
