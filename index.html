@@ -291,6 +291,17 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .cl-cat-tags .cct:hover{border-color:var(--gold-line)}
 .cl-cat-tags .cct.on{background:var(--gold-bg,#f5efe2);border-color:var(--gold-lt,#9a7b3f);color:var(--gold-lt,#9a7b3f)}
 .cl-cat-chip{display:inline-block;font-size:9.5px;font-weight:600;color:var(--gold-lt,#9a7b3f);background:var(--gold-bg,#f5efe2);padding:2px 8px;border-radius:9px;margin:1px 2px}
+/* ── 고객사 카드 그리드 ── */
+.cl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;padding:4px 2px}
+.cl-card{position:relative;border:1px solid var(--bdr);border-radius:12px;background:var(--s1);padding:14px 15px;cursor:pointer;transition:.14s;display:flex;flex-direction:column;gap:9px}
+.cl-card:hover{border-color:var(--gold-line);box-shadow:0 4px 16px rgba(0,0,0,.08);transform:translateY(-2px)}
+.cl-card-top{display:flex;align-items:center;gap:9px}
+.cl-card-name{font-size:14px;font-weight:700;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cl-card-cats{display:flex;flex-wrap:wrap;gap:3px;min-height:18px}
+.cl-card-edit{position:absolute;top:9px;right:9px;width:28px;height:28px;border:none;background:var(--s2);border-radius:7px;cursor:pointer;font-size:13px;opacity:0;transition:.14s;font-family:inherit}
+.cl-card:hover .cl-card-edit{opacity:1}
+.cl-card-edit:hover{background:var(--gold-bg,#f5efe2)}
+.cl-card-inactive{position:absolute;bottom:12px;right:14px;font-size:9.5px;font-weight:700;color:var(--red);background:rgba(192,48,48,.1);padding:2px 7px;border-radius:8px}
 
 /* ── Sales subtab buttons ── */
 .sl-subtab{padding:10px 18px;font-size:12.5px;font-weight:500;color:var(--t2);background:transparent;border:none;border-bottom:2px solid transparent;cursor:pointer;font-family:inherit;transition:.15s;white-space:nowrap}
@@ -6322,12 +6333,14 @@ window.addEventListener('message', function(ev){
   </div>
 </div></div>
 <!-- detail panel -->
-<div class="dp" id="slDp" style="display:none;position:fixed;top:92px;right:0;width:300px;bottom:0;background:var(--s1);border-left:1px solid var(--bdr);z-index:200;overflow-y:auto;padding:14px">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-    <div style="font-size:13px;font-weight:700" id="slDpT">상세</div>
-    <button onclick="closeDp()" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--t3)">×</button>
+<div id="slDpBack" onclick="if(event.target===this)closeDp()" style="display:none;position:fixed;inset:0;background:rgba(20,16,10,.5);backdrop-filter:blur(2px);z-index:9998;align-items:flex-start;justify-content:center;padding:60px 16px;overflow-y:auto">
+<div class="dp" id="slDp" style="width:100%;max-width:460px;background:var(--s1);border:1px solid var(--bdr);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.28);padding:20px 22px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+    <div style="font-size:15px;font-weight:700" id="slDpT">상세</div>
+    <button onclick="closeDp()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--t3);line-height:1">×</button>
   </div>
   <div id="slDpB"></div>
+</div>
 </div>
 </div>
 <!-- 인쇄 영역 — .app 바깥 배치 필수 (print CSS에서 .app은 숨김) -->
@@ -26419,7 +26432,7 @@ function switchTab(tab,el){
   }catch(e){}
   if(el && el.classList) el.classList.add('on');
   document.getElementById('subTitle').textContent=TAB_TITLES[tab]||tab;
-  if(tab!=='sales'){const sm=document.getElementById('salesModalArea');if(sm)sm.style.display='none';const dp=document.getElementById('slDp');if(dp)dp.style.display='none';}
+  if(tab!=='sales'){const sm=document.getElementById('salesModalArea');if(sm)sm.style.display='none';const dp=document.getElementById('slDpBack');if(dp)dp.style.display='none';}
   // Per-tab action button in sub-bar
   const acts=document.getElementById('subActs');
   acts.innerHTML='';
@@ -26531,7 +26544,7 @@ function renderTab(){
   else if(currentTab==='order'){ try{ if(typeof refreshTypeFromServer==='function') refreshTypeFromServer('order'); }catch(e){} }
   else if(currentTab==='schedule'){ try{ if(typeof refreshTypeFromServer==='function') refreshTypeFromServer('task'); }catch(e){} }
   ({dash:renderDash,sample:renderSample,order:renderOrder,schedule:renderSchedule}[currentTab]||renderDash)();
-  {const sm=document.getElementById('salesModalArea');if(sm)sm.style.display='none';const dp=document.getElementById('slDp');if(dp)dp.style.display='none';}
+  {const sm=document.getElementById('salesModalArea');if(sm)sm.style.display='none';const dp=document.getElementById('slDpBack');if(dp)dp.style.display='none';}
 }
 function updateBadges(){
   // 진행중 샘플: 완료(확정)·취소가 아닌 의뢰만
@@ -34511,7 +34524,7 @@ function renderSalesSubTab(){
 
 // Override closeDp / showClientDp / showClientPropDp to use slDp panel
 function closeDp(){
-  const dp=document.getElementById('slDp');
+  const dp=document.getElementById('slDpBack');
   if(dp) dp.style.display='none';
 }
 // 고객사 첨부파일 클릭 → 기존 파일 미리보기 모달로 열기
@@ -34553,7 +34566,7 @@ function showClientDp(id){
       <button class="btn bgo" style="flex:1;font-size:11.5px" onclick="closeDp();openClModal('${String(id).replace(/'/g,"\\'")}')">✏️ 수정</button>
       <button class="btn bp" style="flex:1;font-size:11.5px" onclick="showClientPropDp('${String(id).replace(/'/g,"\\'")}')">영업이력 보기</button>
     </div>`;
-  document.getElementById('slDp').style.display='block';
+  document.getElementById('slDpBack').style.display='flex';
 }
 function showClientPropDp(id){
   const cl=clients.find(c=>c.id==id); if(!cl) return;
@@ -34573,7 +34586,7 @@ function showClientPropDp(id){
     <div style="margin-top:12px">
       <button class="btn bp" style="width:100%;font-size:11.5px" onclick="openPropModal(null);document.getElementById('prop_cl').value=${id};closeDp()">+ 영업 등록</button>
     </div>`;
-  document.getElementById('slDp').style.display='block';
+  document.getElementById('slDpBack').style.display='flex';
 }
 
 // ── 고객사 카테고리 태그 (복수 선택: 주얼리·패션·굳즈·기타) ──
@@ -35583,6 +35596,17 @@ async function stDelete(pageId){
 }
 
 function vClients(c){
+  _ensureIds(clients, '고객사');
+  c.innerHTML=`<div class="card"><div class="ch"><div><div class="ch-t">고객사 관리 <span style="font-size:11px;color:var(--t3);font-weight:400">${clients.length}곳</span></div></div><button class="btn bp bs" onclick="openM('mCl')">+ 등록</button></div>
+  <div class="cl-grid">${clients.map(cl=>`
+    <div class="cl-card" onclick="showClientDp('${String(cl.id).replace(/'/g,"\\'")}')" title="클릭해서 상세 보기">
+      <button class="cl-card-edit" onclick="event.stopPropagation();openClModal('${String(cl.id).replace(/'/g,"\\'")}')" title="수정">✏️</button>
+      <div class="cl-card-top">${clInitHtml(cl)}<span class="cl-card-name" title="${cl.name}">${cl.name}</span></div>
+      <div class="cl-card-cats">${(cl.cat||'').split(',').map(t=>t.trim()).filter(Boolean).map(t=>`<span class="cl-cat-chip">${t}</span>`).join('')||'<span style="font-size:11px;color:var(--t3)">카테고리 미지정</span>'}</div>
+      ${cl.status==='inactive'?'<span class="cl-card-inactive">미활성</span>':''}
+    </div>`).join('')}</div></div>`;
+}
+function _vClients_OLD_TABLE(c){
   _ensureIds(clients, '고객사');
   c.innerHTML=`<div class="card"><div class="ch"><div><div class="ch-t">고객사 관리</div></div><button class="btn bp bs" onclick="openM('mCl')">+ 등록</button></div>
   <div class="tbl-wrap"><table><thead><tr><th>고객사</th><th>카테고리</th><th style="width:60px"></th></tr></thead>
