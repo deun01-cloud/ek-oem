@@ -5838,62 +5838,70 @@ window.addEventListener('message', function(ev){
     </div>
   </div>
 
-  <!-- ===== 매입 자료 (데이터 입력 탭에 통합) ===== -->
-  <div class="dz-row">
-    <div class="dz" id="dz-exp" onclick="document.getElementById('fi-exp').click()" ondragover="MGT.dzo(event,'dz-exp')" ondragleave="MGT.dzl('dz-exp')" ondrop="MGT.dzd(event,'exp')">
-      <button class="dz-x" onclick="event.stopPropagation();MGT.czd('exp')">×</button>
-      <span class="dz-ico" id="i-exp">📤</span>
-      <div class="dz-ttl">지출내역서</div>
-      <div class="dz-dsc">월말 청구내역서 엑셀 <span style="color:var(--ac)">또는 직접입력</span></div>
-      <div class="dz-hint">컬럼: 구분 · <b>거래처</b> · <b>금액</b> · 부가세칸. 금액은 그대로 인식하며, 부가세칸에 <b>O/포함</b> 표기가 있을 때만 ÷1.1 합니다</div>
-      <button class="btn btn-ac btn-sm" style="margin-top:9px" onclick="event.stopPropagation();MGT.quickAddExp()" title="영수증·거래명세서를 첨부해 지출을 직접 입력합니다">✏️ 지출 직접입력</button>
-      <div class="dz-stat" id="s-exp"></div>
-      <div id="files-exp" style="display:none;text-align:left;margin-top:8px"></div>
-      <input type="file" id="fi-exp" accept=".xlsx,.xls" multiple onchange="MGT.lfMulti(this,'exp')">
-    </div>
-    <div class="dz" id="dz-cn" onclick="document.getElementById('fi-cn').click()" ondragover="MGT.dzo(event,'dz-cn')" ondragleave="MGT.dzl('dz-cn')" ondrop="MGT.dzd(event,'cn')">
-      <button class="dz-x" onclick="event.stopPropagation();MGT.czd('cn')">×</button>
-      <span class="dz-ico" id="i-cn">📤</span>
-      <div class="dz-ttl">중국 공장 인보이스</div>
-      <div class="dz-dsc">USD 인보이스 <b>세부내역</b> 엑셀 <span style="color:var(--ac)">또는 인보이스 이미지/PDF (AI 금액인식) · 직접입력</span></div>
-      <div class="dz-hint">금액 집계용 · 엑셀=자동 합산 / 이미지·PDF=AI가 금액 추출 후 확인 · 아래 환율로 KRW 변환</div>
-      <button class="btn btn-ac btn-sm" style="margin-top:9px" onclick="event.stopPropagation();MGT.quickAddInvoice()" title="인보이스 금액을 직접 입력합니다">✏️ 인보이스 직접입력</button>
-      <div class="dz-stat" id="s-cn"></div>
-      <div id="files-cn" style="display:none;text-align:left;margin-top:8px"></div>
-      <input type="file" id="fi-cn" accept=".xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp" multiple onchange="MGT.lfMulti(this,'cn')">
-    </div>
-  </div>
-
-  <div style="display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);margin-bottom:16px">
-    <span style="font-size:13px;font-weight:600">USD 환율</span>
-    <input type="number" id="usd-rate" value="1350" min="100" max="9999" style="width:90px;border:1px solid var(--bd2);border-radius:7px;padding:6px 9px;font-size:13px;font-family:inherit" oninput="MGT.saveUsdRate(this.value);MGT.renderPurchase();if(MGT.renderBoard)MGT.renderBoard(false)">
-    <span style="font-size:12px;color:var(--mu)">원 / USD</span>
-    <span style="font-size:12px;color:var(--mu);margin-left:4px" id="cn-preview"></span>
-  </div>
-
-  <!-- 📋 매입 자료실 — 공장 인보이스(인보이스+증빙+직접입력 통합) / 지출내역서 -->
-  <div class="card" style="margin-bottom:16px">
-    <div class="card-h" style="flex-wrap:wrap;gap:8px">
-      <div style="display:flex;align-items:center;gap:4px">
-        <button class="board-tab on" data-board="cn" onclick="MGT.switchBoardTab('cn')" style="padding:6px 12px;font-size:12.5px;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-weight:600;background:var(--acbg);color:var(--ac)">🏭 공장 인보이스</button>
-        <button class="board-tab" data-board="exp" onclick="MGT.switchBoardTab('exp')" style="padding:6px 12px;font-size:12.5px;border:none;border-radius:7px;cursor:pointer;font-family:inherit;font-weight:500;background:transparent;color:var(--mu)">🧾 지출내역서</button>
-      </div>
+  <!-- ⑤ 지출내역서 (커머스 매출과 동일한 카드 구조 · 헤더 클릭 시 펼침) -->
+  <div class="card" style="margin-top:14px">
+    <div class="card-h">
+      <div class="card-t">⑤ 지출내역서 <span style="color:var(--ac);font-size:10px;background:var(--acbg);padding:1px 6px;border-radius:4px;margin-left:4px;text-transform:none;letter-spacing:0">엑셀/직접입력</span></div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span class="card-badge" id="board-stat">—</span>
-        <span id="pur-save-stat" style="font-size:11px;color:var(--hi);white-space:nowrap"></span>
-        <input type="text" placeholder="🔍 검색" oninput="MGT.boardSearch(this.value)" style="border:1px solid var(--bd2);border-radius:7px;padding:5px 10px;font-size:12px;font-family:inherit;width:120px">
-        <button class="btn btn-sm" id="board-add-manual" onclick="MGT.addBoardManual()" title="직접 입력">+ 직접입력</button>
-        <button class="btn btn-sm btn-gr" id="pur-save-btn" onclick="MGT.savePurchaseNow()" title="입력 내용을 노션에 즉시 저장">💾 저장</button>
-        <button class="btn btn-sm" onclick="MGT.renderBoard(true)" title="노션에서 다시 불러오기">↻</button>
+        <span style="font-size:13px;font-weight:700" id="exp-card-total">0원</span>
+        <input type="text" placeholder="🔍 검색" oninput="MGT.boardSearch(this.value)" style="border:1px solid var(--bd2);border-radius:7px;padding:5px 10px;font-size:12px;font-family:inherit;width:110px">
+        <button class="btn btn-sm" onclick="event.stopPropagation();MGT.quickAddExp()" title="영수증·거래명세서를 첨부해 직접 입력">+ 직접입력</button>
+        <button class="btn btn-sm btn-ac" onclick="event.stopPropagation();document.getElementById('fi-exp').click()">📥 엑셀</button>
+        <button class="btn btn-sm btn-gr" onclick="event.stopPropagation();MGT.savePurchaseNow()" title="노션에 즉시 저장">💾 저장</button>
+        <button class="btn btn-sm" onclick="event.stopPropagation();MGT.renderBoard(true)" title="노션에서 다시 불러오기">↻</button>
+        <input type="file" id="fi-exp" accept=".xlsx,.xls" multiple style="display:none" onchange="MGT.lfMulti(this,'exp')">
       </div>
     </div>
-    <div id="board-body" style="max-height:460px;overflow:auto">
-      <div class="empty" style="padding:24px"><div class="empty-ico">📭</div><div style="font-size:12px;color:var(--mu)">불러오는 중...</div></div>
+    <div style="padding:12px 16px">
+      <div class="dz" id="dz-exp" onclick="document.getElementById('fi-exp').click()" ondragover="MGT.dzo(event,'dz-exp')" ondragleave="MGT.dzl('dz-exp')" ondrop="MGT.dzd(event,'exp')" style="margin-bottom:12px">
+        <span class="dz-ico" id="i-exp">📤</span>
+        <div class="dz-dsc">월말 청구내역서 엑셀을 드래그·클릭 <span style="color:var(--ac)">또는 + 직접입력</span></div>
+        <div class="dz-hint">컬럼: 구분 · <b>거래처</b> · <b>금액</b> · 부가세칸. 부가세칸에 <b>O/포함</b> 표기가 있을 때만 ÷1.1 합니다</div>
+        <div class="dz-stat" id="s-exp"></div>
+        <div id="files-exp" style="display:none;text-align:left;margin-top:8px"></div>
+      </div>
+      <div id="board-body-exp" style="max-height:460px;overflow:auto"></div>
+    </div>
+  </div>
+
+  <!-- ⑥ 중국 공장 인보이스 (동일 카드 구조) -->
+  <div class="card" style="margin-top:14px;margin-bottom:16px">
+    <div class="card-h">
+      <div class="card-t">⑥ 중국 공장 인보이스 <span style="color:var(--ac);font-size:10px;background:var(--acbg);padding:1px 6px;border-radius:4px;margin-left:4px;text-transform:none;letter-spacing:0">엑셀·AI/직접입력</span></div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700" id="cn-card-total">0원</span>
+        <button class="btn btn-sm" onclick="event.stopPropagation();MGT.quickAddInvoice()" title="인보이스 금액을 직접 입력">+ 직접입력</button>
+        <button class="btn btn-sm btn-ac" onclick="event.stopPropagation();document.getElementById('fi-cn').click()">📥 파일</button>
+        <button class="btn btn-sm btn-gr" onclick="event.stopPropagation();MGT.savePurchaseNow()" title="노션에 즉시 저장">💾 저장</button>
+        <button class="btn btn-sm" onclick="event.stopPropagation();MGT.renderBoard(true)" title="노션에서 다시 불러오기">↻</button>
+        <input type="file" id="fi-cn" accept=".xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp" multiple style="display:none" onchange="MGT.lfMulti(this,'cn')">
+      </div>
+    </div>
+    <div style="padding:12px 16px">
+      <div class="dz" id="dz-cn" onclick="document.getElementById('fi-cn').click()" ondragover="MGT.dzo(event,'dz-cn')" ondragleave="MGT.dzl('dz-cn')" ondrop="MGT.dzd(event,'cn')" style="margin-bottom:12px">
+        <span class="dz-ico" id="i-cn">📤</span>
+        <div class="dz-dsc">USD 인보이스 <b>세부내역</b> 엑셀 · 이미지/PDF(AI 금액인식)를 드래그·클릭 <span style="color:var(--ac)">또는 + 직접입력</span></div>
+        <div class="dz-hint">엑셀=자동 합산 / 이미지·PDF=AI가 금액 추출 후 확인 · 아래 환율로 KRW 변환</div>
+        <div class="dz-stat" id="s-cn"></div>
+        <div id="files-cn" style="display:none;text-align:left;margin-top:8px"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);margin-bottom:12px">
+        <span style="font-size:12.5px;font-weight:600">USD 환율</span>
+        <input type="number" id="usd-rate" value="1350" min="100" max="9999" style="width:88px;border:1px solid var(--bd2);border-radius:7px;padding:5px 9px;font-size:13px;font-family:inherit" oninput="MGT.saveUsdRate(this.value);MGT.renderPurchase();if(MGT.renderBoard)MGT.renderBoard(false)">
+        <span style="font-size:12px;color:var(--mu)">원 / USD</span>
+        <span style="font-size:12px;color:var(--mu);margin-left:4px" id="cn-preview"></span>
+      </div>
+      <div id="board-body-cn" style="max-height:460px;overflow:auto"></div>
     </div>
     <div style="padding:8px 16px;border-top:1px solid var(--bd);background:var(--sf);font-size:11px;color:var(--hi)">
-      한 인보이스 = 세부내역 + 증빙 + 금액. 위 업로드 칸에 올리면 인보이스 번호 기준으로 자동 묶입니다. 금액만 있는 매입은 <b>+ 직접입력</b>으로 추가하세요.
+      한 인보이스 = 세부내역 + 증빙 + 금액. 위 칸에 올리면 인보이스 번호 기준으로 자동 묶입니다. 금액만 있는 매입은 <b>+ 직접입력</b>으로 추가하세요.
     </div>
   </div>
+
+  <!-- (호환용) 기존 탭 게시판 참조 잔존 코드가 찾는 히든 엘리먼트 -->
+  <div id="board-body" style="display:none"></div>
+  <span id="board-stat" style="display:none"></span>
+  <span id="pur-save-stat" style="display:none"></span>
 
   <div class="card" id="pur-sum-card" style="display:none">
     <div class="card-h">
@@ -43472,28 +43480,39 @@ function addBoardManual(){
   _focusNewBoardRow(_boardTab);
 }
 
-// 게시판 렌더 (현재 탭 기준)
+// 게시판 렌더 — 두 카드(지출·공장) 모두 로드/렌더
 function renderBoard(forceReload){
-  var wrap = document.getElementById('board-body');
-  if(!wrap) return;
-  var t = _boardTab;
-  if(forceReload || !_boardLoaded[t]){
-    wrap.innerHTML = '<div class="empty" style="padding:24px"><div class="empty-ico">⏳</div><div style="font-size:12px;color:var(--mu)">불러오는 중...</div></div>';
-    loadBoardFiles(t).then(function(){
-      if(_boardTab===t) _renderBoardRows();
-      // 📌 게시판 로드 완료 후 매입 원가 집계도 재계산 (로드 전 S.cnList 폴백으로 그려진 옛 값 교정)
-      if(t==='cn' && typeof renderPurchase==='function') renderPurchase();
+  var wrapE = document.getElementById('board-body-exp');
+  var wrapC = document.getElementById('board-body-cn');
+  if(!wrapE && !wrapC) return;
+  var needExp = forceReload || !_boardLoaded['exp'];
+  var needCn  = forceReload || !_boardLoaded['cn'];
+  if(needExp && wrapE) wrapE.innerHTML = '<div class="empty" style="padding:16px"><div class="empty-ico">⏳</div><div style="font-size:12px;color:var(--mu)">불러오는 중...</div></div>';
+  if(needCn && wrapC)  wrapC.innerHTML = '<div class="empty" style="padding:16px"><div class="empty-ico">⏳</div><div style="font-size:12px;color:var(--mu)">불러오는 중...</div></div>';
+  var jobs = [];
+  if(needExp) jobs.push(loadBoardFiles('exp'));
+  if(needCn)  jobs.push(loadBoardFiles('cn'));
+  if(jobs.length){
+    Promise.all(jobs).then(function(){
+      _renderBoardRows();
+      if(typeof renderPurchase==='function') renderPurchase();
     });
     return;
   }
   _renderBoardRows();
 }
 
+// 두 카드(지출·공장)를 각각 자기 컨테이너에 렌더하는 디스패처.
 function _renderBoardRows(){
-  var wrap = document.getElementById('board-body');
-  var stat = document.getElementById('board-stat');
+  _renderBoardOne('exp', 'board-body-exp', 'exp-card-total');
+  _renderBoardOne('cn',  'board-body-cn',  'cn-card-total');
+}
+
+function _renderBoardOne(forceTab, wrapId, totalId){
+  var wrap = document.getElementById(wrapId);
+  var stat = document.getElementById(totalId);   // 카드 헤더의 합계 표시
   if(!wrap) return;
-  var t = _boardTab;
+  var t = forceTab;
   var rate = parseFloat((document.getElementById('usd-rate')||{}).value) || 1350;
   // 📌 게시판은 항상 상단 페이지 월(g-period)을 따른다 (별도 필터 없음)
   try{ var _gp=(document.getElementById('g-period')||{}).value||''; _boardMonth = _gp; }catch(e){}
@@ -44185,7 +44204,7 @@ function addManualInvoice(){
   S.manual.push({label:'', vendor:'', amount:0, period:gp, date:'', invDate:'', _at:new Date().toISOString()});
   renderManual && renderManual();
   calcPnL(); renderPurchase();
-  if(_boardTab==='cn') _renderBoardRows();
+  _renderBoardRows();
 }
 // 지출내역서 직접입력 — S.exp에 수동 항목 추가
 function addManualExp(){
@@ -44214,9 +44233,9 @@ function _buildExpVendorDatalist(){
 }
 // 📂 매입 자료실 게시판이 접힌 아코디언 안에 있으면 펼친다.
 //    (직접입력 시 행은 추가되지만 board-body가 display:none이면 안 보이는 문제 해결)
-function _expandBoardAccordion(){
+function _expandBoardAccordion(wrapId){
   try{
-    var body=document.getElementById('board-body'); if(!body) return;
+    var body=document.getElementById(wrapId||'board-body-exp'); if(!body) return;
     var wrap=body.closest('.acc-body');
     var card=body.closest('.card');
     if(wrap && wrap.style.display==='none'){ wrap.style.display=''; }
@@ -44227,33 +44246,31 @@ function _expandBoardAccordion(){
     }
   }catch(e){}
 }
-// ✏️ 데이터입력 페이지에서 지출내역 직접입력 — 게시판을 지출탭으로 열고 새 행 추가 후 그 자리로 스크롤/포커스.
-//    직원이 "직접입력 눌렀더니 어디로 갔지?" 하지 않도록, 추가된 입력행을 화면에 바로 보여준다.
+// ✏️ 지출내역 직접입력 — 지출 카드를 펼치고 새 행 추가 후 그 자리로 스크롤/포커스.
 function quickAddExp(){
   var gp=''; try{ gp=(document.getElementById('g-period')||{}).value||''; }catch(e){}
   if(!gp){ toast('먼저 상단에서 매입월(기간)을 선택하세요','err'); try{ var pe=document.getElementById('g-period'); if(pe){ pe.focus(); pe.scrollIntoView({behavior:'smooth',block:'center'}); } }catch(_){}; return; }
-  if(_boardTab!=='exp'){ switchBoardTab('exp'); }          // 지출내역서 탭으로 전환
-  _expandBoardAccordion();                                 // 접혀 있으면 펼치기
+  _boardTab='exp';
+  _expandBoardAccordion('board-body-exp');                 // 지출 카드가 접혀 있으면 펼치기
   addManualExp();                                          // 새 지출 행 추가 (기존 로직 재사용)
-  _focusNewBoardRow('exp');
+  _focusNewBoardRow('board-body-exp');
 }
-// ✏️ 데이터입력 페이지에서 공장 인보이스 직접입력 — 게시판을 공장탭으로 열고 새 행 추가 후 스크롤/포커스.
+// ✏️ 공장 인보이스 직접입력 — 공장 카드를 펼치고 새 행 추가 후 스크롤/포커스.
 function quickAddInvoice(){
   var gp=''; try{ gp=(document.getElementById('g-period')||{}).value||''; }catch(e){}
   if(!gp){ toast('먼저 상단에서 매입월(기간)을 선택하세요','err'); try{ var pe=document.getElementById('g-period'); if(pe){ pe.focus(); pe.scrollIntoView({behavior:'smooth',block:'center'}); } }catch(_){}; return; }
-  if(_boardTab!=='cn'){ switchBoardTab('cn'); }            // 공장 인보이스 탭으로 전환
-  _expandBoardAccordion();                                 // 접혀 있으면 펼치기
+  _boardTab='cn';
+  _expandBoardAccordion('board-body-cn');                  // 공장 카드가 접혀 있으면 펼치기
   addManualInvoice();                                      // 새 인보이스 행 추가
-  _focusNewBoardRow('cn');
+  _focusNewBoardRow('board-body-cn');
 }
-// 게시판에서 방금 추가한 입력행(편집 가능한 마지막 직접입력 행)으로 스크롤하고 첫 입력칸에 포커스
-function _focusNewBoardRow(tab){
+// 지정 컨테이너에서 방금 추가한 직접입력 행으로 스크롤하고 첫 입력칸에 포커스
+function _focusNewBoardRow(wrapId){
   setTimeout(function(){
     try{
-      var body=document.getElementById('board-body'); if(!body) return;
+      var body=document.getElementById(wrapId||'board-body-exp'); if(!body) return;
       body.scrollIntoView({behavior:'smooth', block:'center'});
       var rows=body.querySelectorAll('.bitem');
-      // 편집 가능한(=직접입력) 행만 대상: 텍스트/일반 input이 들어있는 마지막 행
       var target=null, targetInp=null;
       for(var k=rows.length-1;k>=0;k--){
         var inp=rows[k].querySelector('input:not([type="checkbox"]):not([type="button"]):not([type="file"])');
@@ -45101,17 +45118,14 @@ async function deleteBoardFile(pageId){
   toast('🗑️ 삭제됨','ok');
 }
 
-// ── 하위호환 별칭 (기존 호출부 유지) ──
+// ── 하위호환 별칭 (기존 호출부 유지) — 두 카드 모두 렌더 ──
 function renderCnBoard(forceReload){
-  // cn 탭으로 전환 후 렌더 — 새 파일 업로드 시 호출됨
   if(forceReload){ _boardLoaded.cn=false; }
-  if(_boardTab!=='cn'){ switchBoardTab('cn'); }
-  else renderBoard(forceReload);
+  renderBoard(forceReload);
 }
 function renderExpBoard(forceReload){
   if(forceReload){ _boardLoaded.exp=false; }
-  if(_boardTab!=='exp'){ switchBoardTab('exp'); }
-  else renderBoard(forceReload);
+  renderBoard(forceReload);
 }
 function cnBoardSearch(v){ boardSearch(v); }
 async function deleteCnInvoice(pageId){ return deleteBoardFile(pageId); }
@@ -45752,7 +45766,7 @@ function rf(file,type){
         renderFileList(_p2);
         markDz('dz-cninv','i-cninv','s-cninv',file.name, meta.attached?'✓ 보관 완료':'⚠ R2 실패(노션만)');
         toast(meta.attached?'📎 인보이스 증빙 보관 완료':'⚠ R2 업로드 실패','ok');
-        try{ _boardLoaded.cn=false; if(_boardTab==='cn') renderBoard(true); }catch(e){}
+        try{ _boardLoaded.cn=false; renderBoard(true); }catch(e){}
       } else {
         markDz('dz-cninv','i-cninv','s-cninv','','');
         toast('⚠ 증빙 보관 실패: '+file.name,'err');
@@ -45870,8 +45884,8 @@ function rf(file,type){
               toast('⚠️ R2 업로드 실패 — 노션 행만 생성됨','err');
             }
             // 중국 인보이스면 게시판 새로고침
-            if(type==='cn'){ try{ _boardLoaded.cn=false; if(_boardTab==='cn') renderBoard(true); }catch(e){} }
-            if(type==='exp'){ try{ _boardLoaded.exp=false; if(_boardTab==='exp') renderBoard(true); }catch(e){} }
+            if(type==='cn'){ try{ _boardLoaded.cn=false; renderBoard(true); }catch(e){} }
+            if(type==='exp'){ try{ _boardLoaded.exp=false; renderBoard(true); }catch(e){} }
           } else {
             toast('⚠️ 파일 보관 실패: '+file.name+' (손익 계산은 정상)','err');
           }
@@ -46192,7 +46206,7 @@ async function cnAnalyzeFile(file){
     toast('AI 금액 인식엔 Claude API 키가 필요합니다 (⚙ 설정). 금액은 수동 입력하세요.','err');
     // 키 없으면 그냥 증빙처럼 보관만
     markDz('dz-cn','i-cn','s-cn',file.name,'키 없음 — 보관만');
-    uploadFileToNotion(file,'cn',_p,'AI미인식').then(function(meta){ if(meta){ if(!S.files[_p])S.files[_p]=[]; S.files[_p].unshift(meta); renderFileList(_p); try{_boardLoaded.cn=false; if(_boardTab==='cn')renderBoard(true);}catch(e){} } });
+    uploadFileToNotion(file,'cn',_p,'AI미인식').then(function(meta){ if(meta){ if(!S.files[_p])S.files[_p]=[]; S.files[_p].unshift(meta); renderFileList(_p); try{_boardLoaded.cn=false; renderBoard(true);}catch(e){} } });
     return;
   }
   markDz('dz-cn','i-cn','s-cn',file.name,'🔍 AI 금액 인식 중...');
@@ -46272,7 +46286,7 @@ function _showCnConfirm(file, period, info){
     var lockedKrw = (cur==='USD') ? Math.round(usd*lockedRate) : Math.round(usd);
     var extra=cur+' '+usd.toFixed(0)+' RATE '+lockedRate+' KRW '+lockedKrw+(date?' / '+date:'')+(no?' / '+no:'');
     uploadFileToNotion(file,'cn',month,extra).then(function(meta){
-      if(meta){ if(!S.files[month])S.files[month]=[]; S.files[month].unshift(meta); renderFileList(month); try{_boardLoaded.cn=false; if(_boardTab==='cn')renderBoard(true);}catch(e){} toast('✓ 인보이스 저장 + 집계 완료','ok'); }
+      if(meta){ if(!S.files[month])S.files[month]=[]; S.files[month].unshift(meta); renderFileList(month); try{_boardLoaded.cn=false; renderBoard(true);}catch(e){} toast('✓ 인보이스 저장 + 집계 완료','ok'); }
       else toast('⚠ 보관 실패 (집계는 반영됨)','err');
     });
     document.getElementById('cnConfirmOv').remove();
