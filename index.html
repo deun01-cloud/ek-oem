@@ -5844,8 +5844,9 @@ window.addEventListener('message', function(ev){
       <button class="dz-x" onclick="event.stopPropagation();MGT.czd('exp')">×</button>
       <span class="dz-ico" id="i-exp">📤</span>
       <div class="dz-ttl">지출내역서</div>
-      <div class="dz-dsc">월말 청구내역서 엑셀</div>
+      <div class="dz-dsc">월말 청구내역서 엑셀 <span style="color:var(--ac)">또는 직접입력</span></div>
       <div class="dz-hint">컬럼: 구분 · <b>거래처</b> · <b>금액</b> · 부가세칸. 금액은 그대로 인식하며, 부가세칸에 <b>O/포함</b> 표기가 있을 때만 ÷1.1 합니다</div>
+      <button class="btn btn-ac btn-sm" style="margin-top:9px" onclick="event.stopPropagation();MGT.quickAddExp()" title="영수증·거래명세서를 첨부해 지출을 직접 입력합니다">✏️ 지출 직접입력</button>
       <div class="dz-stat" id="s-exp"></div>
       <div id="files-exp" style="display:none;text-align:left;margin-top:8px"></div>
       <input type="file" id="fi-exp" accept=".xlsx,.xls" multiple onchange="MGT.lfMulti(this,'exp')">
@@ -5854,8 +5855,9 @@ window.addEventListener('message', function(ev){
       <button class="dz-x" onclick="event.stopPropagation();MGT.czd('cn')">×</button>
       <span class="dz-ico" id="i-cn">📤</span>
       <div class="dz-ttl">중국 공장 인보이스</div>
-      <div class="dz-dsc">USD 인보이스 <b>세부내역</b> 엑셀 <span style="color:var(--ac)">또는 인보이스 이미지/PDF (AI 금액인식)</span></div>
+      <div class="dz-dsc">USD 인보이스 <b>세부내역</b> 엑셀 <span style="color:var(--ac)">또는 인보이스 이미지/PDF (AI 금액인식) · 직접입력</span></div>
       <div class="dz-hint">금액 집계용 · 엑셀=자동 합산 / 이미지·PDF=AI가 금액 추출 후 확인 · 아래 환율로 KRW 변환</div>
+      <button class="btn btn-ac btn-sm" style="margin-top:9px" onclick="event.stopPropagation();MGT.quickAddInvoice()" title="인보이스 금액을 직접 입력합니다">✏️ 인보이스 직접입력</button>
       <div class="dz-stat" id="s-cn"></div>
       <div id="files-cn" style="display:none;text-align:left;margin-top:8px"></div>
       <input type="file" id="fi-cn" accept=".xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp" multiple onchange="MGT.lfMulti(this,'cn')">
@@ -43541,6 +43543,7 @@ function _renderBoardRows(){
     return;
   }
   var html2='';
+  html2 += _buildExpVendorDatalist();   // 🔎 이전 거래처 자동완성 목록
   // 직접입력(수동) 지출 항목 — 편집 가능한 리스트
   if(manualExp.length){
     html2 += '<div class="blist">';
@@ -43558,7 +43561,7 @@ function _renderBoardRows(){
       });
       return '<div class="bitem" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 4px;border-bottom:1px solid var(--bd)">'
         + '<span style="font-size:16px">🧾</span>'
-        + '<input value="'+(e.vendor||'').replace(/"/g,'&quot;')+'" onchange="MGT.editExpVendor('+i+',this.value)" placeholder="거래처/항목명" style="flex:1;min-width:140px;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12.5px;font-family:inherit;font-weight:600">'
+        + '<input value="'+(e.vendor||'').replace(/"/g,'&quot;')+'" list="expVendorList" onchange="MGT.editExpVendor('+i+',this.value)" placeholder="거래처/항목명 (이전 입력 자동완성)" style="flex:1;min-width:140px;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12.5px;font-family:inherit;font-weight:600">'
         + '<select class="bmonth-sel" onchange="MGT.editExpMonth('+i+',this.value)" title="기간">'
           + (function(){ var cur=e.period||''; var opts=_monthOptionSet(cur,''); var h=''; if(!cur)h+='<option value="" selected>기간?</option>'; opts.forEach(function(mm){h+='<option value="'+mm+'"'+(mm===cur?' selected':'')+'>'+mm+'</option>';}); return h; })()
         + '</select>'
@@ -44190,6 +44193,59 @@ function addManualExp(){
   calcPnL(); renderPurchase&&renderPurchase();
   _renderBoardRows();
   var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p);
+}
+// 🔎 이전에 입력한 지출 거래처(전체 기간) → 자동완성용 datalist HTML.
+//    자주 쓴 거래처가 위로 오도록 빈도순 정렬. 중복 제거.
+function _buildExpVendorDatalist(){
+  try{
+    var freq={};
+    (S.exp||[]).forEach(function(e){
+      var v=(e&&e.vendor||'').trim();
+      if(v) freq[v]=(freq[v]||0)+1;
+    });
+    var names=Object.keys(freq);
+    if(!names.length) return '';
+    names.sort(function(a,b){ return freq[b]-freq[a] || a.localeCompare(b,'ko'); });
+    var opts=names.map(function(n){ return '<option value="'+n.replace(/"/g,'&quot;')+'">'; }).join('');
+    return '<datalist id="expVendorList">'+opts+'</datalist>';
+  }catch(e){ return ''; }
+}
+// ✏️ 데이터입력 페이지에서 지출내역 직접입력 — 게시판을 지출탭으로 열고 새 행 추가 후 그 자리로 스크롤/포커스.
+//    직원이 "직접입력 눌렀더니 어디로 갔지?" 하지 않도록, 추가된 입력행을 화면에 바로 보여준다.
+function quickAddExp(){
+  var gp=''; try{ gp=(document.getElementById('g-period')||{}).value||''; }catch(e){}
+  if(!gp){ toast('먼저 상단에서 매입월(기간)을 선택하세요','err'); try{ var pe=document.getElementById('g-period'); if(pe){ pe.focus(); pe.scrollIntoView({behavior:'smooth',block:'center'}); } }catch(_){}; return; }
+  if(_boardTab!=='exp'){ switchBoardTab('exp'); }          // 지출내역서 탭으로 전환
+  addManualExp();                                          // 새 지출 행 추가 (기존 로직 재사용)
+  _focusNewBoardRow('exp');
+}
+// ✏️ 데이터입력 페이지에서 공장 인보이스 직접입력 — 게시판을 공장탭으로 열고 새 행 추가 후 스크롤/포커스.
+function quickAddInvoice(){
+  var gp=''; try{ gp=(document.getElementById('g-period')||{}).value||''; }catch(e){}
+  if(!gp){ toast('먼저 상단에서 매입월(기간)을 선택하세요','err'); try{ var pe=document.getElementById('g-period'); if(pe){ pe.focus(); pe.scrollIntoView({behavior:'smooth',block:'center'}); } }catch(_){}; return; }
+  if(_boardTab!=='cn'){ switchBoardTab('cn'); }            // 공장 인보이스 탭으로 전환
+  addManualInvoice();                                      // 새 인보이스 행 추가
+  _focusNewBoardRow('cn');
+}
+// 게시판 마지막(가장 최근 추가) 입력행으로 스크롤하고 첫 입력칸에 포커스
+function _focusNewBoardRow(tab){
+  setTimeout(function(){
+    try{
+      var body=document.getElementById('board-body'); if(!body) return;
+      body.scrollIntoView({behavior:'smooth', block:'center'});
+      var rows=body.querySelectorAll('.bitem'); 
+      var last=rows.length? rows[rows.length-1] : null;
+      if(last){
+        last.scrollIntoView({behavior:'smooth', block:'center'});
+        var inp=last.querySelector('input[type="text"], input:not([type="checkbox"]):not([type="number"]), input');
+        if(inp){ inp.focus(); }
+        // 잠깐 강조 효과
+        last.style.transition='background .4s'; var _bg=last.style.background;
+        last.style.background='var(--acbg)';
+        setTimeout(function(){ last.style.background=_bg||''; }, 900);
+      }
+    }catch(e){}
+  }, 180);
 }
 // 입력 변경 즉시 "저장 중" 표시 (사용자가 변경이 반영되는지 바로 알 수 있게)
 function _markPurDirty(){
@@ -48758,6 +48814,8 @@ return {
   addManualInvoice: (typeof addManualInvoice!=="undefined"?addManualInvoice:undefined),
   addBoardManual: (typeof addBoardManual!=="undefined"?addBoardManual:undefined),
   addManualExp: (typeof addManualExp!=="undefined"?addManualExp:undefined),
+  quickAddExp: (typeof quickAddExp!=="undefined"?quickAddExp:undefined),
+  quickAddInvoice: (typeof quickAddInvoice!=="undefined"?quickAddInvoice:undefined),
   editExpVendor: (typeof editExpVendor!=="undefined"?editExpVendor:undefined),
   editExpAmount: (typeof editExpAmount!=="undefined"?editExpAmount:undefined),
   editExpVat: (typeof editExpVat!=="undefined"?editExpVat:undefined),
