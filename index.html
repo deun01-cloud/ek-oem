@@ -11152,7 +11152,14 @@ function saveProduct(){
   };
   if(notionCfg.workerUrl && pdImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
     showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
-    uploadImagesToR2([...pdImgBuf]).then(uploaded=>doSaveProduct(uploaded));
+    uploadImagesToR2([...pdImgBuf])
+      .then(uploaded=>doSaveProduct(uploaded))
+      .catch(err=>{
+        // 업로드가 실패/거부돼도 저장은 진행 (base64 로컬 유지) — 저장 버튼이 먹통되지 않게
+        console.warn('[제품저장] 이미지 업로드 실패, 로컬 저장으로 진행:', err && err.message);
+        showToast('⚠ 이미지 업로드 실패 — 로컬에 저장합니다','var(--red)',4000);
+        doSaveProduct(obj.imgs);
+      });
   } else {
     doSaveProduct(obj.imgs);
   }
@@ -20917,6 +20924,9 @@ async function checkAndBackupApiKey(){
 // R2 업로드: base64 dataURL → Worker → R2 버킷 → 퍼블릭 URL 반환
 async function r2Upload(dataUrl, fileName, fileType){
   if(!notionCfg.workerUrl){ console.warn('[r2Upload] workerUrl 없음'); return null; }
+  // ⏱ 타임아웃: 서버가 응답 없이 매달리면 저장이 영영 막히므로 25초 후 중단
+  var _ac = (typeof AbortController!=='undefined') ? new AbortController() : null;
+  var _to = _ac ? setTimeout(function(){ try{_ac.abort();}catch(_){}}, 25000) : null;
   try{
     const res = await fetch(notionCfg.workerUrl+'/r2/upload',{
       method:'POST',
@@ -20926,8 +20936,10 @@ async function r2Upload(dataUrl, fileName, fileType){
         'X-File-Type': fileType||'image/jpeg',
         'X-Encoding':  'base64',
       },
-      body: dataUrl  // data:image/xxx;base64,xxx 그대로 전송
+      body: dataUrl,  // data:image/xxx;base64,xxx 그대로 전송
+      signal: _ac ? _ac.signal : undefined
     });
+    if(_to){ clearTimeout(_to); _to=null; }
     if(!res.ok){
       const errText=await res.text().catch(()=>'');
       console.warn(`[r2Upload] HTTP ${res.status} — ${fileName}: ${errText.slice(0,200)}`);
@@ -20941,7 +20953,9 @@ async function r2Upload(dataUrl, fileName, fileType){
     // Worker 경유 URL로 변환: workerUrl + /r2/file/key
     return {key:d.key, url: notionCfg.workerUrl+'/r2/file/'+encodeURIComponent(d.key), name:d.name, type:d.type, size:d.size};
   }catch(e){
-    console.warn(`[r2Upload] 네트워크 오류 — ${fileName}:`, e.message);
+    if(_to){ clearTimeout(_to); }
+    if(e && e.name==='AbortError'){ console.warn(`[r2Upload] 타임아웃(25s) — ${fileName}`); }
+    else { console.warn(`[r2Upload] 네트워크 오류 — ${fileName}:`, e.message); }
     return null;
   }
 }
