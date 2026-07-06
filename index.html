@@ -43466,8 +43466,10 @@ function switchBoardTab(boardType){
 }
 // 직접입력 버튼 — 현재 탭에 맞는 항목 추가
 function addBoardManual(){
+  _expandBoardAccordion();                    // 접혀 있으면 펼쳐 새 행이 보이게
   if(_boardTab==='exp') addManualExp();
   else addManualInvoice();
+  _focusNewBoardRow(_boardTab);
 }
 
 // 게시판 렌더 (현재 탭 기준)
@@ -44210,12 +44212,28 @@ function _buildExpVendorDatalist(){
     return '<datalist id="expVendorList">'+opts+'</datalist>';
   }catch(e){ return ''; }
 }
+// 📂 매입 자료실 게시판이 접힌 아코디언 안에 있으면 펼친다.
+//    (직접입력 시 행은 추가되지만 board-body가 display:none이면 안 보이는 문제 해결)
+function _expandBoardAccordion(){
+  try{
+    var body=document.getElementById('board-body'); if(!body) return;
+    var wrap=body.closest('.acc-body');
+    var card=body.closest('.card');
+    if(wrap && wrap.style.display==='none'){ wrap.style.display=''; }
+    if(card && card.classList.contains('acc-collapsed')){
+      card.classList.remove('acc-collapsed');
+      var caret=card.querySelector('.acc-caret');
+      if(caret) caret.style.transform='rotate(90deg)';
+    }
+  }catch(e){}
+}
 // ✏️ 데이터입력 페이지에서 지출내역 직접입력 — 게시판을 지출탭으로 열고 새 행 추가 후 그 자리로 스크롤/포커스.
 //    직원이 "직접입력 눌렀더니 어디로 갔지?" 하지 않도록, 추가된 입력행을 화면에 바로 보여준다.
 function quickAddExp(){
   var gp=''; try{ gp=(document.getElementById('g-period')||{}).value||''; }catch(e){}
   if(!gp){ toast('먼저 상단에서 매입월(기간)을 선택하세요','err'); try{ var pe=document.getElementById('g-period'); if(pe){ pe.focus(); pe.scrollIntoView({behavior:'smooth',block:'center'}); } }catch(_){}; return; }
   if(_boardTab!=='exp'){ switchBoardTab('exp'); }          // 지출내역서 탭으로 전환
+  _expandBoardAccordion();                                 // 접혀 있으면 펼치기
   addManualExp();                                          // 새 지출 행 추가 (기존 로직 재사용)
   _focusNewBoardRow('exp');
 }
@@ -44224,28 +44242,32 @@ function quickAddInvoice(){
   var gp=''; try{ gp=(document.getElementById('g-period')||{}).value||''; }catch(e){}
   if(!gp){ toast('먼저 상단에서 매입월(기간)을 선택하세요','err'); try{ var pe=document.getElementById('g-period'); if(pe){ pe.focus(); pe.scrollIntoView({behavior:'smooth',block:'center'}); } }catch(_){}; return; }
   if(_boardTab!=='cn'){ switchBoardTab('cn'); }            // 공장 인보이스 탭으로 전환
+  _expandBoardAccordion();                                 // 접혀 있으면 펼치기
   addManualInvoice();                                      // 새 인보이스 행 추가
   _focusNewBoardRow('cn');
 }
-// 게시판 마지막(가장 최근 추가) 입력행으로 스크롤하고 첫 입력칸에 포커스
+// 게시판에서 방금 추가한 입력행(편집 가능한 마지막 직접입력 행)으로 스크롤하고 첫 입력칸에 포커스
 function _focusNewBoardRow(tab){
   setTimeout(function(){
     try{
       var body=document.getElementById('board-body'); if(!body) return;
       body.scrollIntoView({behavior:'smooth', block:'center'});
-      var rows=body.querySelectorAll('.bitem'); 
-      var last=rows.length? rows[rows.length-1] : null;
-      if(last){
-        last.scrollIntoView({behavior:'smooth', block:'center'});
-        var inp=last.querySelector('input[type="text"], input:not([type="checkbox"]):not([type="number"]), input');
-        if(inp){ inp.focus(); }
-        // 잠깐 강조 효과
-        last.style.transition='background .4s'; var _bg=last.style.background;
-        last.style.background='var(--acbg)';
-        setTimeout(function(){ last.style.background=_bg||''; }, 900);
+      var rows=body.querySelectorAll('.bitem');
+      // 편집 가능한(=직접입력) 행만 대상: 텍스트/일반 input이 들어있는 마지막 행
+      var target=null, targetInp=null;
+      for(var k=rows.length-1;k>=0;k--){
+        var inp=rows[k].querySelector('input:not([type="checkbox"]):not([type="button"]):not([type="file"])');
+        if(inp){ target=rows[k]; targetInp=inp; break; }
+      }
+      if(target){
+        target.scrollIntoView({behavior:'smooth', block:'center'});
+        if(targetInp) targetInp.focus();
+        target.style.transition='background .4s'; var _bg=target.style.background;
+        target.style.background='var(--acbg)';
+        setTimeout(function(){ target.style.background=_bg||''; }, 900);
       }
     }catch(e){}
-  }, 180);
+  }, 200);
 }
 // 입력 변경 즉시 "저장 중" 표시 (사용자가 변경이 반영되는지 바로 알 수 있게)
 function _markPurDirty(){
