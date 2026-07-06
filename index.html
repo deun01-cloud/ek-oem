@@ -9460,9 +9460,35 @@ function openDropLightbox(idx){
 // ════════════════════════════════
 let catSearch='', catType='전체', catMat='전체', catPlating='전체';
 let catPriceMin='', catPriceMax='', catShowPrice=true, catSource='all'; // all|product|drop
+let catSelOnly=false;   // '선택만 보기' 토글
 const CAT_SEL_KEY='ek_catalog_sel';   // 카탈로그에 담은 항목(수동 선택분)
 function _loadCatSel(){ try{ return JSON.parse(localStorage.getItem(CAT_SEL_KEY)||'[]'); }catch(e){ return []; } }
 function _saveCatSel(a){ try{ localStorage.setItem(CAT_SEL_KEY, JSON.stringify(a||[])); }catch(e){} }
+// 카탈로그 항목 식별 키 (code 우선 → id → name)
+function _catItemKey(x){ return String((x&&(x.code||x.id||x.name))||''); }
+// 개별 선택/해제
+function _toggleCatSel(key, on){
+  var sel=_loadCatSel();
+  var idx=sel.indexOf(key);
+  if(on){ if(idx<0) sel.push(key); }
+  else { if(idx>=0) sel.splice(idx,1); }
+  _saveCatSel(sel);
+  if(typeof renderProducts==='function') renderProducts();
+}
+// 현재 화면(필터)에 보이는 항목 전체 선택
+function _catSelectAllVisible(){
+  var list=_getCatalogFiltered();
+  var sel=_loadCatSel();
+  list.forEach(function(x){ var k=_catItemKey(x); if(k && sel.indexOf(k)<0) sel.push(k); });
+  _saveCatSel(sel);
+  if(typeof renderProducts==='function') renderProducts();
+}
+// 선택 전체 해제
+function _catClearSel(){
+  _saveCatSel([]);
+  catSelOnly=false;
+  if(typeof renderProducts==='function') renderProducts();
+}
 // 통합 카탈로그 풀: 양산품(제품DB) + 재판매로 표시한 드랍샘플
 function _getCatalogPool(){
   const pool=[];
@@ -9510,7 +9536,22 @@ function _getCatalogFiltered(){
     const q=catSearch.toLowerCase().trim();
     list=list.filter(x=>[x.name,x.code,x.type,x.mat,x.plating].filter(Boolean).join(' ').toLowerCase().includes(q));
   }
+  // '선택만 보기' 토글이 켜져 있으면 선택된 항목만
+  if(catSelOnly){
+    var _s=_loadCatSel(); var _ss={}; _s.forEach(function(k){_ss[k]=1;});
+    list=list.filter(function(x){ return _ss[_catItemKey(x)]; });
+  }
   return list;
+}
+// PDF/공유용 — 선택 항목이 있으면 그것만, 없으면 현재 필터 결과 전체
+function _getCatalogForOutput(){
+  var sel=_loadCatSel();
+  if(sel.length){
+    var ss={}; sel.forEach(function(k){ss[k]=1;});
+    // 선택은 전체 풀 기준으로 뽑되(필터 무관), 순서는 풀 순서 유지
+    return _getCatalogPool().filter(function(x){ return ss[_catItemKey(x)]; });
+  }
+  return _getCatalogFiltered();
 }
 
 // 한글 IME 안전 + 디바운스 검색
@@ -10569,13 +10610,19 @@ function _renderCatalog(){
       <span style="font-size:11px;color:var(--t3);width:32px">도금</span>
       ${platings.map(p=>`<button onclick="catPlating='${p}';renderProducts()" style="${chip(catPlating===p)}">${p}</button>`).join('')}
     </div>`:''}
-    <div style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--bdr);padding-top:10px;margin-top:2px">
+    <div style="display:flex;gap:8px;align-items:center;border-top:1px solid var(--bdr);padding-top:10px;margin-top:2px;flex-wrap:wrap">
       <label style="font-size:12px;color:var(--t2);display:flex;align-items:center;gap:5px;cursor:pointer">
         <input type="checkbox" ${catShowPrice?'checked':''} onchange="catShowPrice=this.checked;renderProducts()"> 가격 표시
       </label>
-      <button onclick="catType='전체';catMat='전체';catPlating='전체';catSearch='';catPriceMin='';catPriceMax='';catSource='all';renderProducts()" style="font-size:11px;color:var(--t3);background:none;border:none;cursor:pointer;text-decoration:underline;font-family:inherit">필터 초기화</button>
+      <label style="font-size:12px;color:var(--t2);display:flex;align-items:center;gap:5px;cursor:pointer" title="체크한 항목만 화면에 표시">
+        <input type="checkbox" ${catSelOnly?'checked':''} onchange="catSelOnly=this.checked;renderProducts()"> 선택만 보기
+      </label>
+      <span style="font-size:12px;color:var(--gold-lt);font-weight:700">선택 ${_loadCatSel().length}건</span>
+      <button onclick="_catSelectAllVisible()" style="font-size:11px;color:var(--t2);background:var(--s1);border:1px solid var(--bdr);border-radius:6px;padding:4px 9px;cursor:pointer;font-family:inherit" title="현재 화면 목록 전체 선택">＋ 보이는 항목 전체선택</button>
+      <button onclick="_catClearSel()" style="font-size:11px;color:var(--t3);background:none;border:none;cursor:pointer;text-decoration:underline;font-family:inherit">선택 해제</button>
+      <button onclick="catType='전체';catMat='전체';catPlating='전체';catSearch='';catPriceMin='';catPriceMax='';catSource='all';catSelOnly=false;renderProducts()" style="font-size:11px;color:var(--t3);background:none;border:none;cursor:pointer;text-decoration:underline;font-family:inherit">필터 초기화</button>
       <div style="margin-left:auto;display:flex;gap:6px">
-        <button onclick="_catalogPDF()" style="padding:7px 14px;border-radius:7px;font-size:12px;font-weight:700;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold-lt);cursor:pointer;font-family:inherit">📄 PDF 출력</button>
+        <button onclick="_catalogPDF()" style="padding:7px 14px;border-radius:7px;font-size:12px;font-weight:700;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold-lt);cursor:pointer;font-family:inherit" title="선택 항목이 있으면 그것만, 없으면 필터 전체를 PDF로">📄 PDF 출력${_loadCatSel().length?` (선택 ${_loadCatSel().length})`:''}</button>
         <button onclick="_catalogShareLink()" style="padding:7px 14px;border-radius:7px;font-size:12px;font-weight:700;border:1px solid var(--bdr);background:var(--s1);color:var(--t2);cursor:pointer;font-family:inherit">🔗 공유 링크</button>
       </div>
     </div>
@@ -10589,13 +10636,21 @@ function _renderCatalog(){
       <div style="font-size:13px">조건에 맞는 제품이 없습니다. 필터를 조정해 보세요.</div></div>`;
   }
 
+  const _sel=_loadCatSel();
+  const _selSet={}; _sel.forEach(function(k){ _selSet[k]=1; });
+  const _catKey=function(x){ return String(x.code||x.id||x.name||''); };
+
   const cards=list.map(x=>{
+    const key=_catKey(x);
+    const on=!!_selSet[key];
     const img=x.img?`<img src="${x.img}" style="width:100%;height:160px;object-fit:cover" loading="lazy" onerror="this.style.display='none';this.parentNode.classList.add('noimg2')">`:'';
     const priceTxt=(catShowPrice&&x.price!=null)?`<div style="font-size:13px;font-weight:700;color:var(--gold-lt);margin-top:3px">${(+x.price).toLocaleString()}원</div>`:'';
     const spec=[x.type,x.mat,x.plating].filter(Boolean).join(' · ');
     const badge=x._src==='drop'?`<span style="position:absolute;top:8px;left:8px;background:rgba(180,140,40,.9);color:#fff;font-size:9px;font-weight:700;padding:2px 7px;border-radius:7px">오픈</span>`:'';
-    return `<div style="border:1px solid var(--bdr);border-radius:10px;overflow:hidden;background:var(--s1)">
-      <div style="position:relative;background:var(--s2)" class="${x.img?'':'noimg2'}">${img}${badge}</div>
+    const checkBtn=`<label onclick="event.stopPropagation()" style="position:absolute;top:6px;right:6px;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:rgba(255,255,255,.92);border-radius:7px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.2)" title="PDF에 담기 선택">
+        <input type="checkbox" ${on?'checked':''} onchange="_toggleCatSel('${key.replace(/'/g,"\\'")}',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:var(--gold)"></label>`;
+    return `<div style="border:1px solid ${on?'var(--gold)':'var(--bdr)'};border-radius:10px;overflow:hidden;background:var(--s1);${on?'box-shadow:0 0 0 2px var(--gold-bg)':''}">
+      <div style="position:relative;background:var(--s2)" class="${x.img?'':'noimg2'}">${img}${badge}${checkBtn}</div>
       <div style="padding:10px 11px">
         <div style="font-size:12.5px;font-weight:700;color:var(--t1);line-height:1.3;margin-bottom:2px">${(x.name||'').replace(/</g,'&lt;')}</div>
         ${x.code?`<div style="font-size:10.5px;color:var(--t3);font-family:monospace">${x.code}</div>`:''}
@@ -10610,14 +10665,18 @@ function _renderCatalog(){
 
 // ── 카탈로그 PDF 출력 (인쇄용 새창) ──
 function _catalogPDF(){
-  const list=_getCatalogFiltered();
+  const list=_getCatalogForOutput();
   if(!list.length){ if(typeof showToast==='function') showToast('출력할 제품이 없습니다','var(--red)'); return; }
+  const _selN=_loadCatSel().length;
   const today=new Date().toISOString().slice(0,10);
   const filterDesc=[];
-  if(catType!=='전체')filterDesc.push(catType);
-  if(catMat!=='전체')filterDesc.push(catMat);
-  if(catPlating!=='전체')filterDesc.push(catPlating);
-  if(catPriceMin||catPriceMax)filterDesc.push(`${catPriceMin||'0'}~${catPriceMax||'∞'}원`);
+  if(_selN){ filterDesc.push('선택 '+_selN+'건'); }
+  else {
+    if(catType!=='전체')filterDesc.push(catType);
+    if(catMat!=='전체')filterDesc.push(catMat);
+    if(catPlating!=='전체')filterDesc.push(catPlating);
+    if(catPriceMin||catPriceMax)filterDesc.push(`${catPriceMin||'0'}~${catPriceMax||'∞'}원`);
+  }
   const subtitle=filterDesc.length?filterDesc.join(' · '):'전체 제품';
   const cards=list.map(x=>{
     const img=x.img?`<img src="${x.img}" class="ci">`:`<div class="ci noimg">◫</div>`;
@@ -11150,12 +11209,29 @@ function saveProduct(){
     // 4) 이미지 버퍼 초기화 (다음 등록 시 깨끗하게)
     if(typeof pdImgBuf !== 'undefined') pdImgBuf.length = 0;
   };
-  if(notionCfg.workerUrl && pdImgBuf.some(img=>img.url&&img.url.startsWith('data:'))){
+  // 🖼 이미지 R2 업로드 정책:
+  //   - 업로드가 멈춰도 저장이 막히지 않도록, 저장을 업로드에 종속시키지 않는다.
+  //   - 수정 모드: 즉시 저장(현재 이미지 그대로) → 백그라운드로 R2 업로드 후 URL 교체 재저장.
+  //   - 신규 모드: 노션 등록이 필요하므로 doSaveProduct 내부에서 처리하되, 업로드 실패 시에도 진행.
+  var _needUpload = notionCfg.workerUrl && pdImgBuf.some(function(img){ return img.url && img.url.startsWith('data:'); });
+  if(_needUpload && id){
+    // 수정 모드 — 먼저 즉시 저장(먹통 방지), 이미지는 백그라운드 업로드
+    doSaveProduct(obj.imgs);
+    showToast('🔄 이미지는 백그라운드로 업로드됩니다','var(--blu)',2500);
+    uploadImagesToR2([...(obj.imgs||[])]).then(function(uploaded){
+      try{
+        var i=productDB.findIndex(function(x){return x.id==id;});
+        if(i>=0){ productDB[i].imgs=uploaded; if(typeof save==='function') save();
+          if(productDB[i]._notionId && typeof debouncedSync==='function') debouncedSync('product', productDB[i], true);
+        }
+      }catch(e){ console.warn('[제품저장] 백그라운드 이미지 반영 실패:', e && e.message); }
+    }).catch(function(err){ console.warn('[제품저장] 백그라운드 업로드 실패(로컬 유지):', err && err.message); });
+  } else if(_needUpload){
+    // 신규 모드 — 업로드 시도 후 저장, 실패해도 로컬 저장으로 진행
     showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
     uploadImagesToR2([...pdImgBuf])
-      .then(uploaded=>doSaveProduct(uploaded))
-      .catch(err=>{
-        // 업로드가 실패/거부돼도 저장은 진행 (base64 로컬 유지) — 저장 버튼이 먹통되지 않게
+      .then(function(uploaded){ doSaveProduct(uploaded); })
+      .catch(function(err){
         console.warn('[제품저장] 이미지 업로드 실패, 로컬 저장으로 진행:', err && err.message);
         showToast('⚠ 이미지 업로드 실패 — 로컬에 저장합니다','var(--red)',4000);
         doSaveProduct(obj.imgs);
