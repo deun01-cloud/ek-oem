@@ -45402,8 +45402,14 @@ function _arcBuildItems(){
       if(!files.length){
         out.push(Object.assign({}, base, {date: it.invDate||(it.uploadedAt||'').slice(0,10)||'', uploadedAt: it.uploadedAt||'', file:null}));
       } else {
-        files.forEach(function(f){
+        // 한 인보이스에 파일이 여러 개면 각 파일을 한 줄씩 펼치되,
+        // 금액은 '첫 파일 행'에만 싣는다. 나머지 행은 usd/krw=0 →
+        // 합계에서 같은 인보이스 금액이 중복 계산되지 않도록 한다.
+        files.forEach(function(f, fidx){
           out.push(Object.assign({}, base, {
+            usd: fidx===0 ? (it.usd||0) : 0,
+            krw: fidx===0 ? krw : 0,
+            _dupFile: fidx>0,   // 두 번째 이후 파일 행 표시용
             date: (f.uploadedAt||'').slice(0,10) || it.invDate || (it.uploadedAt||'').slice(0,10) || '',
             uploadedAt: f.uploadedAt || it.uploadedAt || '',
             file: f
@@ -45476,7 +45482,13 @@ function _renderArchiveBody(){
       var badge = it.kind==='cn'
         ? '<span class="arc-badge arc-cn">🏭 인보이스</span>'
         : '<span class="arc-badge arc-exp">🧾 지출내역</span>';
-      var amt = it.usd ? ('$'+_arcNum(it.usd)+' · '+won(it.krw)) : (it.krw?won(it.krw):'—');
+      var amt;
+      if(it._dupFile){
+        // 같은 인보이스의 추가 첨부 파일 — 금액은 첫 행에만 표시(중복 합산 방지)
+        amt = '<span style="color:var(--hi);font-size:11px">↑ 같은 인보이스</span>';
+      } else {
+        amt = it.usd ? ('$'+_arcNum(it.usd)+' · '+won(it.krw)) : (it.krw?won(it.krw):'—');
+      }
       var nm = it.file ? (it.file.name||'파일') : '';
       var disp = nm.length>30 ? nm.slice(0,28)+'…' : nm;
       var ico = /\.pdf$/i.test(nm)?'📄':(/\.(png|jpe?g|webp|gif)$/i.test(nm)?'🖼️':(/\.(xlsx|xls)$/i.test(nm)?'📊':'📎'));
