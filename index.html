@@ -553,6 +553,21 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 #mgtRoot .bchip-manual{background:#FFF4E6;color:var(--org)}
 #mgtRoot .bchip-need{background:#FBECEC;color:var(--rd)}
 #mgtRoot .bitem-act{display:flex;gap:4px;flex-shrink:0;align-items:center;flex-wrap:wrap;justify-content:flex-end;width:200px}
+/* 지출/청구 항목 행 — 그리드로 열 고정 (오와열 정렬) */
+#mgtRoot .exp-row{display:grid;grid-template-columns:20px minmax(120px,1fr) 92px 74px 62px 180px minmax(150px,1.1fr) 116px 22px;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--bd)}
+#mgtRoot .exp-row input,#mgtRoot .exp-row select{font-family:inherit;box-sizing:border-box}
+#mgtRoot .exp-c-ico{font-size:16px;text-align:center}
+#mgtRoot .exp-c-name{width:100%;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12.5px;font-weight:600}
+#mgtRoot .exp-c-month{width:100%}
+#mgtRoot .exp-c-paid,#mgtRoot .exp-c-bill{font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-weight:600;white-space:nowrap}
+#mgtRoot .exp-c-acc{width:100%;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12px}
+#mgtRoot .exp-c-files{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0}
+#mgtRoot .exp-attach-btn{cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px;white-space:nowrap;flex-shrink:0}
+#mgtRoot .exp-chip{display:inline-flex;align-items:center;gap:2px;background:var(--acbg,#EEF3FB);border-radius:6px;padding:1px 4px;max-width:100%}
+#mgtRoot .exp-chip .bitem-flink{border:none;padding:1px 3px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#mgtRoot .exp-c-amt{width:100%;text-align:right;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12.5px;font-weight:700}
+#mgtRoot .exp-c-del{background:none;border:none;color:var(--rd);cursor:pointer;font-size:15px;padding:0;text-align:center}
+@media(max-width:900px){#mgtRoot .exp-row{grid-template-columns:20px 1fr 84px 62px 100px 22px;grid-auto-rows:auto;row-gap:5px}#mgtRoot .exp-c-bill{display:none}#mgtRoot .exp-c-acc{grid-column:2/6}#mgtRoot .exp-c-files{grid-column:2/6}}
 #mgtRoot .bitem-flink{font-size:10.5px;color:var(--ac);text-decoration:none;padding:2px 6px;border:1px solid var(--bd2);border-radius:6px}
 #mgtRoot .bitem-flink:hover{background:var(--acbg)}
 #mgtRoot .dz-btn.drag-over{outline:2px dashed var(--ac);outline-offset:1px;background:var(--acbg)!important;transform:scale(1.05)}
@@ -43980,28 +43995,29 @@ function _renderBoardOne(forceTab, wrapId, totalId){
     var _grpYoung = manualExp.filter(function(o){ return (o.e.category||(o.e._paid?'영수':'청구'))==='영수'; });
     var _renderExpRow = function(o){
       var e=o.e, i=o.i;
+      // 첨부파일 칩 — 첨부 열 안에서만 줄바꿈되어 다른 열의 정렬을 흐트러뜨리지 않음
       var fileChips='';
       (e.files||[]).forEach(function(f,fi){
-        var nm=(f.name||'파일'); var disp=nm.length>12?nm.slice(0,10)+'…':nm;
-        fileChips += '<span style="display:inline-flex;align-items:center;gap:3px;margin-right:4px">'
+        var nm=(f.name||'파일'); var disp=nm.length>10?nm.slice(0,9)+'…':nm;
+        fileChips += '<span class="exp-chip">'
           + '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm+' 미리보기">📎 '+disp+'</a>'
-          + '<button onclick="MGT.removeExpFile('+i+','+fi+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px" title="첨부 제거">×</button></span>';
+          + '<button onclick="MGT.removeExpFile('+i+','+fi+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px;padding:0" title="첨부 제거">×</button></span>';
       });
-      return '<div class="bitem" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 4px;border-bottom:1px solid var(--bd)">'
-        + '<span style="font-size:16px">🧾</span>'
-        + '<input value="'+(e.vendor||'').replace(/"/g,'&quot;')+'" list="expVendorList" onchange="MGT.editExpVendor('+i+',this.value)" placeholder="거래처/항목명 (이전 입력 자동완성)" style="flex:1;min-width:140px;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12.5px;font-family:inherit;font-weight:600">'
-        + '<select class="bmonth-sel" onchange="MGT.editExpMonth('+i+',this.value)" title="기간">'
-          + (function(){ var cur=e.period||''; var opts=_monthOptionSet(cur,''); var h=''; if(!cur)h+='<option value="" selected>기간?</option>'; opts.forEach(function(mm){h+='<option value="'+mm+'"'+(mm===cur?' selected':'')+'>'+mm+'</option>';}); return h; })()
-        + '</select>'
-        + '<label style="font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-weight:600;'+(e._paid?'color:#2E7D32':'color:#E65100')+'"><input type="checkbox" '+(e._paid?'checked':'')+' onchange="MGT.editExpPaid('+i+',this.checked)">'+(e._paid?'입금완료':'입금대기')+'</label>'
-        + '<label style="font-size:11px;display:inline-flex;align-items:center;gap:3px;cursor:pointer;font-weight:600;'+(e._billed?'color:#1565C0':'color:var(--mu)')+'" title="세금계산서 발행 여부"><input type="checkbox" '+(e._billed?'checked':'')+' onchange="MGT.editExpBill('+i+',this.checked)">'+(e._billed?'계산서✓':'계산서')+'</label>'
-        + '<input value="'+(e.account||'').replace(/"/g,'&quot;')+'" onchange="MGT.editExpAccount('+i+',this.value)" placeholder="계좌정보 (은행·번호·예금주)" style="width:170px;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12px;font-family:inherit">'
-        + '<span style="display:inline-flex;gap:4px">'
-          + '<button class="bitem-flink dz-btn" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px" onclick="MGT.openAttachModal(\'exp\','+i+')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToExp(event,'+i+',\'attach\')" title="첨부파일 추가 (클릭=창 / 드래그=바로첨부)">+ 첨부파일</button>'
-        + '</span>'
-        + fileChips
-        + '<input type="number" value="'+(e.amount||'')+'" onchange="MGT.editExpAmount('+i+',this.value)" placeholder="금액(원)" style="width:110px;text-align:right;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12.5px;font-family:inherit;font-weight:700">'
-        + '<button onclick="MGT.deleteManualExp('+i+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:15px" title="삭제">×</button>'
+      var monthOpts = (function(){ var cur=e.period||''; var opts=_monthOptionSet(cur,''); var h=''; if(!cur)h+='<option value="" selected>기간?</option>'; opts.forEach(function(mm){h+='<option value="'+mm+'"'+(mm===cur?' selected':'')+'>'+mm+'</option>';}); return h; })();
+      // 그리드 레이아웃 — 각 열 폭 고정으로 모든 행의 오와열을 맞춘다
+      return '<div class="exp-row">'
+        + '<span class="exp-c-ico">🧾</span>'
+        + '<input class="exp-c-name" value="'+(e.vendor||'').replace(/"/g,'&quot;')+'" list="expVendorList" onchange="MGT.editExpVendor('+i+',this.value)" placeholder="거래처/항목명">'
+        + '<select class="bmonth-sel exp-c-month" onchange="MGT.editExpMonth('+i+',this.value)" title="기간">'+monthOpts+'</select>'
+        + '<label class="exp-c-paid" style="'+(e._paid?'color:#2E7D32':'color:#E65100')+'"><input type="checkbox" '+(e._paid?'checked':'')+' onchange="MGT.editExpPaid('+i+',this.checked)">'+(e._paid?'입금완료':'입금대기')+'</label>'
+        + '<label class="exp-c-bill" style="'+(e._billed?'color:#1565C0':'color:var(--mu)')+'" title="세금계산서 발행 여부"><input type="checkbox" '+(e._billed?'checked':'')+' onchange="MGT.editExpBill('+i+',this.checked)">'+(e._billed?'계산서✓':'계산서')+'</label>'
+        + '<input class="exp-c-acc" value="'+(e.account||'').replace(/"/g,'&quot;')+'" onchange="MGT.editExpAccount('+i+',this.value)" placeholder="계좌정보 (은행·번호·예금주)">'
+        + '<div class="exp-c-files">'
+          + '<button class="bitem-flink dz-btn exp-attach-btn" onclick="MGT.openAttachModal(\'exp\','+i+')" ondragover="MGT.dragOverBtn(event)" ondragleave="MGT.dragLeaveBtn(event)" ondrop="MGT.dropToExp(event,'+i+',\'attach\')" title="첨부파일 추가 (클릭=창 / 드래그=바로첨부)">+ 첨부</button>'
+          + fileChips
+        + '</div>'
+        + '<input class="exp-c-amt" type="number" value="'+(e.amount||'')+'" onchange="MGT.editExpAmount('+i+',this.value)" placeholder="금액(원)">'
+        + '<button class="exp-c-del" onclick="MGT.deleteManualExp('+i+')" title="삭제">×</button>'
         + '</div>';
     };
     var _sectionHdr = function(label, cnt, sum, color, bg){
