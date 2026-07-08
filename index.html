@@ -19094,6 +19094,7 @@ function openIoModal(idOrNull){
         <label>사진 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(증빙·송장·박스)</span></label>
         <div id="io_photo_grid" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;min-height:30px"></div>
         <input type="file" id="io_photo_input" accept="image/*" multiple style="display:none" onchange="_addIoPhoto(event)">
+        <input type="file" id="io_rephoto_input" accept="image/*" style="display:none" onchange="_replaceIoPhoto(event)">
         <button type="button" onclick="document.getElementById('io_photo_input').click()" style="margin-top:6px;padding:6px 12px;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;font-size:11.5px;color:var(--t2);cursor:pointer;font-family:inherit">📷 사진 추가</button>
       </div>
       <div class="fg" style="margin-top:10px;padding:10px 12px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:7px">
@@ -19133,10 +19134,33 @@ function _renderIoPhotoGrid(){
   }
   grid.innerHTML = _ioPhotoBuf.map((f,i)=>`
     <div style="position:relative;width:70px;height:70px;border-radius:5px;overflow:hidden;border:1px solid var(--bdr-lt);background:var(--s2)">
-      <img src="${f.url}" style="width:100%;height:100%;object-fit:cover;cursor:pointer" onclick="_openIoPhotoLightbox(${i})">
+      <img src="${f.url}" style="width:100%;height:100%;object-fit:cover;cursor:pointer" onclick="_openIoPhotoLightbox(${i})"
+        onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+      <div style="display:none;width:100%;height:100%;flex-direction:column;align-items:center;justify-content:center;gap:3px;background:#FFF3F0;cursor:pointer" onclick="document.getElementById('io_rephoto_input').setAttribute('data-idx','${i}');document.getElementById('io_rephoto_input').click();" title="깨진 사진 — 클릭해서 다시 올리기">
+        <span style="font-size:18px">⚠️</span>
+        <span style="font-size:8.5px;color:var(--red);font-weight:600;text-align:center;line-height:1.2">다시<br>올리기</span>
+      </div>
       <button onclick="_removeIoPhoto(${i})" style="position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;border:none;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>
     </div>
   `).join('');
+}
+
+// 깨진 사진 1장만 교체 업로드 (기존 항목/다른 사진은 유지)
+async function _replaceIoPhoto(event){
+  const idx = parseInt(event.target.getAttribute('data-idx'), 10);
+  const file = (event.target.files||[])[0];
+  event.target.value = '';
+  event.target.removeAttribute('data-idx');
+  if(isNaN(idx) || !file || !file.type.startsWith('image/')) return;
+  try{
+    showToast('사진 교체 중…','var(--blu)',1500);
+    // base64로 읽어 버퍼에 넣으면 저장 시 R2로 재업로드됨
+    const url = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); });
+    if(_ioPhotoBuf[idx]) _ioPhotoBuf[idx] = {name:file.name, url, type:file.type};
+    else _ioPhotoBuf.push({name:file.name, url, type:file.type});
+    _renderIoPhotoGrid();
+    showToast('✓ 교체됨 — 저장을 눌러 반영하세요','var(--grn)',2500);
+  }catch(e){ console.warn('사진 교체 실패:', e); showToast('⚠ 교체 실패','var(--red)',3000); }
 }
 
 function _openIoPhotoLightbox(idx){
