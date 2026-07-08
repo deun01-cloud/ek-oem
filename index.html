@@ -617,13 +617,18 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 /* 파일 1개 = 1행 레이아웃 */
 #mgtRoot .arc-row-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 #mgtRoot .arc-row-line .arc-title{flex:0 1 auto;min-width:80px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#mgtRoot .arc-fcell{flex:1 1 200px;min-width:160px;display:flex;align-items:center}
+#mgtRoot .arc-fcell{flex:1 1 240px;min-width:180px;display:flex;align-items:center}
 #mgtRoot .arc-fcell .arc-file{margin-top:0;max-width:100%}
 #mgtRoot .arc-up{font-size:11px;color:var(--mu);white-space:nowrap;font-family:var(--font-data,monospace)}
 #mgtRoot .arc-dl{width:30px;height:30px;border:1px solid var(--bd2);border-radius:7px;background:var(--s1);color:var(--ac);cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;transition:.13s;flex-shrink:0}
 #mgtRoot .arc-dl:hover{background:var(--acbg);border-color:var(--ac)}
 #mgtRoot .arc-del{color:var(--rd)}
 #mgtRoot .arc-del:hover{background:rgba(220,53,69,.08);border-color:var(--rd)}
+/* 자료실 — 한 항목에 여러 첨부파일을 함께 표시 */
+#mgtRoot .arc-fgroup{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center}
+#mgtRoot .arc-fitem{display:inline-flex;align-items:center;gap:2px;background:var(--s2);border:1px solid var(--bd);border-radius:7px;padding:2px 4px 2px 6px}
+#mgtRoot .arc-fitem .arc-file{margin:0;background:transparent;padding:2px 2px}
+#mgtRoot .arc-dl-sm{width:24px;height:24px;font-size:12px}
 #mgtRoot .g2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
 #mgtRoot table{width:100%;border-collapse:collapse}
 #mgtRoot thead th{padding:9px 13px;font-size:11px;font-weight:700;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;text-align:left;border-bottom:1px solid var(--bd);background:var(--sf);white-space:nowrap}
@@ -43996,11 +44001,14 @@ function _renderBoardOne(forceTab, wrapId, totalId){
     var _renderExpRow = function(o){
       var e=o.e, i=o.i;
       // 첨부파일 칩 — 첨부 열 안에서만 줄바꿈되어 다른 열의 정렬을 흐트러뜨리지 않음
+      // 파일명 클릭=미리보기, ⬇=다운로드, ×=제거
       var fileChips='';
       (e.files||[]).forEach(function(f,fi){
         var nm=(f.name||'파일'); var disp=nm.length>10?nm.slice(0,9)+'…':nm;
+        var furl=f.url||f.pageUrl||'';
         fileChips += '<span class="exp-chip">'
-          + '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm+' 미리보기">📎 '+disp+'</a>'
+          + '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(furl)+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm+' 미리보기">📎 '+disp+'</a>'
+          + '<button onclick="MGT.arcDownload(\''+encodeURIComponent(furl)+'\',\''+encodeURIComponent(nm)+'\')" style="background:none;border:none;color:var(--ac);cursor:pointer;font-size:11px;padding:0 2px" title="다운로드">⬇</button>'
           + '<button onclick="MGT.removeExpFile('+i+','+fi+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px;padding:0" title="첨부 제거">×</button></span>';
       });
       var monthOpts = (function(){ var cur=e.period||''; var opts=_monthOptionSet(cur,''); var h=''; if(!cur)h+='<option value="" selected>기간?</option>'; opts.forEach(function(mm){h+='<option value="'+mm+'"'+(mm===cur?' selected':'')+'>'+mm+'</option>';}); return h; })();
@@ -44808,6 +44816,8 @@ function attachExpFile(idx, fileRole, droppedFile){
         S.exp[idx].files.push({name:file.name, url:meta.url, pageId:meta.pageId, pageUrl:meta.pageUrl, r2key:meta.r2key, role:(fileRole||'proof')});
         if(!S.exp[idx].vendor){ S.exp[idx].vendor=file.name.replace(/\.[^.]+$/,''); }
         _renderBoardRows();
+        // 첨부파일 참조를 Notion 비고에 저장 → 새로고침/타기기에서도 항목에 붙어있게
+        var _pp=S.exp[idx].period || document.getElementById('g-period').value; if(_pp) syncCogsToNotion(_pp);
         toast(meta.attached?'📎 첨부 완료':'⚠ R2 실패(노션만)','ok');
       } else { toast('⚠ 첨부 실패','err'); }
     });
@@ -44832,6 +44842,7 @@ async function removeExpFile(idx, fi){
   if(f.r2key){ try{ await deleteFileFromR2(f.r2key); }catch(e){} }
   S.exp[idx].files.splice(fi,1);
   _renderBoardRows();
+  var _pp=S.exp[idx].period || document.getElementById('g-period').value; if(_pp) syncCogsToNotion(_pp);
 }
 function editManualAmount(idx, v){
   if(!(S.manual&&S.manual[idx])) return;
@@ -45222,7 +45233,7 @@ function _attachUploadFiles(fileList){
   });
   seq.then(function(){
     if(t.kind==='invoice'){ renderBoard(true); }
-    else { _renderBoardRows(); var p=document.getElementById('g-period').value; if(p&&t.kind!=='exp') syncCogsToNotion(p); }
+    else { _renderBoardRows(); var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p); }
     _renderAttachExisting();
     var inp=document.getElementById('mAttach_input'); if(inp) inp.value='';
     toast('📎 첨부 완료','ok');
@@ -45399,23 +45410,16 @@ function _arcBuildItems(){
         invNo: it.invNo||'',
         usd: it.usd||0, krw: krw
       };
-      if(!files.length){
-        out.push(Object.assign({}, base, {date: it.invDate||(it.uploadedAt||'').slice(0,10)||'', uploadedAt: it.uploadedAt||'', file:null}));
-      } else {
-        // 한 인보이스에 파일이 여러 개면 각 파일을 한 줄씩 펼치되,
-        // 금액은 '첫 파일 행'에만 싣는다. 나머지 행은 usd/krw=0 →
-        // 합계에서 같은 인보이스 금액이 중복 계산되지 않도록 한다.
-        files.forEach(function(f, fidx){
-          out.push(Object.assign({}, base, {
-            usd: fidx===0 ? (it.usd||0) : 0,
-            krw: fidx===0 ? krw : 0,
-            _dupFile: fidx>0,   // 두 번째 이후 파일 행 표시용
-            date: (f.uploadedAt||'').slice(0,10) || it.invDate || (it.uploadedAt||'').slice(0,10) || '',
-            uploadedAt: f.uploadedAt || it.uploadedAt || '',
-            file: f
-          }));
-        });
-      }
+      // 📌 같은 인보이스의 파일들은 한 항목(한 행)에 모두 첨부해서 표시.
+      //    (파일별로 행을 나누지 않음 → 중복 항목처럼 보이던 문제 해결)
+      var _upAt = it.uploadedAt || '';
+      files.forEach(function(f){ if((f.uploadedAt||'') > _upAt) _upAt=f.uploadedAt||''; });
+      out.push(Object.assign({}, base, {
+        date: it.invDate || (it.uploadedAt||'').slice(0,10) || (files[0] && (files[0].uploadedAt||'').slice(0,10)) || '',
+        uploadedAt: _upAt,
+        file: files.length ? files[0] : null,   // 하위호환(검색/단일 다운로드용)
+        files: files                            // 이 인보이스에 묶인 모든 첨부파일
+      }));
     });
   }
   // 2) 지출내역서 — 파일 1개 = 1행
@@ -45430,7 +45434,8 @@ function _arcBuildItems(){
         date: (f.uploadedAt||'').slice(0,10) || '',
         uploadedAt: f.uploadedAt||'',
         usd:0, krw: f.krw||0,
-        file: file
+        file: file,
+        files: file ? [file] : []
       });
     });
   }
@@ -45438,7 +45443,8 @@ function _arcBuildItems(){
   var q = _arcSearch;
   if(q){
     out = out.filter(function(it){
-      var hay = (it.title||'')+' '+(it.invNo||'')+' '+(it.period||'')+' '+(it.date||'')+' '+((it.file&&it.file.name)||'');
+      var fnames = (it.files||[]).map(function(f){return f.name||'';}).join(' ');
+      var hay = (it.title||'')+' '+(it.invNo||'')+' '+(it.period||'')+' '+(it.date||'')+' '+fnames;
       return hay.toLowerCase().indexOf(q)>=0;
     });
   }
@@ -45478,20 +45484,10 @@ function _renderArchiveBody(){
     html += '<div class="arc-group">'
       + '<div class="arc-gh"><span class="arc-gh-m">📅 '+label+'</span><span class="arc-gh-n">'+rows.length+'건 · '+won(gKRW)+'</span></div>';
     rows.forEach(function(it){
-      if(it.file) fileCnt++;
       var badge = it.kind==='cn'
         ? '<span class="arc-badge arc-cn">🏭 인보이스</span>'
         : '<span class="arc-badge arc-exp">🧾 지출내역</span>';
-      var amt;
-      if(it._dupFile){
-        // 같은 인보이스의 추가 첨부 파일 — 금액은 첫 행에만 표시(중복 합산 방지)
-        amt = '<span style="color:var(--hi);font-size:11px">↑ 같은 인보이스</span>';
-      } else {
-        amt = it.usd ? ('$'+_arcNum(it.usd)+' · '+won(it.krw)) : (it.krw?won(it.krw):'—');
-      }
-      var nm = it.file ? (it.file.name||'파일') : '';
-      var disp = nm.length>30 ? nm.slice(0,28)+'…' : nm;
-      var ico = /\.pdf$/i.test(nm)?'📄':(/\.(png|jpe?g|webp|gif)$/i.test(nm)?'🖼️':(/\.(xlsx|xls)$/i.test(nm)?'📊':'📎'));
+      var amt = it.usd ? ('$'+_arcNum(it.usd)+' · '+won(it.krw)) : (it.krw?won(it.krw):'—');
       // 입력(업로드) 날짜·시각
       var upRaw = it.uploadedAt || '';
       var upDisp = '';
@@ -45500,18 +45496,24 @@ function _renderArchiveBody(){
       }
       if(!upDisp) upDisp = it.date || '—';
 
-      var fileCell = it.file
-        ? '<a class="arc-file" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(it.file.url)+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(it.file.type||'')+'\')" title="'+nm.replace(/"/g,'&quot;')+' 미리보기">'+ico+' '+disp+'</a>'
-        : '<span style="font-size:11.5px;color:var(--mu)">첨부 없음</span>';
-      var dlBtn = it.file
-        ? '<button class="arc-dl" onclick="MGT.arcDownload(\''+encodeURIComponent(it.file.url)+'\',\''+encodeURIComponent(nm)+'\')" title="다운로드">⬇</button>'
-        : '';
-      // 🗑️ 삭제 버튼 — pageId가 있는 파일(노션 기록)만 삭제 가능
-      var delBtn = (it.file && it.file.pageId)
-        ? '<button class="arc-dl arc-del" onclick="MGT.arcDeleteFile(\''+it.file.pageId+'\',\''+(it.file.kind||it.kind||'')+'\')" title="삭제">🗑️</button>'
-        : '';
+      // 📎 이 항목(인보이스)에 묶인 모든 첨부파일을 한 행에 함께 표시
+      var arcFiles = (it.files && it.files.length) ? it.files : (it.file ? [it.file] : []);
+      arcFiles.forEach(function(){ fileCnt++; });
+      var fileCell;
+      if(arcFiles.length){
+        fileCell = '<span class="arc-fgroup">' + arcFiles.map(function(f){
+          var fnm = f.name||'파일';
+          var fdisp = fnm.length>26 ? fnm.slice(0,24)+'…' : fnm;
+          var fico = /\.pdf$/i.test(fnm)?'📄':(/\.(png|jpe?g|webp|gif)$/i.test(fnm)?'🖼️':(/\.(xlsx|xls)$/i.test(fnm)?'📊':'📎'));
+          var pv = '<a class="arc-file" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url)+'\',\''+encodeURIComponent(fnm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+fnm.replace(/"/g,'&quot;')+' 미리보기">'+fico+' '+fdisp+'</a>';
+          var dl = '<button class="arc-dl arc-dl-sm" onclick="MGT.arcDownload(\''+encodeURIComponent(f.url)+'\',\''+encodeURIComponent(fnm)+'\')" title="다운로드">⬇</button>';
+          var del = f.pageId ? '<button class="arc-dl arc-del arc-dl-sm" onclick="MGT.arcDeleteFile(\''+f.pageId+'\',\''+(f.kind||it.kind||'')+'\')" title="삭제">🗑️</button>' : '';
+          return '<span class="arc-fitem">'+pv+dl+del+'</span>';
+        }).join('') + '</span>';
+      } else {
+        fileCell = '<span style="font-size:11.5px;color:var(--mu)">첨부 없음</span>';
+      }
 
-      // 파일 1개 = 1행 (한 줄 레이아웃)
       html += '<div class="arc-row arc-row-line">'
         + badge
         + '<span class="arc-title">'+(it.title||'').replace(/</g,'&lt;')+'</span>'
@@ -45519,8 +45521,6 @@ function _renderArchiveBody(){
         + '<span class="arc-fcell">'+fileCell+'</span>'
         + '<span class="arc-up" title="입력일시">🕓 '+upDisp+'</span>'
         + '<span class="arc-amt">'+amt+'</span>'
-        + dlBtn
-        + delBtn
         + '</div>';
     });
     html += '</div>';
@@ -48156,13 +48156,18 @@ async function syncCogsToNotion(period){
         if(it.inclVat) _memoParts.push('부가세포함');
         if(it._billed) _memoParts.push('계산서발행');
         if(it.account) _memoParts.push('계좌:'+it.account);
+        // 📎 첨부파일 참조를 비고에 함께 저장 → 새로고침/타기기에서도 항목에 파일이 붙어있게
+        if(it.files && it.files.length){
+          var _ff = it.files.map(function(f){ return {n:f.name||'', u:f.url||f.pageUrl||'', p:f.pageId||'', t:f.type||'', r:f.r2key||f.r2Key||'' }; });
+          try{ _memoParts.push('FILES:'+JSON.stringify(_ff)); }catch(e){}
+        }
         await fetch(NOTION_PROXY+'/pages',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({parent:{database_id:NOTION_COGS_DB}, properties:{
           '항목명':{title:[{text:{content:it.vendor||'(지출)'}}]},
           '기간':  {rich_text:[{text:{content:expPeriod}}]},
           '구분':  {rich_text:[{text:{content:'지출내역'}}]},
           '거래처':{rich_text:[{text:{content:it.vendor||''}}]},
           '금액':  {number:Math.round(it.amount||0)},
-          '비고':  {rich_text:[{text:{content:_memoParts.join('|')}}]}
+          '비고':  {rich_text:[{text:{content:_memoParts.join('|').slice(0,1900)}}]}
         }})});
       }
     }
@@ -48277,7 +48282,16 @@ async function loadPeriodFromNotion(period, silent){
           var _billed = /계산서발행/.test(_eb);
           var _acctM = _eb.match(/계좌:([^|]+)/);
           var _acct = _acctM ? _acctM[1].trim() : '';
-          loaded.exp.push({vendor:getText('거래처'),amount:amt,rawAmt:amt, inclVat:_eb.includes('부가세'), category:_cat, _paid:_paid, _billed:_billed, account:_acct, period:getText('기간')||period});
+          // 📎 비고에 저장된 첨부파일 참조 복원 (FILES:[...] — 문자열 끝까지)
+          var _files = [];
+          var _fm = _eb.match(/FILES:(\[.*\])\s*$/);
+          if(_fm){
+            try{
+              var _arr = JSON.parse(_fm[1]);
+              if(Array.isArray(_arr)) _files = _arr.map(function(o){ return {name:o.n||'파일', url:o.u||'', pageId:o.p||'', type:o.t||'', r2key:o.r||''}; });
+            }catch(e){ /* 파싱 실패 시 파일 없이 진행 */ }
+          }
+          loaded.exp.push({vendor:getText('거래처'),amount:amt,rawAmt:amt, inclVat:_eb.includes('부가세'), category:_cat, _paid:_paid, _billed:_billed, account:_acct, period:getText('기간')||period, files:_files});
         } else if(gubun==='중국인보이스'){
           var rate=parseFloat(document.getElementById('usd-rate').value)||1350;
           var bigo = getText('비고');
