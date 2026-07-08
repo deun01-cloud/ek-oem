@@ -585,7 +585,24 @@ function safeLoad(key, fallback){
 }
 function safeSave(key, val){
   try{ localStorage.setItem(key, JSON.stringify(val)); }
-  catch(e){ console.warn('save failed:', key, e); }
+  catch(e){
+    console.warn('save failed:', key, e);
+    // 🛟 용량 초과 시 최후의 수단: 큰 base64(data:) 사진을 제거하고 재시도 —
+    //    R2 업로드 실패로 base64가 남아 용량이 초과돼도 데이터 자체는 살린다.
+    try{
+      const stripped = JSON.parse(JSON.stringify(val), (k,v)=>{
+        if(typeof v==='string' && v.startsWith('data:') && v.length>2000) return '';
+        return v;
+      });
+      localStorage.setItem(key, JSON.stringify(stripped));
+      // 인메모리 원본의 큰 base64도 정리해 다음 저장에서 반복 초과되지 않도록 함
+      const _strip=(obj)=>{ if(!obj||typeof obj!=='object')return; for(const kk in obj){ const vv=obj[kk];
+        if(typeof vv==='string'&&vv.startsWith('data:')&&vv.length>2000) obj[kk]='';
+        else if(vv&&typeof vv==='object') _strip(vv); } };
+      if(Array.isArray(val)) val.forEach(_strip); else _strip(val);
+      try{ showToast('⚠ 저장공간 초과 — 사진은 저장 안 됨(기록은 저장). R2 연결을 확인하세요','warn'); }catch(_){}
+    }catch(e2){ console.warn('save retry failed:', key, e2); }
+  }
 }
 function loadAll(){
   samples       = safeLoad(LS.smp, []);
