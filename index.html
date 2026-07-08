@@ -45682,13 +45682,22 @@ function arcDownload(encUrl, encName){
 
 async function deleteBoardFile(pageId){
   if(!confirm('이 파일을 삭제할까요?\n(원본 파일 + 기록 모두 삭제됩니다)')) return;
-  var t = _boardTab;
-  var item = (_board[t]||[]).find(function(x){return x.pageId===pageId;});
+  // 현재 탭과 무관하게 어느 보드(cn/exp)에 있든 찾아서 삭제
+  var foundBoard = '', item = null;
+  ['cn','exp'].forEach(function(bt){
+    if(item) return;
+    var f=(_board[bt]||[]).find(function(x){return x.pageId===pageId;});
+    if(f){ item=f; foundBoard=bt; }
+  });
   var ok = await deleteFileMeta(pageId);
+  if(!ok){ toast('삭제 실패 — 다시 시도','err'); return; }
   if(item && item.r2key){ try{ await deleteFileFromR2(item.r2key); }catch(e){} }
-  if(!ok){ toast('삭제 실패','err'); return; }
-  _board[t] = (_board[t]||[]).filter(function(x){return x.pageId!==pageId;});
+  // 찾은 보드(없으면 양쪽 모두)에서 제거
+  if(foundBoard){ _board[foundBoard] = (_board[foundBoard]||[]).filter(function(x){return x.pageId!==pageId;}); }
+  else { ['cn','exp'].forEach(function(bt){ _board[bt] = (_board[bt]||[]).filter(function(x){return x.pageId!==pageId;}); }); }
+  // S.files 캐시 + 지출 항목에 연결돼 있던 참조도 제거
   try{ Object.keys(S.files||{}).forEach(function(p){ if(S.files[p]) S.files[p]=S.files[p].filter(function(f){return f.pageId!==pageId;}); }); }catch(e){}
+  try{ (S.exp||[]).forEach(function(x){ if(x.files&&x.files.length) x.files=x.files.filter(function(f){return f.pageId!==pageId;}); }); }catch(e){}
   _renderBoardRows();
   toast('🗑️ 삭제됨','ok');
 }
