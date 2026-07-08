@@ -44049,37 +44049,35 @@ function _renderBoardOne(forceTab, wrapId, totalId){
     }
     html2 += '</div>';
   }
-  // 📌 항목에 이미 연결된 파일(pageId)은 아래 '미연결 파일'에서 제외 —
-  //    각 항목 옆에서만 보이게 하고, 어디에도 안 붙은 파일만 따로 안내한다.
-  var _attachedIds = {};
-  (S.exp||[]).forEach(function(x){ (x.files||[]).forEach(function(f){ if(f.pageId) _attachedIds[f.pageId]=1; }); });
-  var orphan = list.filter(function(it){ return !_attachedIds[it.pageId]; });
-
-  var manTot = manualExp.reduce(function(s,o){return s+(+o.e.amount||0);},0);
-
-  if(!orphan.length){
-    // 미연결 파일 없음 → 항목 리스트만 표시 (별도 파일 표 없음)
-    wrap.innerHTML = html2;
-    if(stat) stat.textContent = manualExp.length+'건 · '+won(manTot);
+  if(!list.length){
+    wrap.innerHTML = html2 + (manualExp.length?'':'');
+    var mtot=manualExp.reduce(function(s,o){return s+(+o.e.amount||0);},0);
+    if(stat) stat.textContent = manualExp.length+'건(직접) · '+won(mtot);
     return;
   }
-
-  // 미연결(어느 항목에도 안 붙은) 업로드 파일 — 항목에 연결하거나 삭제 가능
-  var orphanRows = orphan.map(function(it){
+  var totalKRW2 = list.reduce(function(s,i){return s+(i.krw||0);},0);
+  var manTot = manualExp.reduce(function(s,o){return s+(+o.e.amount||0);},0);
+  // 📎 항목에 이미 연결된 파일(pageId)은 '항목에 연결' 버튼을 숨겨(이미 붙어있음) 중복 연결을 막는다.
+  var _attachedIds = {};
+  (S.exp||[]).forEach(function(x){ (x.files||[]).forEach(function(f){ if(f.pageId) _attachedIds[f.pageId]=1; }); });
+  var rows = list.map(function(it){
+    var _linked = !!_attachedIds[it.pageId];
     var _fjson = encodeURIComponent(JSON.stringify({name:it.name||'파일', url:it.url||it.pageUrl||'', pageId:it.pageId||'', type:it.type||'', r2key:it.r2key||''}));
-    return '<div class="exp-orphan-row">'
-      + '<a class="bitem-flink" style="cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(it.url||it.pageUrl||'')+'\',\''+encodeURIComponent(it.name||'파일')+'\',\''+encodeURIComponent(it.type||'')+'\')" title="'+(it.name||'').replace(/"/g,'&quot;')+' 미리보기">📄 '+(it.name||'파일')+'</a>'
-      + '<span style="font-size:10px;color:var(--hi);white-space:nowrap">'+((it.uploadedAt||'').slice(0,10))+'</span>'
-      + '<button class="bitem-flink" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px;white-space:nowrap" onclick="MGT.expLinkOrphan(\''+_fjson+'\')">항목에 연결</button>'
-      + '<button style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:14px" onclick="MGT.deleteBoardFile(\''+it.pageId+'\')" title="삭제">×</button>'
-      + '</div>';
+    var _linkBtn = _linked
+      ? '<span style="font-size:10.5px;color:#2E7D32;white-space:nowrap" title="이미 항목에 연결됨">✓ 연결됨</span>'
+      : '<button class="bitem-flink" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px;white-space:nowrap" onclick="MGT.expLinkOrphan(\''+_fjson+'\')" title="이 파일을 지출 항목에 연결">항목에 연결</button>';
+    return '<tr>'+
+      '<td style="font-size:11px;color:var(--mu);white-space:nowrap">'+(it.period||'—')+'</td>'+
+      '<td>'+_boardFileLink(it)+'</td>'+
+      '<td class="r" style="font-size:11px;color:var(--mu)">'+(it.cnt?it.cnt+'건':'—')+'</td>'+
+      '<td class="r" style="font-weight:600">'+(it.krw?won(it.krw):'—')+'</td>'+
+      '<td style="font-size:10px;color:var(--hi);white-space:nowrap">'+((it.uploadedAt||'').slice(0,10))+'</td>'+
+      '<td style="text-align:center;white-space:nowrap">'+_linkBtn+' <button onclick="MGT.deleteBoardFile(\''+it.pageId+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:14px" title="삭제">×</button></td>'+
+    '</tr>';
   }).join('');
-  var orphanBox = '<div class="exp-orphan-box">'
-    + '<div class="exp-orphan-hd">📎 미연결 파일 '+orphan.length+'개 <span style="font-weight:400;color:var(--mu)">— 아래 파일을 항목에 연결하면 해당 항목에 붙습니다</span></div>'
-    + orphanRows + '</div>';
-
-  wrap.innerHTML = html2 + orphanBox;
-  if(stat) stat.textContent = manualExp.length+'건 · '+won(manTot)+' · 미연결 '+orphan.length+'개';
+  rows += '<tr class="tr-tot"><td colspan="3">합계 ('+list.length+'개 파일'+(manualExp.length?' + 직접 '+manualExp.length+'건':'')+')</td><td class="r">'+won(totalKRW2+manTot)+'</td><td colspan="2"></td></tr>';
+  wrap.innerHTML = html2 + '<table><thead><tr><th>기간</th><th>파일</th><th class="r">항목수</th><th class="r">지출 합계</th><th>등록일</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+  if(stat) stat.textContent = (list.length+manualExp.length)+'건 · '+won(totalKRW2+manTot);
 }
 
 // 인보이스 1건 리스트 아이템 HTML
