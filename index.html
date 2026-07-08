@@ -43960,21 +43960,7 @@ function _renderBoardOne(forceTab, wrapId, totalId){
     if(q){ var hay=((o.e.vendor||'')+' '+(per||'')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
     return true;
   });
-  // 🔗 항목명과 이름이 매칭되는 업로드 파일 pageId 집합 — 아래 목록에서 숨겨 중복 표시 방지
-  var _matchedBoardIds = {};
-  (function(){
-    var _n = function(x){ return String(x||'').toLowerCase().replace(/\.[^.]+$/,'').replace(/[\s_\-()·]/g,''); };
-    manualExp.forEach(function(o){
-      var vn=_n(o.e.vendor); if(!vn||vn.length<2) return;
-      (_board['exp']||[]).forEach(function(bf){
-        if(_boardMonth && bf.period && bf.period!==_boardMonth) return;
-        var fn=_n(bf.name); if(!fn) return;
-        if(fn.indexOf(vn)>=0 || vn.indexOf(fn)>=0) _matchedBoardIds[bf.pageId]=true;
-      });
-    });
-  })();
   var list = (_board[t]||[]).filter(function(it){
-    if(_matchedBoardIds[it.pageId]) return false;   // 항목에 자동 연결된 파일은 목록에서 숨김
     if(_boardMonth && it.period !== _boardMonth) return false;
     if(!q) return true;
     return (it.name||'').toLowerCase().indexOf(q)>=0 || (it.period||'').toLowerCase().indexOf(q)>=0;
@@ -43992,20 +43978,6 @@ function _renderBoardOne(forceTab, wrapId, totalId){
     // 📌 청구내역(입금대기) / 영수내역(입금완료) 두 그룹으로 나눠 표시
     var _grpChung = manualExp.filter(function(o){ return (o.e.category||(o.e._paid?'영수':'청구'))!=='영수'; });
     var _grpYoung = manualExp.filter(function(o){ return (o.e.category||(o.e._paid?'영수':'청구'))==='영수'; });
-    // 🔗 위 박스(업로드 파일 목록)의 파일을 항목명과 이름으로 자동 매칭 —
-    //    파일명이 거래처/항목명을 포함하거나 그 반대면 같은 건으로 보고 항목 옆에 붙인다.
-    var _norm = function(s){ return String(s||'').toLowerCase().replace(/\.[^.]+$/,'').replace(/[\s_\-()·]/g,''); };
-    var _matchedFilePages = {};
-    var _findBoardFilesFor = function(e){
-      var vn=_norm(e.vendor);
-      if(!vn || vn.length<2) return [];
-      return (_board['exp']||[]).filter(function(bf){
-        if(_boardMonth && bf.period && bf.period!==_boardMonth) return false;
-        var fn=_norm(bf.name);
-        if(!fn) return false;
-        return fn.indexOf(vn)>=0 || vn.indexOf(fn)>=0;
-      });
-    };
     var _renderExpRow = function(o){
       var e=o.e, i=o.i;
       var fileChips='';
@@ -44014,14 +43986,6 @@ function _renderBoardOne(forceTab, wrapId, totalId){
         fileChips += '<span style="display:inline-flex;align-items:center;gap:3px;margin-right:4px">'
           + '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm+' 미리보기">📎 '+disp+'</a>'
           + '<button onclick="MGT.removeExpFile('+i+','+fi+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px" title="첨부 제거">×</button></span>';
-      });
-      // 🔗 이름으로 매칭된 업로드 파일 — 클릭 시 미리보기 (연결 아이콘으로 직접첨부와 구분)
-      _findBoardFilesFor(e).forEach(function(bf){
-        if(_matchedFilePages[bf.pageId]) return;
-        _matchedFilePages[bf.pageId]=true;
-        var mnm=(bf.name||'파일'); var mdisp=mnm.length>12?mnm.slice(0,10)+'…':mnm;
-        fileChips += '<span style="display:inline-flex;align-items:center;gap:3px;margin-right:4px">'
-          + '<a class="bitem-flink" style="cursor:pointer;background:#EAF6EC;color:#2E7D32" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(bf.url||bf.pageUrl||'')+'\',\''+encodeURIComponent(mnm)+'\',\''+encodeURIComponent(bf.type||'')+'\')" title="'+mnm+' (자동 연결 · 클릭하면 미리보기)">🔗 '+mdisp+'</a></span>';
       });
       return '<div class="bitem" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 4px;border-bottom:1px solid var(--bd)">'
         + '<span style="font-size:16px">🧾</span>'
@@ -45684,6 +45648,9 @@ function renderFileList(period){
   allTypes.forEach(function(type){
     var el = document.getElementById('files-'+type);
     if(!el) return;
+    // 📌 지출/공장 인보이스의 '등록된 파일' 초록 박스는 숨김 —
+    //    아래 표에서 제목·파일로 동일 정보를 볼 수 있어 중복이므로 표시하지 않음
+    if(type==='exp' || type==='cn'){ el.innerHTML=''; el.style.display='none'; return; }
     var byType = items.filter(function(f){return f.type===type;});
     if(!byType.length){
       el.innerHTML = '';
