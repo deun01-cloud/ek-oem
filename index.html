@@ -21292,6 +21292,10 @@ async function r2Upload(dataUrl, fileName, fileType){
   var _ac = (typeof AbortController!=='undefined') ? new AbortController() : null;
   var _to = _ac ? setTimeout(function(){ try{_ac.abort();}catch(_){}}, 25000) : null;
   try{
+    // ⚠️ Worker는 body를 순수 base64로 디코드(atob)하므로 "data:...;base64," 접두어를 제거해야 함.
+    //    접두어를 그대로 보내면 이미지가 깨진다(영업자료 업로드는 이미 접두어를 제거해 정상 동작).
+    var _body = String(dataUrl||'');
+    if(_body.indexOf('base64,')>=0) _body = _body.split('base64,')[1];
     const res = await fetch(notionCfg.workerUrl+'/r2/upload',{
       method:'POST',
       headers:{
@@ -21300,7 +21304,7 @@ async function r2Upload(dataUrl, fileName, fileType){
         'X-File-Type': fileType||'image/jpeg',
         'X-Encoding':  'base64',
       },
-      body: dataUrl,  // data:image/xxx;base64,xxx 그대로 전송
+      body: _body,  // 순수 base64만 전송 (data: 접두어 제거)
       signal: _ac ? _ac.signal : undefined
     });
     if(_to){ clearTimeout(_to); _to=null; }
