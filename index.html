@@ -567,6 +567,10 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 #mgtRoot .exp-chip .bitem-flink{border:none;padding:1px 3px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #mgtRoot .exp-c-amt{width:100%;text-align:right;border:1px solid var(--bd2);border-radius:6px;padding:5px 8px;font-size:12.5px;font-weight:700}
 #mgtRoot .exp-c-del{background:none;border:none;color:var(--rd);cursor:pointer;font-size:15px;padding:0;text-align:center}
+#mgtRoot .exp-orphan-box{margin-top:10px;border:1px dashed var(--bd2);border-radius:8px;padding:8px 10px;background:var(--s2)}
+#mgtRoot .exp-orphan-hd{font-size:11px;color:var(--t2,#666);font-weight:700;margin-bottom:6px}
+#mgtRoot .exp-orphan-row{display:flex;align-items:center;gap:8px;padding:5px 6px;border-bottom:1px solid var(--bd);font-size:12px}
+#mgtRoot .exp-orphan-row:last-child{border-bottom:none}
 @media(max-width:900px){#mgtRoot .exp-row{grid-template-columns:20px 1fr 84px 62px 100px 22px;grid-auto-rows:auto;row-gap:5px}#mgtRoot .exp-c-bill{display:none}#mgtRoot .exp-c-acc{grid-column:2/6}#mgtRoot .exp-c-files{grid-column:2/6}}
 #mgtRoot .bitem-flink{font-size:10.5px;color:var(--ac);text-decoration:none;padding:2px 6px;border:1px solid var(--bd2);border-radius:6px}
 #mgtRoot .bitem-flink:hover{background:var(--acbg)}
@@ -44045,27 +44049,37 @@ function _renderBoardOne(forceTab, wrapId, totalId){
     }
     html2 += '</div>';
   }
-  if(!list.length){
-    wrap.innerHTML = html2 + (manualExp.length?'':'');
-    var mtot=manualExp.reduce(function(s,o){return s+(+o.e.amount||0);},0);
-    if(stat) stat.textContent = manualExp.length+'건(직접) · '+won(mtot);
+  // 📌 항목에 이미 연결된 파일(pageId)은 아래 '미연결 파일'에서 제외 —
+  //    각 항목 옆에서만 보이게 하고, 어디에도 안 붙은 파일만 따로 안내한다.
+  var _attachedIds = {};
+  (S.exp||[]).forEach(function(x){ (x.files||[]).forEach(function(f){ if(f.pageId) _attachedIds[f.pageId]=1; }); });
+  var orphan = list.filter(function(it){ return !_attachedIds[it.pageId]; });
+
+  var manTot = manualExp.reduce(function(s,o){return s+(+o.e.amount||0);},0);
+
+  if(!orphan.length){
+    // 미연결 파일 없음 → 항목 리스트만 표시 (별도 파일 표 없음)
+    wrap.innerHTML = html2;
+    if(stat) stat.textContent = manualExp.length+'건 · '+won(manTot);
     return;
   }
-  var totalKRW2 = list.reduce(function(s,i){return s+(i.krw||0);},0);
-  var manTot = manualExp.reduce(function(s,o){return s+(+o.e.amount||0);},0);
-  var rows = list.map(function(it){
-    return '<tr>'+
-      '<td style="font-size:11px;color:var(--mu);white-space:nowrap">'+(it.period||'—')+'</td>'+
-      '<td>'+_boardFileLink(it)+'</td>'+
-      '<td class="r" style="font-size:11px;color:var(--mu)">'+(it.cnt?it.cnt+'건':'—')+'</td>'+
-      '<td class="r" style="font-weight:600">'+(it.krw?won(it.krw):'—')+'</td>'+
-      '<td style="font-size:10px;color:var(--hi);white-space:nowrap">'+((it.uploadedAt||'').slice(0,10))+'</td>'+
-      '<td style="text-align:center"><button onclick="MGT.deleteBoardFile(\''+it.pageId+'\')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:14px" title="삭제">×</button></td>'+
-    '</tr>';
+
+  // 미연결(어느 항목에도 안 붙은) 업로드 파일 — 항목에 연결하거나 삭제 가능
+  var orphanRows = orphan.map(function(it){
+    var _fjson = encodeURIComponent(JSON.stringify({name:it.name||'파일', url:it.url||it.pageUrl||'', pageId:it.pageId||'', type:it.type||'', r2key:it.r2key||''}));
+    return '<div class="exp-orphan-row">'
+      + '<a class="bitem-flink" style="cursor:pointer;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(it.url||it.pageUrl||'')+'\',\''+encodeURIComponent(it.name||'파일')+'\',\''+encodeURIComponent(it.type||'')+'\')" title="'+(it.name||'').replace(/"/g,'&quot;')+' 미리보기">📄 '+(it.name||'파일')+'</a>'
+      + '<span style="font-size:10px;color:var(--hi);white-space:nowrap">'+((it.uploadedAt||'').slice(0,10))+'</span>'
+      + '<button class="bitem-flink" style="cursor:pointer;background:#EEF3FB;color:#3A6DD6;font-size:10.5px;white-space:nowrap" onclick="MGT.expLinkOrphan(\''+_fjson+'\')">항목에 연결</button>'
+      + '<button style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:14px" onclick="MGT.deleteBoardFile(\''+it.pageId+'\')" title="삭제">×</button>'
+      + '</div>';
   }).join('');
-  rows += '<tr class="tr-tot"><td colspan="3">합계 ('+list.length+'개 파일'+(manualExp.length?' + 직접 '+manualExp.length+'건':'')+')</td><td class="r">'+won(totalKRW2+manTot)+'</td><td colspan="2"></td></tr>';
-  wrap.innerHTML = html2 + '<table><thead><tr><th>기간</th><th>파일</th><th class="r">항목수</th><th class="r">지출 합계</th><th>등록일</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
-  if(stat) stat.textContent = (list.length+manualExp.length)+'건 · '+won(totalKRW2+manTot);
+  var orphanBox = '<div class="exp-orphan-box">'
+    + '<div class="exp-orphan-hd">📎 미연결 파일 '+orphan.length+'개 <span style="font-weight:400;color:var(--mu)">— 아래 파일을 항목에 연결하면 해당 항목에 붙습니다</span></div>'
+    + orphanRows + '</div>';
+
+  wrap.innerHTML = html2 + orphanBox;
+  if(stat) stat.textContent = manualExp.length+'건 · '+won(manTot)+' · 미연결 '+orphan.length+'개';
 }
 
 // 인보이스 1건 리스트 아이템 HTML
@@ -44800,6 +44814,43 @@ function deleteManualExp(idx){
   if(!S.exp.length) S.exp=null;
   calcPnL(); renderPurchase&&renderPurchase(); _renderBoardRows();
   var p=document.getElementById('g-period').value; if(p) syncCogsToNotion(p);
+}
+// 📎 미연결 파일을 항목에 연결 — 항목 목록에서 선택(또는 새 항목 생성) 후 그 항목의 files에 붙임
+function expLinkOrphan(fjsonEnc){
+  var f;
+  try{ f=JSON.parse(decodeURIComponent(fjsonEnc)); }catch(e){ toast('파일 정보를 읽지 못했습니다','err'); return; }
+  if(!f || !f.pageId){ toast('파일 정보가 없습니다','err'); return; }
+  if(!S.exp) S.exp=[];
+  var gp=''; try{ gp=(document.getElementById('g-period')||{}).value||''; }catch(e){}
+  // 현재 기간의 항목들만 후보로 (기간 미지정 항목 포함)
+  var cands=[];
+  S.exp.forEach(function(e,idx){ var per=e.period||gp; if(!gp || per===gp || !per) cands.push({idx:idx, name:e.vendor||'(이름없음)', amt:e.amount||0}); });
+  var chosenIdx=-1;
+  if(cands.length){
+    var msg='이 파일("'+(f.name||'파일')+'")을 어느 항목에 연결할까요?\\n\\n';
+    cands.forEach(function(c,n){ msg+=(n+1)+'. '+c.name+(c.amt?(' ('+won(c.amt)+')'):'')+'\\n'; });
+    msg+='\\n0. ➕ 새 항목으로 추가\\n\\n번호를 입력하세요:';
+    var ans=prompt(msg, '1');
+    if(ans===null) return;
+    var num=parseInt(ans,10);
+    if(isNaN(num)){ toast('숫자를 입력해 주세요','err'); return; }
+    if(num===0){ chosenIdx=-1; }
+    else if(num>=1 && num<=cands.length){ chosenIdx=cands[num-1].idx; }
+    else { toast('잘못된 번호','err'); return; }
+  }
+  if(chosenIdx<0){
+    // 새 항목 생성 — 파일명(확장자 제거)을 거래처명으로
+    S.exp.push({vendor:(f.name||'').replace(/\.[^.]+$/,''), amount:0, inclVat:false, period:gp, _manual:true, _at:new Date().toISOString(), files:[]});
+    chosenIdx=S.exp.length-1;
+  }
+  var tgt=S.exp[chosenIdx];
+  if(!tgt.files) tgt.files=[];
+  // 이미 연결돼 있으면 중복 방지
+  if(tgt.files.some(function(x){return x.pageId===f.pageId;})){ toast('이미 연결된 파일입니다','err'); return; }
+  tgt.files.push({name:f.name, url:f.url, pageId:f.pageId, type:f.type, r2key:f.r2key});
+  _renderBoardRows();
+  var p=tgt.period||gp; if(p) syncCogsToNotion(p);
+  toast('📎 "'+(tgt.vendor||'항목')+'"에 연결했습니다','ok');
 }
 // 지출 직접입력 항목에 파일 첨부 (첨부파일/증빙 구분)
 function attachExpFile(idx, fileRole, droppedFile){
@@ -49412,6 +49463,7 @@ return {
   _periodFromFilename: (typeof _periodFromFilename!=="undefined"?_periodFromFilename:undefined),
   editExpMonth: (typeof editExpMonth!=="undefined"?editExpMonth:undefined),
   deleteManualExp: (typeof deleteManualExp!=="undefined"?deleteManualExp:undefined),
+  expLinkOrphan: (typeof expLinkOrphan!=="undefined"?expLinkOrphan:undefined),
   attachExpFile: (typeof attachExpFile!=="undefined"?attachExpFile:undefined),
   removeExpFile: (typeof removeExpFile!=="undefined"?removeExpFile:undefined),
   editManualAmount: (typeof editManualAmount!=="undefined"?editManualAmount:undefined),
