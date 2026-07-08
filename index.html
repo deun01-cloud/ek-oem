@@ -607,6 +607,8 @@ tbody tr:hover td{background:#FFFBF4;cursor:pointer}
 #mgtRoot .arc-up{font-size:11px;color:var(--mu);white-space:nowrap;font-family:var(--font-data,monospace)}
 #mgtRoot .arc-dl{width:30px;height:30px;border:1px solid var(--bd2);border-radius:7px;background:var(--s1);color:var(--ac);cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;transition:.13s;flex-shrink:0}
 #mgtRoot .arc-dl:hover{background:var(--acbg);border-color:var(--ac)}
+#mgtRoot .arc-del{color:var(--rd)}
+#mgtRoot .arc-del:hover{background:rgba(220,53,69,.08);border-color:var(--rd)}
 #mgtRoot .g2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
 #mgtRoot table{width:100%;border-collapse:collapse}
 #mgtRoot thead th{padding:9px 13px;font-size:11px;font-weight:700;color:var(--mu);letter-spacing:.04em;text-transform:uppercase;text-align:left;border-bottom:1px solid var(--bd);background:var(--sf);white-space:nowrap}
@@ -30193,6 +30195,69 @@ function renderFilePreview(){
   }
 }
 
+// 워크시트를 병합·열너비·정렬을 반영한 HTML 테이블로 변환 (미리보기가 실제 파일과 비슷해지도록)
+function _xlsxSheetToTable(ws){
+  if(!ws || !ws['!ref']) return '<div style="font-size:12px;color:var(--t3)">빈 시트</div>';
+  var rng = XLSX.utils.decode_range(ws['!ref']);
+  var merges = ws['!merges'] || [];
+  // 병합 조회 맵: "r,c" → {master:bool, colspan, rowspan} / covered 셀은 skip
+  var mInfo = {};   // 마스터 셀 정보
+  var mSkip = {};   // 마스터가 아닌, 병합에 덮인 셀 → 렌더 생략
+  merges.forEach(function(m){
+    var r0=m.s.r, c0=m.s.c, r1=m.e.r, c1=m.e.c;
+    mInfo[r0+','+c0] = { colspan:(c1-c0+1), rowspan:(r1-r0+1) };
+    for(var r=r0;r<=r1;r++){ for(var c=c0;c<=c1;c++){ if(r===r0&&c===c0) continue; mSkip[r+','+c]=true; } }
+  });
+  // 열 너비 (px). SheetJS !cols의 wpx/wch 사용, 없으면 기본값
+  var cols = ws['!cols'] || [];
+  var colW = function(c){
+    var cc = cols[c];
+    if(cc){
+      if(cc.hidden) return 0;
+      if(typeof cc.wpx==='number') return Math.max(24, Math.round(cc.wpx));
+      if(typeof cc.wch==='number') return Math.max(24, Math.round(cc.wch*7+5));
+      if(typeof cc.width==='number') return Math.max(24, Math.round(cc.width*7+5));
+    }
+    return 64; // 기본 열 너비
+  };
+  // colgroup — 열 너비 고정
+  var colgroup = '<colgroup>';
+  for(var c=rng.s.c;c<=rng.e.c;c++){ var w=colW(c); colgroup += '<col style="width:'+(w||64)+'px">'; }
+  colgroup += '</colgroup>';
+  // 행 높이
+  var rows = ws['!rows'] || [];
+  var esc = function(t){ return String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };
+  var body='';
+  for(var r=rng.s.r;r<=rng.e.r;r++){
+    var rr = rows[r];
+    if(rr && rr.hidden) continue;
+    var rh = (rr && typeof rr.hpx==='number') ? (' style="height:'+Math.round(rr.hpx)+'px"') : '';
+    var tr='<tr'+rh+'>';
+    for(var c=rng.s.c;c<=rng.e.c;c++){
+      if(mSkip[r+','+c]) continue;  // 병합에 덮인 셀은 건너뜀
+      var addr = XLSX.utils.encode_cell({r:r,c:c});
+      var cell = ws[addr];
+      var span = mInfo[r+','+c];
+      var spanAttr='';
+      if(span){ if(span.colspan>1) spanAttr+=' colspan="'+span.colspan+'"'; if(span.rowspan>1) spanAttr+=' rowspan="'+span.rowspan+'"'; }
+      // 표시 텍스트: 서식 적용된 w(있으면) 우선, 없으면 v
+      var txt='';
+      if(cell){ txt = (cell.w!=null) ? cell.w : (cell.v!=null ? cell.v : ''); }
+      // 정렬: 셀 스타일(있으면) → 없으면 타입 기반 (숫자=오른쪽)
+      var cls=[];
+      var al = cell && cell.s && cell.s.alignment ? cell.s.alignment : null;
+      if(al && al.horizontal){ cls.push(al.horizontal==='right'?'xr':al.horizontal==='center'?'xc':'xl'); }
+      else if(cell && cell.t==='n'){ cls.push('xr'); }
+      if(cell && cell.s && cell.s.font && cell.s.font.bold) cls.push('xb');
+      var clsAttr = cls.length ? (' class="'+cls.join(' ')+'"') : '';
+      tr += '<td'+spanAttr+clsAttr+'>'+esc(txt).replace(/\n/g,'<br>')+'</td>';
+    }
+    tr += '</tr>';
+    body += tr;
+  }
+  return '<table class="xlprev">'+colgroup+body+'</table>';
+}
+
 // 엑셀 미리보기 — SheetJS로 읽어서 HTML 테이블 + 이미지 그리드
 async function renderExcelPreview(f, body){
   try{
@@ -30218,7 +30283,8 @@ async function renderExcelPreview(f, body){
       if(!_isZip && !_isOldXls){ throw new Error('엑셀 파일 형식이 아닙니다 (다운로드해서 확인하세요)'); }
     }catch(_sigErr){ if(_sigErr && _sigErr.message && _sigErr.message.indexOf('엑셀')>=0) throw _sigErr; }
     // 시트 텍스트 + 이미지 추출
-    const wb=XLSX.read(ab,{type:'array'});
+    // cellStyles: 병합/열너비/정렬 정보를 함께 파싱해 미리보기를 실제 파일과 비슷하게 렌더
+    const wb=XLSX.read(ab,{type:'array', cellStyles:true, cellHTML:false});
     let rowImages={};
     try{ rowImages = await extractExcelImages(ab) || {}; }catch(_imgErr){ console.warn('엑셀 이미지 추출 건너뜀:', _imgErr && _imgErr.message); rowImages={}; }
 
@@ -30238,15 +30304,21 @@ async function renderExcelPreview(f, body){
       });
       html+='</div></div>';
     }
-    // 시트별 테이블
+    // 시트별 테이블 — 셀 병합(!merges)·열 너비(!cols)를 반영해 실제 파일과 비슷하게 렌더
+    html+='<style>'
+      +'#mFilePrev_body .xlprev{border-collapse:collapse;font-size:11.5px;font-family:inherit;table-layout:fixed;width:auto}'
+      +'#mFilePrev_body .xlprev td{border:1px solid #d9d9d9;padding:3px 6px;vertical-align:middle;white-space:pre-wrap;word-break:normal;overflow-wrap:break-word;line-height:1.35;color:#222}'
+      +'#mFilePrev_body .xlprev td.xr{text-align:right}'
+      +'#mFilePrev_body .xlprev td.xc{text-align:center}'
+      +'#mFilePrev_body .xlprev td.xl{text-align:left}'
+      +'#mFilePrev_body .xlprev td.xb{font-weight:700}'
+      +'#mFilePrev_body .xlprev td:empty{background:#fff}'
+      +'</style>';
     wb.SheetNames.forEach(sn=>{
       const ws=wb.Sheets[sn];
       html+='<div style="background:#fff;border-radius:8px;padding:14px 18px;margin-bottom:14px;box-shadow:0 1px 6px rgba(0,0,0,.05);overflow-x:auto">';
       html+='<div style="font-size:11px;color:var(--t3);font-weight:700;margin-bottom:10px;text-transform:uppercase;letter-spacing:.8px">📊 '+sn+'</div>';
-      const htmlTbl=XLSX.utils.sheet_to_html(ws,{header:'',footer:'',editable:false});
-      // 기본 스타일 개선
-      html+='<style>#mFilePrev_body table{border-collapse:collapse;font-size:11.5px;font-family:inherit}#mFilePrev_body table td{border:1px solid #ddd;padding:5px 8px;min-width:40px;max-width:280px;word-break:break-all;vertical-align:top}#mFilePrev_body table tr:first-child td{background:var(--gold-bg);font-weight:600}</style>';
-      html+=htmlTbl;
+      html+=_xlsxSheetToTable(ws);
       html+='</div>';
     });
     html+='</div>';
@@ -43888,7 +43960,21 @@ function _renderBoardOne(forceTab, wrapId, totalId){
     if(q){ var hay=((o.e.vendor||'')+' '+(per||'')).toLowerCase(); if(hay.indexOf(q)<0) return false; }
     return true;
   });
+  // 🔗 항목명과 이름이 매칭되는 업로드 파일 pageId 집합 — 아래 목록에서 숨겨 중복 표시 방지
+  var _matchedBoardIds = {};
+  (function(){
+    var _n = function(x){ return String(x||'').toLowerCase().replace(/\.[^.]+$/,'').replace(/[\s_\-()·]/g,''); };
+    manualExp.forEach(function(o){
+      var vn=_n(o.e.vendor); if(!vn||vn.length<2) return;
+      (_board['exp']||[]).forEach(function(bf){
+        if(_boardMonth && bf.period && bf.period!==_boardMonth) return;
+        var fn=_n(bf.name); if(!fn) return;
+        if(fn.indexOf(vn)>=0 || vn.indexOf(fn)>=0) _matchedBoardIds[bf.pageId]=true;
+      });
+    });
+  })();
   var list = (_board[t]||[]).filter(function(it){
+    if(_matchedBoardIds[it.pageId]) return false;   // 항목에 자동 연결된 파일은 목록에서 숨김
     if(_boardMonth && it.period !== _boardMonth) return false;
     if(!q) return true;
     return (it.name||'').toLowerCase().indexOf(q)>=0 || (it.period||'').toLowerCase().indexOf(q)>=0;
@@ -43906,6 +43992,20 @@ function _renderBoardOne(forceTab, wrapId, totalId){
     // 📌 청구내역(입금대기) / 영수내역(입금완료) 두 그룹으로 나눠 표시
     var _grpChung = manualExp.filter(function(o){ return (o.e.category||(o.e._paid?'영수':'청구'))!=='영수'; });
     var _grpYoung = manualExp.filter(function(o){ return (o.e.category||(o.e._paid?'영수':'청구'))==='영수'; });
+    // 🔗 위 박스(업로드 파일 목록)의 파일을 항목명과 이름으로 자동 매칭 —
+    //    파일명이 거래처/항목명을 포함하거나 그 반대면 같은 건으로 보고 항목 옆에 붙인다.
+    var _norm = function(s){ return String(s||'').toLowerCase().replace(/\.[^.]+$/,'').replace(/[\s_\-()·]/g,''); };
+    var _matchedFilePages = {};
+    var _findBoardFilesFor = function(e){
+      var vn=_norm(e.vendor);
+      if(!vn || vn.length<2) return [];
+      return (_board['exp']||[]).filter(function(bf){
+        if(_boardMonth && bf.period && bf.period!==_boardMonth) return false;
+        var fn=_norm(bf.name);
+        if(!fn) return false;
+        return fn.indexOf(vn)>=0 || vn.indexOf(fn)>=0;
+      });
+    };
     var _renderExpRow = function(o){
       var e=o.e, i=o.i;
       var fileChips='';
@@ -43914,6 +44014,14 @@ function _renderBoardOne(forceTab, wrapId, totalId){
         fileChips += '<span style="display:inline-flex;align-items:center;gap:3px;margin-right:4px">'
           + '<a class="bitem-flink" style="cursor:pointer" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url||f.pageUrl||'')+'\',\''+encodeURIComponent(nm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+nm+' 미리보기">📎 '+disp+'</a>'
           + '<button onclick="MGT.removeExpFile('+i+','+fi+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:11px" title="첨부 제거">×</button></span>';
+      });
+      // 🔗 이름으로 매칭된 업로드 파일 — 클릭 시 미리보기 (연결 아이콘으로 직접첨부와 구분)
+      _findBoardFilesFor(e).forEach(function(bf){
+        if(_matchedFilePages[bf.pageId]) return;
+        _matchedFilePages[bf.pageId]=true;
+        var mnm=(bf.name||'파일'); var mdisp=mnm.length>12?mnm.slice(0,10)+'…':mnm;
+        fileChips += '<span style="display:inline-flex;align-items:center;gap:3px;margin-right:4px">'
+          + '<a class="bitem-flink" style="cursor:pointer;background:#EAF6EC;color:#2E7D32" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(bf.url||bf.pageUrl||'')+'\',\''+encodeURIComponent(mnm)+'\',\''+encodeURIComponent(bf.type||'')+'\')" title="'+mnm+' (자동 연결 · 클릭하면 미리보기)">🔗 '+mdisp+'</a></span>';
       });
       return '<div class="bitem" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 4px;border-bottom:1px solid var(--bd)">'
         + '<span style="font-size:16px">🧾</span>'
@@ -45301,7 +45409,7 @@ function _arcBuildItems(){
       var krw = it._manual ? (it.krw||0) : (it.usd ? Math.round(it.usd*appliedRate) : (it.krw||0));
       // 인보이스에 묶인 모든 파일 수집 (중복 url 제거)
       var seen = {}; var files = [];
-      var collect = function(f){ if(!f) return; var u=f.url||f.pageUrl; if(!u||seen[u]) return; seen[u]=1; files.push({name:f.name||'파일', url:u, type:f.type||'', uploadedAt:f.uploadedAt||''}); };
+      var collect = function(f){ if(!f) return; var u=f.url||f.pageUrl; if(!u||seen[u]) return; seen[u]=1; files.push({name:f.name||'파일', url:u, type:f.type||'', uploadedAt:f.uploadedAt||'', pageId:f.pageId||'', kind:'cn'}); };
       (it.allFiles||[]).forEach(collect);
       (it.files||[]).forEach(collect);
       var base = {
@@ -45327,7 +45435,7 @@ function _arcBuildItems(){
   // 2) 지출내역서 — 파일 1개 = 1행
   if(_arcFilter==='all' || _arcFilter==='exp'){
     (_board.exp||[]).forEach(function(f){
-      var file = (f.url||f.pageUrl) ? {name:f.name||'지출내역서', url:f.url||f.pageUrl, type:f.type||'', uploadedAt:f.uploadedAt||''} : null;
+      var file = (f.url||f.pageUrl) ? {name:f.name||'지출내역서', url:f.url||f.pageUrl, type:f.type||'', uploadedAt:f.uploadedAt||'', pageId:f.pageId||'', kind:'exp'} : null;
       out.push({
         kind:'exp',
         period: f.period || (f.uploadedAt||'').slice(0,7) || '',
@@ -45406,6 +45514,10 @@ function _renderArchiveBody(){
       var dlBtn = it.file
         ? '<button class="arc-dl" onclick="MGT.arcDownload(\''+encodeURIComponent(it.file.url)+'\',\''+encodeURIComponent(nm)+'\')" title="다운로드">⬇</button>'
         : '';
+      // 🗑️ 삭제 버튼 — pageId가 있는 파일(노션 기록)만 삭제 가능
+      var delBtn = (it.file && it.file.pageId)
+        ? '<button class="arc-dl arc-del" onclick="MGT.arcDeleteFile(\''+it.file.pageId+'\',\''+(it.file.kind||it.kind||'')+'\')" title="삭제">🗑️</button>'
+        : '';
 
       // 파일 1개 = 1행 (한 줄 레이아웃)
       html += '<div class="arc-row arc-row-line">'
@@ -45416,6 +45528,7 @@ function _renderArchiveBody(){
         + '<span class="arc-up" title="입력일시">🕓 '+upDisp+'</span>'
         + '<span class="arc-amt">'+amt+'</span>'
         + dlBtn
+        + delBtn
         + '</div>';
     });
     html += '</div>';
@@ -45424,6 +45537,34 @@ function _renderArchiveBody(){
   if(stat) stat.textContent = items.length+'행 · 파일 '+fileCnt+'개 · '+won(totalKRW);
 }
 function _arcNum(n){ try{ return (Math.round((+n)*100)/100).toLocaleString(); }catch(e){ return n; } }
+
+// 🗑️ 자료실에서 파일 삭제 — 해당 파일이 속한 보드(cn/exp)에서 찾아 노션·R2 기록까지 삭제
+async function arcDeleteFile(pageId, kind){
+  if(!pageId) return;
+  if(!confirm('이 파일을 삭제할까요?\n(원본 파일 + 기록 모두 삭제됩니다)')) return;
+  // 어느 보드에 있는지 확인 (kind 우선, 없으면 양쪽 탐색)
+  var boards = kind ? [kind] : ['cn','exp'];
+  var item = null, foundBoard = '';
+  for(var bi=0; bi<boards.length; bi++){
+    var bt=boards[bi];
+    var f=(_board[bt]||[]).find(function(x){return x.pageId===pageId;});
+    if(f){ item=f; foundBoard=bt; break; }
+  }
+  try{
+    var ok = await deleteFileMeta(pageId);
+    if(!ok){ toast('삭제 실패','err'); return; }
+    if(item && item.r2key){ try{ await deleteFileFromR2(item.r2key); }catch(e){} }
+    // 로컬 보드에서 제거
+    if(foundBoard){ _board[foundBoard] = (_board[foundBoard]||[]).filter(function(x){return x.pageId!==pageId;}); }
+    // S.files 캐시에서도 제거
+    try{ Object.keys(S.files||{}).forEach(function(p){ if(S.files[p]) S.files[p]=S.files[p].filter(function(f){return f.pageId!==pageId;}); }); }catch(e){}
+    // 화면 갱신 — 자료실 + 데이터 입력 보드 모두
+    _renderArchiveBody();
+    if(typeof _renderBoardRows==='function') _renderBoardRows();
+    if(typeof calcPnL==='function'){ try{ calcPnL(); }catch(e){} }
+    toast('🗑️ 삭제됨','ok');
+  }catch(e){ console.warn('자료실 삭제 오류:', e); toast('삭제 중 오류','err'); }
+}
 
 // 📤 자료실 업로드 — 선택한 월(arc-up-period)·종류(arc-up-type)로 rf() 재사용
 function _arcUpType(){ var s=document.getElementById('arc-up-type'); return s?s.value:'cn'; }
@@ -49243,6 +49384,7 @@ return {
   arcUploadFiles: (typeof arcUploadFiles!=="undefined"?arcUploadFiles:undefined),
   arcAddManual: (typeof arcAddManual!=="undefined"?arcAddManual:undefined),
   arcDownload: (typeof arcDownload!=="undefined"?arcDownload:undefined),
+  arcDeleteFile: (typeof arcDeleteFile!=="undefined"?arcDeleteFile:undefined),
   saveUsdRate: (typeof saveUsdRate!=="undefined"?saveUsdRate:undefined),
   restoreUsdRate: (typeof restoreUsdRate!=="undefined"?restoreUsdRate:undefined),
   addManualInvoice: (typeof addManualInvoice!=="undefined"?addManualInvoice:undefined),
