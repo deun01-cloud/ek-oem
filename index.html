@@ -19137,12 +19137,22 @@ async function saveIo(idOrNull){
     const vInit = _ioInitial(vendor) || '?';
     title = `${vInit}_${kind}`;
   }
+  // 📸 사진(base64)을 R2에 업로드해 URL로 교체 — localStorage 용량 초과 방지
+  //    R2가 설정돼 있으면 base64 대신 짧은 URL만 로컬에 저장한다.
+  let files = _ioPhotoBuf.slice();
+  const _hasLocalPhoto = files.some(f => f && f.url && f.url.startsWith('data:'));
+  if(_hasLocalPhoto && notionCfg.workerUrl && typeof uploadImagesToR2 === 'function'){
+    try{
+      showToast('사진 업로드 중…','var(--blu)',1500);
+      files = await uploadImagesToR2(files);
+    }catch(err){ console.warn('[io] 사진 R2 업로드 실패:', err); }
+  }
   const updated = {
     ...(old||{}),
     id: old?.id || Date.now(),
     title, date, kind, flow, vendor, items, qty, invoice, memo, user,
     applyStock,
-    files: _ioPhotoBuf.slice()
+    files: files
   };
   if(isEdit){
     const i = ioItems.findIndex(x=>x.id==idOrNull);
@@ -22582,8 +22592,25 @@ function save(){
       return true;
     }catch(e){
       console.error(`[save] ${label}(${key}) 저장 실패:`, e.message, '— 크기:', (JSON.stringify(data).length/1024).toFixed(1)+'KB');
-      showToast(`⚠ ${label} 저장 실패 — localStorage 용량 초과`,'var(--red)',5000);
-      return false;
+      // 🛟 최후의 수단: base64(data:) 사진을 제거하고 재시도 —
+      //    R2 미설정/실패로 base64가 남아 용량이 초과된 경우에도 등록 자체는 살린다.
+      try{
+        const stripped = JSON.parse(JSON.stringify(data), (k,v)=>{
+          if(typeof v==='string' && v.startsWith('data:') && v.length>2000) return ''; // 큰 base64만 제거
+          return v;
+        });
+        localStorage.setItem(key, JSON.stringify(stripped));
+        // 인메모리 원본의 큰 base64도 정리해 이후 save에서 반복 초과되지 않도록 함
+        const _strip=(obj)=>{ if(!obj||typeof obj!=='object')return; for(const kk in obj){ const vv=obj[kk];
+          if(typeof vv==='string'&&vv.startsWith('data:')&&vv.length>2000) obj[kk]='';
+          else if(vv&&typeof vv==='object') _strip(vv); } };
+        if(Array.isArray(data)) data.forEach(_strip); else _strip(data);
+        showToast(`⚠ 용량 초과 — ${label}의 사진은 저장되지 않았습니다(등록은 완료). R2 저장소 연결을 확인하세요`,'var(--red)',6000);
+        return true;
+      }catch(e2){
+        showToast(`⚠ ${label} 저장 실패 — localStorage 용량 초과`,'var(--red)',5000);
+        return false;
+      }
     }
   };
   const results={
