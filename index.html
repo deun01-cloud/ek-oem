@@ -13124,9 +13124,16 @@ function renderInvoiceHistory(){
     if(da!==db) return db.localeCompare(da);
     return (b.id||0) - (a.id||0);
   });
-  var tSup=list.reduce(function(s,v){return s+v.supplyAmt;},0);
-  var tTax=list.reduce(function(s,v){return s+v.tax;},0);
-  var tAmt=list.reduce(function(s,v){return s+v.total;},0);
+  var tSup=list.reduce(function(s,v){return s+(+v.supplyAmt||0);},0);
+  var tTax=list.reduce(function(s,v){return s+(+v.tax||0);},0);
+  var tAmt=list.reduce(function(s,v){
+    var base=+v.total||0;
+    // 합본에 추가/할인이 있으면 총 합계금액에 그 조정분을 반영 (편집 화면의 '실제 청구액'과 일치)
+    if(v._isConsolidated && v.finalChargeAmount!=null){
+      base += (+v.finalChargeAmount)-(+v.chargeAmount||0);
+    }
+    return s+base;
+  },0);
   var tPrepaid=list.reduce(function(s,v){return s+getInvoicePrepaid(v);},0);
   var months=[...new Set(invoiceHistory.map(function(v){return (v.issuedAt||'').slice(0,7);}))].filter(Boolean).sort().reverse();
   var vendors=[...new Set(invoiceHistory.map(function(v){return v.vendor;}))].filter(Boolean).sort();
@@ -13379,11 +13386,19 @@ function renderInvoiceHistory(){
       // 합계 셀 — 합본은 청구액(차감 후)을 강조, 일반은 합계+선금칩
       if(isCons){
         var deducted = +v.prepaidDeducted||0;
-        var charge = +v.chargeAmount||0;
+        var _baseCharge = +v.chargeAmount||0;
+        // 📌 추가/할인 행이 있으면 finalChargeAmount(= chargeAmount + 추가/할인 합)를 실제 청구액으로 사용
+        var _extraAdj = (v.finalChargeAmount != null) ? ((+v.finalChargeAmount) - _baseCharge) : 0;
+        var charge = (v.finalChargeAmount != null) ? (+v.finalChargeAmount) : _baseCharge;
         var deductedNote = deducted > 0
           ? '<div style="margin-top:2px;font-size:9.5px;color:#7A4DB5;font-weight:600" title="선금 차감됨">선금 −₩'+deducted.toLocaleString()+'</div>'
           : '';
-        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:#7A4DB5">'+charge.toLocaleString()+'</div>'+deductedNote+'<div style="font-size:9px;color:var(--t3);margin-top:1px">합계 ₩'+(+v.total||0).toLocaleString()+'</div></td>';
+        var _extraNote = (_extraAdj !== 0)
+          ? '<div style="margin-top:2px;font-size:9.5px;color:'+(_extraAdj<0?'#c0392b':'#8B6914')+';font-weight:600" title="추가/할인 반영">추가/할인 '+(_extraAdj<0?'−':'+')+'₩'+Math.abs(_extraAdj).toLocaleString()+'</div>'
+          : '';
+        // 합계 표시도 추가/할인 반영값으로 (부가세 포함 총액 + 추가/할인)
+        var _dispTotal = (+v.total||0) + _extraAdj;
+        h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:#7A4DB5">'+charge.toLocaleString()+'</div>'+deductedNote+_extraNote+'<div style="font-size:9px;color:var(--t3);margin-top:1px">합계 ₩'+_dispTotal.toLocaleString()+'</div></td>';
       } else {
         // 📌 발주 선금이 차감된 명세서면 청구액(차감 후) 강조
         var _od = +v.prepaidDeducted||0;
