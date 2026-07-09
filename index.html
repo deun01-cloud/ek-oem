@@ -12897,13 +12897,30 @@ function maintainInvoiceData(){
           if(ch && _vendorOk(ch)){ seenChildIds[String(ch.id)] = ch; }
         });
       }
-      // (3) 🔑 역방향 신뢰: 자식이 _consolidatedInvoiceId로 '이 합본'을 가리키면 그것도 자식으로 인정.
-      //    부모 목록(includedInvoiceIds)이 스냅샷마다 흔들려도, 자식의 부모 지목이 살아있으면 연결 유지.
-      //    이게 없으면 수동으로 맞춘 자식 연결이 다음 스냅샷에서 사라진다(오늘 겪은 흔들림의 핵심).
-      //    ⚠ 단, 고객사가 다르면 신뢰하지 않는다(오염된 역참조가 되살아나는 것 방지).
+      // (3) 🔑 역방향 신뢰: 자식이 _consolidatedInvoiceId로 '이 합본'을 가리키면 확인용으로만 인정.
+      //    ⚠ 단, 이미 (1)includedInvoiceIds 또는 (2)includedChildKeys 로 '이 합본의 원래 자식'인
+      //       명세서만 인정한다. 원래 자식이 아닌데 _consolidatedInvoiceId만 이 합본을 가리키는
+      //       경우(오염된 역참조·과거 합본 잔재)는 무시 → '선택 안 한 명세서가 자동으로 딸려 들어가는' 버그 방지.
+      var _originalKeySet = new Set(
+        (Array.isArray(c.includedChildKeys) ? c.includedChildKeys : []).map(String)
+      );
+      var _originalIdSet = new Set(
+        (Array.isArray(c.includedInvoiceIds) ? c.includedInvoiceIds : []).map(String)
+      );
       invoiceHistory.forEach(function(x){
         if(!x || x._isConsolidated) return;
-        if(String(x._consolidatedInvoiceId) === String(c.id) && _vendorOk(x)){ seenChildIds[String(x.id)] = x; }
+        if(String(x._consolidatedInvoiceId) !== String(c.id)) return;
+        if(!_vendorOk(x)) return;
+        // 원래 자식(id 또는 안정키)로 확인되는 것만 인정
+        var _isOriginal = _originalIdSet.has(String(x.id)) ||
+          (typeof _invStableKey==='function' && _originalKeySet.has(_invStableKey(x)));
+        if(_isOriginal){
+          seenChildIds[String(x.id)] = x;
+        } else {
+          // 오염된 역참조 — 이 합본의 원래 자식이 아니므로 연결 끊기 (독립 명세서로 복귀)
+          delete x._consolidatedInvoiceId;
+          _reconciled++;
+        }
       });
       // 역참조 설정 + includedInvoiceIds를 '실제 해석된 자식'으로 재구성(중복/유령 id 제거)
       var _rebuiltIds = [];
@@ -39524,8 +39541,13 @@ function unwindConsolidatedInvoice(consolidatedId){
   // 이 합본만 0-A 좀비 제거에서 삭제 가능하도록 표시 (명시적 해제임을 알림)
   _unwindingNow = String(consolidatedId);
   console.log('[합본 해제 시작]', cons.vendor, cons.consolidationMonth, 'id:', consolidatedId, '_notionId:', cons._notionId || '(없음)');
-  // 묶인 명세서들의 역참조 제거
-  (cons.includedInvoiceIds||[]).forEach(invId => {
+  // 묶인 명세서들의 역참조 제거 — includedInvoiceIds + '이 합본을 가리키는 모든 명세서'(오염분 포함)
+  var _toUnlink = {};
+  (cons.includedInvoiceIds||[]).forEach(function(invId){ _toUnlink[String(invId)] = true; });
+  invoiceHistory.forEach(function(x){
+    if(x && !x._isConsolidated && String(x._consolidatedInvoiceId)===String(consolidatedId)){ _toUnlink[String(x.id)] = true; }
+  });
+  Object.keys(_toUnlink).forEach(invId => {
     const v = invoiceHistory.find(x => String(x.id)===String(invId));
     if(v){
       // 📌 _consolidatedInvoiceId 완전 제거 (이전엔 delete 후 ''로 재설정하는 버그가 있었음)
