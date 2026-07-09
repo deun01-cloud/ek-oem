@@ -12485,9 +12485,9 @@ function settleMonthDropdownHtml(v){
   }
   var _opts = Object.keys(_mset).sort().reverse();
   var _isMoved = (v.issuedAt||'').slice(0,7) !== _curM;
-  var h='<div style="margin-top:4px"><span style="font-size:9.5px;color:var(--t3);margin-right:3px">청구월</span><select onchange="moveInvoiceToSettleMonth('+v.id+',this.value)" title="청구월 지정 — 발행일과 다른 달 청구에 넣을 때 (경영지원 매출집계 기준)" style="font-size:10px;padding:1px 5px;border-radius:10px;border:1px solid '+(_isMoved?'var(--org)':'var(--bdr)')+';background:'+(_isMoved?'var(--org-bg,#FFF4E6)':'var(--s1)')+';color:'+(_isMoved?'var(--org)':'var(--t3)')+';font-family:inherit;cursor:pointer">';
+  var h='<select onchange="moveInvoiceToSettleMonth('+v.id+',this.value)" title="청구월 지정 — 발행일과 다른 달 청구에 넣을 때 (경영지원 매출집계 기준)" style="font-size:10px;padding:2px 6px;border-radius:10px;border:1px solid '+(_isMoved?'var(--org)':'var(--bdr)')+';background:'+(_isMoved?'var(--org-bg,#FFF4E6)':'var(--s1)')+';color:'+(_isMoved?'var(--org)':'var(--t2)')+';font-family:inherit;cursor:pointer">';
   _opts.forEach(function(m){ h+='<option value="'+m+'"'+(m===_curM?' selected':'')+'>📅 '+m+(((v.issuedAt||'').slice(0,7)===m)?'':' ⤴')+'</option>'; });
-  h+='</select></div>';
+  h+='</select>';
   return h;
 }
 // 명세서를 다른 결산월로 이동 (로컬 + 노션 저장)
@@ -12555,9 +12555,9 @@ function consMonthDropdownHtml(v){
   }
   var _opts = Object.keys(_mset).sort().reverse();
   var _isMoved = (v.issuedAt||'').slice(0,7) !== _curM;
-  var h='<div style="margin-top:4px"><span style="font-size:9.5px;color:#7A4DB5;margin-right:3px">청구월</span><select onchange="changeConsolidationMonth('+v.id+',this.value)" title="합본 청구월 변경 — 경영지원 매출집계 기준" style="font-size:10px;padding:1px 5px;border-radius:10px;border:1px solid '+(_isMoved?'var(--org)':'#7A4DB5')+';background:'+(_isMoved?'var(--org-bg,#FFF4E6)':'rgba(122,77,181,.08)')+';color:'+(_isMoved?'var(--org)':'#7A4DB5')+';font-family:inherit;cursor:pointer">';
+  var h='<select onchange="changeConsolidationMonth('+v.id+',this.value)" title="합본 청구월 변경 — 경영지원 매출집계 기준" style="font-size:10px;padding:2px 6px;border-radius:10px;border:1px solid '+(_isMoved?'var(--org)':'#7A4DB5')+';background:'+(_isMoved?'var(--org-bg,#FFF4E6)':'rgba(122,77,181,.08)')+';color:'+(_isMoved?'var(--org)':'#7A4DB5')+';font-family:inherit;cursor:pointer">';
   _opts.forEach(function(m){ h+='<option value="'+m+'"'+(m===_curM?' selected':'')+'>📑 '+m+(((v.issuedAt||'').slice(0,7)===m)?'':' ⤴')+'</option>'; });
-  h+='</select></div>';
+  h+='</select>';
   return h;
 }
 // PC 드래그앤드롭 핸들러
@@ -13308,8 +13308,12 @@ function renderInvoiceHistory(){
     } else if(subTab === 'billing' || subTab === 'billed'){
       h+='<th style="padding:8px 8px;text-align:center;font-weight:600;white-space:nowrap" title="입금 받았는지">입금</th>';
       h+='<th style="padding:8px 8px;text-align:center;font-weight:600;white-space:nowrap" title="세금계산서 발행 여부">계산서</th>';
+      h+='<th style="padding:8px 8px;text-align:center;font-weight:600;white-space:nowrap" title="청구 귀속 월 (경영지원 매출집계 기준)">청구월</th>';
     } else {
       h+='<th onclick="invToggleSort(\'status\')" style="padding:8px 10px;text-align:center;font-weight:600;cursor:pointer;user-select:none" title="클릭하여 상태 정렬">상태'+_invSortIndicator('status')+'</th>';
+      if(subTab === 'done'){
+        h+='<th style="padding:8px 8px;text-align:center;font-weight:600;white-space:nowrap" title="청구 귀속 월 (경영지원 매출집계 기준)">청구월</th>';
+      }
     }
     h+='<th style="padding:8px 4px;width:64px"></th>';
     h+='</tr></thead><tbody>';
@@ -13459,10 +13463,10 @@ function renderInvoiceHistory(){
           h+='<button onclick="if(confirm(\'이 합본 청구서를 해제합니다.\\n\\n· 합본 청구서는 삭제됩니다.\\n· 묶여 있던 세부 명세서들은 출고완료 탭으로 돌아갑니다.\\n· 다시 합본 청구서를 만들 수 있습니다.\\n\\n계속할까요?\')){if(unwindConsolidatedInvoice('+_idArg+')){showToast(\'✓ 합본 해제됨 — 세부 명세서가 출고완료로 돌아갔습니다\',\'var(--grn)\',3000);}renderInvoiceHistory();}" title="합본을 해제하고 세부 명세서를 출고완료 탭으로 되돌립니다" style="margin-left:8px;padding:3px 9px;font-size:10.5px;border-radius:11px;border:1px solid var(--org);background:var(--org-bg,#FFF4E6);color:var(--org);cursor:pointer;font-family:inherit;font-weight:600;white-space:nowrap">↩ 합본 해제</button>';
         }
         // 📅 청구 탭 — 청구월 지정 드롭다운 (일반=결산월 / 합본=청구월)
-        if(subTab==='billing'){
-          if(isCons) h+=consMonthDropdownHtml(v);
-          else h+=settleMonthDropdownHtml(v);
-        }
+        h+='</td>';
+        h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center;white-space:nowrap">';
+        if(isCons) h+=consMonthDropdownHtml(v);
+        else h+=settleMonthDropdownHtml(v);
         h+='</td>';
       } else {
         // 완료/전체/합본 탭 — 상태 표시 (읽기 전용 라벨)
@@ -13474,7 +13478,6 @@ function renderInvoiceHistory(){
             +'<option value="발행완료"'+(v.status==='발행완료'?' selected':'')+'>발행완료</option>'
             +'<option value="입금완료"'+(v.status==='입금완료'?' selected':'')+'>입금완료</option>'
             +'</select>';
-          if(subTab==='done') h+=consMonthDropdownHtml(v);
         } else {
           // 두 체크 상태에 따라 라벨 표시
           var lbl, lblColor;
@@ -13483,12 +13486,15 @@ function renderInvoiceHistory(){
           else if(taxIssued2){ lbl='계산서 발행'; lblColor='var(--blu)'; }
           else { lbl='청구 대기'; lblColor='var(--t3)'; }
           h+='<span style="font-size:11px;font-weight:700;color:'+lblColor+';padding:3px 9px;border-radius:11px;background:var(--s1);border:1px solid var(--bdr)">'+lbl+'</span>';
-          // 📅 완료 탭 — 청구월(결산월) 이동 드롭다운 (모바일 친화 / PC는 드래그도 가능)
-          if(subTab==='done'){
-            h+=settleMonthDropdownHtml(v);
-          }
         }
         h+='</td>';
+        // 📅 완료 탭 — 청구월 컬럼 (별도 셀)
+        if(subTab==='done'){
+          h+='<td onclick="event.stopPropagation()" style="padding:8px 8px;text-align:center;white-space:nowrap">';
+          if(isCons) h+=consMonthDropdownHtml(v);
+          else h+=settleMonthDropdownHtml(v);
+          h+='</td>';
+        }
       }
       // 액션 버튼 — 합본은 다르게 (🖨 인쇄 / ✏️ 수정 / 🗑 해제 / 일반: 카피/삭제)
       h+='<td onclick="event.stopPropagation()" style="padding:8px 4px;text-align:center;white-space:nowrap">';
@@ -13526,8 +13532,9 @@ function renderInvoiceHistory(){
             .map(function(sk){ return invoiceHistory.find(function(x){ return !x._isConsolidated && _invStableKey(x)===sk; }); })
             .filter(Boolean);
         }
-        // 컬럼 수 계산 (체크박스 셀 유무에 따라)
-        var colSpan = canConsolidate ? 9 : 8;
+        // 컬럼 수 계산 (체크박스 셀 유무 + 청구월 컬럼 유무에 따라)
+        var _hasMonthCol = (subTab==='billing' || subTab==='billed' || subTab==='done');
+        var colSpan = (canConsolidate ? 9 : 8) + (_hasMonthCol ? 1 : 0);
         // 자식 헤더 (작은 안내 행)
         h+='<tr style="background:rgba(122,77,181,.03)"><td colspan="'+colSpan+'" style="padding:6px 10px 4px '+(canConsolidate?'50px':'20px')+';font-size:10.5px;color:#7A4DB5;border-bottom:1px solid rgba(122,77,181,.15)">⤷ 이 합본에 포함된 명세서 '+childInvs.length+'건 (편집은 합본 해제 후 가능)</td></tr>';
         childInvs.forEach(function(cv){
@@ -13552,7 +13559,9 @@ function renderInvoiceHistory(){
           h+='<td onclick="'+cClick+'" style="padding:6px 10px;text-align:right;font-size:11px;color:var(--t3)">'+(cv.tax?cv.tax.toLocaleString():'-')+'</td>';
           h+='<td onclick="'+cClick+'" style="padding:6px 10px;text-align:right;font-size:11px;color:var(--t3);font-weight:600">'+((+cv.total||0).toLocaleString())+'</td>';
           // 액션 셀 — 합본에 묶여있으므로 입금/계산서 토글 비활성화, "합본 관리" 안내만
-          h+='<td colspan="2" style="padding:6px 10px;text-align:center;font-size:10px;color:#7A4DB5">묶음에서 일괄 관리</td>';
+          //   기본 2칸(입금/계산서 또는 상태 + 액션) + 청구월 컬럼 있으면 1칸 추가
+          var _childTailSpan = 2 + ((subTab==='billing'||subTab==='billed'||subTab==='done') ? 1 : 0);
+          h+='<td colspan="'+_childTailSpan+'" style="padding:6px 10px;text-align:center;font-size:10px;color:#7A4DB5">묶음에서 일괄 관리</td>';
           h+='</tr>';
         });
       }
