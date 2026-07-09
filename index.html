@@ -7480,7 +7480,7 @@ window.addEventListener('message', function(ev){
 <div class="ov" id="mConsolidate"><div class="modal wide" style="max-width:780px">
   <div class="mt">📑 합본 청구서 작성</div>
   <div style="padding:8px 14px 4px;background:rgba(122,77,181,.06);border:1px solid rgba(122,77,181,.20);border-radius:6px;margin-bottom:12px;font-size:11px;color:#7A4DB5;line-height:1.5">
-    이 고객사의 <b>모든 미합본 명세서</b>를 아래에 보여줍니다. 체크박스로 원하는 명세서를 골라 한 장의 청구서로 묶어 발행하세요. (여러 달에 걸쳐도 선택 가능) 청구월은 이 합본의 <b>귀속 월 라벨</b>로 쓰입니다. 받은 선금/중도금은 자동 차감됩니다.
+    이 고객사의 <b>현재 탭(출고완료/청구/완료)에 있는 명세서</b>를 아래에 보여줍니다. 체크박스로 원하는 명세서를 골라 한 장의 청구서로 묶어 발행하세요. (여러 달에 걸쳐도 선택 가능) 청구월은 이 합본의 <b>귀속 월 라벨</b>로 쓰입니다. 받은 선금/중도금은 자동 차감됩니다.
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
     <div class="fg"><label>고객사</label>
@@ -39344,13 +39344,19 @@ function getConsolidationCandidates(vendor, month){
     });
   }
   if(!vendor) return [];
-  // 📌 고객사의 모든 미합본 명세서를 후보로 노출 (청구월은 필터가 아니라 결과 합본의 라벨용).
-  //    사용자가 체크박스로 원하는 명세서만 골라 합본할 수 있게 한다.
-  //    (발행일 최신순 정렬)
+  // 📌 현재 탭(출고완료/청구/완료)에 해당하는 명세서만 후보로 노출.
+  //    _consOriginTab: 'draft'(출고완료) / 'billing'(청구) / 'done'(완료) / 'all'(모든 명세서)
+  //    청구월은 필터가 아니라 결과 합본의 라벨용. (발행일 최신순 정렬)
+  const _tabStage = (typeof _consOriginTab!=='undefined') ? _consOriginTab : 'draft';
   return invoiceHistory.filter(v => {
     if(v._isConsolidated) return false;                    // 합본 자체 제외
     if(v._consolidatedInvoiceId) return false;             // 이미 다른 합본에 묶임
     if((v.vendor||'') !== vendor) return false;
+    // 탭 단계 필터 — 'all'(모든 명세서)이면 단계 무관, 그 외엔 현재 탭 단계와 일치하는 것만
+    if(_tabStage && _tabStage!=='all'){
+      const _st = v._invStage || 'draft';
+      if(_st !== _tabStage) return false;
+    }
     return true;
   }).sort((a,b)=>{
     const da=(a.issuedAt||''), db=(b.issuedAt||'');
@@ -39822,7 +39828,7 @@ function _refreshConsolidationPreview(){
   }
   const candidates = getConsolidationCandidates(vendor, month);
   if(!candidates.length){
-    area.innerHTML = '<div style="padding:14px;text-align:center;color:var(--org);background:rgba(232,144,32,.08);border-radius:6px;border:1px solid rgba(232,144,32,.2);font-size:11.5px">⚠ <b>'+vendor+'</b>의 합본 가능한(미합본) 명세서가 없습니다</div>';
+    area.innerHTML = '<div style="padding:14px;text-align:center;color:var(--org);background:rgba(232,144,32,.08);border-radius:6px;border:1px solid rgba(232,144,32,.2);font-size:11.5px">⚠ <b>'+vendor+'</b>의 현재 탭에 합본 가능한 명세서가 없습니다 (다른 탭을 확인하세요)</div>';
     btn.disabled = true;
     return;
   }
@@ -40300,8 +40306,8 @@ function openConsDetail(consId){
     const rowBg = isExtra ? 'background:#FFF8E8' : (r.hasOverride ? 'background:#F0E6FA' : '');
     // updateFn — 어느 source인지에 따라 다른 헬퍼 호출
     const updFn = isExtra
-      ? '_updateConsExtra('+consId+','+r.extraIdx+',\\\'$F\\\',this.value)'
-      : ('_updateConsItemOverride('+consId+','+r.invId+','+r.itemIdx+',\\\'$F\\\',this.value)');
+      ? '_updateConsExtra('+consId+','+r.extraIdx+',\'$F\',this.value)'
+      : ('_updateConsItemOverride('+consId+','+r.invId+','+r.itemIdx+',\'$F\',this.value)');
     body += '<tr style="'+rowBg+';border-bottom:1px solid var(--bdr-lt)">';
     body += '<td style="padding:5px 4px;text-align:center;color:var(--t3);font-family:monospace;font-size:10px">'+(gIdx+1)+'</td>';
     if(consEditLocked || isSummary){
