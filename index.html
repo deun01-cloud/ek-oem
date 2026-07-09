@@ -22966,6 +22966,45 @@ function _cleanupBase64Duplicates(){
   if(n>0){ console.log('[cleanup] base64 중복 '+n+'건 정리'); try{ save(); }catch(e){} }
   return n;
 }
+// 🚚 기존 base64 사진을 R2로 일괄 업로드 → url을 R2 주소로 교체(용량 확보 + 사진 보존).
+//    R2 연결이 정상일 때 실행. 성공한 것만 교체하고, 실패분은 그대로 둔다.
+async function migrateBase64ToR2(){
+  if(!notionCfg.workerUrl){ showToast('⚠ R2(Worker) 미설정 — 설정에서 먼저 연결하세요','var(--red)',4000); return; }
+  // 대상 수집: productDB / ioItems / samples / orders 의 base64 이미지
+  const targets=[]; // {holder, field, idx}
+  const _collect=(arr, field)=>{
+    (arr||[]).forEach(it=>{
+      if(!it) return;
+      const list=it[field];
+      if(Array.isArray(list)){
+        list.forEach((im,idx)=>{
+          if(im && typeof im.url==='string' && im.url.startsWith('data:image/')){
+            targets.push({list, idx, name:im.name||'img'});
+          }
+        });
+      }
+    });
+  };
+  _collect(productDB,'imgs'); _collect(ioItems,'files'); _collect(samples,'imgs'); _collect(orders,'imgs');
+  if(!targets.length){ showToast('R2로 옮길 base64 사진이 없습니다','var(--grn)',3000); return; }
+  if(!confirm(`base64 사진 ${targets.length}장을 R2 저장소로 올려 저장공간을 확보합니다.\n\n연결 상태에 따라 시간이 걸릴 수 있어요. 진행할까요?`)) return;
+  showToast(`🚚 R2 업로드 중… (0/${targets.length})`,'var(--blu)',3000);
+  let ok=0, fail=0;
+  for(let i=0;i<targets.length;i++){
+    const t=targets[i];
+    const im=t.list[t.idx];
+    try{
+      const r=await r2Upload(im.url, t.name, (im.type||'image/jpeg'));
+      if(r && r.url){ im.url=r.url; im.r2Key=r.key; ok++; }
+      else fail++;
+    }catch(e){ fail++; }
+    if(i%5===4 || i===targets.length-1){ showToast(`🚚 R2 업로드 중… (${i+1}/${targets.length})`,'var(--blu)',1500); }
+  }
+  try{ save(); }catch(e){}
+  try{ if(typeof renderTab==='function') renderTab(); }catch(e){}
+  showToast(`✓ R2 업로드 완료 — 성공 ${ok}장${fail?`, 실패 ${fail}장`:''}. 저장공간이 확보됐습니다.`, fail?'var(--org)':'var(--grn)', 6000);
+}
+
 // 🧹 저장공간 사용량 확인 + 정리 제안
 function checkStorageAndOfferCleanup(){
   let total=0, b64Count=0, b64Bytes=0;
@@ -22974,7 +23013,6 @@ function checkStorageAndOfferCleanup(){
       const k=localStorage.key(i); const val=localStorage.getItem(k)||'';
       total+=val.length;
     }
-    // base64 사진 개수/용량 대략 집계 (productDB/io 위주)
     const _scan=(obj)=>{ if(!obj||typeof obj!=='object')return; if(Array.isArray(obj)){obj.forEach(_scan);return;}
       for(const kk in obj){ const vv=obj[kk];
         if(typeof vv==='string'&&vv.startsWith('data:')&&vv.length>2000){ b64Count++; b64Bytes+=vv.length; }
@@ -22983,12 +23021,14 @@ function checkStorageAndOfferCleanup(){
   }catch(e){}
   const totalMB=(total/1024/1024).toFixed(2);
   const b64MB=(b64Bytes/1024/1024).toFixed(2);
-  const msg = `📦 저장공간 사용량\n\n전체: 약 ${totalMB}MB / 한계 5~10MB\n그중 사진(base64): ${b64Count}곳, 약 ${b64MB}MB\n\n`+
-    (b64Count>0
-      ? `사진이 저장공간을 많이 차지하고 있습니다.\n\n"확인"을 누르면 base64 사진을 정리해 공간을 확보합니다.\n※ R2 저장소에 이미 올라간 사진은 그대로 보입니다.\n※ R2에 못 올라간 사진만 화면에서 사라지며, 필요하면 다시 올리면 됩니다.`
-      : `사진으로 인한 용량 문제는 없습니다.`);
-  if(b64Count>0){
-    if(confirm(msg)) purgeAllBase64Images();
+  if(b64Count===0){ alert(`📦 저장공간\n\n전체: 약 ${totalMB}MB / 한계 5~10MB\n사진(base64) 없음 — 용량 문제 없습니다.`); return; }
+  const hasR2 = !!(notionCfg && notionCfg.workerUrl);
+  const msg = `📦 저장공간 사용량\n\n전체: 약 ${totalMB}MB / 한계 5~10MB\n그중 사진(base64): ${b64Count}장, 약 ${b64MB}MB\n\n`+
+    (hasR2
+      ? `【권장】 "확인"을 누르면 이 사진들을 R2 저장소로 올려\n저장공간을 확보합니다. (사진은 그대로 보존됩니다)\n\n취소를 누르면 아무 것도 하지 않습니다.`
+      : `⚠ R2가 연결되지 않아 사진을 옮길 수 없습니다.\n설정에서 R2를 먼저 연결하세요.`);
+  if(hasR2){
+    if(confirm(msg)) migrateBase64ToR2();
   } else {
     alert(msg);
   }
