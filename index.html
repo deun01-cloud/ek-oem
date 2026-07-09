@@ -7478,16 +7478,16 @@ window.addEventListener('message', function(ev){
 
 <!-- 📑 합본 청구서 작성 모달 (2-B) -->
 <div class="ov" id="mConsolidate"><div class="modal wide" style="max-width:780px">
-  <div class="mt">📑 월별 합본 청구서 작성</div>
+  <div class="mt">📑 합본 청구서 작성</div>
   <div style="padding:8px 14px 4px;background:rgba(122,77,181,.06);border:1px solid rgba(122,77,181,.20);border-radius:6px;margin-bottom:12px;font-size:11px;color:#7A4DB5;line-height:1.5">
-    한 고객사의 한 달치 거래명세서를 묶어 한 장의 청구서로 발행합니다. 받은 선금/중도금은 자동으로 차감되어 실제 청구액이 계산됩니다.
+    이 고객사의 <b>모든 미합본 명세서</b>를 아래에 보여줍니다. 체크박스로 원하는 명세서를 골라 한 장의 청구서로 묶어 발행하세요. (여러 달에 걸쳐도 선택 가능) 청구월은 이 합본의 <b>귀속 월 라벨</b>로 쓰입니다. 받은 선금/중도금은 자동 차감됩니다.
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
     <div class="fg"><label>고객사</label>
       <select class="fs" id="cons_vendor" onchange="_resetConsSelection()"></select>
     </div>
-    <div class="fg"><label>청구월</label>
-      <input class="fi" type="month" id="cons_month" onchange="_resetConsSelection()">
+    <div class="fg"><label>청구월 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(합본 귀속 월 · 필터 아님)</span></label>
+      <input class="fi" type="month" id="cons_month" onchange="_refreshConsolidationPreview()">
     </div>
   </div>
   <div id="cons_previewArea" style="margin-bottom:12px"></div>
@@ -39115,6 +39115,7 @@ window.migrateDuplicateCodes = async function(opts){
 // 직접 선택 모드: 사용자가 청구 탭 체크박스로 고른 명세서 ID들.
 // 설정돼 있으면 발행월 필터를 무시하고 이 ID들을 후보로 사용한다.
 let _consExplicitIds = null;
+let _consOriginTab = 'draft';  // 합본을 만든 탭(draft/billing) — 합본의 시작 단계 결정
 
 function getConsolidationCandidates(vendor, month){
   // 직접 선택 모드 — 발행월 무관, 고객사 동일·미합본 조건만 검증
@@ -39126,13 +39127,19 @@ function getConsolidationCandidates(vendor, month){
       return _consExplicitIds.has(String(v.id));
     });
   }
-  if(!vendor || !month) return [];
+  if(!vendor) return [];
+  // 📌 고객사의 모든 미합본 명세서를 후보로 노출 (청구월은 필터가 아니라 결과 합본의 라벨용).
+  //    사용자가 체크박스로 원하는 명세서만 골라 합본할 수 있게 한다.
+  //    (발행일 최신순 정렬)
   return invoiceHistory.filter(v => {
     if(v._isConsolidated) return false;                    // 합본 자체 제외
     if(v._consolidatedInvoiceId) return false;             // 이미 다른 합본에 묶임
     if((v.vendor||'') !== vendor) return false;
-    if(!(v.issuedAt||'').startsWith(month)) return false;
     return true;
+  }).sort((a,b)=>{
+    const da=(a.issuedAt||''), db=(b.issuedAt||'');
+    if(da!==db) return db.localeCompare(da);   // 최신 발행일 위로
+    return (b.id||0)-(a.id||0);
   });
 }
 
@@ -39242,8 +39249,9 @@ function createConsolidatedInvoice(vendor, month, options){
     prepaidDeducted:  summary.prepaidDeducted, // 차감된 선금 합
     chargeAmount:     summary.chargeAmount,    // 실제 청구액
     status: '발행완료',
-    _consBilled: false,        // 📌 합본도 미청구→청구 단계 구분. 작성 직후엔 미청구(draft), '청구하기' 눌러야 청구로.
-    _invStage: 'draft',
+    // 📌 청구 탭에서 만든 합본은 바로 청구(billing) 단계로, 출고완료 탭에서 만들면 draft로 시작.
+    _consBilled: (_consOriginTab === 'billing'),
+    _invStage: (_consOriginTab === 'billing') ? 'billing' : 'draft',
     memo: options.memo || `${month}분 ${vendor} 합본 청구서 (${targets.length}건)`,
     payments: [],
     totalPaid: 0,
@@ -39499,6 +39507,9 @@ let _consSelectedIds = null;
 // 합본 작성 모달 열기
 function openConsolidationModal(opts){
   opts = opts || {};
+  // 📌 합본을 어느 탭에서 만드는지 기록 → 청구 탭에서 만들면 합본도 청구(billing) 단계로 시작.
+  //    (출고완료 탭에서 만들면 기존처럼 draft로 시작)
+  _consOriginTab = (invFilter && invFilter.subTab) || 'draft';
   // 일반(고객사+월 자동) 진입이면 직접 선택 모드 해제
   if(!opts.keepExplicit) _consExplicitIds = null;
   // 합본 후보가 있는 고객사들만 옵션으로
@@ -39530,21 +39541,24 @@ function openConsolidationModal(opts){
   document.getElementById('cons_month').value = defaultMonth;
   document.getElementById('cons_memo').value = '';
 
-  // 후보 변경 시 자동으로 모두 선택되도록 초기화
-  _consSelectedIds = null;
+  // 📌 일반 진입(직접 선택 아님)이면 기본 '선택 없음' — 사용자가 원하는 명세서만 체크.
+  //    직접 선택 모드(_consExplicitIds)면 그 선택을 유지.
+  if(_consExplicitIds && _consExplicitIds.size){
+    _consSelectedIds = new Set([..._consExplicitIds].map(String));
+  } else {
+    _consSelectedIds = new Set();
+  }
   _refreshConsolidationPreview();
   openM('mConsolidate');
 }
 
 // 후보 변경 시 호출 — 새로운 후보 기준으로 선택 집합 재초기화
 function _resetConsSelection(){
-  // 사용자가 고객사/월을 직접 바꾸면 자동(발행월) 모드로 전환
+  // 사용자가 고객사를 바꾸면 자동(전체 후보) 모드로 전환
   _consExplicitIds = null;
-  const vendor = document.getElementById('cons_vendor').value;
-  const month = document.getElementById('cons_month').value;
-  const candidates = (vendor && month) ? getConsolidationCandidates(vendor, month) : [];
-  // 기본: 모두 선택
-  _consSelectedIds = new Set(candidates.map(v => String(v.id)));
+  // 📌 고객사의 모든 명세서를 보여주므로, 기본은 '선택 없음' → 사용자가 원하는 것만 체크.
+  //    (전체 선택 버튼으로 한 번에 고를 수도 있음)
+  _consSelectedIds = new Set();
   _refreshConsolidationPreview();
 }
 
@@ -39587,17 +39601,16 @@ function _refreshConsolidationPreview(){
   }
   const candidates = getConsolidationCandidates(vendor, month);
   if(!candidates.length){
-    area.innerHTML = '<div style="padding:14px;text-align:center;color:var(--org);background:rgba(232,144,32,.08);border-radius:6px;border:1px solid rgba(232,144,32,.2);font-size:11.5px">⚠ <b>'+vendor+'</b>의 <b>'+month+'</b> 미합본 명세서가 없습니다</div>';
+    area.innerHTML = '<div style="padding:14px;text-align:center;color:var(--org);background:rgba(232,144,32,.08);border-radius:6px;border:1px solid rgba(232,144,32,.2);font-size:11.5px">⚠ <b>'+vendor+'</b>의 합본 가능한(미합본) 명세서가 없습니다</div>';
     btn.disabled = true;
     return;
   }
-  // 후보가 바뀐 첫 호출이면 모두 선택으로 초기화
+  // 후보 목록에서 사라진 명세서만 선택에서 제거(정리). 빈 선택은 그대로 존중.
   if(_consSelectedIds === null){
-    _consSelectedIds = new Set(candidates.map(v => String(v.id)));
+    _consSelectedIds = new Set();   // 최초 진입 기본값 = 선택 없음
   } else {
     // 후보 목록에서 사라진 명세서만 선택에서 제거(정리).
-    // ⚠ 후보에 있는데 미선택인 건 '사용자가 의도적으로 해제한 것'이므로 다시 추가하지 않는다.
-    //    (예전엔 여기서 미선택 후보를 전부 재추가해 → 체크 해제가 즉시 되돌려지는 버그가 있었음)
+    // ⚠ 후보에 있는데 미선택인 건 '사용자가 의도적으로 해제/미선택한 것'이므로 다시 추가하지 않는다.
     const candIds = new Set(candidates.map(v => String(v.id)));
     [..._consSelectedIds].forEach(id => { if(!candIds.has(id)) _consSelectedIds.delete(id); });
   }
@@ -39681,9 +39694,9 @@ function confirmConsolidation(){
   // 확인 (사용자에게 한 번 더 안내)
   const summary = calcConsolidationSummary(selected);
   const skipped = candidates.length - selected.length;
-  let msg = `${vendor}의 ${month}분 명세서 ${summary.count}건을 묶어 합본 청구서를 발행하시겠습니까?\n\n합계: ₩${summary.total.toLocaleString()}\n선금 차감: −₩${summary.prepaidDeducted.toLocaleString()}\n실제 청구액: ₩${summary.chargeAmount.toLocaleString()}`;
+  let msg = `${vendor}의 명세서 ${summary.count}건을 묶어 ${month} 귀속 합본 청구서를 발행하시겠습니까?\n\n합계: ₩${summary.total.toLocaleString()}\n선금 차감: −₩${summary.prepaidDeducted.toLocaleString()}\n실제 청구액: ₩${summary.chargeAmount.toLocaleString()}`;
   if(skipped > 0){
-    msg += `\n\n※ 제외된 ${skipped}건은 합본에 들어가지 않습니다 (개별 상태로 남음)`;
+    msg += `\n\n※ 선택하지 않은 ${skipped}건은 합본에 들어가지 않습니다 (개별 상태로 남음)`;
   }
   if(!confirm(msg)) return;
   // 가드 활성화 + 버튼 비활성화 (확인 다이얼로그 후 시점)
