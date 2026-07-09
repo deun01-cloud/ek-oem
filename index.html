@@ -40036,6 +40036,21 @@ function _resetConsItemOverride(consId, invId, itemIdx){
   openConsDetail(consId);
 }
 
+// ➕/➖ 추가 행의 종류를 추가↔할인으로 전환 (금액 부호를 뒤집는다)
+function _toggleConsExtraKind(consId, ridx){
+  const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
+  if(!cons || !Array.isArray(cons.extraItems) || !cons.extraItems[ridx]) return;
+  const it = cons.extraItems[ridx];
+  // 단가·금액의 부호를 반전 (0이면 그대로 두되, 다음 입력이 추가/할인 상태를 따르도록 표시만)
+  if(+it.unit) it.unit = -(+it.unit);
+  if(+it.amt)  it.amt  = -(+it.amt);
+  else if(+it.unit) it.amt = (+it.qty||1) * (+it.unit);
+  cons._extraItemsDirty = true;
+  if(typeof _rawCloseM === 'function') _rawCloseM('mConsDetail');
+  else closeM('mConsDetail');
+  openConsDetail(consId);
+}
+
 function _addConsExtraRow(consId){
   const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
   if(!cons) return;
@@ -40326,7 +40341,14 @@ function openConsDetail(consId){
       body += '<td style="padding:3px 4px"><input type="text" placeholder="비고" value="'+(r.note||'').replace(/"/g,'&quot;')+'" oninput="'+updFn.replace('$F','note')+'" style="width:100%;padding:4px 6px;font-size:10.5px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);color:var(--t2)"></td>';
     }
     // 출처 표시
-    const srcLabel = isExtra ? '<span style="color:#8B6914;font-weight:600;font-size:9.5px">추가/할인</span>' : (r.ordNo ? '<span style="color:#7A4DB5;font-family:monospace;font-size:9.5px">'+r.ordNo+'</span>' : '<span style="color:var(--t3)">—</span>');
+    // 출처 표시 — 추가 행은 추가/할인 토글 버튼, 나머지는 발주번호 라벨
+    let srcLabel;
+    if(isExtra){
+      const _isDiscount = (r.amt < 0) || (r.unit < 0);
+      srcLabel = '<button onclick="_toggleConsExtraKind('+consId+','+r.extraIdx+')" title="클릭하면 추가↔할인 전환 (금액 부호가 바뀝니다)" style="border:1px solid '+(_isDiscount?'#c0392b':'#8B6914')+';background:'+(_isDiscount?'#fbe9e7':'#FFF3D6')+';color:'+(_isDiscount?'#c0392b':'#8B6914')+';font-weight:700;font-size:9.5px;padding:2px 7px;border-radius:10px;cursor:pointer;font-family:inherit;white-space:nowrap">'+(_isDiscount?'➖ 할인':'➕ 추가')+'</button>';
+    } else {
+      srcLabel = (r.ordNo ? '<span style="color:#7A4DB5;font-family:monospace;font-size:9.5px">'+r.ordNo+'</span>' : '<span style="color:var(--t3)">—</span>');
+    }
     body += '<td style="padding:5px 4px;text-align:center">'+srcLabel+'</td>';
     if(!consEditLocked){
       // 액션 셀
@@ -40358,7 +40380,7 @@ function openConsDetail(consId){
     body += '<div style="font-size:10px;color:var(--t3);margin-bottom:10px;padding:6px 10px;background:rgba(122,77,181,.04);border-radius:4px;line-height:1.6">';
     body += '💡 <b>편집 안내</b>: 묶인 명세서의 품목도 수정 가능합니다 (합본 안에서만 적용 — 원본 명세서는 그대로). 수정된 행은 보라색으로 표시됩니다. ';
     body += '<br><b style="color:var(--red)">✕</b>로 합본 PDF에서 행을 제외 (↩로 복원), <b style="color:#7A4DB5">↩</b>로 수정 취소. ';
-    body += '추가 행 (배송비·할인)은 [+ 행 추가]로 입력 → 단가에 음수 입력 시 할인.';
+    body += '추가 행(배송비·할인)은 [+ 행 추가]로 입력. <b>출처</b>칸의 <b style="color:#8B6914">➕ 추가</b>/<b style="color:#c0392b">➖ 할인</b> 버튼을 눌러 종류를 전환하면 금액 부호가 자동으로 바뀝니다.';
     body += '</div>';
   }
   // 추가 행이 있고 dirty면 저장 버튼
