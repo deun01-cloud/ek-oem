@@ -10313,6 +10313,7 @@ function renderProducts(){
       oncompositionend="this._composing=false;_debouncedPdSearch(this.value)"
       oninput="if(!this._composing)_debouncedPdSearch(this.value)"
       style="width:240px">
+    <button onclick="checkStorageAndOfferCleanup()" title="저장공간 사용량 확인 · 정리" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid var(--bdr);background:var(--s1);color:var(--t2);cursor:pointer;font-family:inherit">🧹 저장공간</button>
     <div style="display:flex;gap:4px;flex-wrap:wrap">
       ${types.map(t=>`<button onclick="pdFilterType='${t}';pdPage=1;renderProducts()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdFilterType===t?'var(--gold)':'var(--bdr)'};background:${pdFilterType===t?'var(--gold-bg)':'var(--s1)'};color:${pdFilterType===t?'var(--gold-lt)':'var(--t2)'};cursor:pointer;font-family:inherit">${t}</button>`).join('')}
     </div>
@@ -21579,9 +21580,35 @@ async function r2Upload(dataUrl, fileName, fileType){
 // 이미지 버퍼를 R2에 업로드하고 URL로 교체
 // [{name, url(base64), type}] → [{name, url(r2), key, type}]
 // type이 없으면 dataURL에서 자동 추출 (예: "data:application/pdf;base64," → "application/pdf")
+// 🖼 dataURL 이미지를 지정 크기 이하로 축소 (캔버스 리사이즈 + JPEG 압축).
+//    R2 업로드가 실패해도 localStorage에 담길 만큼 작은 폴백 이미지를 만들어 용량 초과를 막는다.
+function _shrinkDataUrl(dataUrl, maxDim, quality){
+  maxDim = maxDim || 900; quality = quality || 0.7;
+  return new Promise(function(resolve){
+    try{
+      if(!dataUrl || !String(dataUrl).startsWith('data:image/')){ resolve(dataUrl); return; }
+      var img=new Image();
+      img.onload=function(){
+        try{
+          var w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+          if(!w||!h){ resolve(dataUrl); return; }
+          var scale=Math.min(1, maxDim/Math.max(w,h));
+          var nw=Math.max(1,Math.round(w*scale)), nh=Math.max(1,Math.round(h*scale));
+          var cv=document.createElement('canvas'); cv.width=nw; cv.height=nh;
+          var ctx=cv.getContext('2d'); ctx.drawImage(img,0,0,nw,nh);
+          var out=cv.toDataURL('image/jpeg', quality);
+          resolve(out && out.length < dataUrl.length ? out : dataUrl); // 더 작아졌을 때만 교체
+        }catch(e){ resolve(dataUrl); }
+      };
+      img.onerror=function(){ resolve(dataUrl); };
+      img.src=dataUrl;
+    }catch(e){ resolve(dataUrl); }
+  });
+}
+
 async function uploadImagesToR2(imgBuf){
   if(!notionCfg.workerUrl||!imgBuf||!imgBuf.length) return imgBuf;
-  let uploadedCount=0, failedCount=0, alreadyR2=0;
+  let uploadedCount=0, failedCount=0, alreadyR2=0, shrunkCount=0;
   const results = await Promise.all(imgBuf.map(async img=>{
     if(!img.url||img.url.startsWith('http')||img.url.startsWith('/r2')){ alreadyR2++; return img; } // 이미 업로드된 것
     // type이 없으면 dataURL에서 자동 추출
@@ -21595,10 +21622,17 @@ async function uploadImagesToR2(imgBuf){
     if(r){ uploadedCount++; return {...img, url:r.url, r2Key:r.key, type:type}; }
     failedCount++;
     console.warn(`[R2] 업로드 실패: ${img.name} (${type})`);
-    return img; // 실패하면 원본 base64 유지 → 로컬 저장
+    // 🛟 R2 실패 → base64를 작은 썸네일로 축소해 로컬 용량 초과 방지 (사진은 계속 보임)
+    try{
+      if(typeof img.url==='string' && img.url.startsWith('data:image/') && img.url.length>120000){
+        const small=await _shrinkDataUrl(img.url, 900, 0.68);
+        if(small && small.length < img.url.length){ shrunkCount++; return {...img, url:small}; }
+      }
+    }catch(e){}
+    return img; // 실패하면 (가능하면 축소된) base64 유지 → 로컬 저장
   }));
   if(failedCount>0){
-    showToast(`⚠ R2 업로드 실패 ${failedCount}개 — 로컬에만 저장됨 (브라우저 초기화 시 사라짐)`,'var(--red)',5000);
+    showToast(`⚠ R2 업로드 실패 ${failedCount}개 — 사진을 축소해 로컬에 저장했습니다. R2 저장소 연결을 확인하세요`,'var(--org)',5000);
   } else if(uploadedCount>0){
     console.log(`[R2] ${uploadedCount}개 파일 업로드 완료 (기존 유지 ${alreadyR2}개)`);
   }
@@ -22893,6 +22927,89 @@ document.addEventListener('keydown', function(e){
   undoLastChange();
 }, true);
 
+// 🧹 저장공간 정리 — 이미지 배열에서 'R2/http URL이 있는 항목'의 base64 중복만 제거.
+//    (R2 URL이 없는 base64는 유일본이므로 건드리지 않는다 → 사진 유실 방지)
+function _cleanupImgArrayDupes(arr){
+  if(!Array.isArray(arr)) return 0;
+  let n=0;
+  arr.forEach(function(it){
+    if(!it || typeof it!=='object') return;
+    // 이미지 배열 필드 후보: imgs
+    if(Array.isArray(it.imgs)){
+      it.imgs.forEach(function(im){
+        if(im && typeof im==='object'){
+          // r2Key/외부 URL이 있는데 url이 base64면 → 이미 R2에 있으므로 base64 필요없음
+          if(im.r2Key && typeof im.url==='string' && im.url.startsWith('data:')){ /* url은 표시에 필요 → 유지 */ }
+          // _localDataUrl(폴백 base64)만 있고 url이 http면 폴백 제거 가능
+          if(typeof im._localDataUrl==='string' && im._localDataUrl.length>2000 &&
+             typeof im.url==='string' && (im.url.startsWith('http')||im.url.startsWith('/r2'))){
+            im._localDataUrl=''; n++;
+          }
+        }
+      });
+    }
+    // 입출고/증빙: files 배열
+    if(Array.isArray(it.files)){
+      it.files.forEach(function(f){
+        if(f && typeof f==='object' && typeof f._localDataUrl==='string' && f._localDataUrl.length>2000 &&
+           typeof f.url==='string' && (f.url.startsWith('http')||f.url.startsWith('/r2'))){
+          f._localDataUrl=''; n++;
+        }
+      });
+    }
+  });
+  return n;
+}
+function _cleanupBase64Duplicates(){
+  let n=0;
+  [productDB, ioItems, samples, orders].forEach(function(arr){ n+=_cleanupImgArrayDupes(arr); });
+  if(n>0){ console.log('[cleanup] base64 중복 '+n+'건 정리'); try{ save(); }catch(e){} }
+  return n;
+}
+// 🧹 저장공간 사용량 확인 + 정리 제안
+function checkStorageAndOfferCleanup(){
+  let total=0, b64Count=0, b64Bytes=0;
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i); const val=localStorage.getItem(k)||'';
+      total+=val.length;
+    }
+    // base64 사진 개수/용량 대략 집계 (productDB/io 위주)
+    const _scan=(obj)=>{ if(!obj||typeof obj!=='object')return; if(Array.isArray(obj)){obj.forEach(_scan);return;}
+      for(const kk in obj){ const vv=obj[kk];
+        if(typeof vv==='string'&&vv.startsWith('data:')&&vv.length>2000){ b64Count++; b64Bytes+=vv.length; }
+        else if(vv&&typeof vv==='object') _scan(vv); } };
+    [samples,orders,procItems,tasks,asItems,productDB,invoiceHistory,stockHistory,ioItems].forEach(_scan);
+  }catch(e){}
+  const totalMB=(total/1024/1024).toFixed(2);
+  const b64MB=(b64Bytes/1024/1024).toFixed(2);
+  const msg = `📦 저장공간 사용량\n\n전체: 약 ${totalMB}MB / 한계 5~10MB\n그중 사진(base64): ${b64Count}곳, 약 ${b64MB}MB\n\n`+
+    (b64Count>0
+      ? `사진이 저장공간을 많이 차지하고 있습니다.\n\n"확인"을 누르면 base64 사진을 정리해 공간을 확보합니다.\n※ R2 저장소에 이미 올라간 사진은 그대로 보입니다.\n※ R2에 못 올라간 사진만 화면에서 사라지며, 필요하면 다시 올리면 됩니다.`
+      : `사진으로 인한 용량 문제는 없습니다.`);
+  if(b64Count>0){
+    if(confirm(msg)) purgeAllBase64Images();
+  } else {
+    alert(msg);
+  }
+}
+
+// 🧹 수동 전체 정리 — 모든 base64 사진을 localStorage에서 제거(등록/데이터는 유지).
+//    사진은 R2에 없으면 사라지므로, 사용자에게 명확히 경고 후 실행.
+function purgeAllBase64Images(){
+  try{
+    let removed=0;
+    const _purge=(obj)=>{ if(!obj||typeof obj!=='object')return; if(Array.isArray(obj)){obj.forEach(_purge);return;}
+      for(const kk in obj){ const vv=obj[kk];
+        if(typeof vv==='string'&&vv.startsWith('data:')&&vv.length>2000){ obj[kk]=''; removed++; }
+        else if(vv&&typeof vv==='object') _purge(vv); } };
+    [samples,orders,procItems,tasks,asItems,productDB,invoiceHistory,stockHistory,ioItems].forEach(_purge);
+    save();
+    if(typeof renderTab==='function') renderTab();
+    showToast(`✓ 저장공간 정리 완료 — base64 사진 ${removed}곳 제거. R2에 올라간 사진은 그대로 보입니다.`,'var(--grn)',5000);
+  }catch(e){ showToast('정리 실패: '+e.message,'var(--red)',4000); }
+}
+
 function save(){
   _pushUndoSnapshot(_lastUndoLabel);  // 변경 전 상태 보존 (이번 save로 덮어쓰기 직전)
   _lastUndoLabel = '';
@@ -22977,6 +23094,9 @@ function load(){
   if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   if((v=loadKey(SK.sh,'재고이력'))!==undefined) stockHistory=v;
   if((v=loadKey(SK.io,'입출고'))!==undefined) ioItems=v;
+  // 🧹 로드 직후 저장공간 정리 — R2 URL이 있는데 base64도 함께 들고 있으면 base64 제거(중복).
+  //    R2 업로드 실패로 base64만 쌓여 localStorage가 꽉 차 저장이 막히는 문제를 완화한다.
+  try{ _cleanupBase64Duplicates(); }catch(e){ console.warn('[cleanup] base64 정리 실패:', e); }
   try{
   // 로드 시점 발주 상태 마이그레이션: 옛 값(진행중/출고완료/보류/취소) → 새 값
   if(Array.isArray(orders) && typeof normalizeOrderStatus === 'function'){
