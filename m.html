@@ -3871,10 +3871,10 @@ async function uploadImageToR2(file){
       console.warn(`[R2 업로드 실패] HTTP ${r.status} — ${fname}: ${errText.slice(0,200)}`);
     } else {
       const j = await r.json();
-      // PC 워커는 {success, key, name, type, size}를 반환 — key로 URL 만들기
-      // (구 워커가 j.url을 직접 반환하면 그것도 사용)
+      // ✅ Worker는 {key, name, type, size} 반환(success 필드 없을 수 있음) → key로 URL 생성.
+      //    (구 워커가 j.url을 직접 반환하면 그것도 사용)
       let r2Url = null, r2Key = '';
-      if(j && j.success && j.key){
+      if(j && j.key){
         r2Url = notionCfg.workerUrl.replace(/\/+$/,'') + '/r2/file/' + encodeURIComponent(j.key);
         r2Key = j.key;
       } else if(j && j.url){
