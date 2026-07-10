@@ -6190,11 +6190,11 @@ window.addEventListener('message', function(ev){
 <div class="tabs">
   <button class="tab on"  onclick="MGT.go('sales',this)">📥 데이터 입력</button>
   <button class="tab"     onclick="MGT.go('archive',this)">📂 자료실</button>
-  <button class="tab"     onclick="MGT.go('contract',this)">📄 계약서</button>
   <button class="tab"     onclick="MGT.go('monthly',this)">🔒 월별 실적</button>
   <button class="tab"     onclick="MGT.go('pnl',this)">🔒 손익 계산</button>
   <button class="tab"     onclick="MGT.go('dash',this)">🔒 대시보드</button>
   <button class="tab"     onclick="MGT.go('fin',this)">🔒 재무계획</button>
+  <button class="tab"     onclick="MGT.go('contract',this)">📄 문서</button>
 </div>
 
 <div class="pg on" id="pg-sales">
@@ -36596,9 +36596,15 @@ function stPreview(pageId){
   } else if(isPdf && url){
     stage='<iframe src="'+_stEsc(url)+'#toolbar=1" title="'+_stEsc(nm)+'"></iframe>';
   } else if(url){
-    // 오피스 문서 등은 브라우저 인라인 뷰가 제한적 → 구글 뷰어 시도 + 폴백 버튼
-    var gview='https://docs.google.com/gviewer?embedded=true&url='+encodeURIComponent(url);
-    stage='<iframe src="'+_stEsc(gview)+'" title="'+_stEsc(nm)+'"></iframe>';
+    // 오피스·기타 문서(xlsx·docx·hwp 등)는 브라우저 인앱 뷰가 안 되고, 외부 뷰어는 403이 잦고
+    // 민감 파일을 외부로 보내는 것도 부적절 → 임베드 대신 안내 + 열기/다운로드 버튼 제공.
+    stage='<div class="stpv-fallback"><div class="fb-ico">'+ico+'</div>'
+        + '<div class="fb-t">앱에서 바로 볼 수 없는 형식이에요</div>'
+        + '<div class="fb-s">'+_stEsc((ext||'파일').toUpperCase())+' 파일은 아래에서 다운로드하거나 새 탭에서 열어 확인하세요.</div>'
+        + '<div style="margin-top:16px;display:flex;gap:8px;justify-content:center">'
+        +   '<a class="stpv-b" href="'+_stEsc(url)+'" target="_blank" rel="noopener">↗ 새 탭에서 열기</a>'
+        +   '<button class="stpv-b" onclick="stDownload(\''+encodeURIComponent(url)+'\',\''+encodeURIComponent(nm)+'\')">⬇ 다운로드</button>'
+        + '</div></div>';
   } else {
     stage='<div class="stpv-fallback"><div class="fb-ico">'+ico+'</div><div class="fb-t">미리볼 수 없는 파일</div><div class="fb-s">이 자료에 연결된 파일 URL이 없습니다.</div></div>';
   }
@@ -36704,7 +36710,7 @@ async function stSaveEdit(pageId){
 //    영업 자료실과 같은 파일 DB(SALESTOOL_FILES_DB)를 쓰되 타입="계약서"로 분리 저장.
 //    미리보기/삭제/수정은 영업 자료실과 공용(stPreview/stDelete/stEdit).
 // ══════════════════════════════════════════════
-var CONTRACT_CATS = ['거래계약','임대차','근로계약','비밀유지(NDA)','업무위탁','투자·주주','기타'];
+var CONTRACT_CATS = ['계약서','증빙서류','인허가·인증','사업자·법인','견적·제안','재무·세무','기타'];
 var _contractFiles = [];
 var _contractLoaded = false;
 var _contractCat = 'all';
@@ -36712,13 +36718,13 @@ var _contractCat = 'all';
 function vContracts(c){
   c.innerHTML = `
   <div class="card" style="margin-bottom:14px">
-    <div class="card-h"><div class="card-h-t">📄 계약서 보관함</div>
-      <div style="font-size:11.5px;color:var(--t3);margin-left:10px">거래·임대차·근로·NDA 등 회사 계약서를 게시판처럼 모아 보관하세요</div>
+    <div class="card-h"><div class="card-h-t">📄 문서 보관함</div>
+      <div style="font-size:11.5px;color:var(--t3);margin-left:10px">계약서·증빙·인허가 등 회사 관련 문서를 게시판처럼 모아 보관하세요</div>
     </div>
     <div class="st-upzone" id="ct-upzone">
       <div class="st-upzone-inner">
         <div style="font-size:26px;margin-bottom:6px">⬆️</div>
-        <div style="font-size:13px;color:var(--t1);font-weight:600;margin-bottom:3px">계약서 파일을 여기로 끌어다 놓거나 클릭해서 올리세요</div>
+        <div style="font-size:13px;color:var(--t1);font-weight:600;margin-bottom:3px">문서 파일을 여기로 끌어다 놓거나 클릭해서 올리세요</div>
         <div style="font-size:11.5px;color:var(--t3);margin-bottom:12px">PDF·이미지·워드·한글 등 · 여러 개 동시 업로드 가능</div>
         <div style="display:inline-flex;align-items:center;gap:8px">
           <span style="font-size:11.5px;color:var(--t2)">분류</span>
@@ -36733,7 +36739,7 @@ function vContracts(c){
     <div style="padding:8px 2px 2px;text-align:center"><span id="ct-up-stat" style="font-size:11.5px;color:var(--t3)"></span></div>
   </div>
   <div class="card">
-    <div class="card-h"><div class="card-h-t">보관된 계약서 <span id="ct-stat" style="font-size:11.5px;color:var(--t3);font-weight:400;margin-left:6px"></span></div></div>
+    <div class="card-h"><div class="card-h-t">보관된 문서 <span id="ct-stat" style="font-size:11.5px;color:var(--t3);font-weight:400;margin-left:6px"></span></div></div>
     <div id="ct-cat-filters" class="stk-chips" style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:6px"></div>
     <div id="ct-body"></div>
   </div>`;
@@ -36829,13 +36835,16 @@ function _renderContractBody(){
   _contractFiles.forEach(function(f){ counts[f.cat]=(counts[f.cat]||0)+1; });
   if(filt){
     var chips='<button class="stk-chip '+(_contractCat==='all'?'on':'')+'" onclick="ctCatFilter(\'all\')">전체 <span class="stk-chip-n">'+_contractFiles.length+'</span></button>';
-    CONTRACT_CATS.forEach(function(k){ if(counts[k]) chips+='<button class="stk-chip '+(_contractCat===k?'on':'')+'" onclick="ctCatFilter(\''+k+'\')">'+k+' <span class="stk-chip-n">'+counts[k]+'</span></button>'; });
+    // 미리 정의된 분류 + 실제 파일에 있는 분류(구 계약서 분류 등)까지 모두 칩으로 표시
+    var _chipCats = CONTRACT_CATS.slice();
+    Object.keys(counts).forEach(function(k){ if(_chipCats.indexOf(k)<0) _chipCats.push(k); });
+    _chipCats.forEach(function(k){ if(counts[k]) chips+='<button class="stk-chip '+(_contractCat===k?'on':'')+'" onclick="ctCatFilter(\''+k+'\')">'+k+' <span class="stk-chip-n">'+counts[k]+'</span></button>'; });
     filt.innerHTML=chips;
   }
   var list=_contractFiles.filter(function(f){ return _contractCat==='all' || f.cat===_contractCat; });
   list.sort(function(a,b){ return (b.uploadedAt||'').localeCompare(a.uploadedAt||''); });
   if(stat) stat.textContent=list.length+'개';
-  if(!list.length){ body.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)"><div style="font-size:30px;margin-bottom:8px">📄</div><div style="font-size:13px">등록된 계약서가 없습니다</div><div style="font-size:11.5px;color:var(--t3);margin-top:3px">위에서 분류를 고르고 계약서 파일을 업로드하세요</div></div>'; return; }
+  if(!list.length){ body.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)"><div style="font-size:30px;margin-bottom:8px">📄</div><div style="font-size:13px">등록된 문서가 없습니다</div><div style="font-size:11.5px;color:var(--t3);margin-top:3px">위에서 분류를 고르고 문서 파일을 업로드하세요</div></div>'; return; }
   body.innerHTML = '<div class="st-grid">' + list.map(function(f){
     var nm=f.name||'파일';
     var ext=(nm.split('.').pop()||'').toLowerCase();
