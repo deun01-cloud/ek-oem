@@ -17771,6 +17771,9 @@ function mapNotionInvoice(row){
     includedInvoiceIds:     parseIds(np.text(p['포함명세서IDs'])),
     _consUid:               (function(){ try{ var o=JSON.parse(np.text(p['합본키'])||'{}'); return o.uid||undefined; }catch(e){ return undefined; } })(),
     includedChildKeys:      (function(){ try{ var o=JSON.parse(np.text(p['합본키'])||'{}'); return Array.isArray(o.childKeys)?o.childKeys:[]; }catch(e){ return []; } })(),
+    // 📌 합본 내 단가 수정(itemOverrides)·추가/할인(extraItems) 복원 — 합본키 JSON에 함께 저장됨 (재로드 시 보정값 유지)
+    itemOverrides:          (function(){ try{ var o=JSON.parse(np.text(p['합본키'])||'{}'); return (o.ovr&&typeof o.ovr==='object')?o.ovr:{}; }catch(e){ return {}; } })(),
+    extraItems:             (function(){ try{ var o=JSON.parse(np.text(p['합본키'])||'{}'); return Array.isArray(o.extra)?o.extra:[]; }catch(e){ return []; } })(),
     prepaidDeducted:        np.number(p['선금차감'])||0,
     chargeAmount:           np.number(p['청구액'])||0,
     consolidationMonth:     np.text(p['청구월']),
@@ -22665,7 +22668,7 @@ async function syncInvoiceToNotion(inv, update){
     "청구월":{"rich_text":[{"text":{"content":(inv.consolidationMonth||'').slice(0,20)}}]},
     "합본ID":{"rich_text":[{"text":{"content":(inv._consolidatedInvoiceId||'').toString().slice(0,100)}}]},
     // 합본 자체의 기기 간 안정적 식별 키(_consUid) + 자식 안정키 — 중복/0건 방지용
-    "합본키":{"rich_text":chunkRichText(inv._isConsolidated ? JSON.stringify({uid:inv._consUid||'', childKeys:inv.includedChildKeys||[]}) : '')},
+    "합본키":{"rich_text":chunkRichText(inv._isConsolidated ? JSON.stringify({uid:inv._consUid||'', childKeys:inv.includedChildKeys||[], ovr:(inv.itemOverrides&&typeof inv.itemOverrides==='object')?inv.itemOverrides:{}, extra:Array.isArray(inv.extraItems)?inv.extraItems:[]}) : '')},
     // 5-A: 명세서별 출고완료 플래그
     "명세서출고완료":{"checkbox":!!inv._shipped},
     // 📅 결산월 — 월별 결산 그룹핑 키 (발행월과 다를 수 있음). 비었으면 발행월로 간주.
