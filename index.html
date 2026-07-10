@@ -6190,6 +6190,7 @@ window.addEventListener('message', function(ev){
 <div class="tabs">
   <button class="tab on"  onclick="MGT.go('sales',this)">📥 데이터 입력</button>
   <button class="tab"     onclick="MGT.go('archive',this)">📂 자료실</button>
+  <button class="tab"     onclick="MGT.go('contract',this)">📄 계약서</button>
   <button class="tab"     onclick="MGT.go('monthly',this)">🔒 월별 실적</button>
   <button class="tab"     onclick="MGT.go('pnl',this)">🔒 손익 계산</button>
   <button class="tab"     onclick="MGT.go('dash',this)">🔒 대시보드</button>
@@ -6430,6 +6431,11 @@ window.addEventListener('message', function(ev){
       모든 월의 공장 인보이스와 지출내역서를 한곳에 모아 봅니다. 파일을 누르면 미리보기, ⬇ 버튼으로 다운로드할 수 있습니다.
     </div>
   </div>
+</div>
+
+<!-- ===== 📄 계약서 보관함 ===== -->
+<div class="pg" id="pg-contract">
+  <div id="contract-body"></div>
 </div>
 
 <!-- ===== 📊 월별 실적 (영업관리에서 이동) ===== -->
@@ -21636,8 +21642,16 @@ async function r2Upload(dataUrl, fileName, fileType){
     if(_isImg){
       var _ok = await _verifyImageUrl(_url, 8000);
       if(!_ok){
-        console.warn(`[r2Upload] 업로드는 됐으나 URL 이미지 로드 실패 — base64 유지: ${fileName}`);
-        return null;   // base64 폴백 유지
+        // R2 반영 지연/캐시 대비 1회 재시도
+        await new Promise(function(r){ setTimeout(r, 1500); });
+        _ok = await _verifyImageUrl(_url, 8000);
+      }
+      if(!_ok){
+        // 📌 업로드는 성공(HTTP 200 + key)했으므로 URL을 그대로 저장한다.
+        //    검증은 일시적 지연으로 실패할 수 있고, base64 폴백은 '노션-우선 모드'에서
+        //    이미지JSON(http URL만 저장)에 담기지 않아 재로드 시 오히려 이미지가 사라진다.
+        //    진짜로 죽은 URL이면 화면의 onerror 폴백이 '재업로드 필요'로 안내한다.
+        console.warn('[r2Upload] 업로드 성공(key 수신)·즉시 검증 실패 → URL 저장 유지: '+fileName);
       }
     }
     // Worker 경유 URL로 변환: base + /r2/file/key (업로드에 쓴 것과 동일 base)
@@ -21693,7 +21707,13 @@ async function uploadImagesToR2(imgBuf){
       if(m) type=m[1];
     }
     type=type||'application/octet-stream';
-    const r=await r2Upload(img.url, img.name||'file', type);
+    // 📌 업로드 전 사전 축소 — 큰 사진(폰 원본 등)은 그대로 보내면 타임아웃/워커 한계로 실패한다.
+    //    이미지에 한해 최대 1600px·품질 0.82로 줄여 안정적으로 업로드 (제품 카탈로그엔 충분한 해상도).
+    var _up = img.url;
+    if(typeof _up==='string' && _up.startsWith('data:image/') && _up.length > 500000 && typeof _shrinkDataUrl==='function'){
+      try{ var _s = await _shrinkDataUrl(_up, 1600, 0.82); if(_s && _s.length < _up.length) _up = _s; }catch(e){}
+    }
+    const r=await r2Upload(_up, img.name||'file', type);
     if(r){ uploadedCount++; return {...img, url:r.url, r2Key:r.key, type:type}; }
     failedCount++;
     console.warn(`[R2] 업로드 실패: ${img.name} (${type})`);
@@ -36549,9 +36569,19 @@ function _renderSalesToolBody(){
   }).join('') + '</div>';
 }
 
+// 📄 두 게시판(영업자료·계약서) 공용 헬퍼 — pageId로 어느 보드든 조회/재렌더
+function _stFindFile(pageId){
+  var f=(_salesToolFiles||[]).find(function(x){return x.pageId===pageId;});
+  if(f) return {f:f, board:'sales'};
+  f=(typeof _contractFiles!=='undefined'?_contractFiles:[]||[]).find(function(x){return x.pageId===pageId;});
+  if(f) return {f:f, board:'contract'};
+  return {f:null, board:null};
+}
+function _stRerenderBoards(){ try{_renderSalesToolBody();}catch(e){} try{ if(typeof _renderContractBody==='function') _renderContractBody(); }catch(e){} }
+
 // 파일 전체 미리보기 모달 (앱 안에서 바로 보기)
 function stPreview(pageId){
-  var f=(_salesToolFiles||[]).find(function(x){return x.pageId===pageId;});
+  var f=_stFindFile(pageId).f;
   if(!f){ return; }
   var nm=f.name||'파일';
   var url=f.url||'';
@@ -36609,17 +36639,19 @@ async function stDelete(pageId){
   if(!confirm('이 자료를 삭제할까요?')) return;
   try{
     await fetch(_stProxy()+'/pages/'+pageId,{method:'PATCH',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({archived:true})});
-    _salesToolFiles=_salesToolFiles.filter(function(f){return f.pageId!==pageId;});
-    _renderSalesToolBody();
+    _salesToolFiles=(_salesToolFiles||[]).filter(function(f){return f.pageId!==pageId;});
+    if(typeof _contractFiles!=='undefined') _contractFiles=(_contractFiles||[]).filter(function(f){return f.pageId!==pageId;});
+    _stRerenderBoards();
     if(typeof showToast==='function') showToast('자료를 삭제했습니다','var(--t2)',2000);
   }catch(e){ if(typeof showToast==='function') showToast('삭제 실패','var(--red)',2500); }
 }
 
 // 영업 자료 수정 — 이름·분류(카테고리) 변경 후 노션 반영
 function stEdit(pageId){
-  var f=(_salesToolFiles||[]).find(function(x){return x.pageId===pageId;});
+  var _r=_stFindFile(pageId); var f=_r.f;
   if(!f) return;
-  var catOpts = SALESTOOL_CATS.map(function(k){ return '<option value="'+k+'"'+(f.cat===k?' selected':'')+'>'+k+'</option>'; }).join('');
+  var _cats = (_r.board==='contract' && typeof CONTRACT_CATS!=='undefined') ? CONTRACT_CATS : SALESTOOL_CATS;
+  var catOpts = _cats.map(function(k){ return '<option value="'+k+'"'+(f.cat===k?' selected':'')+'>'+k+'</option>'; }).join('');
   var back=document.createElement('div');
   back.className='stpv-back';
   back.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
@@ -36658,13 +36690,174 @@ async function stSaveEdit(pageId){
       body:JSON.stringify({properties:props})
     });
     if(!resp.ok) throw new Error('HTTP '+resp.status);
-    // 로컬 목록 갱신
-    var f=(_salesToolFiles||[]).find(function(x){return x.pageId===pageId;});
+    // 로컬 목록 갱신 (어느 보드든)
+    var f=_stFindFile(pageId).f;
     if(f){ f.name=newName; f.cat=newCat; }
     if(back) back.remove();
-    _renderSalesToolBody();
+    _stRerenderBoards();
     if(typeof showToast==='function') showToast('자료를 수정했습니다','#2E7D32',2000);
   }catch(e){ console.warn('[영업자료 수정]', e.message); if(typeof showToast==='function') showToast('수정 실패 — 노션 연결 확인','var(--red)',2500); }
+}
+
+// ══════════════════════════════════════════════
+// 📄 계약서 게시판 — 회사 관련 계약서를 업로드해 게시판처럼 관리
+//    영업 자료실과 같은 파일 DB(SALESTOOL_FILES_DB)를 쓰되 타입="계약서"로 분리 저장.
+//    미리보기/삭제/수정은 영업 자료실과 공용(stPreview/stDelete/stEdit).
+// ══════════════════════════════════════════════
+var CONTRACT_CATS = ['거래계약','임대차','근로계약','비밀유지(NDA)','업무위탁','투자·주주','기타'];
+var _contractFiles = [];
+var _contractLoaded = false;
+var _contractCat = 'all';
+
+function vContracts(c){
+  c.innerHTML = `
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-h"><div class="card-h-t">📄 계약서 보관함</div>
+      <div style="font-size:11.5px;color:var(--t3);margin-left:10px">거래·임대차·근로·NDA 등 회사 계약서를 게시판처럼 모아 보관하세요</div>
+    </div>
+    <div class="st-upzone" id="ct-upzone">
+      <div class="st-upzone-inner">
+        <div style="font-size:26px;margin-bottom:6px">⬆️</div>
+        <div style="font-size:13px;color:var(--t1);font-weight:600;margin-bottom:3px">계약서 파일을 여기로 끌어다 놓거나 클릭해서 올리세요</div>
+        <div style="font-size:11.5px;color:var(--t3);margin-bottom:12px">PDF·이미지·워드·한글 등 · 여러 개 동시 업로드 가능</div>
+        <div style="display:inline-flex;align-items:center;gap:8px">
+          <span style="font-size:11.5px;color:var(--t2)">분류</span>
+          <select id="ct-up-cat" onclick="event.stopPropagation()" style="border:1px solid var(--bdr);border-radius:7px;padding:7px 10px;font-size:12.5px;font-family:inherit">
+            ${CONTRACT_CATS.map(k=>`<option value="${k}">${k}</option>`).join('')}
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();ctPickFile()">📎 파일 선택</button>
+        </div>
+      </div>
+      <input type="file" id="ct-up-file" multiple style="display:none" onchange="ctUploadFiles(this)">
+    </div>
+    <div style="padding:8px 2px 2px;text-align:center"><span id="ct-up-stat" style="font-size:11.5px;color:var(--t3)"></span></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><div class="card-h-t">보관된 계약서 <span id="ct-stat" style="font-size:11.5px;color:var(--t3);font-weight:400;margin-left:6px"></span></div></div>
+    <div id="ct-cat-filters" class="stk-chips" style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:6px"></div>
+    <div id="ct-body"></div>
+  </div>`;
+  // 드래그&드롭 업로드
+  var dz=document.getElementById('ct-upzone');
+  if(dz){
+    dz.onclick=function(){ ctPickFile(); };
+    dz.ondragover=function(e){ e.preventDefault(); dz.classList.add('drag'); };
+    dz.ondragleave=function(){ dz.classList.remove('drag'); };
+    dz.ondrop=function(e){ e.preventDefault(); dz.classList.remove('drag'); if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length){ ctUploadFiles({files:e.dataTransfer.files, value:''}); } };
+  }
+  loadContracts(false);
+}
+function ctPickFile(){ var i=document.getElementById('ct-up-file'); if(i){ i.value=''; i.click(); } }
+function _ctStat(msg,color){ var el=document.getElementById('ct-up-stat'); if(el){ el.textContent=msg||''; el.style.color=color||'var(--t3)'; } }
+
+async function ctUploadFiles(inp){
+  if(!inp.files || !inp.files.length) return;
+  var cat = (document.getElementById('ct-up-cat')||{}).value || '기타';
+  var files = [].slice.call(inp.files);
+  _ctStat('업로드 중… ('+files.length+'개)', 'var(--gold-lt)');
+  var okN=0;
+  for(var i=0;i<files.length;i++){
+    try{
+      var f=files[i];
+      var r2 = await _stR2Upload(f);
+      var props = {
+        '이름':       {title:[{text:{content:f.name}}]},
+        '기간':       {rich_text:[{text:{content:cat}}]},
+        '타입':       {select:{name:'계약서'}},
+        '업로드일시': {rich_text:[{text:{content:new Date().toISOString()}}]}
+      };
+      if(r2 && r2.url){ props['파일'] = {files:[{name:f.name, external:{url:r2.url}}]}; }
+      var memo = r2 && r2.key ? ('r2key:'+r2.key) : '';
+      if(memo) props['비고'] = {rich_text:[{text:{content:memo}}]};
+      var resp = await fetch(_stProxy()+'/pages', {
+        method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},
+        body: JSON.stringify({parent:{database_id:SALESTOOL_FILES_DB}, properties:props})
+      });
+      if(resp.ok) okN++;
+    }catch(e){ console.warn('[계약서 업로드]', e.message); }
+  }
+  _ctStat('✓ '+okN+'개 업로드 완료', '#2E7D32');
+  if(inp.value!==undefined) inp.value='';
+  await loadContracts(true);
+  setTimeout(function(){ _ctStat('',''); }, 4000);
+}
+
+async function loadContracts(force){
+  var body=document.getElementById('ct-body');
+  if(force) _contractLoaded=false;
+  if(!_contractLoaded){
+    if(body) body.innerHTML='<div style="padding:34px;text-align:center;color:var(--t3);font-size:12.5px">⏳ 불러오는 중…</div>';
+    try{
+      var all=[], cursor=undefined, guard=0;
+      do{
+        var q={page_size:100};
+        if(cursor) q.start_cursor=cursor;
+        var resp=await fetch(_stProxy()+'/databases/'+SALESTOOL_FILES_DB+'/query',{
+          method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},
+          body:JSON.stringify(q)
+        });
+        if(!resp.ok){ throw new Error('HTTP '+resp.status); }
+        var d=await resp.json();
+        (d.results||[]).forEach(function(p){
+          if(p.archived) return;
+          var pr=p.properties||{};
+          var typeName=(pr['타입']&&pr['타입'].select&&pr['타입'].select.name)||'';
+          if(typeName!=='계약서') return;   // 계약서만
+          var nm=(pr['이름']&&pr['이름'].title&&pr['이름'].title[0]&&pr['이름'].title[0].plain_text)||'파일';
+          var cat=(pr['기간']&&pr['기간'].rich_text&&pr['기간'].rich_text[0]&&pr['기간'].rich_text[0].plain_text)||'기타';
+          var up=(pr['업로드일시']&&pr['업로드일시'].rich_text&&pr['업로드일시'].rich_text[0]&&pr['업로드일시'].rich_text[0].plain_text)||'';
+          var url='';
+          if(pr['파일']&&pr['파일'].files&&pr['파일'].files[0]){ var ff=pr['파일'].files[0]; url=(ff.external&&ff.external.url)||(ff.file&&ff.file.url)||''; }
+          all.push({pageId:p.id, name:nm, cat:cat, uploadedAt:up, url:url});
+        });
+        cursor=d.has_more?d.next_cursor:null; guard++;
+      }while(cursor && guard<20);
+      _contractFiles=all;
+      _contractLoaded=true;
+    }catch(e){ console.warn('[계약서 로드]', e.message); if(body) body.innerHTML='<div style="padding:34px;text-align:center;color:var(--red);font-size:12.5px">불러오기 실패 — 노션 연결을 확인하세요</div>'; return; }
+  }
+  _renderContractBody();
+}
+function ctCatFilter(cat){ _contractCat=cat; _renderContractBody(); }
+
+function _renderContractBody(){
+  var body=document.getElementById('ct-body');
+  var stat=document.getElementById('ct-stat');
+  var filt=document.getElementById('ct-cat-filters');
+  if(!body) return;
+  var counts={};
+  _contractFiles.forEach(function(f){ counts[f.cat]=(counts[f.cat]||0)+1; });
+  if(filt){
+    var chips='<button class="stk-chip '+(_contractCat==='all'?'on':'')+'" onclick="ctCatFilter(\'all\')">전체 <span class="stk-chip-n">'+_contractFiles.length+'</span></button>';
+    CONTRACT_CATS.forEach(function(k){ if(counts[k]) chips+='<button class="stk-chip '+(_contractCat===k?'on':'')+'" onclick="ctCatFilter(\''+k+'\')">'+k+' <span class="stk-chip-n">'+counts[k]+'</span></button>'; });
+    filt.innerHTML=chips;
+  }
+  var list=_contractFiles.filter(function(f){ return _contractCat==='all' || f.cat===_contractCat; });
+  list.sort(function(a,b){ return (b.uploadedAt||'').localeCompare(a.uploadedAt||''); });
+  if(stat) stat.textContent=list.length+'개';
+  if(!list.length){ body.innerHTML='<div style="padding:40px;text-align:center;color:var(--t3)"><div style="font-size:30px;margin-bottom:8px">📄</div><div style="font-size:13px">등록된 계약서가 없습니다</div><div style="font-size:11.5px;color:var(--t3);margin-top:3px">위에서 분류를 고르고 계약서 파일을 업로드하세요</div></div>'; return; }
+  body.innerHTML = '<div class="st-grid">' + list.map(function(f){
+    var nm=f.name||'파일';
+    var ext=(nm.split('.').pop()||'').toLowerCase();
+    var isImg=/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(nm);
+    var upDisp='';
+    if(f.uploadedAt){ try{ var d=new Date(f.uploadedAt); if(!isNaN(d)) upDisp=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }catch(e){} }
+    var thumb = (isImg && f.url)
+      ? '<img src="'+_stEsc(f.url)+'" alt="" loading="lazy" onerror="this.style.display=\'none\';this.parentNode.classList.add(\'st-thumb-plain\');this.parentNode.insertAdjacentHTML(\'beforeend\',\'<span class=&quot;st-thumb-ext&quot;>'+_stEsc(ext||'IMG')+'</span>\')">'
+      : '<span class="st-thumb-ext '+_stExtClass(ext)+'">'+_stEsc(ext||'FILE')+'</span>';
+    var actions='';
+    if(f.url) actions+='<button class="st-btn" onclick="event.stopPropagation();stDownload(\''+encodeURIComponent(f.url)+'\',\''+encodeURIComponent(nm)+'\')" title="다운로드">⬇</button>';
+    actions+='<button class="st-btn" onclick="event.stopPropagation();stEdit(\''+f.pageId+'\')" title="수정">✏️</button>';
+    actions+='<button class="st-btn st-del" onclick="event.stopPropagation();stDelete(\''+f.pageId+'\')" title="삭제">🗑</button>';
+    return '<div class="st-card" onclick="stPreview(\''+f.pageId+'\')" title="클릭해서 미리보기">'
+      + '<div class="st-card-actions">'+actions+'</div>'
+      + '<div class="st-thumb">'+thumb+'</div>'
+      + '<div class="st-card-b">'
+      +   '<div class="st-card-name" title="'+_stEsc(nm)+'">'+_stEsc(nm)+'</div>'
+      +   '<div class="st-card-meta"><span class="st-card-cat">'+_stEsc(f.cat)+'</span><span class="st-card-date">'+upDisp+'</span></div>'
+      + '</div>'
+      + '</div>';
+  }).join('') + '</div>';
 }
 
 function vClients(c){
@@ -46940,6 +47133,9 @@ function go(id,el){
       if(aup && !aup.value){ var gp=(document.getElementById('g-period')||{}).value||''; aup.value = gp || (new Date().toISOString().slice(0,7)); }
     }catch(e){}
     try{ renderArchive(false); }catch(e){ console.warn('자료실 렌더 실패:', e.message); }
+  }
+  if(id==='contract'){
+    try{ var cb=document.getElementById('contract-body'); if(cb && typeof vContracts==='function') vContracts(cb); }catch(e){ console.warn('계약서 렌더 실패:', e.message); }
   }
   if(id==='fin'){ try{ renderFinPlan(); }catch(e){ console.warn('재무계획 렌더 실패:', e.message); } }
   if(id==='monthly'){
