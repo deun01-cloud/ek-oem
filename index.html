@@ -13127,7 +13127,7 @@ function renderInvoiceHistory(){
   var tTax=list.reduce(function(s,v){return s+(+v.tax||0);},0);
   var tAmt=list.reduce(function(s,v){
     var base=+v.total||0;
-    // 합본은 수정/추가 분(단가 수정 + 추가·할인)을 라이브로 반영해 모든 화면과 총합을 일치시킴
+    // 합본은 추가/할인 분을 라이브로 반영해 모든 화면과 총합을 일치시킴
     if(v._isConsolidated){
       base += calcConsAdjustment(v).adjTotal;
     }
@@ -13390,7 +13390,7 @@ function renderInvoiceHistory(){
       if(isCons){
         var deducted = +v.prepaidDeducted||0;
         var _baseCharge = +v.chargeAmount||0;
-        // 📌 단가 수정(itemOverrides) + 추가/할인 행을 모두 반영한 실제 청구액 (SSOT, 라이브 계산)
+        // 📌 합본 조정액 — 추가/할인 행만 반영 (SSOT, 라이브 계산)
         var _adj = calcConsAdjustment(v);
         var _extraAdj = _adj.adjTotal;
         var charge = _baseCharge + _extraAdj;
@@ -13398,9 +13398,9 @@ function renderInvoiceHistory(){
           ? '<div style="margin-top:2px;font-size:9.5px;color:#7A4DB5;font-weight:600" title="선금 차감됨">선금 −₩'+deducted.toLocaleString()+'</div>'
           : '';
         var _extraNote = (_extraAdj !== 0)
-          ? '<div style="margin-top:2px;font-size:9.5px;color:'+(_extraAdj<0?'#c0392b':'#8B6914')+';font-weight:600" title="단가 수정 + 추가/할인 반영">수정/추가 '+(_extraAdj<0?'−':'+')+'₩'+Math.abs(_extraAdj).toLocaleString()+'</div>'
+          ? '<div style="margin-top:2px;font-size:9.5px;color:'+(_extraAdj<0?'#c0392b':'#8B6914')+';font-weight:600" title="추가/할인 반영">추가/할인 '+(_extraAdj<0?'−':'+')+'₩'+Math.abs(_extraAdj).toLocaleString()+'</div>'
           : '';
-        // 합계 표시도 수정/추가 반영값으로 (부가세 포함 총액 + 수정/추가 분)
+        // 합계 표시도 추가/할인 반영값으로 (부가세 포함 총액 + 추가/할인)
         var _dispTotal = (+v.total||0) + _extraAdj;
         h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:#7A4DB5">'+charge.toLocaleString()+'</div>'+deductedNote+_extraNote+'<div style="font-size:9px;color:var(--t3);margin-top:1px">합계 ₩'+_dispTotal.toLocaleString()+'</div></td>';
       } else {
@@ -40118,52 +40118,53 @@ function _removeConsExtra(consId, ridx){
   openConsDetail(consId);
 }
 
-// ── 합본 청구서 "수정/추가 분" 단일 계산 함수 (SSOT) ─────────────────────────
-// 합본에는 두 종류의 조정이 있다:
-//   ① itemOverrides — 묶인 명세서 품목의 단가/수량/금액 수정 및 행 제외(_excluded)
-//   ② extraItems    — 추가/할인 행
-// 카드·목록·모달·문서 모든 화면이 이 함수 하나로 계산해 총합이 항상 일치하도록 한다.
-// 반환: { overrideDiff, extraTotal, adjTotal, finalCharge }
-//   adjTotal    = overrideDiff + extraTotal  (= 표시용 "수정/추가 분")
-//   finalCharge = chargeAmount + adjTotal     (= 실제 청구액)
+// ── 합본 청구서 조정액 계산 함수 (SSOT) ─────────────────────────
+// 합본 청구서의 조정은 오직 '추가/할인 행(extraItems)' 만으로 한다.
+//   → 묶인 명세서 품목의 단가/수량 개별 수정(itemOverrides)은 청구서 금액에 반영하지 않는다.
+//     (사용자 요청: 추가비용/할인만 표기. 품목 단가 수정 개념은 청구서에서 제외)
+// 반환: { overrideDiff, overrideDiffRaw, extraTotal, adjTotal, finalCharge }
+//   adjTotal    = extraTotal            (= 표시용 '추가/할인')
+//   finalCharge = chargeAmount + adjTotal
+//   overrideDiff는 항상 0 (표시 안 함). overrideDiffRaw는 진단용으로만 계산해 둔다.
 function calcConsAdjustment(cons){
   const base = +((cons && cons.chargeAmount)) || 0;
-  const out = { overrideDiff:0, extraTotal:0, adjTotal:0, finalCharge:base };
+  const out = { overrideDiff:0, overrideDiffRaw:0, extraTotal:0, adjTotal:0, finalCharge:base };
   if(!cons || !cons._isConsolidated) return out;
   const _hist = (typeof invoiceHistory!=='undefined' && Array.isArray(invoiceHistory)) ? invoiceHistory : [];
   const invs = (cons.includedInvoiceIds||[]).map(id =>
     _hist.find(v => !v._isConsolidated && String(v.id)===String(id))
   ).filter(Boolean);
   const overrides = (cons.itemOverrides && typeof cons.itemOverrides==='object') ? cons.itemOverrides : {};
-  // ① 단가/수량 수정 + 행 제외 차이 (품목별 원본 대비 — supplyAmt 오차에 의존하지 않음)
-  let overrideDiff = 0;
+  // (진단용) 단가/수량 수정 + 행 제외 차이 — 청구액에는 반영하지 않음
+  let overrideDiffRaw = 0;
   invs.forEach(inv => {
     const items = Array.isArray(inv.items) ? inv.items : [];
-    if(!items.length) return; // 품목 없는 명세서는 원본 supplyAmt 그대로 → 차이 0
+    if(!items.length) return;
     const ovInv = overrides[inv.id] || {};
     items.forEach((it, idx) => {
       const ov = ovInv[idx] || {};
       const origAmt = (it.amt != null && +it.amt !== 0)
         ? +it.amt
         : ((+it.qty||0) * (+it.unit || +it.unitPrice || 0));
-      if(ov._excluded){ overrideDiff -= origAmt; return; }        // 제외된 행 → 원본만큼 감액
-      if(ov.qty==null && ov.unit==null && ov.amt==null) return;   // 수정 없음
+      if(ov._excluded){ overrideDiffRaw -= origAmt; return; }
+      if(ov.qty==null && ov.unit==null && ov.amt==null) return;
       const q = ov.qty != null ? +ov.qty : (+it.qty||0);
       const u = ov.unit != null ? +ov.unit : (+it.unit || +it.unitPrice || 0);
       const curAmt = ov.amt != null ? +ov.amt : (q * u);
-      overrideDiff += (curAmt - origAmt);
+      overrideDiffRaw += (curAmt - origAmt);
     });
   });
-  // ② 추가/할인 행
+  // ② 추가/할인 행 — 이것만 청구서 조정액으로 반영
   const extraItems = Array.isArray(cons.extraItems) ? cons.extraItems : [];
   const extraTotal = extraItems.reduce((s,it)=>{
     const amt = (it.amt != null && +it.amt !== 0) ? +it.amt : ((+it.qty||0) * (+it.unit||0));
     return s + amt;
   }, 0);
-  out.overrideDiff = overrideDiff;
-  out.extraTotal   = extraTotal;
-  out.adjTotal     = overrideDiff + extraTotal;
-  out.finalCharge  = base + out.adjTotal;
+  out.overrideDiff    = 0;                 // 표시 안 함 (청구서에서 단가 수정 개념 제외)
+  out.overrideDiffRaw = overrideDiffRaw;   // 진단용 (콘솔 확인용)
+  out.extraTotal      = extraTotal;
+  out.adjTotal        = extraTotal;        // 추가/할인 행만
+  out.finalCharge     = base + extraTotal;
   return out;
 }
 
@@ -40485,22 +40486,16 @@ function openConsDetail(consId){
     body += '</div>';
   }
 
-  // 📌 수정/추가 분 — 단가 수정(itemOverrides) + 추가/할인 행을 공통 함수로 계산 (SSOT)
+  // 📌 조정액 — 추가/할인 행만 반영
   const _adj = calcConsAdjustment(cons);
-  const overrideDiff = _adj.overrideDiff;   // 단가/수량 수정 + 행 제외 차이
   const extraTotal   = _adj.extraTotal;     // 추가/할인 행 합
-  const finalCharge  = _adj.finalCharge;    // 실제 청구액
+  const finalCharge  = _adj.finalCharge;    // 실제 청구액 (= 합계금액 + 추가/할인)
   body += '<div style="display:flex;justify-content:flex-end;margin-bottom:14px"><div style="min-width:280px">';
   body += '<div style="display:flex;justify-content:space-between;padding:6px 12px;background:var(--s2);border-radius:5px 5px 0 0;border:1px solid var(--bdr)"><span style="font-size:12px">공급가액 합</span><span style="font-size:12px;font-weight:600">₩'+(+cons.supplyAmt||0).toLocaleString()+'</span></div>';
   body += '<div style="display:flex;justify-content:space-between;padding:6px 12px;background:var(--s2);border:1px solid var(--bdr);border-top:none"><span style="font-size:12px">부가세 합</span><span style="font-size:12px;color:var(--t3)">₩'+(+cons.tax||0).toLocaleString()+'</span></div>';
   body += '<div style="display:flex;justify-content:space-between;padding:6px 12px;background:var(--s2);border:1px solid var(--bdr);border-top:none"><span style="font-size:12px;font-weight:600">합계금액</span><span style="font-size:12px;font-weight:700">₩'+(+cons.total||0).toLocaleString()+'</span></div>';
   if((+cons.prepaidDeducted||0) > 0){
     body += '<div style="display:flex;justify-content:space-between;padding:6px 12px;background:rgba(122,77,181,.08);border:1px solid rgba(122,77,181,.25);border-top:none"><span style="font-size:12px;color:#7A4DB5;font-weight:600">선금 차감</span><span style="font-size:12px;color:#7A4DB5;font-weight:700">−₩'+(+cons.prepaidDeducted).toLocaleString()+'</span></div>';
-  }
-  if(overrideDiff !== 0){
-    const sign = overrideDiff >= 0 ? '+' : '−';
-    const c = overrideDiff >= 0 ? 'var(--gold-lt)' : 'var(--red)';
-    body += '<div style="display:flex;justify-content:space-between;padding:6px 12px;background:var(--gold-bg);border:1px solid var(--gold-line);border-top:none"><span style="font-size:12px;color:'+c+';font-weight:600" title="묶인 명세서 단가/수량 수정 · 행 제외 반영">단가 수정 분</span><span style="font-size:12px;color:'+c+';font-weight:700">'+sign+'₩'+Math.abs(overrideDiff).toLocaleString()+'</span></div>';
   }
   if(extraTotal !== 0){
     const sign = extraTotal >= 0 ? '+' : '−';
@@ -40683,7 +40678,8 @@ function printConsolidatedInvoice(consId){
     }
     return inv.issuedAt || '';
   };
-  // 📌 itemOverrides가 있으면 우선 적용 (합본 안에서 수정된 값)
+  // 📌 합본 청구서는 묶인 명세서의 '원본' 품목을 그대로 표시한다.
+  //    (합본 내 단가/수량 개별 수정값 itemOverrides는 청구서에 반영하지 않음 — 행 제외만 유지)
   const overrides = (cons.itemOverrides && typeof cons.itemOverrides === 'object') ? cons.itemOverrides : {};
   includedInvs.forEach(inv => {
     const items = Array.isArray(inv.items) ? inv.items : [];
@@ -40691,20 +40687,19 @@ function printConsolidatedInvoice(consId){
     if(items.length){
       items.forEach((it, idx) => {
         const ov = invOverrides[idx] || {};
-        // 📌 제외된 행은 PDF에서도 안 보임
+        // 📌 제외된 행은 PDF에서도 안 보임 (행 제외 기능은 유지)
         if(ov._excluded) return;
-        const qty = ov.qty != null ? +ov.qty : (+it.qty || 0);
-        const unitPrice = ov.unit != null ? +ov.unit : (+it.unit || +it.unitPrice || 0);
-        const amount = ov.amt != null
-          ? +ov.amt
-          : ((it.amt != null && +it.amt !== 0) ? +it.amt : qty * unitPrice);
+        // ⚠ 단가/수량/금액/이름 수정값은 무시 — 원본 명세서 값 사용
+        const qty = (+it.qty || 0);
+        const unitPrice = (+it.unit || +it.unitPrice || 0);
+        const amount = (it.amt != null && +it.amt !== 0) ? +it.amt : qty * unitPrice;
         flatItems.push({
-          name: ov.name != null ? ov.name : (it.name || it.itemName || '—'),
+          name: it.name || it.itemName || '—',
           qty: qty,
           unit: it.unit_label || it.unitLabel || 'EA',
           unitPrice: unitPrice,
           amount: amount,
-          note: ov.note != null ? ov.note : (it.note || ''),
+          note: it.note || '',
           ordNo: inv.ordNo || (inv._fromSample?'샘플':''),
           shipDate: _invShipDate(inv),
           isExtra: false,
@@ -40828,22 +40823,13 @@ function printConsolidatedInvoice(consId){
           <tr><td style="padding:6px 14px;border:1px solid #ddd;background:#F8F7F4;font-weight:700">합계금액</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;font-weight:700">₩${(+cons.total||0).toLocaleString()}</td></tr>
           ${(+cons.prepaidDeducted||0) > 0 ? `<tr><td style="padding:6px 14px;border:1px solid #ddd;background:#F5EBFF;color:#7A4DB5;font-weight:600">선금 차감</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;color:#7A4DB5;font-weight:700">−₩${(+cons.prepaidDeducted).toLocaleString()}</td></tr>` : ''}
           ${(function(){
-            // 📌 수정/추가 분을 두 줄로 분리 — '추가/할인'은 명세서에 보이는 [추가/할인] 행 합과 정확히 일치
+            // 📌 조정액은 '추가/할인' 행만 표기 (명세서에 보이는 [추가/할인] 행 합과 일치)
             const _a = calcConsAdjustment(cons);
-            let rows = '';
-            if(_a.overrideDiff !== 0){
-              const sign = _a.overrideDiff >= 0 ? '+' : '−';
-              const color = _a.overrideDiff >= 0 ? '#8B6914' : '#C03030';
-              const bg = _a.overrideDiff >= 0 ? '#FFF8E8' : '#FCEAEA';
-              rows += `<tr><td style="padding:6px 14px;border:1px solid #ddd;background:${bg};color:${color};font-weight:600">단가 수정 분</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;color:${color};font-weight:700">${sign}₩${Math.abs(_a.overrideDiff).toLocaleString()}</td></tr>`;
-            }
-            if(_a.extraTotal !== 0){
-              const sign = _a.extraTotal >= 0 ? '+' : '−';
-              const color = _a.extraTotal >= 0 ? '#8B6914' : '#C03030';
-              const bg = _a.extraTotal >= 0 ? '#FFF8E8' : '#FCEAEA';
-              rows += `<tr><td style="padding:6px 14px;border:1px solid #ddd;background:${bg};color:${color};font-weight:600">추가/할인</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;color:${color};font-weight:700">${sign}₩${Math.abs(_a.extraTotal).toLocaleString()}</td></tr>`;
-            }
-            return rows;
+            if(_a.extraTotal === 0) return '';
+            const sign = _a.extraTotal >= 0 ? '+' : '−';
+            const color = _a.extraTotal >= 0 ? '#8B6914' : '#C03030';
+            const bg = _a.extraTotal >= 0 ? '#FFF8E8' : '#FCEAEA';
+            return `<tr><td style="padding:6px 14px;border:1px solid #ddd;background:${bg};color:${color};font-weight:600">추가/할인</td><td style="padding:6px 14px;border:1px solid #ddd;text-align:right;color:${color};font-weight:700">${sign}₩${Math.abs(_a.extraTotal).toLocaleString()}</td></tr>`;
           })()}
           <tr style="background:#7A4DB5;color:#fff"><td style="padding:9px 14px;border:1.5px solid #5C3994;font-size:13pt;font-weight:700">실제 청구액</td><td style="padding:9px 14px;border:1.5px solid #5C3994;text-align:right;font-size:14pt;font-weight:700">₩${calcConsAdjustment(cons).finalCharge.toLocaleString()}</td></tr>
         </table>
