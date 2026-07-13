@@ -46477,15 +46477,48 @@ function arcFilter(f){
 }
 function arcSearch(v){ _arcSearch = (v||'').trim().toLowerCase(); _renderArchiveBody(); }
 
+// 📇 모든 기간의 지출 항목(COGS '지출내역')에서 첨부파일 pageId → {거래처, 금액} 전역 맵 구축
+//    (자료실 '전체' 뷰는 여러 기간 파일을 보여주므로, 현재 월 S.exp만으론 거래처를 못 채운다)
+var _arcExpVendorMap = null;
+async function _loadArcExpVendorMap(force){
+  if(_arcExpVendorMap && !force) return _arcExpVendorMap;
+  var map = {};
+  try{
+    if(typeof NOTION_COGS_DB!=='undefined' && NOTION_COGS_DB){
+      var cursor, guard=0;
+      do{
+        var body = {page_size:200};
+        if(cursor) body.start_cursor = cursor;
+        var resp = await fetch(NOTION_PROXY+'/databases/'+NOTION_COGS_DB+'/query',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify(body)});
+        if(!resp.ok) break;
+        var d = await resp.json();
+        (d.results||[]).forEach(function(p){
+          if(p.archived) return;
+          var pr=p.properties;
+          var getText=function(k){return pr[k]&&pr[k].rich_text&&pr[k].rich_text[0]?pr[k].rich_text[0].plain_text:'';};
+          if(getText('구분')!=='지출내역') return;
+          var vendor=getText('거래처'); var amt=pr['금액']?pr['금액'].number:0;
+          var _eb=getText('비고'); var _fm=_eb.match(/FILES:(\[.*\])\s*$/);
+          if(_fm){ try{ var _arr=JSON.parse(_fm[1]); if(Array.isArray(_arr)) _arr.forEach(function(o){ if(o && o.p) map[o.p]={vendor:vendor, amount:amt}; }); }catch(e){} }
+        });
+        cursor = d.has_more ? d.next_cursor : null; guard++;
+      }while(cursor && guard<10);
+    }
+  }catch(e){ console.warn('[arcExpVendorMap]', e.message); }
+  _arcExpVendorMap = map;
+  return map;
+}
+
 async function renderArchive(forceReload){
   var body = document.getElementById('arc-body');
   if(!body) return;
-  if(forceReload){ _boardLoaded.cn=false; _boardLoaded.exp=false; _arcLoaded=false; }
+  if(forceReload){ _boardLoaded.cn=false; _boardLoaded.exp=false; _arcLoaded=false; _arcExpVendorMap=null; }
   if(!_arcLoaded){
     body.innerHTML = '<div class="empty" style="padding:40px 24px"><div class="empty-ico">⏳</div><div style="font-size:12.5px;color:var(--mu)">전체 기간 자료를 불러오는 중…</div></div>';
     try{
       await loadBoardFiles('cn');
       await loadBoardFiles('exp');
+      await _loadArcExpVendorMap(forceReload);   // 모든 기간 거래처 맵
       _arcLoaded = true;
     }catch(e){ console.warn('자료실 로드 예외:', e.message); }
   }
@@ -46538,8 +46571,9 @@ function _arcBuildItems(){
   }
   // 2) 지출내역서 — 파일 1개 = 1행 (제목·금액은 연결된 지출 항목의 거래처/금액을 우선 사용)
   if(_arcFilter==='all' || _arcFilter==='exp'){
-    // S.exp 항목의 첨부 pageId → {vendor(거래처), amount(금액)} 매핑
-    var _expByFile = {};
+    // 전역 맵(모든 기간 COGS에서 미리 로드): 파일 pageId → {vendor(거래처), amount(금액)}
+    var _expByFile = (typeof _arcExpVendorMap!=='undefined' && _arcExpVendorMap) ? _arcExpVendorMap : {};
+    // 현재 로드된 S.exp도 보강(최신 반영)
     (S.exp||[]).forEach(function(e){
       (e.files||[]).forEach(function(ef){ if(ef && ef.pageId) _expByFile[ef.pageId] = {vendor:e.vendor||'', amount:(+e.amount||0)}; });
     });
