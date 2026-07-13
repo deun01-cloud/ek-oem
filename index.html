@@ -46628,7 +46628,7 @@ function _renderArchiveBody(){
       html += '<div class="arc-row arc-row-line">'
         + badge
         + '<span class="arc-title">'+(it.title||'').replace(/</g,'&lt;')+'</span>'
-        + (it.invNo?'<span class="arc-inv">#'+it.invNo+'</span>':'')
+        + (it.kind==='cn' ? '<span class="arc-inv" title="자동 생성 인보이스 번호">'+(_arcAutoInv(it)||'INV')+'</span>' : '')
         + '<span class="arc-fcell">'+fileCell+'</span>'
         + monthSel
         + '<span class="arc-up" title="입력일시">🕓 '+upDisp+'</span>'
@@ -46642,6 +46642,14 @@ function _renderArchiveBody(){
   if(stat) stat.textContent = items.length+'행 · 파일 '+fileCnt+'개 · '+won(totalKRW);
 }
 function _arcNum(n){ try{ return (Math.round((+n)*100)/100).toLocaleString(); }catch(e){ return n; } }
+
+// 🧾 자동 인보이스 번호 — 항목 날짜 기준 INV-MM/DD/YY (지저분한 인코딩 invNo 대체)
+function _arcAutoInv(it){
+  var d = (it.invDate || it.date || (it.uploadedAt||'').slice(0,10) || '');
+  var m = String(d).match(/(\d{4})-(\d{2})-(\d{2})/);
+  if(!m) return '';
+  return 'INV-'+m[2]+'/'+m[3]+'/'+m[1].slice(2);   // INV-MM/DD/YY
+}
 
 // 📅 자료실 항목 귀속월 select — 항목의 모든 첨부파일 월을 한 번에 바꾼다
 function _arcMonthSelect(cur, pids, kind){
