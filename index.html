@@ -7676,8 +7676,8 @@ window.addEventListener('message', function(ev){
   <div id="mAttach_drop" style="border:2px dashed var(--bd2);border-radius:12px;padding:30px 18px;text-align:center;background:var(--s2);cursor:pointer;transition:.15s"
        onclick="document.getElementById('mAttach_input').click()">
     <div style="font-size:34px;margin-bottom:8px">📥</div>
-    <div style="font-size:14px;font-weight:600;color:var(--t1)">여기로 파일을 끌어다 놓거나 클릭하세요</div>
-    <div style="font-size:11.5px;color:var(--hi);margin-top:5px">PDF · 이미지 · 엑셀 · 여러 개 한꺼번에 가능</div>
+    <div style="font-size:14px;font-weight:600;color:var(--t1)">여기로 파일을 끌어다 놓거나 클릭 · 붙여넣기(Ctrl+V)</div>
+    <div style="font-size:11.5px;color:var(--hi);margin-top:5px">PDF · 이미지 · 엑셀 · 여러 개 한꺼번에 가능 · 화면 캡처 붙여넣기 지원</div>
     <input type="file" id="mAttach_input" accept=".pdf,.png,.jpg,.jpeg,.webp,.xlsx,.xls" multiple style="display:none">
   </div>
   <div id="mAttach_list" style="margin-top:14px;display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto"></div>
@@ -21741,8 +21741,9 @@ function _verifyImageUrl(url, timeoutMs){
 }
 
 async function r2Upload(dataUrl, fileName, fileType){
-  // 🔧 영업자료(정상 작동)와 동일한 프록시 정규화 사용 — notion-proxy 계열이면 ek-proxy로 교정.
-  //    (설정된 workerUrl이 R2 바인딩 없는 프록시면 이미지가 깨져 검정화면이 됨)
+  // 🔧 영업자료/문서 업로드(_stR2Upload, 정상 작동)와 100% 동일한 경로 사용.
+  //    이전엔 25초 타임아웃 + 이미지 검증이 있었는데, 이것들이 정상 업로드를 끊거나
+  //    빈/느린 업로드를 죽은 URL로 저장하는 원인이 될 수 있어 제거하고 단순화한다.
   var _base = (function(){
     try{
       if(notionCfg && notionCfg.workerUrl && notionCfg.workerUrl.trim()){
@@ -21754,15 +21755,13 @@ async function r2Upload(dataUrl, fileName, fileType){
     return 'https://ek-proxy.deun01.workers.dev';
   })();
   if(!_base){ console.warn('[r2Upload] workerUrl 없음'); return null; }
-  // ⏱ 타임아웃: 서버가 응답 없이 매달리면 저장이 영영 막히므로 25초 후 중단
-  var _ac = (typeof AbortController!=='undefined') ? new AbortController() : null;
-  var _to = _ac ? setTimeout(function(){ try{_ac.abort();}catch(_){}}, 25000) : null;
   try{
-    // ⚠️ Worker는 body를 순수 base64로 디코드(atob)하므로 "data:...;base64," 접두어를 제거해야 함.
-    //    접두어를 그대로 보내면 이미지가 깨진다(영업자료 업로드는 이미 접두어를 제거해 정상 동작).
+    // Worker는 body를 순수 base64로 디코드(atob)하므로 "data:...;base64," 접두어 제거
     var _body = String(dataUrl||'');
     if(_body.indexOf('base64,')>=0) _body = _body.split('base64,')[1];
-    const res = await fetch(_base+'/r2/upload',{
+    // 🛡 빈 데이터 업로드 방지 — 빈 body를 올리면 워커가 key는 주지만 실제 파일이 비어 URL이 죽는다.
+    if(!_body || _body.length < 24){ console.warn('[r2Upload] 빈/비정상 body — 업로드 중단: '+fileName); return null; }
+    var res = await fetch(_base+'/r2/upload',{
       method:'POST',
       headers:{
         'Content-Type':'text/plain',
@@ -21770,49 +21769,18 @@ async function r2Upload(dataUrl, fileName, fileType){
         'X-File-Type': fileType||'image/jpeg',
         'X-Encoding':  'base64',
       },
-      body: _body,  // 순수 base64만 전송 (data: 접두어 제거)
-      signal: _ac ? _ac.signal : undefined
+      body: _body
     });
-    if(_to){ clearTimeout(_to); _to=null; }
     if(!res.ok){
-      const errText=await res.text().catch(()=>'');
-      console.warn(`[r2Upload] HTTP ${res.status} — ${fileName}: ${errText.slice(0,200)}`);
+      var errText = await res.text().catch(function(){return '';});
+      console.warn('[r2Upload] HTTP '+res.status+' — '+fileName+': '+errText.slice(0,200));
       return null;
     }
-    const d=await res.json();
-    // ✅ Worker는 {key, name, type, size}를 반환(success 필드가 없을 수 있음).
-    //    영업자료 업로드처럼 key 존재로 성공 판정한다. (success 요구 시 항상 실패했음)
-    if(!d || !d.key){
-      console.warn(`[r2Upload] 응답에 key 없음 — ${fileName}:`, d);
-      return null;
-    }
-    var _url = _base+'/r2/file/'+encodeURIComponent(d.key);
-    // 🖼 업로드 직후 URL이 실제 이미지로 로드되는지 검증(이미지 타입만).
-    //    검증 실패 시 null 반환 → 호출부가 base64 원본을 유지 → '검정화면' 대신 사진이 계속 보임.
-    var _isImg = /^image\//i.test(fileType||'') || /^image\//i.test(d.type||'');
-    if(_isImg){
-      var _ok = await _verifyImageUrl(_url, 8000);
-      if(!_ok){
-        // R2 반영 지연/캐시 대비 1회 재시도
-        await new Promise(function(r){ setTimeout(r, 1500); });
-        _ok = await _verifyImageUrl(_url, 8000);
-      }
-      if(!_ok){
-        // 📌 업로드는 성공(HTTP 200 + key)했으므로 URL을 그대로 저장한다.
-        //    검증은 일시적 지연으로 실패할 수 있고, base64 폴백은 '노션-우선 모드'에서
-        //    이미지JSON(http URL만 저장)에 담기지 않아 재로드 시 오히려 이미지가 사라진다.
-        //    진짜로 죽은 URL이면 화면의 onerror 폴백이 '재업로드 필요'로 안내한다.
-        console.warn('[r2Upload] 업로드 성공(key 수신)·즉시 검증 실패 → URL 저장 유지: '+fileName);
-      }
-    }
-    // Worker 경유 URL로 변환: base + /r2/file/key (업로드에 쓴 것과 동일 base)
-    return {key:d.key, url: _url, name:d.name, type:d.type, size:d.size};
-  }catch(e){
-    if(_to){ clearTimeout(_to); }
-    if(e && e.name==='AbortError'){ console.warn(`[r2Upload] 타임아웃(25s) — ${fileName}`); }
-    else { console.warn(`[r2Upload] 네트워크 오류 — ${fileName}:`, e.message); }
-    return null;
-  }
+    var d = await res.json();
+    // Worker는 {key, name, type, size} 반환 — key 존재로 성공 판정 (영업자료와 동일)
+    if(!d || !d.key){ console.warn('[r2Upload] 응답에 key 없음 — '+fileName, d); return null; }
+    return { key:d.key, url:_base+'/r2/file/'+encodeURIComponent(d.key), name:d.name, type:d.type, size:d.size };
+  }catch(e){ console.warn('[r2Upload] 예외 — '+fileName+':', e && e.message); return null; }
 }
 
 // R2 파일 삭제
@@ -46263,9 +46231,27 @@ function openAttachModal(kind, ref){
     dz.ondragleave=function(){ dz.style.borderColor='var(--bd2)'; dz.style.background='var(--s2)'; };
     dz.ondrop=function(e){ e.preventDefault(); dz.style.borderColor='var(--bd2)'; dz.style.background='var(--s2)'; if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length) _attachUploadFiles(e.dataTransfer.files); };
   }
+  // 📋 붙여넣기(Ctrl+V) 지원 — 클립보드 이미지/파일을 현재 항목에 바로 첨부
+  try{ if(window._attachPasteHandler) document.removeEventListener('paste', window._attachPasteHandler); }catch(e){}
+  window._attachPasteHandler = function(e){
+    if(!_attachTarget) return;
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    var files = [];
+    for(var i=0;i<items.length;i++){
+      if(items[i].kind==='file'){
+        var f=items[i].getAsFile();
+        if(f){
+          if(!f.name){ try{ var ext=((f.type||'image/png').split('/')[1]||'png'); f=new File([f], '붙여넣기_'+Date.now()+'.'+ext, {type:f.type||'image/png'}); }catch(_){ } }
+          files.push(f);
+        }
+      }
+    }
+    if(files.length){ e.preventDefault(); _attachUploadFiles(files); }
+  };
+  document.addEventListener('paste', window._attachPasteHandler);
   openM('mAttach');
 }
-function closeAttach(){ closeM('mAttach'); _attachTarget=null; }
+function closeAttach(){ closeM('mAttach'); _attachTarget=null; try{ if(window._attachPasteHandler){ document.removeEventListener('paste', window._attachPasteHandler); window._attachPasteHandler=null; } }catch(e){} }
 // 현재 항목에 이미 붙은 파일 목록 표시 (삭제 가능)
 function _renderAttachExisting(){
   var listEl=document.getElementById('mAttach_list'); if(!listEl||!_attachTarget) return;
@@ -46503,6 +46489,15 @@ async function renderArchive(forceReload){
       _arcLoaded = true;
     }catch(e){ console.warn('자료실 로드 예외:', e.message); }
   }
+  // 📌 현재 월의 지출 항목(S.exp)을 로드해 두면 자료실에서도 파일 대신 '거래처' 제목이 표시된다.
+  try{
+    var _per = (document.getElementById('g-period')||{}).value||'';
+    window._fpPeriodTried = window._fpPeriodTried || {};
+    if(_per && !window._fpPeriodTried[_per] && typeof loadPeriodFromNotion==='function'){
+      window._fpPeriodTried[_per] = true;
+      loadPeriodFromNotion(_per, true).then(function(){ _renderArchiveBody(); }).catch(function(){});
+    }
+  }catch(e){}
   _renderArchiveBody();
 }
 
@@ -46541,18 +46536,24 @@ function _arcBuildItems(){
       }));
     });
   }
-  // 2) 지출내역서 — 파일 1개 = 1행
+  // 2) 지출내역서 — 파일 1개 = 1행 (제목·금액은 연결된 지출 항목의 거래처/금액을 우선 사용)
   if(_arcFilter==='all' || _arcFilter==='exp'){
+    // S.exp 항목의 첨부 pageId → {vendor(거래처), amount(금액)} 매핑
+    var _expByFile = {};
+    (S.exp||[]).forEach(function(e){
+      (e.files||[]).forEach(function(ef){ if(ef && ef.pageId) _expByFile[ef.pageId] = {vendor:e.vendor||'', amount:(+e.amount||0)}; });
+    });
     (_board.exp||[]).forEach(function(f){
       var file = (f.url||f.pageUrl) ? {name:f.name||'지출내역서', url:f.url||f.pageUrl, type:f.type||'', uploadedAt:f.uploadedAt||'', pageId:f.pageId||'', kind:'exp'} : null;
+      var _lk = (f.pageId && _expByFile[f.pageId]) ? _expByFile[f.pageId] : null;
       out.push({
         kind:'exp',
         period: f.period || (f.uploadedAt||'').slice(0,7) || '',
-        title: f.vendor || f.name || '지출내역서',
+        title: (_lk && _lk.vendor) ? _lk.vendor : (f.vendor || f.name || '지출내역'),
         invNo:'',
         date: (f.uploadedAt||'').slice(0,10) || '',
         uploadedAt: f.uploadedAt||'',
-        usd:0, krw: f.krw||0,
+        usd:0, krw: _lk ? (_lk.amount||0) : (f.krw||0),
         file: file,
         files: file ? [file] : []
       });
@@ -46622,9 +46623,8 @@ function _renderArchiveBody(){
       if(arcFiles.length){
         fileCell = '<span class="arc-fgroup">' + arcFiles.map(function(f){
           var fnm = f.name||'파일';
-          var fdisp = fnm.length>14 ? fnm.slice(0,12)+'…' : fnm;
           var fico = /\.pdf$/i.test(fnm)?'📄':(/\.(png|jpe?g|webp|gif)$/i.test(fnm)?'🖼️':(/\.(xlsx|xls)$/i.test(fnm)?'📊':'📎'));
-          var pv = '<a class="arc-file" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url)+'\',\''+encodeURIComponent(fnm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+fnm.replace(/"/g,'&quot;')+' 미리보기">'+fico+' '+fdisp+'</a>';
+          var pv = '<a class="arc-file" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url)+'\',\''+encodeURIComponent(fnm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+fnm.replace(/"/g,'&quot;')+' — 클릭하여 미리보기" style="font-size:15px;text-decoration:none">'+fico+'</a>';
           var dl = '<button class="arc-dl arc-dl-sm" onclick="MGT.arcDownload(\''+encodeURIComponent(f.url)+'\',\''+encodeURIComponent(fnm)+'\')" title="다운로드">⬇</button>';
           var del = f.pageId ? '<button class="arc-dl arc-del arc-dl-sm" onclick="MGT.arcDeleteFile(\''+f.pageId+'\',\''+(f.kind||it.kind||'')+'\')" title="삭제">🗑️</button>' : '';
           return '<span class="arc-fitem">'+pv+dl+del+'</span>';
