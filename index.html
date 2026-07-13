@@ -46611,7 +46611,7 @@ function _renderArchiveBody(){
       if(arcFiles.length){
         fileCell = '<span class="arc-fgroup">' + arcFiles.map(function(f){
           var fnm = f.name||'파일';
-          var fdisp = fnm.length>26 ? fnm.slice(0,24)+'…' : fnm;
+          var fdisp = fnm.length>14 ? fnm.slice(0,12)+'…' : fnm;
           var fico = /\.pdf$/i.test(fnm)?'📄':(/\.(png|jpe?g|webp|gif)$/i.test(fnm)?'🖼️':(/\.(xlsx|xls)$/i.test(fnm)?'📊':'📎'));
           var pv = '<a class="arc-file" onclick="MGT.previewInvoiceFile(\''+encodeURIComponent(f.url)+'\',\''+encodeURIComponent(fnm)+'\',\''+encodeURIComponent(f.type||'')+'\')" title="'+fnm.replace(/"/g,'&quot;')+' 미리보기">'+fico+' '+fdisp+'</a>';
           var dl = '<button class="arc-dl arc-dl-sm" onclick="MGT.arcDownload(\''+encodeURIComponent(f.url)+'\',\''+encodeURIComponent(fnm)+'\')" title="다운로드">⬇</button>';
@@ -46622,13 +46622,18 @@ function _renderArchiveBody(){
         fileCell = '<span style="font-size:11.5px;color:var(--mu)">첨부 없음</span>';
       }
 
+      var _pids = arcFiles.map(function(f){return f.pageId;}).filter(Boolean).join(',');
+      var monthSel = _arcMonthSelect(it.period, _pids, it.kind);
+      var itemDel = _pids ? '<button class="arc-item-del" onclick="MGT.arcDeleteItem(\''+_pids+'\',\''+(it.kind||'')+'\')" title="이 항목(첨부 전체) 삭제" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:14px;padding:0 3px">🗑️</button>' : '';
       html += '<div class="arc-row arc-row-line">'
         + badge
         + '<span class="arc-title">'+(it.title||'').replace(/</g,'&lt;')+'</span>'
         + (it.invNo?'<span class="arc-inv">#'+it.invNo+'</span>':'')
         + '<span class="arc-fcell">'+fileCell+'</span>'
+        + monthSel
         + '<span class="arc-up" title="입력일시">🕓 '+upDisp+'</span>'
         + '<span class="arc-amt">'+amt+'</span>'
+        + itemDel
         + '</div>';
     });
     html += '</div>';
@@ -46637,6 +46642,68 @@ function _renderArchiveBody(){
   if(stat) stat.textContent = items.length+'행 · 파일 '+fileCnt+'개 · '+won(totalKRW);
 }
 function _arcNum(n){ try{ return (Math.round((+n)*100)/100).toLocaleString(); }catch(e){ return n; } }
+
+// 📅 자료실 항목 귀속월 select — 항목의 모든 첨부파일 월을 한 번에 바꾼다
+function _arcMonthSelect(cur, pids, kind){
+  if(!pids) return '';
+  cur = cur||'';
+  var opts = (typeof _monthOptionSet==='function') ? _monthOptionSet(cur,'') : [cur].filter(Boolean);
+  var h = '<select class="arc-month-sel" onchange="MGT.arcChangeItemMonth(\''+pids+'\',this.value,\''+(kind||'')+'\')" title="귀속월(매입월) 변경" onclick="event.stopPropagation()" style="font-size:10.5px;border:1px solid var(--bd2);border-radius:5px;padding:2px 4px;background:var(--s2);font-family:inherit;color:var(--t2);max-width:120px;cursor:pointer">';
+  if(!cur) h += '<option value="" selected>귀속월?</option>';
+  opts.forEach(function(m){ h += '<option value="'+m+'"'+(m===cur?' selected':'')+'>📅 '+m+'</option>'; });
+  h += '</select>';
+  return h;
+}
+// 항목(첨부 전체)의 귀속월 일괄 변경 — 노션 '기간' 패치 + 로컬 반영
+async function arcChangeItemMonth(pids, newMonth, kind){
+  if(!pids || !newMonth) return;
+  var ids = pids.split(',').filter(Boolean);
+  var boards = kind ? [kind] : ['cn','exp'];
+  var okN = 0;
+  for(var i=0;i<ids.length;i++){
+    var pageId = ids[i];
+    try{
+      var resp = await fetch(NOTION_PROXY+'/pages/'+pageId,{
+        method:'PATCH',
+        headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},
+        body: JSON.stringify({properties:{'기간':{rich_text:[{text:{content:newMonth}}]}}})
+      });
+      if(resp.ok){
+        okN++;
+        for(var bi=0; bi<boards.length; bi++){
+          var f=(_board[boards[bi]]||[]).find(function(x){return x.pageId===pageId;});
+          if(f){ f.period = newMonth; break; }
+        }
+      }
+    }catch(e){ console.warn('[arcChangeItemMonth]', e.message); }
+  }
+  _renderArchiveBody();
+  if(typeof toast==='function') toast(okN? ('✓ 귀속월 변경 → '+newMonth) : '⚠ 귀속월 변경 실패', okN?'ok':'err');
+}
+// 항목(인보이스/지출) 전체 삭제 — 묶인 첨부파일 모두 삭제
+async function arcDeleteItem(pids, kind){
+  if(!pids) return;
+  var ids = pids.split(',').filter(Boolean);
+  if(!ids.length) return;
+  if(!confirm('이 항목의 첨부파일 '+ids.length+'개를 모두 삭제할까요?\n(원본 파일 + 기록 모두 삭제됩니다 · 되돌릴 수 없음)')) return;
+  var boards = kind ? [kind] : ['cn','exp'];
+  var okN = 0;
+  for(var i=0;i<ids.length;i++){
+    var pageId = ids[i];
+    try{
+      var ok = await deleteFileMeta(pageId);
+      if(!ok) continue;
+      okN++;
+      for(var bi=0; bi<boards.length; bi++){
+        var bt=boards[bi];
+        var f=(_board[bt]||[]).find(function(x){return x.pageId===pageId;});
+        if(f){ if(f.r2key){ try{ await deleteFileFromR2(f.r2key); }catch(e){} } _board[bt]=(_board[bt]||[]).filter(function(x){return x.pageId!==pageId;}); break; }
+      }
+    }catch(e){ console.warn('[arcDeleteItem]', e.message); }
+  }
+  _renderArchiveBody();
+  if(typeof toast==='function') toast(okN? ('🗑 항목 삭제 완료 ('+okN+'건)') : '삭제 실패', okN?'ok':'err');
+}
 
 // 🗑️ 자료실에서 파일 삭제 — 해당 파일이 속한 보드(cn/exp)에서 찾아 노션·R2 기록까지 삭제
 async function arcDeleteFile(pageId, kind){
@@ -50530,6 +50597,8 @@ return {
   arcAddManual: (typeof arcAddManual!=="undefined"?arcAddManual:undefined),
   arcDownload: (typeof arcDownload!=="undefined"?arcDownload:undefined),
   arcDeleteFile: (typeof arcDeleteFile!=="undefined"?arcDeleteFile:undefined),
+  arcChangeItemMonth: (typeof arcChangeItemMonth!=="undefined"?arcChangeItemMonth:undefined),
+  arcDeleteItem: (typeof arcDeleteItem!=="undefined"?arcDeleteItem:undefined),
   saveUsdRate: (typeof saveUsdRate!=="undefined"?saveUsdRate:undefined),
   restoreUsdRate: (typeof restoreUsdRate!=="undefined"?restoreUsdRate:undefined),
   addManualInvoice: (typeof addManualInvoice!=="undefined"?addManualInvoice:undefined),
