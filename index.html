@@ -44948,6 +44948,17 @@ function renderBoard(forceReload){
   var wrapE = document.getElementById('board-body-exp');
   var wrapC = document.getElementById('board-body-cn');
   if(!wrapE && !wrapC) return;
+  // 📌 지출내역서 '항목'(S.exp)은 파일과 별개로 노션 COGS에서 로드된다.
+  //    이 보드를 열 때 해당 월 항목이 아직 로드되지 않았으면 함께 불러온다 (파일만 보이던 문제 해결).
+  try{
+    var _per = (document.getElementById('g-period')||{}).value||'';
+    window._fpPeriodTried = window._fpPeriodTried || {};
+    if(forceReload && _per) delete window._fpPeriodTried[_per];
+    if(_per && !window._fpPeriodTried[_per] && typeof loadPeriodFromNotion==='function'){
+      window._fpPeriodTried[_per] = true;
+      loadPeriodFromNotion(_per, true).then(function(){ _renderBoardRows(); }).catch(function(){});
+    }
+  }catch(e){}
   var needExp = forceReload || !_boardLoaded['exp'];
   var needCn  = forceReload || !_boardLoaded['cn'];
   if(needExp && wrapE) wrapE.innerHTML = '<div class="empty" style="padding:16px"><div class="empty-ico">⏳</div><div style="font-size:12px;color:var(--mu)">불러오는 중...</div></div>';
