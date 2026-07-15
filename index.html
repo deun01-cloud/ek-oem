@@ -11915,23 +11915,19 @@ function saveProduct(){
   //   - 수정 모드: 즉시 저장(현재 이미지 그대로) → 백그라운드로 R2 업로드 후 URL 교체 재저장.
   //   - 신규 모드: 노션 등록이 필요하므로 doSaveProduct 내부에서 처리하되, 업로드 실패 시에도 진행.
   var _needUpload = notionCfg.workerUrl && pdImgBuf.some(function(img){ return img.url && img.url.startsWith('data:'); });
-  if(_needUpload && id){
-    // 수정 모드 — 먼저 즉시 저장(먹통 방지), 이미지는 백그라운드 업로드
-    doSaveProduct(obj.imgs);
-    showToast('🔄 이미지는 백그라운드로 업로드됩니다','var(--blu)',2500);
-    uploadImagesToR2([...(obj.imgs||[])]).then(function(uploaded){
-      try{
-        var i=productDB.findIndex(function(x){return x.id==id;});
-        if(i>=0){ productDB[i].imgs=uploaded; if(typeof save==='function') save();
-          if(productDB[i]._notionId && typeof debouncedSync==='function') debouncedSync('product', productDB[i], true);
-        }
-      }catch(e){ console.warn('[제품저장] 백그라운드 이미지 반영 실패:', e && e.message); }
-    }).catch(function(err){ console.warn('[제품저장] 백그라운드 업로드 실패(로컬 유지):', err && err.message); });
-  } else if(_needUpload){
-    // 신규 모드 — 업로드 시도 후 저장, 실패해도 로컬 저장으로 진행
+  if(_needUpload){
+    // 신규·수정 공통 — 업로드를 먼저 끝내고 저장한다.
+    //   (수정 모드에서 '먼저 저장 → 백그라운드 업로드'로 하면, 노션에는 base64가 걸러진
+    //    '이미지 없음' 상태가 먼저 저장되어 새로고침 시 사진이 사라졌다.)
     showToast('🔄 이미지 업로드 중...','var(--blu)',2000);
     uploadImagesToR2([...pdImgBuf])
-      .then(function(uploaded){ doSaveProduct(uploaded); })
+      .then(function(uploaded){
+        var _b64N = (uploaded||[]).filter(function(m){ return m && typeof m.url==='string' && m.url.startsWith('data:'); }).length;
+        if(_b64N > 0){
+          showToast('⚠ 이미지 '+_b64N+'장이 R2에 업로드되지 않았습니다 — 새로고침 시 사라질 수 있어요. 콘솔(F12)의 [r2Upload] 오류를 확인하세요','var(--red)',7000);
+        }
+        doSaveProduct(uploaded);
+      })
       .catch(function(err){
         console.warn('[제품저장] 이미지 업로드 실패, 로컬 저장으로 진행:', err && err.message);
         showToast('⚠ 이미지 업로드 실패 — 로컬에 저장합니다','var(--red)',4000);
