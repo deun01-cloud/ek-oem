@@ -23217,6 +23217,14 @@ async function syncProductToNotion(pd, update){
     } catch(e){ return '[]'; }
   };
   const imgsJson = _safeImgJson(pd.imgs);
+  // 🛡 이미지 보호 — 로컬 이미지가 전부 base64(=R2 미업로드)면 이미지JSON을 건드리지 않는다.
+  //    (이 필드는 http URL만 저장하므로 그대로 보내면 '[]'가 되어 노션의 기존 사진이 지워지고,
+  //     노션-우선 모드에서 다시 로드하면 제품DB 사진까지 사라진다.
+  //     예: 견적서 저장 → 단가 갱신 동기화 과정에서 사진 유실)
+  //    · 사진을 실제로 모두 지운 경우(pd.imgs가 빈 배열)에는 정상적으로 '[]'를 저장한다.
+  const _imgArr = Array.isArray(pd.imgs) ? pd.imgs : [];
+  const _hasHttp = _imgArr.some(im => im && im.url && /^https?:\/\//.test(im.url));
+  const _skipImgField = (_imgArr.length > 0 && !_hasHttp);
   const p={
     "품목코드":{"title":[{"text":{"content":pd.code||''}}]},
     "품목명":{"rich_text":[{"text":{"content":pd.name||''}}]},
@@ -23237,8 +23245,12 @@ async function syncProductToNotion(pd, update){
     "안전재고":{"number":+pd.safetyStock||0},
     "중량":{"number":+pd.weight||0},
   };
-  if(pd.type)    p["유형"]={"select":{"name":pd.type}};
-  if(pd.mat)     p["소재"]={"select":{"name":pd.mat}};
+  // 🛡 base64-only 이미지면 이미지JSON을 payload에서 제외 → 노션의 기존 사진 보존
+  if(_skipImgField){
+    delete p["이미지JSON"];
+    console.warn('[제품sync] 로컬 이미지가 R2 미업로드(base64) 상태 — 노션 이미지 필드를 건드리지 않음:', pd.code||pd.name||'');
+  }
+  if(pd.type)    p["유형"]={"select":{"name":pd.type}};  if(pd.mat)     p["소재"]={"select":{"name":pd.mat}};
   if(pd.plating) p["도금"]={"select":{"name":pd.plating}};
   if(pd.createdDate)  p["최초등록일"]={"date":{"start":pd.createdDate}};
   if(pd.lastModified) p["최종수정일"]={"date":{"start":pd.lastModified}};
