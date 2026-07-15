@@ -37538,10 +37538,73 @@ async function vaultUnlock(){
 }
 function vaultLock(){ _vaultCK=null; _vaultData=null; _vaultShow={}; vVault(document.getElementById('vault-body')); }
 function vaultToggleShow(id){ _vaultShow[id] = !_vaultShow[id]; _vaultRenderList(); }
-async function vaultAdd(){
-  var it = {id:'v'+Date.now()+Math.random().toString(36).slice(2,6), site:'', url:'', user:'', pw:'', memo:'', at:new Date().toISOString()};
+async function vaultAdd(company){
+  var it = {id:'v'+Date.now()+Math.random().toString(36).slice(2,6),
+            company:(company||''), site:'', url:'', user:'', pw:'', memo:'', at:new Date().toISOString()};
   _vaultData.push(it); await _vaultSave(); _vaultRenderList();
   setTimeout(function(){ var el=document.getElementById('vf-site-'+it.id); if(el) el.focus(); },0);
+}
+// 📥 엑셀 일괄 가져오기 — 컬럼: 회사명 · 브랜드명 · 접속주소 · ID · PW · 비고
+async function vaultImportXlsx(inp){
+  var f = inp.files && inp.files[0]; if(!f) return;
+  try{
+    var ab = await f.arrayBuffer();
+    var wb = XLSX.read(ab, {type:'array'});
+    var added = 0, sheets = 0;
+    for(var si=0; si<wb.SheetNames.length; si++){
+      var rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[si]], {header:1, defval:''});
+      // 헤더 행 찾기 — 제목 행("COMMERCE 로그인 ID & PW")이 오인되지 않도록
+      //  · 셀 '단위'로 ID/PW가 정확히 있는지 확인 (문장 안에 포함된 경우 제외)
+      var hi = -1;
+      for(var i=0;i<Math.min(rows.length,20);i++){
+        var cells = (rows[i]||[]).map(function(c){ return String(c||'').replace(/\s/g,'').toUpperCase(); });
+        var hasId = cells.some(function(c){ return c==='ID' || c==='아이디' || c==='계정'; });
+        var hasPw = cells.some(function(c){ return c==='PW' || c==='비밀번호' || c==='패스워드'; });
+        if(hasId && hasPw){ hi=i; break; }
+      }
+      if(hi<0) continue;
+      sheets++;
+      var hdr = rows[hi].map(function(c){ return String(c||'').replace(/\s/g,''); });
+      var find = function(names){
+        for(var k=0;k<names.length;k++){
+          var j = hdr.findIndex(function(h){ return h === names[k]; });
+          if(j>=0) return j;
+        }
+        for(var k2=0;k2<names.length;k2++){
+          var j2 = hdr.findIndex(function(h){ return h && h.indexOf(names[k2])>=0; });
+          if(j2>=0) return j2;
+        }
+        return -1;
+      };
+      var cCo=find(['회사명','회사']), cBr=find(['브랜드명','브랜드','서비스','사이트']),
+          cUrl=find(['접속주소','주소','URL','링크']), cId=find(['ID','아이디','계정']),
+          cPw=find(['PW','비밀번호','패스워드']), cMemo=find(['비고','메모']);
+      var lastCo = '';
+      for(var r=hi+1; r<rows.length; r++){
+        var row = rows[r]; if(!row) continue;
+        var co = cCo>=0 ? String(row[cCo]||'').trim() : '';
+        if(co) lastCo = co; else co = lastCo;                    // 병합셀(회사명) 이어받기
+        var site = cBr>=0 ? String(row[cBr]||'').trim() : '';
+        var user = cId>=0 ? String(row[cId]||'').trim() : '';
+        var pw   = cPw>=0 ? String(row[cPw]||'').trim() : '';
+        if(!site && !user && !pw) continue;                      // 빈 줄 스킵
+        _vaultData.push({
+          id:'v'+Date.now()+Math.random().toString(36).slice(2,6),
+          company: co, site: site,
+          url: cUrl>=0 ? String(row[cUrl]||'').trim() : '',
+          user: user, pw: pw,
+          memo: cMemo>=0 ? String(row[cMemo]||'').trim() : '',
+          at: new Date().toISOString()
+        });
+        added++;
+      }
+    }
+    if(!added){ alert('가져올 로그인 정보를 찾지 못했습니다.\n엑셀에 ID·PW 컬럼이 있는지 확인해 주세요.'); return; }
+    await _vaultSave();
+    _vaultRenderList();
+    if(typeof showToast==='function') showToast('📥 '+added+'건 가져왔습니다 (시트 '+sheets+'개) — 암호화 저장됨','var(--grn)',4000);
+  }catch(e){ console.warn('[금고 엑셀]', e); alert('엑셀을 읽지 못했습니다: '+(e&&e.message||'')); }
+  finally{ inp.value=''; }
 }
 async function vaultEdit(id, field, val){
   var it = (_vaultData||[]).find(function(x){return x.id===id;}); if(!it) return;
@@ -37552,6 +37615,16 @@ async function vaultDel(id){
   if(!confirm('"'+((it&&it.site)||'이 항목')+'" 로그인 정보를 삭제할까요?')) return;
   _vaultData = _vaultData.filter(function(x){return x.id!==id;});
   await _vaultSave(); _vaultRenderList();
+}
+// 🏢 회사(그룹) 변경
+async function vaultMove(id){
+  var it = (_vaultData||[]).find(function(x){return x.id===id;}); if(!it) return;
+  var cur = it.company||'';
+  var v = prompt('이 항목의 회사명을 입력하세요 (그룹으로 묶입니다)', cur);
+  if(v===null) return;
+  it.company = v.trim();
+  await _vaultSave();
+  _vaultRenderList();
 }
 function vaultCopy(id, field){
   var it = (_vaultData||[]).find(function(x){return x.id===id;}); if(!it) return;
@@ -37619,8 +37692,11 @@ function vVault(c){
   }
   c.innerHTML = '<div class="card">'
     + '<div class="card-h"><div class="card-h-t">🔑 로그인 정보 <span id="vlt-cnt" style="font-size:11.5px;color:var(--t3);font-weight:400;margin-left:6px"></span></div>'
-    + '<div style="margin-left:auto;display:flex;gap:6px">'
+    + '<div style="margin-left:auto;display:flex;gap:6px;align-items:center">'
+    +   '<input id="vlt-search" placeholder="🔍 회사·브랜드·ID 검색" oninput="_vaultRenderList()" style="padding:5px 9px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:12px;width:180px">'
     +   '<button class="btn btn-primary btn-sm" onclick="vaultAdd()">+ 추가</button>'
+    +   '<button class="btn btn-sm" onclick="document.getElementById(\'vlt-xlsx\').click()" title="엑셀(회사명·브랜드명·접속주소·ID·PW·비고)에서 한 번에 가져오기">📥 엑셀 가져오기</button>'
+    +   '<input type="file" id="vlt-xlsx" accept=".xlsx,.xls,.csv" style="display:none" onchange="vaultImportXlsx(this)">'
     +   '<button class="btn btn-sm" onclick="vaultExport()" title="암호화된 백업 파일 저장">⬇ 백업</button>'
     +   '<button class="btn btn-sm" onclick="vaultLock()" title="잠그기">🔒 잠금</button>'
     + '</div></div>'
@@ -37632,24 +37708,54 @@ function _vaultRenderList(){
   var el = document.getElementById('vlt-list'); if(!el) return;
   var cnt = document.getElementById('vlt-cnt'); if(cnt) cnt.textContent = (_vaultData||[]).length+'개';
   if(!(_vaultData||[]).length){
-    el.innerHTML = '<div style="padding:36px;text-align:center;color:var(--t3)"><div style="font-size:28px;margin-bottom:8px">🔑</div><div style="font-size:13px">저장된 로그인 정보가 없습니다</div><div style="font-size:11.5px;margin-top:3px">+ 추가 를 눌러 사이트·아이디·비밀번호를 등록하세요</div></div>';
+    el.innerHTML = '<div style="padding:36px;text-align:center;color:var(--t3)"><div style="font-size:28px;margin-bottom:8px">🔑</div><div style="font-size:13px">저장된 로그인 정보가 없습니다</div><div style="font-size:11.5px;margin-top:3px">[+ 추가]로 직접 입력하거나 [📥 엑셀 가져오기]로 한 번에 등록하세요</div></div>';
     return;
   }
-  el.innerHTML = '<div style="display:grid;grid-template-columns:1.1fr 1.1fr 1.2fr 1fr 74px;gap:8px;padding:6px 4px;font-size:10.5px;color:var(--t3);font-weight:600">'
-    + '<span>사이트/서비스</span><span>아이디</span><span>비밀번호</span><span>메모</span><span></span></div>'
-    + _vaultData.map(function(it){
-        var show = !!_vaultShow[it.id];
-        return '<div style="display:grid;grid-template-columns:1.1fr 1.1fr 1.2fr 1fr 74px;gap:8px;align-items:center;padding:6px 4px;border-top:1px solid var(--bdr)">'
-        + '<input class="fi" id="vf-site-'+it.id+'" value="'+_stEsc(it.site||'')+'" placeholder="예: 카페24" onchange="vaultEdit(\''+it.id+'\',\'site\',this.value)" style="font-size:12.5px">'
-        + '<div style="display:flex;gap:3px"><input class="fi" value="'+_stEsc(it.user||'')+'" placeholder="아이디" onchange="vaultEdit(\''+it.id+'\',\'user\',this.value)" style="font-size:12.5px">'
-        +   '<button class="btn btn-sm" onclick="vaultCopy(\''+it.id+'\',\'user\')" title="복사">📋</button></div>'
-        + '<div style="display:flex;gap:3px"><input class="fi" type="'+(show?'text':'password')+'" value="'+_stEsc(it.pw||'')+'" placeholder="비밀번호" onchange="vaultEdit(\''+it.id+'\',\'pw\',this.value)" style="font-size:12.5px">'
-        +   '<button class="btn btn-sm" onclick="vaultToggleShow(\''+it.id+'\')" title="'+(show?'가리기':'보기')+'">'+(show?'🙈':'👁')+'</button>'
-        +   '<button class="btn btn-sm" onclick="vaultCopy(\''+it.id+'\',\'pw\')" title="복사">📋</button></div>'
-        + '<input class="fi" value="'+_stEsc(it.memo||'')+'" placeholder="메모·URL" onchange="vaultEdit(\''+it.id+'\',\'memo\',this.value)" style="font-size:12.5px">'
-        + '<div style="text-align:right"><button class="btn btn-sm" onclick="vaultDel(\''+it.id+'\')" title="삭제" style="color:var(--red)">🗑</button></div>'
-        + '</div>';
-      }).join('');
+  var q = ((document.getElementById('vlt-search')||{}).value||'').trim().toLowerCase();
+  var list = _vaultData.filter(function(it){
+    if(!q) return true;
+    return [it.company,it.site,it.url,it.user,it.memo].some(function(v){ return String(v||'').toLowerCase().indexOf(q)>=0; });
+  });
+  // 회사명으로 그룹 (엑셀과 동일한 구조)
+  var groups = [], gmap = {};
+  list.forEach(function(it){
+    var k = (it.company||'').trim() || '(회사 미지정)';
+    if(!gmap[k]){ gmap[k] = []; groups.push(k); }
+    gmap[k].push(it);
+  });
+  var GRID = 'grid-template-columns:1.1fr 1.5fr 1fr 1fr 1.1fr 74px;gap:8px';
+  el.innerHTML = groups.map(function(g){
+    return '<div style="margin-bottom:16px">'
+      + '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px 6px 0 0">'
+      +   '<span style="font-size:12.5px;font-weight:800;color:var(--t1)">🏢 '+_stEsc(g)+'</span>'
+      +   '<span style="font-size:10.5px;color:var(--t3)">'+gmap[g].length+'개</span>'
+      +   '<button class="btn btn-sm" style="margin-left:auto" onclick="vaultAdd(\''+_stEsc(g==='(회사 미지정)'?'':g).replace(/'/g,"\\'")+'\')">+ 행 추가</button>'
+      + '</div>'
+      + '<div style="border:1px solid var(--bdr);border-top:none;border-radius:0 0 6px 6px;padding:6px 8px 8px">'
+      + '<div style="display:grid;'+GRID+';padding:4px 2px;font-size:10px;color:var(--t3);font-weight:700">'
+      +   '<span>브랜드명/서비스</span><span>접속 주소</span><span>ID</span><span>PW</span><span>비고</span><span></span></div>'
+      + gmap[g].map(function(it){
+          var show = !!_vaultShow[it.id];
+          return '<div style="display:grid;'+GRID+';gap:8px;align-items:center;padding:4px 2px;border-top:1px solid var(--bdr-lt)">'
+          + '<input class="fi" id="vf-site-'+it.id+'" value="'+_stEsc(it.site||'')+'" placeholder="예: 카페24" onchange="vaultEdit(\''+it.id+'\',\'site\',this.value)" style="font-size:12px">'
+          + '<div style="display:flex;gap:3px">'
+          +   '<input class="fi" value="'+_stEsc(it.url||'')+'" placeholder="https://" onchange="vaultEdit(\''+it.id+'\',\'url\',this.value)" style="font-size:11.5px">'
+          +   (it.url?'<a class="btn btn-sm" href="'+_stEsc(it.url)+'" target="_blank" rel="noopener" title="새 탭에서 열기" style="text-decoration:none">↗</a>':'')
+          + '</div>'
+          + '<div style="display:flex;gap:3px"><input class="fi" value="'+_stEsc(it.user||'')+'" placeholder="ID" onchange="vaultEdit(\''+it.id+'\',\'user\',this.value)" style="font-size:12px">'
+          +   '<button class="btn btn-sm" onclick="vaultCopy(\''+it.id+'\',\'user\')" title="복사">📋</button></div>'
+          + '<div style="display:flex;gap:3px"><input class="fi" type="'+(show?'text':'password')+'" value="'+_stEsc(it.pw||'')+'" placeholder="PW" onchange="vaultEdit(\''+it.id+'\',\'pw\',this.value)" style="font-size:12px">'
+          +   '<button class="btn btn-sm" onclick="vaultToggleShow(\''+it.id+'\')" title="'+(show?'가리기':'보기')+'">'+(show?'🙈':'👁')+'</button>'
+          +   '<button class="btn btn-sm" onclick="vaultCopy(\''+it.id+'\',\'pw\')" title="복사">📋</button></div>'
+          + '<input class="fi" value="'+_stEsc(it.memo||'')+'" placeholder="비고" onchange="vaultEdit(\''+it.id+'\',\'memo\',this.value)" style="font-size:11.5px">'
+          + '<div style="display:flex;gap:2px;justify-content:flex-end">'
+          +   '<button class="btn btn-sm" onclick="vaultMove(\''+it.id+'\')" title="회사 변경" style="color:var(--t3)">🏢</button>'
+          +   '<button class="btn btn-sm" onclick="vaultDel(\''+it.id+'\')" title="삭제" style="color:var(--red)">🗑</button>'
+          + '</div>'
+          + '</div>';
+        }).join('')
+      + '</div></div>';
+  }).join('');
 }
 
 function vContracts(c){
