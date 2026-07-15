@@ -19012,7 +19012,7 @@ function _kkoShippedList(){
   var src = (typeof ioItems!=='undefined' && Array.isArray(ioItems)) ? ioItems : [];
   return src.filter(function(io){
     if((io.brand||'') !== '카카오') return false;
-    if(io.shipStage !== 'shipped') return false;                 // 출고 완료 건만
+    if(typeof _ioStage!=='function' || _ioStage(io) !== 'shipped') return false;   // 출고 완료 건만 (앱 공식 판정)
     var rs = io.returnStatus||''; if(rs.indexOf('환불')>=0) return false;   // 환불건 제외
     return true;
   }).sort(function(a,b){ return String(b.shipDate||b.date||'').localeCompare(String(a.shipDate||a.date||'')); });
@@ -19164,21 +19164,22 @@ async function _kkoBillIssue(){
 }
 
 // ══════════════════════════════════════════════
-// 🔗 합배송 — 아직 출고되지 않은 주문 중 같은 사람(수령인+연락처)이 여러 건이면 한 박스로 보냄
+// 🔗 합배송 — 카카오 '주문'(미출고) 건 중 같은 사람(수령인+연락처)이 여러 건이면 한 박스로 보냄
 //    · 주문 데이터는 그대로 두고(=청구·이력 보존), 송장은 1건만 나가도록 묶어서 출력한다
+//    · 대상: 브랜드=카카오 + _ioStage()==='order' (출고완료·과거데이터·환불건 제외)
 // ══════════════════════════════════════════════
 function _ioMergeKey(io){
   var nm = String(io.recipient||'').replace(/\s/g,'');
   var ph = String(io.phone||'').replace(/[^0-9]/g,'');
   return (nm+'|'+ph);
 }
-// 미출고(주문) 건 중 합배송 그룹 = {key: [io,...]} (2건 이상만)
+// 카카오 미출고(주문) 건 중 합배송 그룹 = {key: [io,...]} (2건 이상만)
 function _ioMergeGroups(){
   var src = (typeof ioItems!=='undefined' && Array.isArray(ioItems)) ? ioItems : [];
   var map = {};
   src.forEach(function(io){
-    if(io.shipStage === 'shipped') return;                       // 출고 완료건 제외
-    if(!io.brand) return;                                        // 커머스 건만
+    if((io.brand||'') !== '카카오') return;                       // 카카오 건만
+    if(typeof _ioStage!=='function' || _ioStage(io) !== 'order') return;   // 주문(미출고) 단계만
     var rs = io.returnStatus||''; if(rs.indexOf('환불')>=0) return;
     var k = _ioMergeKey(io);
     if(k==='|') return;
@@ -19644,9 +19645,9 @@ function _renderIoCommerce(){
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:88px">주문일자</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:90px">수령인</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:120px">연락처</th>
-      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">품목</th>
-      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:140px">옵션</th>
-      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:130px">주소</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:250px">품목</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:190px">옵션</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">주소</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:92px">요청출고일</th>
       <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:78px;white-space:nowrap">매칭</th>
       <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:44px" title="송장 등록용 엑셀 내려받기">송장</th>
@@ -19697,15 +19698,15 @@ function _renderIoCommerce(){
       const _o_late = _o_req && _o_req < new Date().toISOString().slice(0,10);
       const _mg = (function(){ try{ var g=_ioMergeGroups(); var k=_ioMergeKey(io); return (g[k]&&g[k].length>1)?g[k].length:0; }catch(e){ return 0; } })();
       const _mgBadge = _mg ? ` <span style="display:inline-block;padding:1px 5px;border-radius:8px;font-size:9.5px;font-weight:700;background:rgba(26,109,181,.12);color:var(--blu);vertical-align:middle" title="같은 사람 ${_mg}건 — 합배송 대상">🔗${_mg}</span>` : '';
-      return `<tr style="border-bottom:1px solid var(--bdr-lt);${checked?'background:rgba(168,118,49,.07)':''}" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${checked?'rgba(168,118,49,.07)':''}'">
-        <td style="padding:7px 10px;text-align:center"><input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation();_ioToggleChecked('${io.id}',this.checked)" style="width:auto;margin:0;cursor:pointer"></td>
-        <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1);cursor:pointer" onclick="openIoDetail('${io.id}')">${escHtml(io.brand||'-')}</td>
+      return `<tr style="border-bottom:1px solid var(--bdr-lt);cursor:pointer;${checked?'background:rgba(168,118,49,.07)':''}" onclick="openIoDetail('${io.id}')" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${checked?'rgba(168,118,49,.07)':''}'">
+        <td style="padding:7px 10px;text-align:center" onclick="event.stopPropagation()"><input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation();_ioToggleChecked('${io.id}',this.checked)" style="width:auto;margin:0;cursor:pointer"></td>
+        <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1)">${escHtml(io.brand||'-')}</td>
         <td style="padding:7px 10px;font-size:10.5px;color:var(--t2);font-family:monospace;white-space:nowrap">${escHtml(io.date||'-')}</td>
-        <td style="padding:7px 10px;font-size:12px;font-weight:600;cursor:pointer" onclick="openIoDetail('${io.id}')">${escHtml(io.recipient||'-')}${_mgBadge}</td>
+        <td style="padding:7px 10px;font-size:12px;font-weight:600">${escHtml(io.recipient||'-')}${_mgBadge}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);font-family:monospace">${escHtml(io.phone||'-')}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(_o_split.name||io.items||'-')}</td>
         <td style="padding:7px 10px;font-size:10.5px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(_o_opt||'')}">${_o_opt?escHtml(_o_opt):'-'}</td>
-        <td style="padding:7px 10px;font-size:11px;color:var(--t3);width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.address||'')}">${escHtml(io.address||'-')}</td>
+        <td style="padding:7px 10px;font-size:11px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.address||'')}">${escHtml(io.address||'-')}</td>
         <td style="padding:7px 10px;font-size:10.5px;font-family:monospace;color:${_o_late?'var(--red)':'var(--t2)'};font-weight:${_o_late?'700':'400'}" title="주문일 기준 영업일 10일">${escHtml(_o_req||'-')}</td>
         <td style="padding:7px 10px;text-align:center">${io.matchStatus?`<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap;${matchCls}">${escHtml(io.matchStatus)}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
         <td style="padding:7px 10px;text-align:center"><button onclick="event.stopPropagation();_ioExportInvoiceXlsx('${io.id}')" title="송장 등록용 엑셀 내려받기" style="padding:3px 6px;font-size:13px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit">📊</button></td>
@@ -19817,9 +19818,9 @@ function _renderIoCommerce(){
     var cnt = keys.reduce(function(s,k){ return s + g[k].length; }, 0);
     var names = keys.slice(0,4).map(function(k){ return (g[k][0].recipient||'?')+' <b>'+g[k].length+'건</b>'; }).join(' · ');
     return `<div style="display:flex;align-items:center;gap:10px;padding:9px 13px;background:rgba(26,109,181,.07);border:1px solid rgba(26,109,181,.3);border-radius:7px;margin-bottom:12px;flex-wrap:wrap">
-      <span style="font-size:12px;font-weight:700;color:var(--blu)">🔗 합배송 대상 ${people}명 · ${cnt}건</span>
+      <span style="font-size:12px;font-weight:700;color:var(--blu)">🔗 카카오 합배송 대상 ${people}명 · ${cnt}건</span>
       <span style="font-size:11.5px;color:var(--t2)">${names}${keys.length>4?' 외…':''}</span>
-      <span style="font-size:10.5px;color:var(--t3)">같은 사람은 송장 엑셀에서 자동으로 1건으로 합쳐집니다</span>
+      <span style="font-size:10.5px;color:var(--t3)">미출고 카카오 주문 중 같은 사람 — 송장 엑셀에서 자동으로 1건으로 합쳐집니다</span>
       <button onclick="_ioSelectMergeGroups()" style="margin-left:auto;padding:5px 12px;font-size:11.5px;background:var(--blu);border:none;border-radius:5px;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">합배송 건 선택</button>
     </div>`;
   })();
