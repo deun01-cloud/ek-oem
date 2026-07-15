@@ -6534,6 +6534,7 @@ window.addEventListener('message', function(ev){
       <div class="card-t">④ 커머스 매출 <span style="color:var(--ac);font-size:10px;background:var(--acbg);padding:1px 6px;border-radius:4px;margin-left:4px;text-transform:none;letter-spacing:0">수기/엑셀 입력</span></div>
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-size:13px;font-weight:700" id="cm-sales-total">0원</span>
+        <button class="btn btn-sm btn-gr" onclick="MGT.applyBcProfit()" title="브랜드커머스의 해당 월 영업이익을 커머스 매출로 자동 반영합니다">🛍 커머스 영업이익 반영</button>
         <button class="btn btn-sm" onclick="MGT.addOtherSales('commerce')">+ 행 추가</button>
         <button class="btn btn-sm btn-ac" onclick="document.getElementById('fi-cm-sales').click()">📥 엑셀</button>
         <input type="file" id="fi-cm-sales" accept=".xlsx,.xls,.csv" style="display:none" onchange="MGT.lfOtherSales(this,'commerce')">
@@ -49103,6 +49104,80 @@ function addOtherSales(kind){
   S[_otherSalesKey(kind)].push({date:'', cust:'', item:'', amount:0, memo:''});
   renderOtherSales(kind);
 }
+// ══════════════════════════════════════════════
+// 🛍 브랜드커머스 영업이익 → 커머스 매출 자동 반영
+//    · BC는 srcdoc(iframe)이라 localStorage를 부모와 공유 → 키 atelier_{브랜드}_pl / _plFixed 를 직접 읽는다
+//    · 영업이익 = 매출 − (변동비 + 그 달 적용 고정비[일회성/시작월/제외/금액변경 반영])
+// ══════════════════════════════════════════════
+var BC_BRANDS = ['비비케이트','RUHEL'];
+function _bcGet(brand, k, def){
+  try{ var v = JSON.parse(localStorage.getItem('atelier_'+brand+'_'+k)); return (v==null?def:v); }catch(e){ return def; }
+}
+function _bcMonthVarCosts(p){
+  if(Array.isArray(p && p.costItems)) return p.costItems;
+  var c = (p && p.costs) || {}; var fixedNames = ['운영비','인건비','기타지출'];
+  return Object.keys(c).filter(function(k){ return fixedNames.indexOf(k)<0; }).map(function(name){ return {name:name, amount:+c[name]||0}; });
+}
+function _bcMonthFixedCosts(brand, mk){
+  var tmpl = _bcGet(brand,'plFixed',[]) || [];
+  var all = _bcGet(brand,'pl',{}) || {};
+  var p = all[mk] || {};
+  var skip = p.fixedSkip || {}, ov = p.fixedOverride || {};
+  return tmpl.filter(function(f){
+      if(!f) return false;
+      var from = (f.from||'').slice(0,7);
+      if(f.type === 'once') return from ? (from === mk) : false;
+      return !from || from <= mk;
+    })
+    .filter(function(f){ return !skip[f.id]; })
+    .map(function(f){ return {name:f.name, amount:(ov[f.id]!=null ? +ov[f.id] : (+f.amount||0))}; });
+}
+// 특정 월의 BC 손익 (브랜드별 + 합계)
+function bcProfitOf(mk){
+  var per = [], totSales=0, totCost=0;
+  BC_BRANDS.forEach(function(b){
+    var all = _bcGet(b,'pl',{}) || {};
+    var p = all[mk];
+    if(!p) return;
+    var sales = (p.sales||[]).reduce(function(a,s){ return a + (+s.amount||0); }, 0);
+    var varCost = _bcMonthVarCosts(p).reduce(function(a,x){ return a + (+x.amount||0); }, 0);
+    var fixedCost = _bcMonthFixedCosts(b, mk).reduce(function(a,x){ return a + (+x.amount||0); }, 0);
+    var cost = varCost + fixedCost;
+    if(!sales && !cost) return;
+    per.push({ brand:b, sales:sales, cost:cost, profit: sales - cost });
+    totSales += sales; totCost += cost;
+  });
+  return { per:per, sales:totSales, cost:totCost, profit: totSales - totCost };
+}
+// 선택 월의 BC 영업이익을 '커머스 매출'에 반영 (브랜드별 1행, 재실행 시 갱신)
+function applyBcProfit(){
+  var mk = (document.getElementById('g-period')||{}).value || '';
+  if(!/^\d{4}-\d{2}$/.test(mk)){ toast('⚠ 상단 기간(YYYY-MM)을 먼저 선택하세요','err'); return; }
+  var r = bcProfitOf(mk);
+  if(!r.per.length){ toast('⚠ '+mk+' 브랜드커머스 손익 데이터가 없습니다','err'); return; }
+  var msg = mk + ' 브랜드커머스 영업이익을 커머스 매출로 반영합니다.\n\n'
+    + r.per.map(function(x){ return '· '+x.brand+' : 매출 ₩'+x.sales.toLocaleString()+' − 비용 ₩'+x.cost.toLocaleString()+' = 영업이익 ₩'+x.profit.toLocaleString(); }).join('\n')
+    + '\n─────────────\n합계 영업이익 ₩'+r.profit.toLocaleString()
+    + '\n\n※ 같은 브랜드의 기존 자동반영 행은 갱신됩니다. 계속할까요?';
+  if(!confirm(msg)) return;
+  S.salesCommerce = S.salesCommerce || [];
+  var last = mk+'-01';
+  r.per.forEach(function(x){
+    var row = S.salesCommerce.find(function(v){ return v && v._bcBrand === x.brand; });
+    if(!row){ row = { _bcBrand:x.brand }; S.salesCommerce.push(row); }
+    row.date = last;
+    row.cust = x.brand;
+    row.item = '브랜드커머스 영업이익 (매출 '+x.sales.toLocaleString()+' − 비용 '+x.cost.toLocaleString()+')';
+    row.amount = x.profit;
+    row.memo = '자동 반영 · ' + mk;
+  });
+  renderOtherSales('commerce');
+  updateOtherSalesTotal('commerce');
+  calcPnL();
+  autoSaveOtherSales();
+  toast('🛍 '+mk+' 커머스 영업이익 ₩'+r.profit.toLocaleString()+' 반영됨','ok');
+}
+
 function renderOtherSales(kind){
   var key=_otherSalesKey(kind);
   var el=document.getElementById(_otherSalesListId(kind));
@@ -51605,6 +51680,8 @@ return {
   deleteBoardFile: (typeof deleteBoardFile!=="undefined"?deleteBoardFile:undefined),
   loadBoardFiles: (typeof loadBoardFiles!=="undefined"?loadBoardFiles:undefined),
   addOtherSales: (typeof addOtherSales!=="undefined"?addOtherSales:undefined),
+  applyBcProfit: (typeof applyBcProfit!=="undefined"?applyBcProfit:undefined),
+  bcProfitOf: (typeof bcProfitOf!=="undefined"?bcProfitOf:undefined),
   renderOtherSales: (typeof renderOtherSales!=="undefined"?renderOtherSales:undefined),
   updateOtherSalesTotal: (typeof updateOtherSalesTotal!=="undefined"?updateOtherSalesTotal:undefined),
   lfOtherSales: (typeof lfOtherSales!=="undefined"?lfOtherSales:undefined),
