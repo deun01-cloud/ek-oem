@@ -755,7 +755,7 @@ body.cio-only{ background:#fff; }
     <div class="navg" data-group="scm-grp">
       <button class="tab-btn navg-btn" data-group-btn="scm-grp">🔗 SCM <span class="navg-caret">▾</span></button>
       <div class="navg-menu">
-        <button class="navg-item" onclick="navGo('io',this)" data-tab="io">🚚 출입고</button>
+        <button class="navg-item" onclick="navGo('io',this)" data-tab="io">🚚 출입고/커머스</button>
         <button class="navg-item" onclick="navGo('invoices',this)" data-tab="invoices">🧾 거래명세서</button>
       </div>
     </div>
@@ -28043,7 +28043,7 @@ body{background:#fff;padding:14px}
 // ════════════════════════════════
 // TAB NAVIGATION
 // ════════════════════════════════
-const TAB_TITLES={dash:'대시보드',sample:'샘플 의뢰 관리',order:'생산관리',schedule:'업무 일지',sales:'영업 관리',as:'AS 관리',io:'입출고 관리',products:'제품 DB',invoices:'거래명세서',mgt:'경영지원 · 손익관리',commerce:'브랜드커머스'};
+const TAB_TITLES={dash:'대시보드',sample:'샘플 의뢰 관리',order:'생산관리',schedule:'업무 일지',sales:'영업 관리',as:'AS 관리',io:'입출고 · 커머스 관리',products:'제품 DB',invoices:'거래명세서',mgt:'경영지원 · 손익관리',commerce:'브랜드커머스'};
 // 탭 이름(data-tab)으로 버튼 엘리먼트 찾기 — 그룹 드롭다운 구조에 대응
 function getTabBtn(tabName){
   // solo 버튼 (경영지원 등)
@@ -38176,8 +38176,49 @@ function vQuotes(c){
 let _qtRowsBuf = [];
 let _qtSampleIdsBuf = [];
 
+// ── 📎 견적서 파일 첨부 (발주서와 동일 방식) ──
+let qtFileBuf = [];
+function _qtFilePick(inp){
+  const files = Array.from(inp.files||[]);
+  _qtFileAdd(files);
+  inp.value = '';
+}
+function _qtFileDrop(e){
+  e.preventDefault();
+  const dz = document.getElementById('qtFileDz');
+  if(dz){ dz.style.borderColor='var(--bdr)'; dz.style.background='var(--s2)'; }
+  _qtFileAdd(Array.from((e.dataTransfer&&e.dataTransfer.files)||[]));
+}
+function _qtFileAdd(files){
+  if(!files.length) return;
+  const ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+  files.forEach((f,idx)=>{
+    const r = new FileReader();
+    r.onload = ev=>{
+      const nm = (f.name && f.name!=='image.png') ? f.name : `paste_${ts}_${idx+1}.png`;
+      qtFileBuf.push({ name:nm, type:f.type||'application/octet-stream', size:f.size, url:ev.target.result });
+      _renderQtFilePrev();
+    };
+    r.readAsDataURL(f);
+  });
+  if(typeof showToast==='function') showToast(`📎 ${files.length}개 파일 첨부됨`,'var(--grn)',1600);
+}
+function _renderQtFilePrev(){
+  const el = document.getElementById('qtFilePrev'); if(!el) return;
+  if(!qtFileBuf.length){ el.innerHTML=''; return; }
+  el.innerHTML = qtFileBuf.map((f,i)=>{
+    const isImg = /^image\//i.test(f.type||'') || /\.(png|jpe?g|webp|gif)$/i.test(f.name||'');
+    const ico = isImg ? '🖼' : (/\.pdf$/i.test(f.name||'') ? '📄' : (/\.(xlsx?|csv)$/i.test(f.name||'') ? '📊' : '📎'));
+    return `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 8px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;font-size:11px;max-width:220px">
+      <span>${ico}</span>
+      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${(f.name||'').replace(/"/g,'&quot;')}">${(f.name||'파일')}</span>
+      <button onclick="qtFileBuf.splice(${i},1);_renderQtFilePrev()" title="삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:12px;padding:0 2px">×</button>
+    </span>`;
+  }).join('');
+}
 function openQuoteModal(idOrNull){
   const q = idOrNull ? quotes.find(x=>x.id==idOrNull) : null;
+  qtFileBuf = q ? (q.files||[]).map(f=>({...f})) : [];   // 📎 기존 첨부 로드
   const today = toLocalDateStr(new Date());
   const issued = q?q.issuedAt||today : today;
   const valid  = q?q.validUntil||defaultValidUntil(issued) : defaultValidUntil(issued);
@@ -38280,6 +38321,19 @@ function openQuoteModal(idOrNull){
       <textarea class="fi" id="qt_intMemo" rows="2">${q?q.intMemo||'':''}</textarea>
     </div>
 
+    <div class="fg"><label>📎 파일 첨부 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(도면·참고 이미지·사양서 등 · 샘플/발주 이관 시 함께 넘어갑니다)</span></label>
+      <div id="qtFileDz" style="border:1.5px dashed var(--bdr);border-radius:7px;padding:10px 12px;cursor:pointer;background:var(--s2);transition:.15s"
+        onclick="document.getElementById('qtFileInput').click()"
+        ondragover="event.preventDefault();this.style.borderColor='var(--gold)';this.style.background='var(--gold-bg)'"
+        ondragleave="this.style.borderColor='var(--bdr)';this.style.background='var(--s2)'"
+        ondrop="_qtFileDrop(event)">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-size:16px">📎</span>
+          <span style="font-size:11.5px;color:var(--t3)">파일을 끌어다 놓거나 클릭 · 붙여넣기(Ctrl+V) — 이미지·PDF·엑셀 등</span></div>
+      </div>
+      <input type="file" id="qtFileInput" multiple style="display:none" onchange="_qtFilePick(this)">
+      <div id="qtFilePrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px"></div>
+    </div>
+
     <div id="qt_totalArea" style="margin-top:14px;padding:10px 14px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px">
       ${_renderQtTotalsBox()}
     </div>
@@ -38305,6 +38359,7 @@ function openQuoteModal(idOrNull){
   }
   m.querySelector('.modal').innerHTML = html;
   openM('mQuote');
+  _renderQtFilePrev();
 
   // 첫 렌더 후 모든 행의 계산식 표시 갱신 (DOM이 그려진 다음 실행되도록 setTimeout)
   setTimeout(()=>{
@@ -38395,6 +38450,7 @@ function _renderQtRows(){
         <!-- 1행: PDF에 표시되는 정보 -->
         <div style="display:grid;grid-template-columns:30px 1.6fr 1fr 1fr 0.8fr 0.7fr 0.7fr 1fr 1fr 30px;gap:4px;align-items:center;margin-bottom:4px">
           <div style="text-align:center">
+            ${r.img?`<img src="${String(r.img).replace(/"/g,'&quot;')}" onclick="event.stopPropagation();openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${String(r.name||'품목').replace(/'/g,"\\'").replace(/"/g,'&quot;')}'}],0,false)" onerror="this.style.display='none'" title="클릭하면 크게 보기" style="width:26px;height:26px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);cursor:zoom-in;display:block;margin:0 auto 2px">`:''}
             <div style="font-size:11px;color:var(--t3);font-weight:600">${i+1}</div>
             ${r.itemCode?`<div style="font-size:8.5px;color:var(--gold-lt);font-family:monospace;line-height:1.1;margin-top:1px" title="기존 품번 매칭됨: ${r.itemCode}">📌</div>`:''}
           </div>
@@ -38898,6 +38954,14 @@ function addProductToQuote(idOrCode){
     note: '',
     itemCode: p.code, // ← 매칭 정보 보존 → 저장 시 신규 생성 X, 기존 품번 갱신만
     _pdId: p.id,      // ← 제품DB ID (도금별 분리된 같은 코드 구별용)
+    // 🖼 썸네일 — 제품DB 대표 이미지 (견적 행에 표시 + 샘플/발주 이관 시 승계)
+    img: (function(){
+      try{
+        var im = (p.imgs && p.imgs.length) ? p.imgs[0] : null;
+        var u = im ? (typeof im === 'string' ? im : (im.url || '')) : (p.img || p.image || '');
+        return u || '';
+      }catch(e){ return ''; }
+    })(),
   };
 
   // 첫 행이 비어있으면 그 자리, 아니면 새 행 추가
@@ -38947,6 +39011,13 @@ function addSampleToQuoteRow(sid){
     note: '',
     itemCode: s.itemCode || '',    // 샘플에 품번이 있으면 매칭
     _fromSampleId: s.id,           // 샘플 출처 추적 (중복 방지용)
+    // 🖼 썸네일 — 샘플 대표 이미지
+    img: (function(){
+      try{
+        var im = (s.imgs && s.imgs.length) ? s.imgs[0] : null;
+        return im ? (typeof im === 'string' ? im : (im.url || '')) : '';
+      }catch(e){ return ''; }
+    })(),
   };
 
   // 첫 행이 비어있으면 그 자리, 아니면 새 행 추가
@@ -39106,6 +39177,7 @@ function transferQuoteToOrder(quoteId){
     itemCode: r.itemCode || '', // 견적 후 자동 매칭된 품번
     note: r.note || '',  // 견적 메모도 발주로 전달
     color: r.color || '',
+    img: r.img || '',    // 🖼 견적 행 썸네일 → 발주 행에 그대로 승계
   }));
   // 견적서 정보를 발주서 모달에 미리 채울 수 있도록 임시 저장
   window._transferFromQuote = {
@@ -39128,6 +39200,13 @@ function transferQuoteToOrder(quoteId){
   closeM('mQuote');
   if(typeof openOrdModal === 'function'){
     openOrdModal(null);
+    // 📎 견적서 첨부파일 승계 — openOrdModal이 내부에서 ordFileBuf=[]로 초기화하므로 '연 뒤'에 넣어야 함
+    try{
+      if(Array.isArray(q.files) && q.files.length){
+        ordFileBuf = q.files.map(function(f){ return {...f}; });
+        if(typeof renderOrdFilePrev==='function') renderOrdFilePrev();
+      }
+    }catch(e){ console.warn('[견적→발주 첨부]', e && e.message); }
     // 모달이 열리고 나서 vendor와 견적번호 메모 자동 채우기 (약간 딜레이)
     setTimeout(()=>{
       const vEl = document.getElementById('o_vendor');
@@ -39214,7 +39293,8 @@ function transferQuoteToSample(quoteId){
     unitPrice: +r.unitPrice || 0,
     devCost: 0,
     memo: '',
-    imgs: [], sourceDoc: [], cadFiles: []
+    // 🖼 견적 행 썸네일 → 샘플 이미지로 승계 (이관 후에도 사진 유지)
+    imgs: r.img ? [{url:r.img, name:(r.name||'품목')}] : [], sourceDoc: [], cadFiles: []
   }));
   openSmpMultiModal(prefillRows);
   // 공통 정보 채우기
@@ -39236,6 +39316,17 @@ function _doTransferToSample(q, row){
   closeM('mQuote');
   if(typeof openSmpModal === 'function'){
     openSmpModal(null);
+    // 📎 견적서 첨부파일 승계 (모달이 버퍼를 초기화하므로 '연 뒤'에 주입)
+    try{
+      if(q && Array.isArray(q.files) && q.files.length){
+        smpSrcBuf = q.files.map(function(f){ return {...f}; });
+      }
+      // 🖼 견적 행 썸네일 → 샘플 이미지로 승계 (이관 후에도 사진 유지)
+      if(row && row.img){
+        smpImgBuf = [{url: row.img, name: (row.name||'품목')}];
+      }
+      if(typeof renderSmpPrev==='function') renderSmpPrev();
+    }catch(e){ console.warn('[견적→샘플 첨부/이미지]', e && e.message); }
     setTimeout(()=>{
       // 모달이 열린 후 폼 필드 채우기
       const setVal = (id, val) => { const el = document.getElementById(id); if(el && val !== undefined && val !== null && val !== '') el.value = val; };
@@ -39367,7 +39458,16 @@ async function saveQuote(forceOverwrite){
     total,
     cnCostTotal, // 입고원가 합계 (자동 계산)
     imgs: [],
-    files: [],
+    // 📎 첨부파일 — R2 업로드 후 URL 저장 (실패 시 base64 유지). 샘플/발주 이관 시 그대로 승계됨
+    files: await (async function(){
+      try{
+        if(typeof uploadImagesToR2==='function' && notionCfg.workerUrl && qtFileBuf.some(f=>f.url && String(f.url).startsWith('data:'))){
+          const up = await uploadImagesToR2(qtFileBuf.map(f=>({...f})));
+          if(Array.isArray(up) && up.length===qtFileBuf.length){ qtFileBuf = up; return up.map(f=>({...f})); }
+        }
+      }catch(e){ console.warn('[견적 첨부 업로드]', e && e.message); }
+      return qtFileBuf.map(f=>({...f}));
+    })(),
   };
 
   let target;
