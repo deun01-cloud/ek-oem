@@ -18964,18 +18964,34 @@ function _ioExportInvoiceXlsx(id){
       if(one) picked = [one];
     }
     if(!picked.length){ showToast('⚠ 출력할 주문이 없습니다','var(--red)',2000); return; }
-    var aoa = picked.map(function(io){
-      var opt = io.option || _ioSplitItemOpt(io.items||'').opt || '';
-      return [ io.recipient||'', io.phone||'', io.address||'', io.deliveryMemo||'', opt ];
+    // 🔗 합배송 — 같은 사람(수령인+연락처)은 송장 1건으로 합침 (옵션은 모두 이어붙임)
+    var groups = [], gmap = {};
+    picked.forEach(function(io){
+      var k = _ioMergeKey(io);
+      if(!gmap[k]){ gmap[k] = { first:io, list:[] }; groups.push(gmap[k]); }
+      gmap[k].list.push(io);
+    });
+    var mergedN = groups.filter(function(g){ return g.list.length>1; }).length;
+    var aoa = groups.map(function(g){
+      var io = g.first;
+      var opts = g.list.map(function(x){
+        var o = x.option || _ioSplitItemOpt(x.items||'').opt || '';
+        var nm = _ioSplitItemOpt(x.items||'').name || x.items || '';
+        return g.list.length>1 ? (nm ? (nm+' - '+o) : o) : o;      // 합배송이면 품목명도 같이 표기
+      }).filter(Boolean);
+      var memo = g.list.map(function(x){ return x.deliveryMemo||''; }).filter(Boolean);
+      return [ io.recipient||'', io.phone||'', io.address||'',
+               Array.from(new Set(memo)).join(' / '),
+               opts.join(g.list.length>1 ? '\n' : '') ];
     });
     var ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = [{wch:10},{wch:15},{wch:46},{wch:26},{wch:44}];
     var wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, '주문내역');
     var d = new Date();
-    var fn = '택배_송장_등록_'+d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')+'_'+picked.length+'건.xlsx';
+    var fn = '택배_송장_등록_'+d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')+'_'+aoa.length+'건.xlsx';
     XLSX.writeFile(wb, fn);
-    showToast('📊 송장 엑셀 '+picked.length+'건 내려받았습니다','var(--grn)',2500);
+    showToast('📊 송장 엑셀 '+aoa.length+'건 내려받았습니다'+(mergedN?(' · 🔗 합배송 '+mergedN+'명 묶음 (주문 '+picked.length+'건 → 송장 '+aoa.length+'건)'):''),'var(--grn)', mergedN?5000:2500);
   }catch(e){ console.warn('[송장엑셀]', e); showToast('⚠ 엑셀 생성 실패: '+(e&&e.message||''),'var(--red)',3000); }
 }
 // ══════════════════════════════════════════════
@@ -19147,6 +19163,39 @@ async function _kkoBillIssue(){
   try{ if(typeof renderTab==='function') renderTab(); }catch(e){}
 }
 
+// ══════════════════════════════════════════════
+// 🔗 합배송 — 아직 출고되지 않은 주문 중 같은 사람(수령인+연락처)이 여러 건이면 한 박스로 보냄
+//    · 주문 데이터는 그대로 두고(=청구·이력 보존), 송장은 1건만 나가도록 묶어서 출력한다
+// ══════════════════════════════════════════════
+function _ioMergeKey(io){
+  var nm = String(io.recipient||'').replace(/\s/g,'');
+  var ph = String(io.phone||'').replace(/[^0-9]/g,'');
+  return (nm+'|'+ph);
+}
+// 미출고(주문) 건 중 합배송 그룹 = {key: [io,...]} (2건 이상만)
+function _ioMergeGroups(){
+  var src = (typeof ioItems!=='undefined' && Array.isArray(ioItems)) ? ioItems : [];
+  var map = {};
+  src.forEach(function(io){
+    if(io.shipStage === 'shipped') return;                       // 출고 완료건 제외
+    if(!io.brand) return;                                        // 커머스 건만
+    var rs = io.returnStatus||''; if(rs.indexOf('환불')>=0) return;
+    var k = _ioMergeKey(io);
+    if(k==='|') return;
+    (map[k] = map[k] || []).push(io);
+  });
+  var out = {};
+  Object.keys(map).forEach(function(k){ if(map[k].length>1) out[k] = map[k]; });
+  return out;
+}
+// 합배송 대상(같은 사람 2건 이상)을 한 번에 선택 — 이어서 📊 송장 엑셀 / 📤 선택 출고에 사용
+function _ioSelectMergeGroups(){
+  var g = _ioMergeGroups();
+  _ioCommerceChecked = new Set();
+  Object.keys(g).forEach(function(k){ g[k].forEach(function(io){ _ioCommerceChecked.add(String(io.id)); }); });
+  _renderIoCommerce();
+  showToast('🔗 합배송 대상 '+_ioCommerceChecked.size+'건을 선택했습니다 — 📊 송장 엑셀을 누르면 사람별 1건으로 합쳐서 출력됩니다','var(--blu)',5000);
+}
 let _ioCommerceBrand = 'all'; // 'all' | '비비케이트' | ...
 let _ioCommerceQ = '';        // 🔍 커머스 검색어 (재렌더 시 input이 새로 그려져 포커스 잃는 것 방지용 보관)
 let _ioCommerceSearchTimer = null;
@@ -19646,11 +19695,13 @@ function _renderIoCommerce(){
       const _o_opt = io.option || _o_split.opt;
       const _o_req = io.reqShipDate || _addBusinessDays(io.date||'', 10);
       const _o_late = _o_req && _o_req < new Date().toISOString().slice(0,10);
+      const _mg = (function(){ try{ var g=_ioMergeGroups(); var k=_ioMergeKey(io); return (g[k]&&g[k].length>1)?g[k].length:0; }catch(e){ return 0; } })();
+      const _mgBadge = _mg ? ` <span style="display:inline-block;padding:1px 5px;border-radius:8px;font-size:9.5px;font-weight:700;background:rgba(26,109,181,.12);color:var(--blu);vertical-align:middle" title="같은 사람 ${_mg}건 — 합배송 대상">🔗${_mg}</span>` : '';
       return `<tr style="border-bottom:1px solid var(--bdr-lt);${checked?'background:rgba(168,118,49,.07)':''}" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${checked?'rgba(168,118,49,.07)':''}'">
         <td style="padding:7px 10px;text-align:center"><input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation();_ioToggleChecked('${io.id}',this.checked)" style="width:auto;margin:0;cursor:pointer"></td>
         <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1);cursor:pointer" onclick="openIoDetail('${io.id}')">${escHtml(io.brand||'-')}</td>
         <td style="padding:7px 10px;font-size:10.5px;color:var(--t2);font-family:monospace;white-space:nowrap">${escHtml(io.date||'-')}</td>
-        <td style="padding:7px 10px;font-size:12px;font-weight:600;cursor:pointer" onclick="openIoDetail('${io.id}')">${escHtml(io.recipient||'-')}</td>
+        <td style="padding:7px 10px;font-size:12px;font-weight:600;cursor:pointer" onclick="openIoDetail('${io.id}')">${escHtml(io.recipient||'-')}${_mgBadge}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);font-family:monospace">${escHtml(io.phone||'-')}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(_o_split.name||io.items||'-')}</td>
         <td style="padding:7px 10px;font-size:10.5px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(_o_opt||'')}">${_o_opt?escHtml(_o_opt):'-'}</td>
@@ -19756,6 +19807,23 @@ function _renderIoCommerce(){
     </div>
   ` : '';
 
+  // 🔗 합배송 안내 (주문 모드) — 같은 사람이 여러 건 주문한 경우
+  const mergeBar = (function(){
+    if(_ioCommerceMode !== 'order') return '';
+    var g = (typeof _ioMergeGroups==='function') ? _ioMergeGroups() : {};
+    var keys = Object.keys(g);
+    if(!keys.length) return '';
+    var people = keys.length;
+    var cnt = keys.reduce(function(s,k){ return s + g[k].length; }, 0);
+    var names = keys.slice(0,4).map(function(k){ return (g[k][0].recipient||'?')+' <b>'+g[k].length+'건</b>'; }).join(' · ');
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 13px;background:rgba(26,109,181,.07);border:1px solid rgba(26,109,181,.3);border-radius:7px;margin-bottom:12px;flex-wrap:wrap">
+      <span style="font-size:12px;font-weight:700;color:var(--blu)">🔗 합배송 대상 ${people}명 · ${cnt}건</span>
+      <span style="font-size:11.5px;color:var(--t2)">${names}${keys.length>4?' 외…':''}</span>
+      <span style="font-size:10.5px;color:var(--t3)">같은 사람은 송장 엑셀에서 자동으로 1건으로 합쳐집니다</span>
+      <button onclick="_ioSelectMergeGroups()" style="margin-left:auto;padding:5px 12px;font-size:11.5px;background:var(--blu);border:none;border-radius:5px;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">합배송 건 선택</button>
+    </div>`;
+  })();
+
   // 일자별 테이블
   const tablesHtml = sortedDates.length ? sortedDates.map(d => {
     const dateLabel = _ioCommerceMode === 'return' ? `📅 요청일 ${d}` : _ioCommerceMode === 'ship' ? `📅 출고일 ${d}` : `📅 주문일 ${d}`;
@@ -19774,7 +19842,7 @@ function _renderIoCommerce(){
     `;
   }).join('') : emptyState;
 
-  sub.innerHTML = modeTab + shipStatBar + aiArea + searchBar + brandFilter + returnFilters + batchBar + tablesHtml;
+  sub.innerHTML = modeTab + shipStatBar + aiArea + searchBar + brandFilter + returnFilters + mergeBar + batchBar + tablesHtml;
 }
 
 // ── 주문 → 출고 처리 ──
