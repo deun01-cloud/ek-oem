@@ -18735,6 +18735,7 @@ function mapNotionIO(row){
   const returnType = returnStatus.includes('교환') ? '교환' : returnStatus.includes('환불') ? '환불' : '';
   return {
     _notionId: row.id,
+    createdAt: row.created_time || '',   // 🔒 목록 순서 고정용 (없으면 새로고침마다 순서가 바뀜)
     title:   np.title(p['제목']),
     date:    np.date(p['일자']),
     kind:    np.select(p['구분']),
@@ -18754,6 +18755,8 @@ function mapNotionIO(row){
     deliveryMemo: np.text(p['배송메모']) || '',
     option:       np.text(p['옵션']) || '',
     reqShipDate:  np.date(p['요청출고일']) || '',
+    billNo:       np.text(p['정산명세서']) || '',
+    isRemote:     !!np.check(p['도서산간']),
     shipStatus:   np.select(p['송장상태']) || '',
     matchStatus:  np.select(p['매칭상태']) || '',
     // 주문/출고 단계 (없으면 undefined → 기존 데이터는 _ioStage가 'shipped'로 처리)
@@ -18804,6 +18807,8 @@ async function syncIOToNotion(io){
   if(io.deliveryMemo) props["배송메모"]   = {rich_text:[{text:{content: (io.deliveryMemo||'').slice(0,2000)}}]};
   if(io.option)       props["옵션"]       = {rich_text:[{text:{content: (io.option||'').slice(0,2000)}}]};
   if(io.reqShipDate)  props["요청출고일"]  = {date:{start: io.reqShipDate}};
+  if(io.billNo)       props["정산명세서"]  = {rich_text:[{text:{content: String(io.billNo).slice(0,200)}}]};
+  if(io.isRemote!=null) props["도서산간"]   = {checkbox: !!io.isRemote};
   if(io.shipStatus)   props["송장상태"]   = {select:{name: io.shipStatus}};
   if(io.matchStatus)  props["매칭상태"]   = {select:{name: io.matchStatus}};
   // 주문/출고 단계 + 출고일 (커머스 3단계 흐름)
@@ -18973,6 +18978,175 @@ function _ioExportInvoiceXlsx(id){
     showToast('📊 송장 엑셀 '+picked.length+'건 내려받았습니다','var(--grn)',2500);
   }catch(e){ console.warn('[송장엑셀]', e); showToast('⚠ 엑셀 생성 실패: '+(e&&e.message||''),'var(--red)',3000); }
 }
+// ══════════════════════════════════════════════
+// 🧾 카카오 정산 거래명세서 — 출고한 카카오 주문건에 대해 건당 각인비·물류비를 카카오에 청구
+//    · 각인비 1,400원 (부가세 별도)  · 물류비 3,100원 (부가세 포함)  · 도서산간 5,000원 추가 (부가세 포함)
+//    · 발행 시 각 건에 명세서 번호를 기록해 중복 청구를 막는다
+// ══════════════════════════════════════════════
+var KKO_FEE = { engrave: 1400, logistics: 3100, remote: 5000 };   // 각인비(VAT별도) · 물류비(VAT포함) · 도서산간(VAT포함)
+var _kkoBillSel = new Set();
+var _kkoBillRemote = {};   // {id:true} — 도서산간 지정
+
+// 주소로 도서산간 추정 (제주·울릉·도서지역)
+function _kkoIsRemote(addr){
+  var a = String(addr||'');
+  return /제주|서귀포|울릉|독도|백령|연평|흑산|추자|거문|울릉군|남해군 창선|가파|마라/.test(a);
+}
+function _kkoShippedList(){
+  var src = (typeof ioItems!=='undefined' && Array.isArray(ioItems)) ? ioItems : [];
+  return src.filter(function(io){
+    if((io.brand||'') !== '카카오') return false;
+    if(io.shipStage !== 'shipped') return false;                 // 출고 완료 건만
+    var rs = io.returnStatus||''; if(rs.indexOf('환불')>=0) return false;   // 환불건 제외
+    return true;
+  }).sort(function(a,b){ return String(b.shipDate||b.date||'').localeCompare(String(a.shipDate||a.date||'')); });
+}
+function openKakaoBillModal(){
+  var list = _kkoShippedList();
+  if(!list.length){ showToast('⚠ 출고 완료된 카카오 주문이 없습니다','var(--org)',2500); return; }
+  _kkoBillSel = new Set();
+  _kkoBillRemote = {};
+  list.forEach(function(io){
+    if(!io.billNo) _kkoBillSel.add(String(io.id));                       // 미청구 건 기본 선택
+    _kkoBillRemote[String(io.id)] = (io.isRemote!=null) ? !!io.isRemote : _kkoIsRemote(io.address);
+  });
+  var back = document.createElement('div');
+  back.id = 'kkoBillBack';
+  back.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px';
+  back.onclick = function(e){ if(e.target===back) back.remove(); };
+  back.innerHTML = '<div style="background:var(--s1);border-radius:12px;max-width:1000px;width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.3)">'
+    + '<div style="padding:16px 20px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px">'
+    +   '<div style="font-size:15px;font-weight:700">🧾 카카오 정산 거래명세서 발행</div>'
+    +   '<div style="font-size:11.5px;color:var(--t3)">출고 완료된 카카오 주문건에 각인비·물류비를 청구합니다</div>'
+    +   '<button onclick="document.getElementById(\'kkoBillBack\').remove()" style="margin-left:auto;padding:5px 10px;background:none;border:1px solid var(--bdr);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--t2)">✕ 닫기</button>'
+    + '</div>'
+    + '<div style="padding:12px 20px;border-bottom:1px solid var(--bdr);display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px">'
+    +   '<label style="display:flex;align-items:center;gap:5px">각인비 <input type="number" id="kko_engrave" value="'+KKO_FEE.engrave+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도)</span></label>'
+    +   '<label style="display:flex;align-items:center;gap:5px">물류비 <input type="number" id="kko_logi" value="'+KKO_FEE.logistics+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함)</span></label>'
+    +   '<label style="display:flex;align-items:center;gap:5px">도서산간 <input type="number" id="kko_remote" value="'+KKO_FEE.remote+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함)</span></label>'
+    +   '<label style="display:flex;align-items:center;gap:5px;margin-left:auto">발행일 <input type="date" id="kko_date" value="'+new Date().toISOString().slice(0,10)+'" style="padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit"></label>'
+    + '</div>'
+    + '<div id="kkoBillBody" style="overflow:auto;flex:1;padding:0 20px"></div>'
+    + '<div id="kkoBillFoot" style="padding:14px 20px;border-top:1px solid var(--bdr);background:var(--s2);border-radius:0 0 12px 12px"></div>'
+    + '</div>';
+  document.body.appendChild(back);
+  _kkoBillRender();
+}
+function _kkoBillToggle(id, on){ if(on) _kkoBillSel.add(String(id)); else _kkoBillSel.delete(String(id)); _kkoBillRender(); }
+function _kkoBillToggleRemote(id, on){ _kkoBillRemote[String(id)] = !!on; _kkoBillRender(); }
+function _kkoBillAll(on){
+  var list=_kkoShippedList();
+  list.forEach(function(io){ if(io.billNo) return; if(on) _kkoBillSel.add(String(io.id)); else _kkoBillSel.delete(String(io.id)); });
+  _kkoBillRender();
+}
+function _kkoBillCalc(){
+  var eng = +(document.getElementById('kko_engrave')||{}).value || 0;
+  var logi = +(document.getElementById('kko_logi')||{}).value || 0;
+  var rmt = +(document.getElementById('kko_remote')||{}).value || 0;
+  var ids = Array.from(_kkoBillSel);
+  var n = ids.length;
+  var m = ids.filter(function(id){ return _kkoBillRemote[id]; }).length;
+  // 각인비: VAT 별도 → 공급가 그대로
+  var engSupply = eng * n, engTax = Math.round(engSupply*0.1);
+  // 물류비·도서산간: VAT 포함 → 공급가 = 총액/1.1
+  var logiTotal = logi * n, logiSupply = Math.round(logiTotal/1.1), logiTax = logiTotal - logiSupply;
+  var rmtTotal = rmt * m,  rmtSupply = Math.round(rmtTotal/1.1),  rmtTax = rmtTotal - rmtSupply;
+  var supply = engSupply + logiSupply + rmtSupply;
+  var tax = engTax + logiTax + rmtTax;
+  return { n:n, m:m, eng:eng, logi:logi, rmt:rmt,
+           engSupply:engSupply, engTax:engTax,
+           logiSupply:logiSupply, logiTax:logiTax, logiTotal:logiTotal,
+           rmtSupply:rmtSupply, rmtTax:rmtTax, rmtTotal:rmtTotal,
+           supply:supply, tax:tax, total:supply+tax };
+}
+function _kkoBillRender(){
+  var body = document.getElementById('kkoBillBody'); if(!body) return;
+  var list = _kkoShippedList();
+  var _w = function(v){ return '₩'+(Math.round(v)||0).toLocaleString(); };
+  body.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px">'
+    + '<thead><tr style="background:var(--s2)">'
+    +   '<th style="padding:7px;width:34px"><input type="checkbox" onclick="_kkoBillAll(this.checked)"></th>'
+    +   '<th style="padding:7px;text-align:left;width:84px">출고일</th>'
+    +   '<th style="padding:7px;text-align:left;width:86px">수령인</th>'
+    +   '<th style="padding:7px;text-align:left">주소</th>'
+    +   '<th style="padding:7px;text-align:center;width:88px">도서산간</th>'
+    +   '<th style="padding:7px;text-align:center;width:120px">청구 상태</th>'
+    + '</tr></thead><tbody>'
+    + list.map(function(io){
+        var id=String(io.id), billed=!!io.billNo, sel=_kkoBillSel.has(id), rmt=!!_kkoBillRemote[id];
+        return '<tr style="border-bottom:1px solid var(--bdr-lt);'+(billed?'opacity:.5':'')+'">'
+        + '<td style="padding:6px;text-align:center">'+(billed?'—':'<input type="checkbox" '+(sel?'checked':'')+' onclick="_kkoBillToggle(\''+id+'\',this.checked)">')+'</td>'
+        + '<td style="padding:6px;font-family:monospace;font-size:11px">'+escHtml(io.shipDate||io.date||'-')+'</td>'
+        + '<td style="padding:6px;font-weight:600">'+escHtml(io.recipient||'-')+'</td>'
+        + '<td style="padding:6px;color:var(--t2);font-size:11px">'+escHtml((io.address||'-').slice(0,46))+'</td>'
+        + '<td style="padding:6px;text-align:center">'+(billed?'':'<input type="checkbox" '+(rmt?'checked':'')+' onclick="_kkoBillToggleRemote(\''+id+'\',this.checked)" title="도서산간 추가배송비 대상">')+'</td>'
+        + '<td style="padding:6px;text-align:center;font-size:10.5px">'+(billed?'<span style="color:var(--grn);font-weight:700">✓ '+escHtml(io.billNo)+'</span>':'<span style="color:var(--org)">미청구</span>')+'</td>'
+        + '</tr>';
+      }).join('')
+    + '</tbody></table>';
+  var c = _kkoBillCalc();
+  var foot = document.getElementById('kkoBillFoot'); if(!foot) return;
+  foot.innerHTML = '<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">'
+    + '<div style="font-size:12px;color:var(--t2);line-height:1.9;flex:1;min-width:280px">'
+    +   '<div>각인비 <b>'+c.n+'건</b> × '+_w(c.eng)+' <span style="color:var(--t3)">(VAT별도)</span> → 공급가 <b>'+_w(c.engSupply)+'</b> · 부가세 '+_w(c.engTax)+'</div>'
+    +   '<div>물류비 <b>'+c.n+'건</b> × '+_w(c.logi)+' <span style="color:var(--t3)">(VAT포함)</span> → 공급가 <b>'+_w(c.logiSupply)+'</b> · 부가세 '+_w(c.logiTax)+'</div>'
+    +   (c.m ? '<div>도서산간 <b>'+c.m+'건</b> × '+_w(c.rmt)+' <span style="color:var(--t3)">(VAT포함)</span> → 공급가 <b>'+_w(c.rmtSupply)+'</b> · 부가세 '+_w(c.rmtTax)+'</div>' : '')
+    + '</div>'
+    + '<div style="text-align:right;min-width:180px">'
+    +   '<div style="font-size:11.5px;color:var(--t3)">공급가액 '+_w(c.supply)+' · 부가세 '+_w(c.tax)+'</div>'
+    +   '<div style="font-size:20px;font-weight:800;color:var(--gold-lt);margin:2px 0 8px">'+_w(c.total)+'</div>'
+    +   '<button onclick="_kkoBillIssue()" '+(c.n?'':'disabled')+' style="padding:8px 18px;font-size:13px;background:'+(c.n?'var(--grn)':'var(--bdr)')+';border:none;border-radius:6px;color:#fff;font-weight:800;cursor:'+(c.n?'pointer':'not-allowed')+';font-family:inherit">🧾 거래명세서 발행 ('+c.n+'건)</button>'
+    + '</div></div>';
+}
+async function _kkoBillIssue(){
+  var c = _kkoBillCalc();
+  if(!c.n){ showToast('⚠ 선택된 건이 없습니다','var(--red)',2000); return; }
+  var issuedAt = (document.getElementById('kko_date')||{}).value || new Date().toISOString().slice(0,10);
+  if(!confirm('카카오에 청구할 거래명세서를 발행합니다.\n\n· 대상 '+c.n+'건 (도서산간 '+c.m+'건)\n· 공급가액 ₩'+c.supply.toLocaleString()+' / 부가세 ₩'+c.tax.toLocaleString()+'\n· 합계 ₩'+c.total.toLocaleString()+'\n\n계속할까요?')) return;
+  var items = [];
+  items.push({ name:'각인비', code:'', qty:c.n, unit:c.eng, amt:c.engSupply, note:'건당 '+c.eng.toLocaleString()+'원 (부가세 별도)' });
+  items.push({ name:'물류비', code:'', qty:c.n, unit:Math.round(c.logiSupply/(c.n||1)), amt:c.logiSupply, note:'건당 '+c.logi.toLocaleString()+'원 (부가세 포함)' });
+  if(c.m) items.push({ name:'도서산간 추가배송비', code:'', qty:c.m, unit:Math.round(c.rmtSupply/(c.m||1)), amt:c.rmtSupply, note:'건당 '+c.rmt.toLocaleString()+'원 (부가세 포함)' });
+  var invNo = 'KKO-'+issuedAt.replace(/-/g,'').slice(2)+'-'+String((invoiceHistory.filter(function(v){return String(v.invNo||'').startsWith('KKO-');}).length||0)+1).padStart(2,'0');
+  var inv = {
+    id: (typeof genId==='function' ? genId() : Date.now()),
+    invNo: invNo,
+    invType: '거래명세서',
+    issuedAt: issuedAt,
+    vendor: '카카오',
+    ordNo: '',
+    ordId: null,
+    shipDate: issuedAt,
+    items: items,
+    itemSummary: items.map(function(it){ return it.name+' ×'+it.qty; }).join(', '),
+    supplyAmt: c.supply, tax: c.tax, total: c.total,
+    status: '작성중',
+    memo: '카카오 정산 — 출고 '+c.n+'건'+(c.m?(' (도서산간 '+c.m+'건)'):''),
+    _shipped: false,
+    _invStage: 'draft',
+    _kkoIds: Array.from(_kkoBillSel)
+  };
+  invoiceHistory.unshift(inv);
+  if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
+  // 각 출고건에 명세서 번호·도서산간 기록 (중복 청구 방지)
+  var src = (typeof ioItems!=='undefined' && Array.isArray(ioItems)) ? ioItems : [];
+  _kkoBillSel.forEach(function(id){
+    var io = src.find(function(x){ return String(x.id)===String(id); });
+    if(!io) return;
+    io.billNo = invNo;
+    io.isRemote = !!_kkoBillRemote[String(id)];
+    try{ if(typeof syncIOToNotion==='function') syncIOToNotion(io); }catch(e){}
+  });
+  if(typeof save==='function') save();
+  if(notionCfg.workerUrl && notionCfg.invDb && typeof syncInvoiceToNotion === 'function'){
+    try{ await syncInvoiceToNotion(inv, false); }catch(e){ console.warn('카카오 명세서 노션 동기화 실패:', e); }
+  }
+  var back=document.getElementById('kkoBillBack'); if(back) back.remove();
+  showToast('🧾 카카오 거래명세서 발행 완료 — '+invNo+' (₩'+c.total.toLocaleString()+') · SCM > 거래명세서에서 확인·출력하세요','var(--grn)',6000);
+  try{ _renderIoCommerce(); }catch(e){}
+  try{ if(typeof renderTab==='function') renderTab(); }catch(e){}
+}
+
 let _ioCommerceBrand = 'all'; // 'all' | '비비케이트' | ...
 let _ioCommerceQ = '';        // 🔍 커머스 검색어 (재렌더 시 input이 새로 그려져 포커스 잃는 것 방지용 보관)
 let _ioCommerceSearchTimer = null;
@@ -19289,6 +19463,17 @@ function _renderIoCommerce(){
     byDate[d].push(io);
   });
   const sortedDates = Object.keys(byDate).sort().reverse();
+  // 🔒 그룹 내 순서 고정 — 정렬 기준이 없으면 노션이 돌려주는 순서에 따라 새로고침마다 뒤바뀐다.
+  //    등록시각(createdAt) → id → 수령인 순으로 안정 정렬 (업로드한 원본 순서가 유지됨)
+  sortedDates.forEach(function(d){
+    byDate[d].sort(function(a,b){
+      var ca = String(a.createdAt||''), cb = String(b.createdAt||'');
+      if(ca && cb && ca!==cb) return ca < cb ? -1 : 1;
+      var ia = Number(a.id)||0, ib = Number(b.id)||0;
+      if(ia !== ib) return ia - ib;
+      return String(a.recipient||'').localeCompare(String(b.recipient||''), 'ko');
+    });
+  });
 
   // ── HTML 렌더 ──
   // 모드 토글 탭 (주문 / 출고 / 교환환불)
@@ -19323,6 +19508,17 @@ function _renderIoCommerce(){
         ${_statCard('교환·환불', _returnPendingF+_returnDoneF, _returnPendingF>0?`진행중 ${_returnPendingF} · 완료 ${_returnDoneF}`:`완료 ${_returnDoneF}`, _returnPendingF>0?'var(--org)':'var(--t1)')}
       </div>
       ${_monthChips?`<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><span style="font-size:10.5px;color:var(--t3);font-weight:600">월별</span>${_monthChips}</div>`:''}
+      ${(function(){
+        var _kko = (typeof _kkoShippedList==='function') ? _kkoShippedList() : [];
+        if(!_kko.length) return '';
+        var _un = _kko.filter(function(x){ return !x.billNo; }).length;
+        return `<div style="margin-top:10px;display:flex;align-items:center;gap:10px;padding:9px 13px;background:rgba(250,225,60,.10);border:1px solid rgba(200,160,20,.35);border-radius:7px;flex-wrap:wrap">
+          <span style="font-size:12px;font-weight:700;color:var(--t1)">🧾 카카오 정산</span>
+          <span style="font-size:11.5px;color:var(--t2)">출고 ${_kko.length}건 · 미청구 <b style="color:${_un?'var(--org)':'var(--grn)'}">${_un}건</b></span>
+          <span style="font-size:10.5px;color:var(--t3)">각인비 1,400원(VAT별도) · 물류비 3,100원(VAT포함) · 도서산간 5,000원(VAT포함)</span>
+          <button onclick="openKakaoBillModal()" style="margin-left:auto;padding:6px 14px;font-size:12px;background:var(--gold);border:none;border-radius:5px;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">거래명세서 발행</button>
+        </div>`;
+      })()}
     </div>
   ` : '';
 
@@ -19396,6 +19592,7 @@ function _renderIoCommerce(){
     <tr style="background:var(--s2);border-bottom:1px solid var(--bdr)">
       <th style="padding:8px 10px;text-align:center;width:34px"><input type="checkbox" ${allChecked?'checked':''} onclick="_ioToggleAllChecked(this.checked)" style="width:auto;margin:0;cursor:pointer"></th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:80px">브랜드</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:88px">주문일자</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:90px">수령인</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:120px">연락처</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">품목</th>
@@ -19452,6 +19649,7 @@ function _renderIoCommerce(){
       return `<tr style="border-bottom:1px solid var(--bdr-lt);${checked?'background:rgba(168,118,49,.07)':''}" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${checked?'rgba(168,118,49,.07)':''}'">
         <td style="padding:7px 10px;text-align:center"><input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation();_ioToggleChecked('${io.id}',this.checked)" style="width:auto;margin:0;cursor:pointer"></td>
         <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1);cursor:pointer" onclick="openIoDetail('${io.id}')">${escHtml(io.brand||'-')}</td>
+        <td style="padding:7px 10px;font-size:10.5px;color:var(--t2);font-family:monospace;white-space:nowrap">${escHtml(io.date||'-')}</td>
         <td style="padding:7px 10px;font-size:12px;font-weight:600;cursor:pointer" onclick="openIoDetail('${io.id}')">${escHtml(io.recipient||'-')}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);font-family:monospace">${escHtml(io.phone||'-')}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(_o_split.name||io.items||'-')}</td>
@@ -19552,6 +19750,7 @@ function _renderIoCommerce(){
   const batchBar = (_ioCommerceMode === 'order' && checkedCount > 0) ? `
     <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--grn);border-radius:7px;margin-bottom:12px;color:#fff">
       <span style="font-size:12.5px;font-weight:700">${checkedCount}건 선택됨</span>
+      <button onclick="_ioExportInvoiceXlsx()" style="padding:5px 14px;font-size:12px;background:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit;color:var(--grn);font-weight:800" title="선택한 주문을 택배 송장 등록 양식으로 내려받습니다">📊 송장 엑셀 (${checkedCount})</button>
       <button onclick="_ioBatchShip()" style="padding:5px 14px;font-size:12px;background:#fff;border:none;border-radius:5px;cursor:pointer;font-family:inherit;color:var(--grn);font-weight:800">📤 선택 출고</button>
       <button onclick="_ioCommerceChecked=new Set();_renderIoCommerce()" style="padding:5px 10px;font-size:11.5px;background:rgba(255,255,255,.2);border:none;border-radius:5px;cursor:pointer;font-family:inherit;color:#fff">선택 해제</button>
     </div>
@@ -20131,19 +20330,26 @@ function _showCommerceDetail(io){
       <div style="display:grid;grid-template-columns:90px 1fr;gap:8px 12px;font-size:12.5px;line-height:1.6">
         <div style="color:var(--t3);font-weight:600">브랜드</div>
         <div style="font-weight:700;color:var(--gold-lt)">🛍 ${escHtml(io.brand||'-')}</div>
-        <div style="color:var(--t3);font-weight:600">일자</div>
+        <div style="color:var(--t3);font-weight:600">주문일자</div>
         <div style="font-family:monospace">${escHtml(io.date||'-')}</div>
+        ${(io.reqShipDate || io.date) ? `<div style="color:var(--t3);font-weight:600">요청출고일</div>
+        <div style="font-family:monospace;font-weight:700;color:${((io.reqShipDate||_addBusinessDays(io.date||'',10)) < new Date().toISOString().slice(0,10) && !io.shipDate) ? 'var(--red)':'var(--t1)'}">${escHtml(io.reqShipDate||_addBusinessDays(io.date||'',10)||'-')} <span style="font-size:10px;color:var(--t3);font-weight:400">(주문일+영업일 10일)</span></div>` : ''}
+        ${io.shipDate ? `<div style="color:var(--t3);font-weight:600">출고일</div><div style="font-family:monospace">${escHtml(io.shipDate)}</div>` : ''}
         <div style="color:var(--t3);font-weight:600">수령인</div>
         <div style="font-weight:700;font-size:13.5px">${escHtml(io.recipient||'-')}</div>
         <div style="color:var(--t3);font-weight:600">연락처</div>
         <div style="font-family:monospace"><a href="tel:${escHtml((io.phone||'').replace(/[^0-9+]/g,''))}" style="color:var(--blu);text-decoration:none">${escHtml(io.phone||'-')}</a></div>
         <div style="color:var(--t3);font-weight:600">주소</div>
-        <div>${escHtml(io.address||'-')}</div>
+        <div style="word-break:break-all;line-height:1.6">${escHtml(io.address||'-')}</div>
         ${io.deliveryMemo ? `<div style="color:var(--t3);font-weight:600">배송메모</div><div style="color:var(--t2);font-size:11.5px;background:var(--s2);padding:5px 8px;border-radius:4px">${escHtml(io.deliveryMemo)}</div>` : ''}
       </div>
       <div style="margin-top:14px;padding:11px 13px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:8px">
         <div style="font-size:11px;color:var(--gold-lt);font-weight:700;margin-bottom:4px">📦 품목</div>
         <div style="font-size:13px;font-weight:600;color:var(--t1)">${escHtml(io.items||'-')}</div>
+        ${(io.option || _ioSplitItemOpt(io.items||'').opt) ? `<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--gold-line)">
+          <div style="font-size:10.5px;color:var(--gold-lt);font-weight:700;margin-bottom:3px">🎚 옵션</div>
+          <div style="font-size:12.5px;color:var(--t1);line-height:1.6;word-break:break-all;white-space:pre-wrap">${escHtml(io.option || _ioSplitItemOpt(io.items||'').opt)}</div>
+        </div>` : ''}
         ${io.matchStatus ? `<div style="margin-top:6px;display:inline-block;padding:2px 7px;border-radius:3px;font-size:10px;font-weight:700;${matchCls}">${escHtml(io.matchStatus)}${io._matchedProductCode ? ` · ${escHtml(io._matchedProductCode)}` : ''}</div>` : ''}
       </div>
       ${io.memo ? `<div style="margin-top:10px;padding:9px 11px;background:var(--s2);border-radius:7px;font-size:11.5px;color:var(--t2)"><div style="font-size:10px;color:var(--t3);font-weight:700;margin-bottom:3px">메모</div>${escHtml(io.memo)}</div>` : ''}
@@ -21264,6 +21470,27 @@ async function processCommerceAIFiles(files){
   if(!files.length) return;
   const resultEl = document.getElementById('commerceAiResult');
   if(!resultEl) return;
+
+  // 📦 카카오 주문서(헤더 포맷) 엑셀이면 AI를 거치지 않고 바로 정확히 파싱한다.
+  //    (AI는 상품명에서 브랜드를 추측해 "굿즈포굿X포인핸드" 같은 값을 넣어버림)
+  try{
+    const f0 = files[0];
+    const n0 = (f0 && f0.name || '').toLowerCase();
+    if(f0 && (/\.(xlsx?|csv)$/i.test(n0) || (f0.type||'').includes('spreadsheet') || (f0.type||'').includes('excel'))){
+      const ab = await f0.arrayBuffer();
+      const wb = XLSX.read(ab, {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {defval:'', header:1});
+      const hdr = (rows[0]||[]).map(c=>String(c||'').trim()).join('|');
+      if(/수령인명/.test(hdr) && /상품/.test(hdr)){
+        resultEl.innerHTML = '';
+        openCommerceUpload();
+        setTimeout(()=>{ _parseCommerceRows(rows); }, 120);   // 브랜드=카카오·옵션·주문일 자동 세팅
+        return;
+      }
+    }
+  }catch(e){ console.warn('[카카오 포맷 감지]', e && e.message); }
+
   resultEl.innerHTML = '<div style="padding:10px;color:var(--t3);font-size:12px;background:var(--s1);border:1px solid var(--bdr);border-radius:6px"><span class="loading-dot"></span> 🔄 AI가 파일을 분석 중...</div>';
 
   // 파일 → payload 변환
