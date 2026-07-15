@@ -28490,6 +28490,29 @@ function renderCalWidget(){
       });
     });
 
+    // 1-A) 🟡 카카오 주문 — 요청출고일(주문일+영업일 10일) 기준, 그날 출고해야 할 건수를 한 줄로 묶어 표시
+    if(_calFilters.ord){
+      const _kk = (typeof ioItems!=='undefined' && Array.isArray(ioItems)) ? ioItems.filter(function(io){
+        if((io.brand||'') !== '카카오') return false;
+        const rs = io.returnStatus||''; if(rs.indexOf('환불')>=0) return false;
+        const req = io.reqShipDate || (typeof _addBusinessDays==='function' ? _addBusinessDays(io.date||'', 10) : '');
+        return req === ds;
+      }) : [];
+      if(_kk.length){
+        const _pend = _kk.filter(function(io){ return (typeof _ioStage==='function' ? _ioStage(io) : 'shipped') === 'order'; }).length;
+        const _allDone = _pend === 0;
+        r.push({
+          cls:'ev-ord',
+          group:'ord',
+          done: _allDone,
+          canceled: false,
+          t:`<span style="margin-right:3px">🟡</span><span>카카오 ${_kk.length}건${_allDone?' ✓':''}</span>`,
+          click:`calGoKakao('${ds}')`,
+          title: `카카오 요청출고일 — 총 ${_kk.length}건 · 미출고 ${_pend}건${_allDone?' (모두 출고완료)':''}`
+        });
+      }
+    }
+
     // 2) 샘플 출고 — 샘플의뢰서의 납기일(s.due) 기준
     //    확정/취소도 표시 (삭선으로 구분)
     if(_calFilters.smp) samples.filter(s=>s.due===ds).forEach(s=>{
@@ -28636,6 +28659,23 @@ function renderCalWidget(){
   </div>`;
 }
 // 달력 이벤트 클릭 네비게이션
+// 🟡 캘린더에서 카카오 요청출고일 클릭 → 입출고 > 커머스 > 주문 탭으로 이동 + 카카오 필터
+function calGoKakao(ds){
+  try{
+    var tabBtn = (typeof getTabBtn==='function') ? getTabBtn('io') : null;
+    if(tabBtn) switchTab('io', tabBtn);
+    _ioSubTab = 'commerce';
+    _ioCommerceMode = 'order';
+    _ioCommerceBrand = '카카오';
+    setTimeout(function(){
+      try{
+        if(typeof renderIo==='function') renderIo();
+        else if(typeof _renderIoCommerce==='function') _renderIoCommerce();
+        showToast('🟡 '+ds+' 요청출고일 카카오 주문입니다','var(--blu)',3000);
+      }catch(e){ console.warn('[calGoKakao]', e && e.message); }
+    }, 120);
+  }catch(e){ console.warn('[calGoKakao]', e && e.message); }
+}
 function calGoOrder(ordId){
   switchTab('order',getTabBtn('order'));
   setTimeout(()=>{
