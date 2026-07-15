@@ -6431,6 +6431,7 @@ window.addEventListener('message', function(ev){
   <button class="tab"     onclick="MGT.go('dash',this)">🔒 대시보드</button>
   <button class="tab"     onclick="MGT.go('fin',this)">🔒 재무계획</button>
   <button class="tab"     onclick="MGT.go('contract',this)">📄 문서</button>
+  <button class="tab"     onclick="MGT.go('vault',this)">🔑 로그인 정보</button>
 </div>
 
 <div class="pg on" id="pg-sales">
@@ -6670,6 +6671,11 @@ window.addEventListener('message', function(ev){
 </div>
 
 <!-- ===== 📄 계약서 보관함 ===== -->
+<!-- ===== 🔑 로그인 정보 금고 ===== -->
+<div class="pg" id="pg-vault">
+  <div id="vault-body"></div>
+</div>
+
 <div class="pg" id="pg-contract">
   <div id="contract-body"></div>
 </div>
@@ -18746,6 +18752,8 @@ function mapNotionIO(row){
     phone:        phone,
     address:      np.text(p['주소']) || '',
     deliveryMemo: np.text(p['배송메모']) || '',
+    option:       np.text(p['옵션']) || '',
+    reqShipDate:  np.date(p['요청출고일']) || '',
     shipStatus:   np.select(p['송장상태']) || '',
     matchStatus:  np.select(p['매칭상태']) || '',
     // 주문/출고 단계 (없으면 undefined → 기존 데이터는 _ioStage가 'shipped'로 처리)
@@ -18794,6 +18802,8 @@ async function syncIOToNotion(io){
   if(io.phone)        props["연락처"]    = {phone_number: (io.phone||'').slice(0,50)};
   if(io.address)      props["주소"]      = {rich_text:[{text:{content: (io.address||'').slice(0,2000)}}]};
   if(io.deliveryMemo) props["배송메모"]   = {rich_text:[{text:{content: (io.deliveryMemo||'').slice(0,2000)}}]};
+  if(io.option)       props["옵션"]       = {rich_text:[{text:{content: (io.option||'').slice(0,2000)}}]};
+  if(io.reqShipDate)  props["요청출고일"]  = {date:{start: io.reqShipDate}};
   if(io.shipStatus)   props["송장상태"]   = {select:{name: io.shipStatus}};
   if(io.matchStatus)  props["매칭상태"]   = {select:{name: io.matchStatus}};
   // 주문/출고 단계 + 출고일 (커머스 3단계 흐름)
@@ -18923,6 +18933,46 @@ let _ioSubTab = (function(){
   } catch(e){}
   return 'general';
 })();
+// 📦 품목 텍스트에서 옵션 분리 — "SLIM PAVE RING [WHITE GOLD](SIZE:13)" → {name:'SLIM PAVE RING', opt:'WHITE GOLD · SIZE:13'}
+//    (옵션 전용 필드가 없어 대괄호/괄호 안 값을 옵션으로 간주)
+function _ioSplitItemOpt(s){
+  s = String(s||'');
+  var opts = [];
+  var name = s.replace(/\[([^\]]*)\]|\(([^)]*)\)/g, function(m, a, b){
+    var v = (a!=null?a:b||'').trim();
+    if(v) opts.push(v);
+    return ' ';
+  }).replace(/\s{2,}/g,' ').trim();
+  return { name: name || s.trim(), opt: opts.join(' · ') };
+}
+// 📊 송장 등록용 엑셀 내려받기 — 양식: [수령인 · 연락처 · 주소 · 배송메시지 · 옵션] (헤더 없음)
+//    선택(체크)된 건이 있으면 그 건들을, 없으면 클릭한 1건만 출력
+function _ioExportInvoiceXlsx(id){
+  try{
+    var src = (typeof ioItems!=='undefined' && Array.isArray(ioItems)) ? ioItems : [];
+    var picked = [];
+    if(_ioCommerceChecked && _ioCommerceChecked.size){
+      picked = src.filter(function(x){ return _ioCommerceChecked.has(String(x.id)); });
+    }
+    if(!picked.length){
+      var one = src.find(function(x){ return String(x.id)===String(id); });
+      if(one) picked = [one];
+    }
+    if(!picked.length){ showToast('⚠ 출력할 주문이 없습니다','var(--red)',2000); return; }
+    var aoa = picked.map(function(io){
+      var opt = io.option || _ioSplitItemOpt(io.items||'').opt || '';
+      return [ io.recipient||'', io.phone||'', io.address||'', io.deliveryMemo||'', opt ];
+    });
+    var ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{wch:10},{wch:15},{wch:46},{wch:26},{wch:44}];
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '주문내역');
+    var d = new Date();
+    var fn = '택배_송장_등록_'+d.getFullYear()+String(d.getMonth()+1).padStart(2,'0')+String(d.getDate()).padStart(2,'0')+'_'+picked.length+'건.xlsx';
+    XLSX.writeFile(wb, fn);
+    showToast('📊 송장 엑셀 '+picked.length+'건 내려받았습니다','var(--grn)',2500);
+  }catch(e){ console.warn('[송장엑셀]', e); showToast('⚠ 엑셀 생성 실패: '+(e&&e.message||''),'var(--red)',3000); }
+}
 let _ioCommerceBrand = 'all'; // 'all' | '비비케이트' | ...
 let _ioCommerceQ = '';        // 🔍 커머스 검색어 (재렌더 시 input이 새로 그려져 포커스 잃는 것 방지용 보관)
 let _ioCommerceSearchTimer = null;
@@ -19307,12 +19357,17 @@ function _renderIoCommerce(){
     </div>
   `;
 
-  // 브랜드 필터 (공통)
+  // 브랜드 필터 (공통) — 등록된 브랜드(카카오 등)는 건수가 0이어도 항상 탭으로 표시
+  const _roster = (typeof loadCommerceBrands==='function') ? loadCommerceBrands() : [];
+  const _brandKeys = [];
+  _roster.forEach(b=>{ if(b && _brandKeys.indexOf(b)<0) _brandKeys.push(b); });
+  Object.keys(brandCount).forEach(b=>{ if(b && _brandKeys.indexOf(b)<0) _brandKeys.push(b); });
+  _brandKeys.sort((a,b)=>(brandCount[b]||0)-(brandCount[a]||0));
   const brandFilter = `
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
       <button onclick="_setIoCommerceBrand('all')" class="ek-chip ${_ioCommerceBrand==='all'?'active':''}">전체 브랜드 <span class="cnt">${allItems.length}</span></button>
-      ${Object.entries(brandCount).sort((a,b)=>b[1]-a[1]).map(([b,c])=>`
-        <button onclick="_setIoCommerceBrand('${b.replace(/'/g,"\\'")}')" class="ek-chip ${_ioCommerceBrand===b?'active':''}">🛍 ${escHtml(b)} <span class="cnt">${c}</span></button>
+      ${_brandKeys.map(b=>`
+        <button onclick="_setIoCommerceBrand('${b.replace(/'/g,"\\'")}')" class="ek-chip ${_ioCommerceBrand===b?'active':''}">🛍 ${escHtml(b)} <span class="cnt">${brandCount[b]||0}</span></button>
       `).join('')}
     </div>
   `;
@@ -19344,17 +19399,22 @@ function _renderIoCommerce(){
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:90px">수령인</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:120px">연락처</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">품목</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:140px">옵션</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:130px">주소</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:92px">요청출고일</th>
       <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:78px;white-space:nowrap">매칭</th>
+      <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:44px" title="송장 등록용 엑셀 내려받기">송장</th>
       <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:90px">출고 처리</th>
     </tr>`;
   } else if(_ioCommerceMode === 'ship'){
     tableHeader = `
     <tr style="background:var(--s2);border-bottom:1px solid var(--bdr)">
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:82px">주문일자</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:80px">브랜드</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:90px">수령인</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:115px">연락처</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px">품목</th>
+      <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:150px">옵션</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:130px">송장번호</th>
       <th style="padding:8px 10px;text-align:left;font-weight:600;color:var(--t2);font-size:11px;width:82px">출고일</th>
       <th style="padding:8px 10px;text-align:center;font-weight:600;color:var(--t2);font-size:11px;width:150px">교환/환불 · 되돌리기</th>
@@ -19385,14 +19445,21 @@ function _renderIoCommerce(){
     if(_ioCommerceMode === 'order'){
       // ── 주문 모드 행 (체크박스 + 출고 버튼) ──
       const checked = _ioCommerceChecked.has(String(io.id));
+      const _o_split = _ioSplitItemOpt(io.items||'');
+      const _o_opt = io.option || _o_split.opt;
+      const _o_req = io.reqShipDate || _addBusinessDays(io.date||'', 10);
+      const _o_late = _o_req && _o_req < new Date().toISOString().slice(0,10);
       return `<tr style="border-bottom:1px solid var(--bdr-lt);${checked?'background:rgba(168,118,49,.07)':''}" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${checked?'rgba(168,118,49,.07)':''}'">
         <td style="padding:7px 10px;text-align:center"><input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation();_ioToggleChecked('${io.id}',this.checked)" style="width:auto;margin:0;cursor:pointer"></td>
         <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1);cursor:pointer" onclick="openIoDetail('${io.id}')">${escHtml(io.brand||'-')}</td>
         <td style="padding:7px 10px;font-size:12px;font-weight:600;cursor:pointer" onclick="openIoDetail('${io.id}')">${escHtml(io.recipient||'-')}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);font-family:monospace">${escHtml(io.phone||'-')}</td>
-        <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(io.items||'-')}</td>
+        <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(_o_split.name||io.items||'-')}</td>
+        <td style="padding:7px 10px;font-size:10.5px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(_o_opt||'')}">${_o_opt?escHtml(_o_opt):'-'}</td>
         <td style="padding:7px 10px;font-size:11px;color:var(--t3);width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.address||'')}">${escHtml(io.address||'-')}</td>
+        <td style="padding:7px 10px;font-size:10.5px;font-family:monospace;color:${_o_late?'var(--red)':'var(--t2)'};font-weight:${_o_late?'700':'400'}" title="주문일 기준 영업일 10일">${escHtml(_o_req||'-')}</td>
         <td style="padding:7px 10px;text-align:center">${io.matchStatus?`<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap;${matchCls}">${escHtml(io.matchStatus)}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
+        <td style="padding:7px 10px;text-align:center"><button onclick="event.stopPropagation();_ioExportInvoiceXlsx('${io.id}')" title="송장 등록용 엑셀 내려받기" style="padding:3px 6px;font-size:13px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit">📊</button></td>
         <td style="padding:7px 10px;text-align:center"><button onclick="event.stopPropagation();_ioMarkShipped('${io.id}')" style="padding:4px 11px;font-size:11px;background:var(--grn);border:1px solid var(--grn);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:700">📤 출고</button></td>
       </tr>`;
     } else if(_ioCommerceMode === 'ship'){
@@ -19401,11 +19468,15 @@ function _renderIoCommerce(){
         <button onclick="event.stopPropagation();openReturnModal('${io.id}')" style="padding:3px 7px;font-size:10px;background:var(--s1);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2);white-space:nowrap">🔄/↩ 교환·환불</button>
         <button onclick="event.stopPropagation();_ioUnship('${io.id}')" style="padding:3px 7px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3);white-space:nowrap" title="출고를 취소하고 주문 단계로 되돌립니다">↶ 주문</button>
       </div>`;
+      const _io_split = _ioSplitItemOpt(io.items||'');
+      const _io_opt = io.option || _io_split.opt;
       return `<tr style="border-bottom:1px solid var(--bdr-lt);cursor:pointer" onclick="openIoDetail('${io.id}')" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
+        <td style="padding:7px 10px;font-size:10.5px;color:var(--t2);font-family:monospace;white-space:nowrap">${escHtml(io.date||'-')}</td>
         <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1)">${escHtml(io.brand||'-')}</td>
         <td style="padding:7px 10px;font-size:12px;font-weight:600">${escHtml(io.recipient||'-')}</td>
         <td style="padding:7px 10px;font-size:11px;color:var(--t2);font-family:monospace">${escHtml(io.phone||'-')}</td>
-        <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(io.items||'-')}</td>
+        <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(_io_split.name||io.items||'-')}</td>
+        <td style="padding:7px 10px;font-size:10.5px;color:var(--t3);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(_io_opt||'')}">${_io_opt?escHtml(_io_opt):'<span style="color:var(--t3)">-</span>'}</td>
         <td style="padding:7px 10px;font-size:11px;font-family:monospace;color:${io.invoice?'var(--t2)':'var(--t3)'}">${io.invoice?escHtml(io.invoice):`<button onclick="event.stopPropagation();_ioEditInvoice('${io.id}')" style="padding:2px 7px;font-size:10px;background:none;border:1px dashed var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)">+ 입력</button>`}</td>
         <td style="padding:7px 10px;font-size:10.5px;color:var(--t3);font-family:monospace">${escHtml(io.shipDate||io.date||'-')}</td>
         <td style="padding:7px 10px;text-align:center">${actionCell}</td>
@@ -20189,11 +20260,14 @@ let _commerceUploadRows = []; // 미리보기용 행들
 // 알려진 자체 브랜드 (사용자가 +로 추가 가능, localStorage에 저장)
 const COMMERCE_BRANDS_KEY = 'ek3_commerce_brands';
 function loadCommerceBrands(){
+  var list = ['비비케이트'];
   try{
     const s = localStorage.getItem(COMMERCE_BRANDS_KEY);
-    if(s) return JSON.parse(s);
+    if(s){ const j = JSON.parse(s); if(Array.isArray(j) && j.length) list = j; }
   }catch(e){}
-  return ['비비케이트']; // 기본
+  // 📌 기본 채널 보장 — 카카오가 없으면 추가 (기존 사용자도 카카오 탭을 쓸 수 있게)
+  if(list.indexOf('카카오') < 0){ list = list.concat(['카카오']); try{ saveCommerceBrands(list); }catch(e){} }
+  return list;
 }
 function saveCommerceBrands(brands){
   try{ localStorage.setItem(COMMERCE_BRANDS_KEY, JSON.stringify(brands)); }catch(e){}
@@ -20363,8 +20437,88 @@ async function _handleCommerceFile(file){
 }
 
 // 엑셀 행들을 파싱 → 한 사람당 여러 품목이면 행을 분리 + 자동 매칭
+// 📅 영업일(주말 제외) N일 뒤 — 요청출고일 자동 계산용
+function _addBusinessDays(dateStr, n){
+  var d = new Date(String(dateStr||'').slice(0,10));
+  if(isNaN(d)) return '';
+  var added = 0;
+  while(added < n){
+    d.setDate(d.getDate()+1);
+    var w = d.getDay();
+    if(w!==0 && w!==6) added++;   // 토·일 제외
+  }
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+
 function _parseCommerceRows(rawRows){
   _commerceUploadRows = [];
+  // ── 📦 카카오 주문서(헤더 있는 포맷) 자동 인식 ──
+  //    헤더 예: 배송번호·주문번호·상품·옵션·수량·주문일시·수령인명·수령인 연락처1·배송주소·배송메시지
+  var hdr = (rawRows[0]||[]).map(function(c){ return String(c||'').trim(); });
+  var hdrStr = hdr.join('|');
+  if(/수령인명/.test(hdrStr) && /상품/.test(hdrStr)){
+    var _idx = function(names){
+      for(var k=0;k<names.length;k++){
+        var i = hdr.findIndex(function(h){ return h.replace(/\s/g,'') === names[k].replace(/\s/g,''); });
+        if(i>=0) return i;
+      }
+      for(var k2=0;k2<names.length;k2++){
+        var j = hdr.findIndex(function(h){ return h.indexOf(names[k2])>=0; });
+        if(j>=0) return j;
+      }
+      return -1;
+    };
+    var cRec=_idx(['수령인명','수령인']), cPh=_idx(['수령인 연락처1','연락처1','수령인 연락처']),
+        cAddr=_idx(['배송주소','주소']), cMemo=_idx(['배송메시지','배송메모']),
+        cItem=_idx(['상품']), cOpt=_idx(['옵션']), cQty=_idx(['수량']),
+        cOrd=_idx(['주문일시','주문일','결제일시']), cNo=_idx(['주문번호']);
+    var firstOrderDate='';
+    for(var i=1;i<rawRows.length;i++){
+      var row = rawRows[i];
+      if(!row || !row.length) continue;
+      var recipient = cRec>=0 ? String(row[cRec]||'').trim() : '';
+      var itemName  = cItem>=0 ? String(row[cItem]||'').trim() : '';
+      if(!recipient && !itemName) continue;
+      var option = cOpt>=0 ? String(row[cOpt]||'').trim() : '';
+      var od = cOrd>=0 ? String(row[cOrd]||'').trim().slice(0,10).replace(/[./]/g,'-') : '';
+      if(od && !firstOrderDate) firstOrderDate = od;
+      var qtyN = cQty>=0 ? (parseInt(String(row[cQty]||'1').replace(/[^\d]/g,''),10)||1) : 1;
+      var m = _matchProductByText((itemName+' '+option).trim());
+      _commerceUploadRows.push({
+        recipient: recipient,
+        phone: cPh>=0 ? String(row[cPh]||'').trim() : '',
+        address: cAddr>=0 ? String(row[cAddr]||'').trim() : '',
+        deliveryMemo: cMemo>=0 ? String(row[cMemo]||'').trim() : '',
+        itemText: itemName,
+        option: option,
+        qty: qtyN,
+        orderDate: od,
+        orderNo: cNo>=0 ? String(row[cNo]||'').trim() : '',
+        matched: m.product,
+        matchedName: m.product ? (m.product.name||'') : '',
+        matchStatus: m.product ? '자동매칭' : '미매칭',
+        score: m.score,
+        _kakao: true
+      });
+    }
+    // 카카오 포맷이면 브랜드=카카오, 일자=주문일 자동 세팅
+    setTimeout(function(){
+      try{
+        var bs = document.getElementById('cu_brand');
+        if(bs){
+          if(!Array.from(bs.options).some(function(o){return o.value==='카카오';})){
+            var op=document.createElement('option'); op.value='카카오'; op.textContent='카카오'; bs.appendChild(op);
+          }
+          bs.value='카카오';
+        }
+        var ds = document.getElementById('cu_date');
+        if(ds && firstOrderDate) ds.value = firstOrderDate;
+        if(typeof showToast==='function') showToast('📦 카카오 주문서로 인식 — 브랜드 카카오, 요청출고일은 주문일+영업일 10일로 설정됩니다','var(--blu)',4500);
+      }catch(e){}
+    }, 0);
+    _renderCommercePreview();
+    return;
+  }
   // 헤더 행 감지: 첫 행에 "수령인","이름","연락처" 같은 단어 있으면 스킵
   let startRow = 0;
   if(rawRows[0]){
@@ -20980,15 +21134,20 @@ async function _registerCommerce(){
   const baseTs = Date.now();
   const toRegister = _commerceUploadRows.map((row, i) => {
     const title = `${brand}_${row.recipient||'주문'}_${date.slice(5).replace('-','')}`;
+    const _ordDate = row.orderDate || date;                      // 주문일 (카카오 주문서면 주문일시)
+    const _reqShip = _addBusinessDays(_ordDate, 10);             // 요청출고일 = 주문일 + 영업일 10일
     return {
       id: baseTs + i,
       kind: '출고',
       flow: '한국→고객',
-      date,
+      date: _ordDate,
       vendor: brand,
       title,
       items: row.itemText || '',
-      qty: 1,
+      option: row.option || '',
+      orderNo: row.orderNo || '',
+      reqShipDate: _reqShip,
+      qty: row.qty || 1,
       memo: row.matched ? `매칭: ${row.matched.name}${row.matched.code?` (${row.matched.code})`:''}` : '',
       user: '',
       files: [],
@@ -30737,10 +30896,11 @@ function renderOrder(){
               return ordChip;
             })();
             // 가로형 품목 칩: 작은 이미지 옆에 이름·수량 (한 줄, 컴팩트)
-            const itemChips = rows.map(r=>`<span style="display:inline-flex;flex-direction:row;align-items:center;gap:6px;font-size:11px;padding:3px 9px 3px ${r.img?'3px':'9px'};border-radius:5px;background:var(--s2);border:1px solid var(--bdr);flex-shrink:0;white-space:nowrap">
+            const itemChips = rows.slice(0,1).map(r=>`<span style="display:inline-flex;flex-direction:row;align-items:center;gap:6px;font-size:11px;padding:3px 9px 3px ${r.img?'3px':'9px'};border-radius:5px;background:var(--s2);border:1px solid var(--bdr);flex-shrink:0;white-space:nowrap;max-width:420px;overflow:hidden">
               ${r.img?`<img src="${r.img}" style="width:28px;height:28px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);flex-shrink:0;cursor:pointer" onclick="event.stopPropagation();openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${(r.name||'품목').replace(/'/g,"\\'").replace(/"/g,'&quot;')}'}],0,false)" title="클릭하여 크게 보기">`:''}
-              <span>${r.name||''}${r.qty?`<span style="color:var(--t3)"> ×${r.qty}</span>`:''}</span>
-            </span>`).join('');
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.name||''}${r.qty?`<span style="color:var(--t3)"> ×${r.qty}</span>`:''}</span>
+            </span>`).join('')
+            + (rows.length>1 ? `<span style="font-size:10.5px;color:var(--t3);padding:3px 8px;border-radius:5px;background:var(--s2);border:1px dashed var(--bdr);flex-shrink:0;white-space:nowrap" title="클릭하면 전체 품목을 볼 수 있어요">외 ${rows.length-1}건</span>` : '');
             // 한 발주를 2행으로 표시: 1행 메타정보 + 2행 품목내역(전체 너비)
             // border-bottom 처리로 시각적으로 묶음 표현
             const openModal = `ordRowsBuf=[...(orders.find(x=>String(x.id)==='${o.id}')?.rows||[])].map(r=>({...r}));openOrdModal('${o.id}')`;
@@ -30783,8 +30943,8 @@ function renderOrder(){
             </tr>
             <tr class="${rowCls} ord-row-bottom" style="${rowStyle};cursor:pointer" onclick="${openModal}">
               <td colspan="${ordSubTab==='done'?8:10}" style="padding:4px 12px 10px 12px;vertical-align:top">
-                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">
-                  <span style="font-size:9.5px;color:var(--t3);font-weight:700;letter-spacing:.3px;margin-right:2px">품목 ${rows.length}건</span>
+                <div style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px;overflow:hidden">
+                  <span style="font-size:9.5px;color:var(--t3);font-weight:700;letter-spacing:.3px;margin-right:2px;flex-shrink:0">품목 ${rows.length}건</span>
                   ${itemChips}
                 </div>
               </td>
@@ -36977,6 +37137,172 @@ var CONTRACT_CATS = ['계약서','증빙서류','인허가·인증','사업자·
 var _contractFiles = [];
 var _contractLoaded = false;
 var _contractCat = 'all';
+
+// ══════════════════════════════════════════════
+// 🔑 로그인 정보 금고 — 마스터 비밀번호로 암호화(AES-GCM)해서 이 브라우저에만 저장.
+//    · 저장 전 항상 암호화되며, 마스터 비밀번호 없이는 복호화 불가
+//    · 노션/서버로 전송하지 않음 (평문 유출 방지). 백업은 암호화 파일 내보내기 사용
+//    · 마스터 비밀번호를 분실하면 복구 수단이 없음 (설계상 의도)
+// ══════════════════════════════════════════════
+var VAULT_KEY = 'ek_vault_v1';
+var _vaultCK = null;      // 세션 중에만 유지되는 복호화 키
+var _vaultData = null;    // 복호화된 항목 배열 (세션 메모리)
+var _vaultShow = {};      // 항목별 비밀번호 표시 여부
+
+function _vaultRaw(){ try{ return JSON.parse(localStorage.getItem(VAULT_KEY)||'null'); }catch(e){ return null; } }
+function _vB64(buf){ return btoa(String.fromCharCode.apply(null, new Uint8Array(buf))); }
+function _vBuf(b64){ return Uint8Array.from(atob(b64), function(c){ return c.charCodeAt(0); }); }
+async function _vaultDeriveKey(pw, salt){
+  var base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2', salt:salt, iterations:200000, hash:'SHA-256'},
+    base, {name:'AES-GCM', length:256}, false, ['encrypt','decrypt']);
+}
+async function _vaultSave(){
+  if(!_vaultCK || !_vaultData) return;
+  var raw = _vaultRaw() || {};
+  var iv = crypto.getRandomValues(new Uint8Array(12));
+  var ct = await crypto.subtle.encrypt({name:'AES-GCM', iv:iv}, _vaultCK, new TextEncoder().encode(JSON.stringify(_vaultData)));
+  localStorage.setItem(VAULT_KEY, JSON.stringify({v:1, salt:raw.salt, iv:_vB64(iv), ct:_vB64(ct)}));
+}
+async function vaultCreate(){
+  var pw = document.getElementById('vlt-newpw').value||'';
+  var pw2 = document.getElementById('vlt-newpw2').value||'';
+  if(pw.length < 8){ alert('마스터 비밀번호는 8자 이상으로 설정하세요.'); return; }
+  if(pw !== pw2){ alert('두 비밀번호가 일치하지 않습니다.'); return; }
+  if(!confirm('마스터 비밀번호를 분실하면 저장한 로그인 정보를 복구할 수 없습니다.\n안전한 곳에 기록해 두셨나요?')) return;
+  var salt = crypto.getRandomValues(new Uint8Array(16));
+  _vaultCK = await _vaultDeriveKey(pw, salt);
+  _vaultData = [];
+  localStorage.setItem(VAULT_KEY, JSON.stringify({v:1, salt:_vB64(salt), iv:'', ct:''}));
+  await _vaultSave();
+  vVault(document.getElementById('vault-body'));
+}
+async function vaultUnlock(){
+  var pw = document.getElementById('vlt-pw').value||'';
+  var raw = _vaultRaw(); if(!raw || !raw.salt) return;
+  var st = document.getElementById('vlt-err');
+  try{
+    var key = await _vaultDeriveKey(pw, _vBuf(raw.salt));
+    var pt = await crypto.subtle.decrypt({name:'AES-GCM', iv:_vBuf(raw.iv)}, key, _vBuf(raw.ct));
+    _vaultCK = key; _vaultData = JSON.parse(new TextDecoder().decode(pt));
+    vVault(document.getElementById('vault-body'));
+  }catch(e){ if(st) st.textContent = '비밀번호가 올바르지 않습니다.'; }
+}
+function vaultLock(){ _vaultCK=null; _vaultData=null; _vaultShow={}; vVault(document.getElementById('vault-body')); }
+function vaultToggleShow(id){ _vaultShow[id] = !_vaultShow[id]; _vaultRenderList(); }
+async function vaultAdd(){
+  var it = {id:'v'+Date.now()+Math.random().toString(36).slice(2,6), site:'', url:'', user:'', pw:'', memo:'', at:new Date().toISOString()};
+  _vaultData.push(it); await _vaultSave(); _vaultRenderList();
+  setTimeout(function(){ var el=document.getElementById('vf-site-'+it.id); if(el) el.focus(); },0);
+}
+async function vaultEdit(id, field, val){
+  var it = (_vaultData||[]).find(function(x){return x.id===id;}); if(!it) return;
+  it[field] = val; it.at = new Date().toISOString(); await _vaultSave();
+}
+async function vaultDel(id){
+  var it = (_vaultData||[]).find(function(x){return x.id===id;});
+  if(!confirm('"'+((it&&it.site)||'이 항목')+'" 로그인 정보를 삭제할까요?')) return;
+  _vaultData = _vaultData.filter(function(x){return x.id!==id;});
+  await _vaultSave(); _vaultRenderList();
+}
+function vaultCopy(id, field){
+  var it = (_vaultData||[]).find(function(x){return x.id===id;}); if(!it) return;
+  try{ navigator.clipboard.writeText(it[field]||''); if(typeof showToast==='function') showToast('복사했습니다 — 클립보드는 사용 후 지워주세요','var(--t2)',2500); }catch(e){}
+}
+async function vaultExport(){
+  var raw = _vaultRaw(); if(!raw){ alert('내보낼 금고가 없습니다.'); return; }
+  var blob = new Blob([JSON.stringify(raw)], {type:'application/json'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'EK_로그인정보_암호화백업_'+new Date().toISOString().slice(0,10)+'.json';
+  a.click(); URL.revokeObjectURL(a.href);
+  if(typeof showToast==='function') showToast('암호화된 백업 파일을 내려받았습니다','var(--grn)',3000);
+}
+function vaultImport(inp){
+  var f = inp.files && inp.files[0]; if(!f) return;
+  var r = new FileReader();
+  r.onload = function(){
+    try{
+      var j = JSON.parse(r.result);
+      if(!j || !j.salt || !j.ct) throw new Error('형식 오류');
+      if(!confirm('가져오면 현재 이 브라우저의 금고를 덮어씁니다. 계속할까요?')) return;
+      localStorage.setItem(VAULT_KEY, JSON.stringify(j));
+      _vaultCK=null; _vaultData=null;
+      vVault(document.getElementById('vault-body'));
+      alert('가져왔습니다. 해당 백업의 마스터 비밀번호로 잠금 해제하세요.');
+    }catch(e){ alert('가져오기 실패 — 올바른 백업 파일이 아닙니다.'); }
+  };
+  r.readAsText(f); inp.value='';
+}
+
+function vVault(c){
+  if(!c) return;
+  var raw = _vaultRaw();
+  var hasVault = !!(raw && raw.salt);
+  var unlocked = !!(_vaultCK && _vaultData);
+  var note = '<div style="font-size:11.5px;color:var(--t3);line-height:1.7;background:var(--s2);border:1px solid var(--bdr);border-radius:8px;padding:10px 12px;margin-bottom:14px">'
+    + '🔐 저장 전 <b>마스터 비밀번호로 암호화</b>되며, 이 브라우저에만 보관됩니다(노션·서버로 전송하지 않음).<br>'
+    + '· 마스터 비밀번호를 분실하면 <b>복구할 수 없습니다</b> — 안전한 곳에 따로 기록해 두세요.<br>'
+    + '· 브라우저 데이터를 지우면 사라지니, <b>암호화 백업 내보내기</b>로 보관하시길 권합니다.</div>';
+
+  if(!hasVault){
+    c.innerHTML = '<div class="card"><div class="card-h"><div class="card-h-t">🔑 로그인 정보 금고 만들기</div></div>' + note
+      + '<div style="max-width:420px">'
+      + '<div class="fg"><label>마스터 비밀번호 (8자 이상)</label><input class="fi" type="password" id="vlt-newpw" autocomplete="new-password"></div>'
+      + '<div class="fg"><label>마스터 비밀번호 확인</label><input class="fi" type="password" id="vlt-newpw2" autocomplete="new-password" onkeydown="if(event.key===\'Enter\')vaultCreate()"></div>'
+      + '<button class="btn btn-primary" onclick="vaultCreate()">🔐 금고 만들기</button>'
+      + '<div style="margin-top:14px;font-size:11.5px;color:var(--t3)">이미 백업 파일이 있나요? '
+      + '<button class="btn btn-sm" onclick="document.getElementById(\'vlt-imp\').click()">⬆ 백업 가져오기</button>'
+      + '<input type="file" id="vlt-imp" accept="application/json" style="display:none" onchange="vaultImport(this)"></div>'
+      + '</div></div>';
+    return;
+  }
+  if(!unlocked){
+    c.innerHTML = '<div class="card"><div class="card-h"><div class="card-h-t">🔒 금고 잠김</div></div>' + note
+      + '<div style="max-width:420px">'
+      + '<div class="fg"><label>마스터 비밀번호</label><input class="fi" type="password" id="vlt-pw" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')vaultUnlock()"></div>'
+      + '<div id="vlt-err" style="color:var(--red);font-size:12px;margin-bottom:8px"></div>'
+      + '<button class="btn btn-primary" onclick="vaultUnlock()">🔓 잠금 해제</button>'
+      + '<button class="btn btn-sm" style="margin-left:6px" onclick="document.getElementById(\'vlt-imp\').click()">⬆ 백업 가져오기</button>'
+      + '<input type="file" id="vlt-imp" accept="application/json" style="display:none" onchange="vaultImport(this)"></div>'
+      + '</div>';
+    setTimeout(function(){ var el=document.getElementById('vlt-pw'); if(el) el.focus(); },0);
+    return;
+  }
+  c.innerHTML = '<div class="card">'
+    + '<div class="card-h"><div class="card-h-t">🔑 로그인 정보 <span id="vlt-cnt" style="font-size:11.5px;color:var(--t3);font-weight:400;margin-left:6px"></span></div>'
+    + '<div style="margin-left:auto;display:flex;gap:6px">'
+    +   '<button class="btn btn-primary btn-sm" onclick="vaultAdd()">+ 추가</button>'
+    +   '<button class="btn btn-sm" onclick="vaultExport()" title="암호화된 백업 파일 저장">⬇ 백업</button>'
+    +   '<button class="btn btn-sm" onclick="vaultLock()" title="잠그기">🔒 잠금</button>'
+    + '</div></div>'
+    + note
+    + '<div id="vlt-list"></div></div>';
+  _vaultRenderList();
+}
+function _vaultRenderList(){
+  var el = document.getElementById('vlt-list'); if(!el) return;
+  var cnt = document.getElementById('vlt-cnt'); if(cnt) cnt.textContent = (_vaultData||[]).length+'개';
+  if(!(_vaultData||[]).length){
+    el.innerHTML = '<div style="padding:36px;text-align:center;color:var(--t3)"><div style="font-size:28px;margin-bottom:8px">🔑</div><div style="font-size:13px">저장된 로그인 정보가 없습니다</div><div style="font-size:11.5px;margin-top:3px">+ 추가 를 눌러 사이트·아이디·비밀번호를 등록하세요</div></div>';
+    return;
+  }
+  el.innerHTML = '<div style="display:grid;grid-template-columns:1.1fr 1.1fr 1.2fr 1fr 74px;gap:8px;padding:6px 4px;font-size:10.5px;color:var(--t3);font-weight:600">'
+    + '<span>사이트/서비스</span><span>아이디</span><span>비밀번호</span><span>메모</span><span></span></div>'
+    + _vaultData.map(function(it){
+        var show = !!_vaultShow[it.id];
+        return '<div style="display:grid;grid-template-columns:1.1fr 1.1fr 1.2fr 1fr 74px;gap:8px;align-items:center;padding:6px 4px;border-top:1px solid var(--bdr)">'
+        + '<input class="fi" id="vf-site-'+it.id+'" value="'+_stEsc(it.site||'')+'" placeholder="예: 카페24" onchange="vaultEdit(\''+it.id+'\',\'site\',this.value)" style="font-size:12.5px">'
+        + '<div style="display:flex;gap:3px"><input class="fi" value="'+_stEsc(it.user||'')+'" placeholder="아이디" onchange="vaultEdit(\''+it.id+'\',\'user\',this.value)" style="font-size:12.5px">'
+        +   '<button class="btn btn-sm" onclick="vaultCopy(\''+it.id+'\',\'user\')" title="복사">📋</button></div>'
+        + '<div style="display:flex;gap:3px"><input class="fi" type="'+(show?'text':'password')+'" value="'+_stEsc(it.pw||'')+'" placeholder="비밀번호" onchange="vaultEdit(\''+it.id+'\',\'pw\',this.value)" style="font-size:12.5px">'
+        +   '<button class="btn btn-sm" onclick="vaultToggleShow(\''+it.id+'\')" title="'+(show?'가리기':'보기')+'">'+(show?'🙈':'👁')+'</button>'
+        +   '<button class="btn btn-sm" onclick="vaultCopy(\''+it.id+'\',\'pw\')" title="복사">📋</button></div>'
+        + '<input class="fi" value="'+_stEsc(it.memo||'')+'" placeholder="메모·URL" onchange="vaultEdit(\''+it.id+'\',\'memo\',this.value)" style="font-size:12.5px">'
+        + '<div style="text-align:right"><button class="btn btn-sm" onclick="vaultDel(\''+it.id+'\')" title="삭제" style="color:var(--red)">🗑</button></div>'
+        + '</div>';
+      }).join('');
+}
 
 function vContracts(c){
   c.innerHTML = `
@@ -47561,6 +47887,9 @@ function go(id,el){
   if(id==='contract'){
     try{ var cb=document.getElementById('contract-body'); if(cb && typeof vContracts==='function') vContracts(cb); }catch(e){ console.warn('계약서 렌더 실패:', e.message); }
   }
+  if(id==='vault'){
+    try{ var vb=document.getElementById('vault-body'); if(vb && typeof vVault==='function') vVault(vb); }catch(e){ console.warn('로그인 정보 렌더 실패:', e.message); }
+  }
   if(id==='fin'){ try{ renderFinPlan(); }catch(e){ console.warn('재무계획 렌더 실패:', e.message); } }
   if(id==='monthly'){
     try{
@@ -50793,6 +51122,7 @@ return {
   arcDeleteFile: (typeof arcDeleteFile!=="undefined"?arcDeleteFile:undefined),
   arcChangeItemMonth: (typeof arcChangeItemMonth!=="undefined"?arcChangeItemMonth:undefined),
   arcDeleteItem: (typeof arcDeleteItem!=="undefined"?arcDeleteItem:undefined),
+  vVault: (typeof vVault!=="undefined"?vVault:undefined),
   saveUsdRate: (typeof saveUsdRate!=="undefined"?saveUsdRate:undefined),
   restoreUsdRate: (typeof restoreUsdRate!=="undefined"?restoreUsdRate:undefined),
   addManualInvoice: (typeof addManualInvoice!=="undefined"?addManualInvoice:undefined),
