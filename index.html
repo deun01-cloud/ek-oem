@@ -19560,7 +19560,7 @@ function _setIoSubTab(t){
   else { _stopCommercePoll(); }
 }
 var _commercePollTimer=null;
-var COMMERCE_POLL_MS = 15*1000;  // 커머스 화면을 보는 동안 15초마다 최신화
+var COMMERCE_POLL_MS = 60*1000;  // 커머스 화면을 보는 동안 60초마다 최신화 (전체 pull 대신 io만 경량 갱신)
 function _startCommercePoll(){
   _stopCommercePoll();
   if(!(notionCfg && notionCfg.workerUrl && notionCfg.ioDb)) return;
@@ -19568,7 +19568,12 @@ function _startCommercePoll(){
     // 탭이 화면에 보일 때만, 그리고 커머스 서브탭일 때만 폴링
     if(document.hidden) return;
     if(_ioSubTab!=='commerce') { _stopCommercePoll(); return; }
-    try{ pullFromNotion({silent:true}); }catch(e){}
+    // ⚡ 전체 Notion pull(pullFromNotion) 대신 io 타입만 실시간 서버에서 경량 갱신.
+    //    (전체 pull은 발주·샘플·제품·업무일지·AS까지 매번 훑어 '중복 제외' 로그 폭주 + 부하)
+    try{
+      if(typeof refreshTypeFromServer==='function'){ refreshTypeFromServer('io'); }
+      else { pullFromNotion({silent:true}); }
+    }catch(e){}
   }, COMMERCE_POLL_MS);
 }
 function _stopCommercePoll(){
@@ -21043,11 +21048,18 @@ function _addBusinessDays(dateStr, n){
 
 function _parseCommerceRows(rawRows){
   _commerceUploadRows = [];
-  // ── 📦 카카오 주문서(헤더 있는 포맷) 자동 인식 ──
   //    헤더 예: 배송번호·주문번호·상품·옵션·수량·주문일시·수령인명·수령인 연락처1·배송주소·배송메시지
-  var hdr = (rawRows[0]||[]).map(function(c){ return String(c||'').trim(); });
-  var hdrStr = hdr.join('|');
-  if(/수령인명/.test(hdrStr) && /상품/.test(hdrStr)){
+  //    헤더가 첫 행이 아닐 수 있으므로 상위 몇 행을 훑어 헤더 행을 찾는다.
+  var _hdrRowIdx = -1, hdr = [];
+  for(var _hr=0; _hr<Math.min(5, rawRows.length); _hr++){
+    var _cand = (rawRows[_hr]||[]).map(function(c){ return String(c||'').trim(); });
+    var _cs = _cand.join('|');
+    // 수령인 계열 + 상품/품목 계열이 같이 있으면 헤더 행으로 판단
+    if(/(수령인|받는분|받는사람|주문자|수취인)/.test(_cs) && /(상품|품목|제품|주문상품)/.test(_cs)){
+      _hdrRowIdx = _hr; hdr = _cand; break;
+    }
+  }
+  if(_hdrRowIdx >= 0){
     var _idx = function(names){
       for(var k=0;k<names.length;k++){
         var i = hdr.findIndex(function(h){ return h.replace(/\s/g,'') === names[k].replace(/\s/g,''); });
@@ -21059,12 +21071,13 @@ function _parseCommerceRows(rawRows){
       }
       return -1;
     };
-    var cRec=_idx(['수령인명','수령인']), cPh=_idx(['수령인 연락처1','연락처1','수령인 연락처']),
-        cAddr=_idx(['배송주소','주소']), cMemo=_idx(['배송메시지','배송메모']),
-        cItem=_idx(['상품']), cOpt=_idx(['옵션']), cQty=_idx(['수량']),
-        cOrd=_idx(['주문일시','주문일','결제일시']), cNo=_idx(['주문번호']);
+    var cRec=_idx(['수령인명','수령인','받는분','받는사람','수취인','주문자명','주문자']),
+        cPh=_idx(['수령인 연락처1','연락처1','수령인 연락처','수령인연락처','연락처','휴대폰','전화번호','핸드폰']),
+        cAddr=_idx(['배송주소','주소','배송지','받는분주소']), cMemo=_idx(['배송메시지','배송메모','배송요청','요청사항']),
+        cItem=_idx(['상품','품목','제품','주문상품','상품명']), cOpt=_idx(['옵션','옵션명','상품옵션']), cQty=_idx(['수량','주문수량']),
+        cOrd=_idx(['주문일시','주문일','결제일시','결제일']), cNo=_idx(['주문번호','주문no','주문 번호']);
     var firstOrderDate='';
-    for(var i=1;i<rawRows.length;i++){
+    for(var i=_hdrRowIdx+1;i<rawRows.length;i++){
       var row = rawRows[i];
       if(!row || !row.length) continue;
       var recipient = cRec>=0 ? String(row[cRec]||'').trim() : '';
@@ -21697,6 +21710,24 @@ async function _registerCommerce(){
   if(!brand){ showToast('⚠ 브랜드를 선택하세요','var(--red)',2000); return; }
   if(!date){ showToast('⚠ 일자를 입력하세요','var(--red)',2000); return; }
   if(!_commerceUploadRows.length){ showToast('⚠ 등록할 행이 없습니다','var(--red)',2000); return; }
+
+  // 🛡 이름·전화가 둘 다 빈 행은 등록하지 않는다 (파싱 실패로 인한 껍데기 주문 방지)
+  var _blankRows = _commerceUploadRows.filter(function(r){
+    return !String(r.recipient||'').trim() && !String(r.phone||'').trim();
+  });
+  if(_blankRows.length){
+    _commerceUploadRows = _commerceUploadRows.filter(function(r){
+      return String(r.recipient||'').trim() || String(r.phone||'').trim();
+    });
+    if(typeof showToast==='function'){
+      showToast('⚠ 수령인·연락처가 모두 빈 '+_blankRows.length+'건은 제외했습니다. 원본 파일의 열 순서/헤더를 확인하세요.','var(--org)',6000);
+    }
+    if(typeof _renderCommercePreview==='function') _renderCommercePreview();
+  }
+  if(!_commerceUploadRows.length){
+    showToast('등록할 유효한 주문이 없습니다 (수령인·연락처 누락)','var(--red)',4000);
+    return;
+  }
 
   // 재고 차감 시뮬레이션 (확인 메시지에 표시)
   const stockChanges = {}; // {productId: {product, qty}}
