@@ -19179,6 +19179,23 @@ async function syncIOToNotion(io){
   if(io.returnCompletedAt) props["반품입고일"] = {date:{start: io.returnCompletedAt}};
   // 재고반영 체크박스 — 매칭된 제품이 있으면 true (재고 자동 차감/복원이 일어나는 경우)
   props["재고반영"] = {checkbox: !!io._matchedProductId || !!io.stockApplied};
+  // 🔒 중복 생성 방지 — 같은 항목의 create가 진행 중이면 대기/스킵.
+  //    (_notionId가 채워지기 전 sync가 여러 번 발동하면 Notion에 같은 페이지가 2개 생기는 경쟁상태 차단)
+  if(!io._notionId){
+    if(!window._ioCreateInFlight) window._ioCreateInFlight = new Map();
+    const lockKey = String(io.id);
+    const inflight = window._ioCreateInFlight.get(lockKey);
+    if(inflight){
+      // 이미 이 항목을 만드는 중 → 그 결과를 기다렸다가, _notionId 붙으면 update로 전환
+      try{ await inflight; }catch(_){}
+      if(io._notionId){
+        try{ await nUpdate(io._notionId, props); io._syncedAt=new Date().toISOString();
+          if(typeof realtimePublish==='function') try{ realtimePublish('io', io); }catch(_){} }catch(e){ console.warn('IO update(after inflight) 실패:', e); }
+        return true;
+      }
+      // 그래도 _notionId가 없으면(첫 create 실패) 아래 정상 흐름으로 진행
+    }
+  }
   try {
     if(io._notionId){
       await nUpdate(io._notionId, props);
@@ -19186,7 +19203,13 @@ async function syncIOToNotion(io){
       if(typeof realtimePublish === 'function') try{ realtimePublish('io', io); }catch(_){}
       return true;
     } else {
-      const res = await nCreate(notionCfg.ioDb, props);
+      // create를 in-flight로 등록 → 동시에 들어온 중복 create가 이 프라미스를 기다림
+      const lockKey = String(io.id);
+      const createP = nCreate(notionCfg.ioDb, props);
+      if(window._ioCreateInFlight) window._ioCreateInFlight.set(lockKey, createP);
+      let res;
+      try{ res = await createP; }
+      finally{ if(window._ioCreateInFlight) window._ioCreateInFlight.delete(lockKey); }
       if(res?.id){ io._notionId = res.id; io._syncedAt = new Date().toISOString();
         if(typeof realtimePublish === 'function') try{ realtimePublish('io', io); }catch(_){}
         return true;
