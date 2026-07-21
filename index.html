@@ -18282,6 +18282,7 @@ function mapNotionTask(row){
     date: np.date(p['날짜']),
     ap:   np.select(p['오전오후'])||'오전',
     cat:  np.select(p['카테고리'])||'업무',
+    ord:  (p['순서'] && typeof p['순서'].number==='number') ? p['순서'].number : undefined,
     files:[],
   };
 }
@@ -23354,6 +23355,7 @@ async function syncTaskToNotion(task, update){
   if(task.date) p["날짜"]={"date":{"start":task.date}};
   if(task.ap)   p["오전오후"]={"select":{"name":task.ap}};
   if(task.cat)  p["카테고리"]={"select":{"name":task.cat}};
+  if(typeof task.ord==='number') p["순서"]={"number":task.ord};
   if(task._notionId){
     await nUpdate(task._notionId,p);
   } else {
@@ -29266,7 +29268,7 @@ function renderSample(){
           const safeMgr=e.managerRaw.replace(/'/g,'&#39;');
           const displayName=cl?cl.name:e.managerRaw;
           return`<span onclick="toggleSmpClientFilter('${safeMgr}')"
-            title="${displayName} — 진행중 ${e.count}건${isActive?' (해제하려면 다시 클릭)':''}"
+            title="${displayName} — ${_smpChipTitle==='전체 고객사'?'전체':_smpTabLabel} ${e.count}건${isActive?' (해제하려면 다시 클릭)':''}"
             style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px 3px 3px;background:${isActive?'var(--gold-bg)':'var(--s1)'};border:1.5px solid ${isActive?'var(--gold)':'var(--bdr)'};border-radius:14px;cursor:pointer;font-size:11px;font-weight:${isActive?'700':'500'};color:var(--t1);transition:all .15s;position:relative"
             onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='${isActive?'var(--gold)':'var(--bdr)'}'">
             <span class="cl-init cl-init-sm" style="background:${color}">${init}</span>
@@ -29480,11 +29482,8 @@ function filteredSamples(){
       if(cl && (cl.name===af.manager || (cl.initials||'').toUpperCase()===af.manager.toUpperCase())) return true;
       return false;
     });
-    // 고객사 이니셜 칩으로 필터 시 + 상태 필터가 '전체'면 → 자동으로 진행중(의뢰/제작중/수정중)만
-    if(smpFilter==='전체'){
-      const ACTIVE=['의뢰','제작중','수정중'];
-      list=list.filter(s=>ACTIVE.includes(s.status));
-    }
+    // ⚠ 전체 탭에서 고객사를 클릭하면 상태(완료·취소 포함) 무관하게 그 고객사 전체를 보여준다.
+    //   (이전엔 진행중만 남겨서 완료/취소 건이 숨겨지는 문제가 있었음)
   }
   if(af.type) list=list.filter(s=>(s.type||'')===af.type);
   if(af.dday){
@@ -32117,6 +32116,24 @@ function renderSchedContent(){
 
 // ── 업무 드래그 앤 드롭 ──
 let _draggingTaskId = null;
+// 같은 셀(날짜+카테고리) 안에서 ord 기준으로 정렬된 수동 업무 목록 반환
+function _sortedCellTasks(ds, cat, ap){
+  let arr = tasks.filter(t=> t.date===ds && t.cat===cat && (ap===undefined || t.ap===ap));
+  // ord가 없는 기존 항목은 배열 순서를 보존하도록 큰 기본값 부여(안정 정렬)
+  return arr.map((t,i)=>({t, _i:i}))
+    .sort((a,b)=>{
+      const oa = (typeof a.t.ord==='number') ? a.t.ord : (1e9 + a._i);
+      const ob = (typeof b.t.ord==='number') ? b.t.ord : (1e9 + b._i);
+      return oa - ob || a._i - b._i;
+    })
+    .map(x=>x.t);
+}
+// 대상 셀의 모든 수동 업무에 0,1,2... 순번을 다시 매김(정규화)
+function _renumberCell(ds, cat, ap){
+  const ordered = _sortedCellTasks(ds, cat, ap);
+  ordered.forEach((t,i)=>{ t.ord = i; });
+  return ordered;
+}
 function taskDragStart(e, taskId){
   _draggingTaskId = taskId;
   try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', String(taskId)); }catch(_){}
@@ -32129,6 +32146,7 @@ function taskDragEnd(e){
   _draggingTaskId = null;
   document.querySelectorAll('.task-dragging').forEach(el=>el.classList.remove('task-dragging'));
   document.querySelectorAll('.drop-over').forEach(el=>el.classList.remove('drop-over'));
+  document.querySelectorAll('.task-drop-before').forEach(el=>el.classList.remove('task-drop-before'));
 }
 function taskDragOver(e, el){
   if(!_draggingTaskId) return;
@@ -32139,28 +32157,69 @@ function taskDragOver(e, el){
 function taskDragLeave(el){
   if(el) el.classList.remove('drop-over');
 }
+// 개별 업무 카드 위에서 드래그 — 그 카드 "앞"에 삽입할 위치 표시
+function taskItemDragOver(e, el){
+  if(!_draggingTaskId) return;
+  e.preventDefault();
+  e.stopPropagation();
+  try{ e.dataTransfer.dropEffect='move'; }catch(_){}
+  document.querySelectorAll('.task-drop-before').forEach(x=>{ if(x!==el) x.classList.remove('task-drop-before'); });
+  if(el) el.classList.add('task-drop-before');
+}
+function taskItemDragLeave(el){
+  if(el) el.classList.remove('task-drop-before');
+}
+// 개별 업무 카드 위에 드롭 — 같은 셀이면 순서 변경, 다른 셀이면 이동 후 해당 위치에 삽입
+function taskItemDrop(e, el, targetTaskId){
+  e.preventDefault();
+  e.stopPropagation();
+  if(el) el.classList.remove('task-drop-before');
+  const taskId = _draggingTaskId || e.dataTransfer.getData('text/plain');
+  if(!taskId || String(taskId)===String(targetTaskId)) return;
+  const src = tasks.find(x=>String(x.id)===String(taskId));
+  const tgt = tasks.find(x=>String(x.id)===String(targetTaskId));
+  if(!src || !tgt) return;
+  // 대상 카드가 속한 셀로 src를 옮긴다(날짜·카테고리·오전오후 일치)
+  src.date = tgt.date;
+  src.cat  = tgt.cat;
+  if(tgt.ap!==undefined) src.ap = tgt.ap;
+  // 대상 셀을 정렬·정규화한 뒤, 대상 카드 "앞"에 src를 끼워넣는다
+  const ordered = _sortedCellTasks(tgt.date, tgt.cat, tgt.ap!==undefined?tgt.ap:undefined)
+                    .filter(t=>String(t.id)!==String(src.id));
+  const insertAt = ordered.findIndex(t=>String(t.id)===String(tgt.id));
+  ordered.splice(insertAt<0?ordered.length:insertAt, 0, src);
+  ordered.forEach((t,i)=>{ t.ord = i; });
+  save();
+  if(typeof syncTaskToNotion === 'function'){ debouncedSync('task', src, true); }
+  renderSchedContent();
+  showToast('✓ 순서 변경됨','var(--grn)',1200);
+}
 function taskDrop(e, el){
   e.preventDefault();
   if(el) el.classList.remove('drop-over');
-  const taskId = _draggingTaskId || +e.dataTransfer.getData('text/plain');
+  const taskId = _draggingTaskId || e.dataTransfer.getData('text/plain');
   if(!taskId) return;
   const newDate = el.dataset.date;
   const newCat = el.dataset.cat;
   const newAp = el.dataset.ap; // 일간 뷰에서만 있음
-  const t = tasks.find(x=>x.id==taskId);
+  const t = tasks.find(x=>String(x.id)==String(taskId));
   if(!t) return;
-  // 변경 없으면 무시
-  if(t.date===newDate && t.cat===newCat && (newAp===undefined || t.ap===newAp)) return;
+  const sameCell = (t.date===newDate && t.cat===newCat && (newAp===undefined || t.ap===newAp));
+  // 빈 영역(셀 바닥)에 드롭 → 그 셀의 맨 뒤로 보냄
   t.date = newDate || t.date;
   t.cat = newCat || t.cat;
   if(newAp) t.ap = newAp;
+  const ordered = _sortedCellTasks(t.date, t.cat, newAp!==undefined?newAp:undefined)
+                    .filter(x=>String(x.id)!==String(t.id));
+  ordered.push(t);
+  ordered.forEach((x,i)=>{ x.ord = i; });
   save();
   // Notion 동기화
   if(typeof syncTaskToNotion === 'function'){
     debouncedSync('task', t, true);
   }
   renderSchedContent();
-  showToast('✓ 업무 이동됨','var(--grn)',1500);
+  showToast(sameCell?'✓ 맨 아래로 이동':'✓ 업무 이동됨','var(--grn)',1500);
 }
 
 // 드래그 스타일
@@ -32172,6 +32231,9 @@ if(!document.getElementById('taskDragStyles')){
     .wg-cell.drop-over,.drop-over{background:var(--gold-bg)!important;outline:2px dashed var(--gold);outline-offset:-2px;transition:all .12s}
     .task-it[draggable="true"]{transition:background .15s}
     .task-it[draggable="true"]:hover{background:rgba(255,255,255,.35)}
+    .task-it.task-drop-before{box-shadow:inset 0 2px 0 var(--gold);border-radius:3px}
+    .task-it .drag-handle{cursor:grab;color:var(--t3);font-size:11px;user-select:none;flex-shrink:0;opacity:.55;line-height:1}
+    .task-it:hover .drag-handle{opacity:1}
   `;
   document.head.appendChild(st);
 }
@@ -32184,7 +32246,7 @@ function renderDayView(sc){
 
   // Helper: render one category block
   function catBlock(cat,ap){
-    const manualTasks=dayT.filter(t=>t.ap===ap&&t.cat===cat);
+    const manualTasks=_sortedCellTasks(ds,cat,ap);
     const autoItems=(cat==='발주출고'||cat==='샘플출고'||cat==='중국출고')?getAutoItems(ds,cat):[];
     const hasAny=autoItems.length||manualTasks.length;
     return`<div style="margin-bottom:10px;padding:7px 9px;border-radius:6px;background:${CAT_BG[cat]||'var(--s2)'};border:1px solid ${CAT_BG[cat]?'transparent':'var(--bdr)'}" data-date="${ds}" data-cat="${cat}" data-ap="${ap}" ondragover="taskDragOver(event,this)" ondragleave="taskDragLeave(this)" ondrop="taskDrop(event,this)">
@@ -32198,7 +32260,8 @@ function renderDayView(sc){
           <span class="tt ${it.done?'done':''}" style="font-size:11px;flex:1;margin-left:${it.badge?'2px':'0'}">${it.cont}</span>
         </div>`).join('')}
       ${manualTasks.map(t=>`
-        <div class="task-it" draggable="true" ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" style="margin-bottom:2px" title="드래그로 이동 가능">
+        <div class="task-it" draggable="true" ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" ondragover="taskItemDragOver(event,this)" ondragleave="taskItemDragLeave(this)" ondrop="taskItemDrop(event,this,'${t.id}')" style="margin-bottom:2px" title="드래그로 순서·위치 이동">
+          <span class="drag-handle" title="드래그하여 순서 변경">⋮⋮</span>
           <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${t.id}')">
           <span class="tt ${t.done?'done':''}" onclick="openEditTask('${t.id}')" style="cursor:pointer;flex:1;font-size:11.5px">${t.cont}</span>
           ${t.files&&t.files.length?`<span onclick="openEditTask('${t.id}')" title="${t.files.length}개 첨부" style="font-size:10px;cursor:pointer;color:var(--t3);flex-shrink:0">📎${t.files.length}</span>`:''}
@@ -32359,7 +32422,7 @@ function renderWeekView(sc){
         <div class="wg-cat" style="background:${CAT_BG[cat]};color:${CAT_COL[cat]};font-size:10.5px">${catLabel(cat)}</div>
         ${days.map(d=>{
           const ds=toLocalDateStr(d);
-          const manualTasks=tasks.filter(t=>t.date===ds&&t.cat===cat);
+          const manualTasks=_sortedCellTasks(ds,cat);
           const autoItems=(cat==='발주출고'||cat==='샘플출고'||cat==='중국출고')?getAutoItems(ds,cat):[];
           const hasFiles=manualTasks.some(t=>t.files&&t.files.length);
           return`<div class="wg-cell" style="background:${CAT_BG[cat]||'transparent'};min-height:38px" data-date="${ds}" data-cat="${cat}" ondragover="taskDragOver(event,this)" ondragleave="taskDragLeave(this)" ondrop="taskDrop(event,this)">
@@ -32367,7 +32430,8 @@ function renderWeekView(sc){
               ${it.badge||''}
               <span class="tt ${it.done?'done':''}" style="font-size:10.5px;flex:1;margin-left:${it.badge?'2px':'0'}">${it.cont}</span>
             </div>`).join('')}
-            ${manualTasks.map(t=>`<div class="task-it" draggable="true" ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" title="드래그로 이동 가능">
+            ${manualTasks.map(t=>`<div class="task-it" draggable="true" ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" ondragover="taskItemDragOver(event,this)" ondragleave="taskItemDragLeave(this)" ondrop="taskItemDrop(event,this,'${t.id}')" title="드래그로 순서·위치 이동">
+              <span class="drag-handle" title="드래그하여 순서 변경">⋮⋮</span>
               <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${t.id}')">
               <span class="tt ${t.done?'done':''}" onclick="openEditTask('${t.id}')" style="cursor:pointer;flex:1">${t.cont}</span>
               ${t.files&&t.files.length?`<span title="${t.files.length}개 첨부" style="font-size:10px;cursor:pointer" onclick="openEditTask('${t.id}')">📎${t.files.length}</span>`:''}
