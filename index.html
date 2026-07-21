@@ -19509,7 +19509,8 @@ async function _kkoBillIssue(){
 function _ioMergeKey(io){
   var nm = String(io.recipient||'').replace(/\s/g,'');
   var ph = String(io.phone||'').replace(/[^0-9]/g,'');
-  return (nm+'|'+ph);
+  var dt = String(io.date||'').slice(0,10);   // 📅 주문일(당일 기준) — 같은 사람이라도 주문일이 다르면 따로 배송
+  return (nm+'|'+ph+'|'+dt);
 }
 // 카카오 미출고(주문) 건 중 합배송 그룹 = {key: [io,...]} (2건 이상만)
 function _ioMergeGroups(){
@@ -19520,7 +19521,8 @@ function _ioMergeGroups(){
     if(typeof _ioStage!=='function' || _ioStage(io) !== 'order') return;   // 주문(미출고) 단계만
     var rs = io.returnStatus||''; if(rs.indexOf('환불')>=0) return;
     var k = _ioMergeKey(io);
-    if(k==='|') return;
+    // 이름·전화가 모두 비면 그룹핑에서 제외 (날짜만 있는 건 방지)
+    if(k.split('|').slice(0,2).join('')==='') return;
     (map[k] = map[k] || []).push(io);
   });
   var out = {};
@@ -20035,7 +20037,7 @@ function _renderIoCommerce(){
       const _o_req = io.reqShipDate || _addBusinessDays(io.date||'', 10);
       const _o_late = _o_req && _o_req < new Date().toISOString().slice(0,10);
       const _mg = (function(){ try{ var g=_ioMergeGroups(); var k=_ioMergeKey(io); return (g[k]&&g[k].length>1)?g[k].length:0; }catch(e){ return 0; } })();
-      const _mgBadge = _mg ? ` <span style="display:inline-block;padding:1px 5px;border-radius:8px;font-size:9.5px;font-weight:700;background:rgba(26,109,181,.12);color:var(--blu);vertical-align:middle" title="같은 사람 ${_mg}건 — 합배송 대상">🔗${_mg}</span>` : '';
+      const _mgBadge = _mg ? ` <span style="display:inline-block;padding:1px 5px;border-radius:8px;font-size:9.5px;font-weight:700;background:rgba(26,109,181,.12);color:var(--blu);vertical-align:middle" title="같은 사람·같은 주문일 ${_mg}건 — 합배송 대상">🔗${_mg}</span>` : '';
       return `<tr style="border-bottom:1px solid var(--bdr-lt);cursor:pointer;${checked?'background:rgba(168,118,49,.07)':''}" onclick="openIoDetail('${io.id}')" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${checked?'rgba(168,118,49,.07)':''}'">
         <td style="padding:7px 10px;text-align:center" onclick="event.stopPropagation()"><input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation();_ioToggleChecked('${io.id}',this.checked)" style="width:auto;margin:0;cursor:pointer"></td>
         <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1)">${escHtml(io.brand||'-')}</td>
@@ -20158,7 +20160,7 @@ function _renderIoCommerce(){
     return `<div style="display:flex;align-items:center;gap:10px;padding:9px 13px;background:rgba(26,109,181,.07);border:1px solid rgba(26,109,181,.3);border-radius:7px;margin-bottom:12px;flex-wrap:wrap">
       <span style="font-size:12px;font-weight:700;color:var(--blu)">🔗 카카오 합배송 대상 ${people}명 · ${cnt}건</span>
       <span style="font-size:11.5px;color:var(--t2)">${names}${keys.length>4?' 외…':''}</span>
-      <span style="font-size:10.5px;color:var(--t3)">미출고 카카오 주문 중 같은 사람 — 송장 엑셀에서 자동으로 1건으로 합쳐집니다</span>
+      <span style="font-size:10.5px;color:var(--t3)">미출고 카카오 주문 중 같은 사람·같은 주문일 — 송장 엑셀에서 자동으로 1건으로 합쳐집니다</span>
       <button onclick="_ioSelectMergeGroups()" style="margin-left:auto;padding:5px 12px;font-size:11.5px;background:var(--blu);border:none;border-radius:5px;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">합배송 건 선택</button>
     </div>`;
   })();
