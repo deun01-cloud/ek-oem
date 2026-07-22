@@ -12085,7 +12085,9 @@ function _renderPriceHist(p){
       }).join('')
     + '</div>';
 }
-// 잘못된 이력 삭제 (로컬 저장 — 이력은 로컬 전용, 노션 pull 시 병합으로 보존됨)
+// 잘못된 이력 삭제 — 모든 기기에 실시간 반영.
+//   union 병합으로 다른 기기의 로컬에서 되살아나지 않도록 삭제 id를 묘비(priceHistDeleted)에 기록하고
+//   제품을 서버에 즉시 재전파한다. (수신 측 union 병합이 이 묘비를 참조해 제외)
 function deletePriceHist(entryId){
   const id = gv('pd_id');
   if(!id) return;
@@ -12094,9 +12096,19 @@ function deletePriceHist(entryId){
   const before = p.priceHistory.length;
   p.priceHistory = p.priceHistory.filter(function(h){ return String(h.id) !== String(entryId); });
   if(p.priceHistory.length === before) return;
+  // 🪦 삭제 묘비 기록 — 다른 기기의 union 병합이 이 id를 부활시키지 않도록 함
+  if(!Array.isArray(p.priceHistDeleted)) p.priceHistDeleted = [];
+  if(entryId!=null && entryId!=='' && p.priceHistDeleted.indexOf(String(entryId))<0){
+    p.priceHistDeleted.push(String(entryId));
+    if(p.priceHistDeleted.length > 200) p.priceHistDeleted = p.priceHistDeleted.slice(-200);
+  }
+  p._ts = Date.now();
   if(typeof save==='function') save();
+  // 🌐 서버 즉시 전파 (어느 기기서 보든 삭제 반영) + 노션 백업
+  if(p._notionId && typeof debouncedSync==='function') debouncedSync('product', p, true);
+  else if(typeof realtimePublish==='function'){ try{ realtimePublish('product', p); }catch(e){} }
   _renderPriceHist(p);
-  if(typeof showToast==='function') showToast('이력 1건 삭제됨','var(--t2)',1800);
+  if(typeof showToast==='function') showToast('이력 1건 삭제됨 — 모든 기기 반영','var(--t2)',1800);
 }
 function saveProduct(){
   if(!_validateRequired([{id:'pd_name',label:'품목명'}])) return;
@@ -12238,6 +12250,7 @@ function saveProduct(){
         costPrice: +obj.costPrice||0   // 변경 당시 입고가(입고단가)
       });
       if(savedProduct.priceHistory.length > 50) savedProduct.priceHistory = savedProduct.priceHistory.slice(-50);
+      savedProduct._ts = Date.now(); // ⏱ 이 이력 추가가 최신이 되도록 (동기화가 옛 상태로 되돌리지 않게)
     }
     // 출고단가 변경 시: 출고완료/입금완료 안 된 거래명세서의 같은 품번 행 단가 자동 동기화
     let priceSyncedCount = 0;
@@ -16512,6 +16525,32 @@ function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
     if(localTs > (item._ts || ts || 0)) return;
     // 머지: 로컬 id 유지 (다른 기기에선 다를 수 있으므로)
     const merged = { ...local, ...item, _ts: item._ts || ts };
+    // 📈 출고단가 변경 이력(priceHistory)은 append-only 로그 — LWW로 덮으면 한쪽 기기의 이력이 사라진다.
+    //    로컬+원격을 id 기준 UNION 병합해 어느 기기서든 모든 이력이 보이게 한다. (변경일시순 정렬)
+    if(type === 'product'){
+      const _lh = Array.isArray(local.priceHistory) ? local.priceHistory : [];
+      const _rh = Array.isArray(item.priceHistory)  ? item.priceHistory  : [];
+      // 🪦 삭제 묘비 union — 어느 기기서 삭제한 것이든 모두 제외 대상
+      const _del = new Set([
+        ...(Array.isArray(local.priceHistDeleted) ? local.priceHistDeleted : []),
+        ...(Array.isArray(item.priceHistDeleted)  ? item.priceHistDeleted  : [])
+      ].map(String));
+      if(_del.size) merged.priceHistDeleted = Array.from(_del);
+      if(_lh.length || _rh.length){
+        const _seen = new Set(), _u = [];
+        [..._lh, ..._rh].forEach(function(h){
+          if(!h) return;
+          if(h.id!=null && h.id!=='' && _del.has(String(h.id))) return; // 삭제된 이력 제외
+          // id 없는 옛 기록은 내용키로 중복 판정
+          const k = (h.id!=null && h.id!=='') ? ('id:'+h.id)
+                    : ('c:'+(h.ts||'')+'|'+(h.from||0)+'|'+(h.to||0));
+          if(_seen.has(k)) return;
+          _seen.add(k); _u.push(h);
+        });
+        _u.sort(function(a,b){ return new Date(a.ts||0) - new Date(b.ts||0); });
+        merged.priceHistory = _u.length > 50 ? _u.slice(-50) : _u;
+      }
+    }
     // 합본은 자연키로 매칭됐을 수 있으므로 항상 로컬 id 유지 (id 흔들림 방지)
     if(item._isConsolidated && local.id !== undefined){
       merged.id = local.id;
@@ -18391,9 +18430,17 @@ function mapNotionProduct(row){
       if(Array.isArray(parsed)) imgs = parsed.filter(im => im && im.url);
     }
   } catch(e){ /* 파싱 실패 시 빈 배열 */ }
+  // 📈 가격이력JSON 파싱 — {h:[이력], d:[삭제묘비]} 형태
+  let priceHistory = [], priceHistDeleted = [];
+  try{
+    const pj = np.text(p['가격이력JSON']);
+    if(pj){
+      const parsed = JSON.parse(pj);
+      if(parsed && Array.isArray(parsed.h)) priceHistory = parsed.h;
+      if(parsed && Array.isArray(parsed.d)) priceHistDeleted = parsed.d.map(String);
+    }
+  } catch(e){ /* 파싱 실패 시 빈 배열 */ }
   return{
-    _notionId:row.id,
-    code:       np.title(p['품목코드']),
     name:       np.text(p['품목명']),
     type:       np.select(p['유형']),
     mat:        np.select(p['소재']),
@@ -18416,6 +18463,8 @@ function mapNotionProduct(row){
     safetyStock:np.number(p['안전재고']),
     weight:     np.number(p['중량']),
     imgs,
+    priceHistory,
+    priceHistDeleted,
     createdDate:  np.date(p['최초등록일']),
     lastModified: np.date(p['최종수정일']),
   };
@@ -18758,7 +18807,28 @@ async function pullFromNotion(opts){
           if(isArr){
             const prevArr = Array.isArray(prev[f]) ? prev[f] : [];
             const remoteArr = Array.isArray(out[f]) ? out[f] : [];
-            if(recentlyPushed){
+            // 📈 가격이력·삭제묘비는 append-only 로그 → 로컬+노션 UNION 병합 (어느 쪽도 유실 없이 합침)
+            if(f === 'priceHistDeleted'){
+              const s = new Set([...prevArr, ...remoteArr].map(String));
+              out[f] = Array.from(s);
+            } else if(f === 'priceHistory'){
+              // 삭제묘비(로컬+노션 union)를 존중하며 이력 union
+              const _del = new Set([
+                ...(Array.isArray(prev.priceHistDeleted) ? prev.priceHistDeleted : []),
+                ...(Array.isArray(out.priceHistDeleted)  ? out.priceHistDeleted  : [])
+              ].map(String));
+              const seen = new Set(), u = [];
+              [...prevArr, ...remoteArr].forEach(function(h){
+                if(!h) return;
+                if(h.id!=null && h.id!=='' && _del.has(String(h.id))) return;
+                const k = (h.id!=null && h.id!=='') ? ('id:'+h.id)
+                          : ('c:'+(h.ts||'')+'|'+(h.from||0)+'|'+(h.to||0));
+                if(seen.has(k)) return;
+                seen.add(k); u.push(h);
+              });
+              u.sort(function(a,b){ return new Date(a.ts||0) - new Date(b.ts||0); });
+              out[f] = u.length > 50 ? u.slice(-50) : u;
+            } else if(recentlyPushed){
               // 방금 이 기기가 push한 직후 — 로컬이 최신이므로 로컬 유지
               out[f] = prevArr.length >= remoteArr.length ? prevArr : remoteArr;
             } else if(remoteArr.length === 0 && prevArr.length > 0){
@@ -19008,7 +19078,7 @@ async function pullFromNotion(opts){
     clients       = mergeRows(cliRows,  clients,        mapNotionClient,    ['files'], '고객사',   notionCfg.clientDb);
     tasks         = mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
     asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        ['repairs','files'], 'AS',       notionCfg.asDb);
-    productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['imgs','importSource','createdAt'], '제품DB',   notionCfg.productDb);
+    productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['imgs','importSource','createdAt','priceHistory','priceHistDeleted'], '제품DB',   notionCfg.productDb);
     // 🏛️ 골격: 거래명세서는 '서버(ek-realtime)가 유일 기준점'.
     //    Notion 풀(mergeRows)을 적용하지 않는다 — 적용하면 Notion의 옛 합본 연결이
     //    서버 골격을 덮어써 고아 복구/자식 흔들림이 재발한다(데이터 소스 이중화 충돌).
@@ -23614,6 +23684,16 @@ async function syncProductToNotion(pd, update){
   const _imgArr = Array.isArray(pd.imgs) ? pd.imgs : [];
   const _hasHttp = _imgArr.some(im => im && im.url && /^https?:\/\//.test(im.url));
   const _skipImgField = (_imgArr.length > 0 && !_hasHttp);
+  // 📈 출고단가 변경 이력 직렬화 — 이력 + 삭제묘비를 한 JSON에 저장 (Notion=영구 정본)
+  //    시세 변동에 따른 이전 출고가들을 영구 보존. 노션 rich_text 2000자 청크로 자동 분할됨.
+  const _priceHistJson = (function(){
+    try{
+      const hist = Array.isArray(pd.priceHistory) ? pd.priceHistory.slice(-50) : [];
+      const del  = Array.isArray(pd.priceHistDeleted) ? pd.priceHistDeleted.slice(-200) : [];
+      if(!hist.length && !del.length) return '';
+      return JSON.stringify({ h: hist, d: del });
+    }catch(e){ return ''; }
+  })();
   const p={
     "품목코드":{"title":[{"text":{"content":pd.code||''}}]},
     "품목명":{"rich_text":[{"text":{"content":pd.name||''}}]},
@@ -23633,6 +23713,7 @@ async function syncProductToNotion(pd, update){
     "재고수량":{"number":+pd.stock||0},
     "안전재고":{"number":+pd.safetyStock||0},
     "중량":{"number":+pd.weight||0},
+    "가격이력JSON":{"rich_text":chunkRichText(_priceHistJson)},
   };
   // 🛡 base64-only 이미지면 이미지JSON을 payload에서 제외 → 노션의 기존 사진 보존
   if(_skipImgField){
