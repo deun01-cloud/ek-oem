@@ -7427,6 +7427,20 @@ window.addEventListener('message', function(ev){
   <div class="fg"><label>메모</label><textarea class="fta" id="cl_mo"></textarea></div>
   <div class="ma"><button class="btn bg" onclick="closeM('mCl')">취소</button><button class="btn bp-red" id="cl_delBtn" style="display:none" onclick="deleteClient()">삭제</button><button class="btn bp" onclick="saveCl()">저장</button></div>
 </div></div>
+<div class="ov" id="mFac"><div class="modal">
+  <div class="mt" id="mFac_t">🏭 공장 등록</div>
+  <input type="hidden" id="fac_id">
+  <div class="fr2">
+    <div class="fg"><label>공장명 *</label><input class="fi" id="fac_nm" placeholder="예: 광저우 J공장"></div>
+    <div class="fg"><label>국가</label><select class="fs" id="fac_country"><option value="중국">중국</option><option value="한국">한국</option><option value="기타">기타</option></select></div>
+  </div>
+  <div class="fr2"><div class="fg"><label>담당자</label><input class="fi" id="fac_ct"></div><div class="fg"><label>연락처</label><input class="fi" id="fac_ph"></div></div>
+  <div class="fr2"><div class="fg"><label>위챗(WeChat) ID</label><input class="fi" id="fac_wc" placeholder="微信 ID"></div><div class="fg"><label>이메일</label><input class="fi" id="fac_em"></div></div>
+  <div class="fg"><label>주소</label><input class="fi" id="fac_addr" placeholder="공장 주소"></div>
+  <div class="fr2"><div class="fg"><label>취급 품목</label><input class="fi" id="fac_items" placeholder="예: 실버 캐스팅, 도금"></div><div class="fg"><label>결제 조건</label><input class="fi" id="fac_pay" placeholder="예: 선금 50% / 잔금 출고 시"></div></div>
+  <div class="fg"><label>메모</label><textarea class="fta" id="fac_mo" placeholder="공장 특성, 주의사항 등"></textarea></div>
+  <div class="ma"><button class="btn bg" onclick="closeM('mFac')">취소</button><button class="btn bp-red" id="fac_delBtn" style="display:none" onclick="deleteFactory()">삭제</button><button class="btn bp" onclick="saveFactory()">저장</button></div>
+</div></div>
 <div class="ov" id="mProp"><div class="modal">
   <div class="mt" id="mProp_t">영업 등록</div>
   <input type="hidden" id="prop_id">
@@ -8881,7 +8895,7 @@ function toggleOrdVendorFilter(v){
 }
 
 // data
-let samples=[], orders=[], procItems=[], tasks=[], asItems=[], productDB=[], invoiceHistory=[], ioItems=[];
+let samples=[], orders=[], procItems=[], tasks=[], asItems=[], productDB=[], invoiceHistory=[], ioItems=[], factories=[];
 let inquiries=[]; // 고객사 문의 관리
 let newDesigns=[]; // 신규 디자인 제안 관리
 let stockHistory=[]; // 재고 변동 이력
@@ -9729,6 +9743,19 @@ function renderAS(){
       style="font-size:10px;padding:2px 18px 2px 8px;border-radius:10px;border:1px solid ${c.bd};background:${c.bg};color:${c.fg};font-weight:600;cursor:pointer;font-family:inherit;appearance:none;-webkit-appearance:none;background-image:linear-gradient(45deg,transparent 50%,${c.fg} 50%),linear-gradient(135deg,${c.fg} 50%,transparent 50%);background-position:calc(100% - 9px) 8px,calc(100% - 5px) 8px;background-size:4px 4px,4px 4px;background-repeat:no-repeat">${optsHtml}</select>`;
   };
 
+  // 🔧 수리주체 옵션 — '한국' + 샘플/발주에 쓰인 공장명들 + 기존 AS에 쓰인 수리주체. (중복 제거)
+  const _repairerSet = new Set(['', '한국']);
+  (typeof factories!=='undefined'?factories:[]).forEach(fa=>{ if(fa.status!=='inactive'){ const n=(fa.name||'').trim(); if(n) _repairerSet.add(n); } });
+  (typeof samples!=='undefined'?samples:[]).forEach(s=>{ const f=(s.factory||'').trim(); if(f) _repairerSet.add(f); });
+  (typeof orders!=='undefined'?orders:[]).forEach(o=>{ const f=(o.factory||'').trim(); if(f) _repairerSet.add(f); });
+  (asItems||[]).forEach(a=>{ const r=(a.repairer||'').trim(); if(r) _repairerSet.add(r); });
+  const REPAIRER_OPTS = Array.from(_repairerSet);
+  const REPAIRER_COLOR = {};
+  REPAIRER_OPTS.forEach(o=>{
+    if(o==='한국') REPAIRER_COLOR[o]={bg:'#eaf2ff',bd:'#b3ccf5',fg:'#2b5aa8'};
+    else if(o) REPAIRER_COLOR[o]={bg:'#fff0e6',bd:'#f0c9a8',fg:'#a8632a'}; // 공장(중국) = 주황 계열
+  });
+
   const asRow=a=>`
     <tr onclick="openASModal('${a.id}')" style="cursor:pointer" class="${a.status==='완료'||a.status==='반송'?'':'row-'+(dday(a.due)!==null&&dday(a.due)<=0?'u':dday(a.due)<=3?'w':'')}" ${_asSelected.has(String(a.id))?'style="background:var(--gold-bg)"':''}>
       <td style="text-align:center" onclick="event.stopPropagation()"><input type="checkbox" ${_asSelected.has(String(a.id))?'checked':''} onclick="toggleASSelect('${a.id}',event)" style="cursor:pointer;width:14px;height:14px"></td>
@@ -9739,6 +9766,7 @@ function renderAS(){
       <td style="text-align:right;font-weight:600;color:var(--gold-lt)">${a.unitCost?(+(a.unitCost)).toLocaleString()+'원':'—'}</td>
       <td style="text-align:right;color:var(--t1);font-weight:600">${a.unitCost?((a.qty||1)*(a.unitCost)).toLocaleString()+'원':'—'}</td>
       <td style="text-align:center">${inlineSelect(a.id,'defectType',a.defectType||'',DEFECT_OPTS,DEFECT_COLOR)}</td>
+      <td style="text-align:center">${inlineSelect(a.id,'repairer',a.repairer||'',REPAIRER_OPTS,REPAIRER_COLOR)}</td>
       <td>${inlineSelect(a.id,'status',a.status||'접수',STATUS_OPTS,STATUS_COLOR)}</td>
       <td>${inlineSelect(a.id,'billing',a.billing||'미청구',BILL_OPTS,BILL_COLOR)}</td>
       <td>${ddTag(a.due)}</td>
@@ -9828,10 +9856,10 @@ function renderAS(){
       <thead><tr>
         <th style="text-align:center;width:30px"><input type="checkbox" ${active.length&&active.every(a=>_asSelected.has(String(a.id)))?'checked':''} onclick="toggleASSelectAll(${JSON.stringify(active.map(a=>String(a.id)))},event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
         <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
-        <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th>
+        <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th><th style="text-align:center">수리주체</th>
         <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
       </tr></thead>
-      <tbody>${active.length?active.map(asRow).join(''):`<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 진행 중 AS 없음`:'진행 중인 AS 없음'}</td></tr>`}</tbody>
+      <tbody>${active.length?active.map(asRow).join(''):`<tr><td colspan="13" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 진행 중 AS 없음`:'진행 중인 AS 없음'}</td></tr>`}</tbody>
     </table></div>
   </div>
   ` : `
@@ -9841,10 +9869,10 @@ function renderAS(){
       <thead><tr>
         <th style="text-align:center;width:30px"><input type="checkbox" ${done.length&&done.every(a=>_asSelected.has(String(a.id)))?'checked':''} onclick="toggleASSelectAll(${JSON.stringify(done.map(a=>String(a.id)))},event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
         <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
-        <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th>
+        <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th><th style="text-align:center">수리주체</th>
         <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
       </tr></thead>
-      <tbody>${done.length?done.map(asRow).join(''):`<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 완료/반송된 AS 없음`:'완료/반송된 AS 없음'}</td></tr>`}</tbody>
+      <tbody>${done.length?done.map(asRow).join(''):`<tr><td colspan="13" style="text-align:center;padding:24px;color:var(--t3)">${currentGroupName?`'${currentGroupName}' 완료/반송된 AS 없음`:'완료/반송된 AS 없음'}</td></tr>`}</tbody>
     </table></div>
   </div>
   `}`;
@@ -15824,6 +15852,7 @@ let notionCfg = {
   ordDb:   '97ff79daa2c04b309df42a7a1a2c7b89', // 발주서
   propDb:  'ec27bf5f4cbc4de3b2ed9aafabae4e9c', // 영업제안
   clientDb:'e16c633eae84465da2430ee09b5ef3b0', // 고객사
+  factoryDb:'c7251c7609714acb9f6d85983b711adc', // 공장
   procDb:  'c7be71c6f72e4d3c837c2264daeb4f14', // 공정관리
   taskDb:  'fbd18fa997864266868634b0f7496e8a', // 업무일지
   asDb:    'd06349df1c614e9991851b4d3b90c2cb', // AS관리
@@ -15864,7 +15893,7 @@ function saveNotionSettings(){
     ordDb:   document.getElementById('notion_ord_db')?.value.trim()||notionCfg.ordDb,
     propDb:  document.getElementById('notion_prop_db')?.value.trim()||notionCfg.propDb,
     clientDb:notionCfg.clientDb,
-    procDb:  notionCfg.procDb,
+    factoryDb:notionCfg.factoryDb,
     taskDb:  notionCfg.taskDb,
     asDb:    notionCfg.asDb,
     ioDb:    notionCfg.ioDb,
@@ -16038,7 +16067,7 @@ function _rtOnOpen(){
   _rtSend({
     op: 'subscribe',
     clientId: _rtClientId,
-    types: ['invoice','order','sample','product','client','customer','task','quote','proposal','as','proc','io','stockhist','inquiry','checklist'],
+    types: ['invoice','order','sample','product','client','customer','factory','task','quote','proposal','as','proc','io','stockhist','inquiry','checklist'],
   });
   // 큐에 있던 outbound 메시지 flush
   if(_rtOutboundQueue.length){
@@ -16307,7 +16336,8 @@ var RT_NOTION_FALLBACK_MAP = {
   product:   { db:'productDb',   mapper:'mapNotionProduct' },
   as:        { db:'asDb',        mapper:'mapNotionAS' },
   io:        { db:'ioDb',        mapper:'mapNotionIO' },
-  stockhist: { db:'stockHistDb', mapper:'mapNotionStockHist' }
+  stockhist: { db:'stockHistDb', mapper:'mapNotionStockHist' },
+  factory:   { db:'factoryDb',   mapper:'mapNotionFactory' }
 };
 
 // 노션을 '완전하게' 받아오기 — 중간에 끊기면 ok:false 반환(부분 결과 폐기)
@@ -16456,6 +16486,7 @@ function _rtGetLocalArray(type){
   if(type === 'sample')   return (typeof samples !== 'undefined') ? samples : null;
   if(type === 'product')  return (typeof productDB !== 'undefined') ? productDB : null;
   if(type === 'client')   return (typeof clients !== 'undefined') ? clients : null;
+  if(type === 'factory')  return (typeof factories !== 'undefined') ? factories : null;
   if(type === 'customer') return (typeof clients !== 'undefined') ? clients : null; // 구버전 호환
   if(type === 'task')     return (typeof tasks !== 'undefined') ? tasks : null;
   if(type === 'quote')    return (typeof quotes !== 'undefined') ? quotes : null;
@@ -18355,12 +18386,34 @@ function mapNotionClient(row){
     files,
   };
 }
+function mapNotionFactory(row){
+  const p=row.properties||{};
+  let files = [];
+  try{
+    const fj = np.text(p['파일JSON']);
+    if(fj){ const parsed = JSON.parse(fj); if(Array.isArray(parsed)) files = parsed; }
+  }catch(e){}
+  return{
+    _notionId:row.id,
+    name:     np.title(p['공장명']),
+    contact:  np.text(p['담당자']),
+    phone:    np.text(p['연락처']),
+    wechat:   np.text(p['위챗']),
+    email:    np.text(p['이메일']),
+    address:  np.text(p['주소']),
+    items:    np.text(p['취급품목']),
+    payTerms: np.text(p['결제조건']),
+    memo:     np.text(p['메모']),
+    country:  np.select(p['국가'])||'중국',
+    status:   np.select(p['상태'])==='미활성'?'inactive':'active',
+    files,
+  };
+}
 function mapNotionTask(row){
   const p=row.properties||{};
   return{
     _notionId:row.id,
-    cont: np.title(p['업무내용']),
-    note: np.text(p['비고']),
+    cont: np.title(p['업무내용']),    note: np.text(p['비고']),
     done: np.check(p['완료']),
     date: np.date(p['날짜']),
     ap:   np.select(p['오전오후'])||'오전',
@@ -18393,6 +18446,7 @@ function mapNotionAS(row){
     _notionId:row.id,
     item:    np.title(p['품목']),
     client:  np.text(p['고객사']),
+    repairer: np.text(p['수리주체']),
     desc:    np.text(p['증상내용']),
     note:    np.text(p['비고']),
     qty:     np.number(p['수량'])||1,
@@ -18646,7 +18700,7 @@ async function pullFromNotion(opts){
     }
 
     // 10개 DB를 병렬 쿼리 (증분 모드면 since 이후만 받음) + 견적 DB + 입출고
-    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows,qtRows,ioRows,stkhRows]=await Promise.all([
+    const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows,qtRows,ioRows,stkhRows,facRows]=await Promise.all([
       notionCfg.smpDb   ? nQueryAll(notionCfg.smpDb,    sinceFor(notionCfg.smpDb),   callOpts) : Promise.resolve([]),
       notionCfg.ordDb   ? nQueryAll(notionCfg.ordDb,    sinceFor(notionCfg.ordDb),   callOpts) : Promise.resolve([]),
       notionCfg.procDb  ? nQueryAll(notionCfg.procDb,   sinceFor(notionCfg.procDb),  callOpts) : Promise.resolve([]),
@@ -18660,6 +18714,7 @@ async function pullFromNotion(opts){
       notionCfg.quoteDb ? nQueryAll(notionCfg.quoteDb,  sinceFor(notionCfg.quoteDb), callOpts) : Promise.resolve([]),
       notionCfg.ioDb    ? nQueryAll(notionCfg.ioDb,     sinceFor(notionCfg.ioDb),    callOpts) : Promise.resolve([]),
       notionCfg.stockHistDb ? nQueryAll(notionCfg.stockHistDb, sinceFor(notionCfg.stockHistDb), callOpts) : Promise.resolve([]),
+      notionCfg.factoryDb ? nQueryAll(notionCfg.factoryDb, sinceFor(notionCfg.factoryDb), callOpts) : Promise.resolve([]),
     ]);
 
     // pull 도중 회로차단기가 열린 경우 → Worker가 응답 실패 상태
@@ -19084,6 +19139,7 @@ async function pullFromNotion(opts){
     procItems     = mergeRows(procRows, procItems,      mapNotionProc,      ['orderId'], '공정',     notionCfg.procDb);
     proposals     = mergeRows(propRows, proposals,      mapNotionProposal,  ['images','productId'], '영업제안', notionCfg.propDb);
     clients       = mergeRows(cliRows,  clients,        mapNotionClient,    ['files'], '고객사',   notionCfg.clientDb);
+    factories     = mergeRows(facRows,  factories,      mapNotionFactory,   ['files'], '공장',     notionCfg.factoryDb);
     tasks         = mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
     asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        ['repairs','files'], 'AS',       notionCfg.asDb);
     productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['imgs','importSource','createdAt','priceHistory','priceHistDeleted'], '제품DB',   notionCfg.productDb);
@@ -22984,6 +23040,7 @@ const _syncFnMap = {
   proc:      (o,u)=>syncProcToNotion(o,u),
   proposal:  (o,u)=>syncProposalToNotion(o,u),
   client:    (o,u)=>syncClientToNotion(o,u),
+  factory:   (o,u)=>syncFactoryToNotion(o,u),
   task:      (o,u)=>syncTaskToNotion(o,u),
   as:        (o,u)=>syncASToNotion(o,u),
   product:   (o,u)=>syncProductToNotion(o,u),
@@ -23465,6 +23522,53 @@ async function syncClientToNotion(cl, update){
   }
   cl._syncedAt = new Date().toISOString();
 }
+async function syncFactoryToNotion(fa, update){
+  if(!notionCfg.workerUrl||!notionCfg.factoryDb){
+    throw new Error('Notion 미연결: 공장 DB');
+  }
+  const chunkRichText=(str)=>{
+    const s2=String(str||'');
+    if(!s2) return [{text:{content:''}}];
+    const chunks=[];
+    for(let i=0;i<s2.length;i+=2000){ chunks.push({text:{content:s2.slice(i,i+2000)}}); }
+    return chunks;
+  };
+  const filesJson = (() => {
+    try{
+      const arr = (fa.files||[])
+        .filter(f => f && f.url && String(f.url).startsWith('http'))
+        .map(f => ({name:f.name||'', url:f.url, type:f.type||'', r2Key:f.r2Key||''}));
+      return JSON.stringify(arr);
+    }catch(e){ return '[]'; }
+  })();
+  const p={
+    "공장명":{"title":[{"text":{"content":fa.name||''}}]},
+    "담당자":{"rich_text":[{"text":{"content":fa.contact||''}}]},
+    "연락처":{"rich_text":[{"text":{"content":fa.phone||''}}]},
+    "위챗":{"rich_text":[{"text":{"content":fa.wechat||''}}]},
+    "이메일":{"rich_text":[{"text":{"content":fa.email||''}}]},
+    "주소":{"rich_text":[{"text":{"content":fa.address||''}}]},
+    "취급품목":{"rich_text":[{"text":{"content":fa.items||''}}]},
+    "결제조건":{"rich_text":[{"text":{"content":fa.payTerms||''}}]},
+    "메모":{"rich_text":chunkRichText(fa.memo||'')},
+    "파일JSON":{"rich_text":chunkRichText(filesJson)},
+    "국가":{"select":{"name":fa.country||'중국'}},
+    "상태":{"select":{"name":fa.status==='inactive'?'미활성':'활성'}},
+  };
+  if(fa._notionId){
+    await nUpdate(fa._notionId,p);
+  } else {
+    const r=await nCreate(notionCfg.factoryDb,p);
+    if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (공장)');
+    saveNotionId(factories,fa.id,r.id,SL_K.fac);
+    fa._notionId = r.id;
+  }
+  fa._syncedAt = new Date().toISOString();
+}
+async function deleteFactoryFromNotion(fa){
+  if(fa._notionId) await nDelete(fa._notionId);
+  if(typeof realtimeDelete === 'function') try{ realtimeDelete('factory', fa); }catch(_){}
+}
 async function deleteClientFromNotion(cl){
   if(cl._notionId) await nDelete(cl._notionId);
   if(typeof realtimeDelete === 'function') try{ realtimeDelete('client', cl); }catch(_){}
@@ -23512,6 +23616,7 @@ async function syncASToNotion(a, update){
   const p={
     "품목":{"title":[{"text":{"content":a.item||''}}]},
     "고객사":{"rich_text":[{"text":{"content":a.client||''}}]},
+    "수리주체":{"rich_text":[{"text":{"content":a.repairer||''}}]},
     "수량":{"number":+a.qty||1},
     "개당수리비":{"number":+a.unitCost||0},
     "합계":{"number":total},
@@ -24111,9 +24216,10 @@ async function deleteQuoteFromNotion(qt){
 // ── Sales data (declared early to avoid TDZ) ──
 let clients=[], proposals=[], projects=[], quotes=[];
 let _salesInited=false, _salesSubTab=(function(){try{return localStorage.getItem('ek3_salesSubTab')||'inquiry';}catch(e){return 'inquiry';}})();
-const SL_K={cli:'ek_v9_cli',prop:'ek_v9_prop',prj:'ek_v9_prj',inq:'ek_inquiries',nd:'ek_newdesigns',qt:'ek_quotes'};
+const SL_K={cli:'ek_v9_cli',fac:'ek_v9_fac',prop:'ek_v9_prop',prj:'ek_v9_prj',inq:'ek_inquiries',nd:'ek_newdesigns',qt:'ek_quotes'};
 function slSave(){try{
   localStorage.setItem(SL_K.cli,JSON.stringify(clients));
+  localStorage.setItem(SL_K.fac,JSON.stringify(factories));
   localStorage.setItem(SL_K.prop,JSON.stringify(proposals));
   localStorage.setItem(SL_K.prj,JSON.stringify(projects));
   localStorage.setItem(SL_K.inq,JSON.stringify(inquiries));
@@ -24123,6 +24229,7 @@ function slSave(){try{
 function slLoad(){try{
   const d=k=>JSON.parse(localStorage.getItem(k)||'[]');
   clients=d(SL_K.cli);proposals=d(SL_K.prop);projects=d(SL_K.prj);
+  factories=d(SL_K.fac);
   inquiries=d(SL_K.inq);newDesigns=d(SL_K.nd);
   quotes=d(SL_K.qt);
 }catch(e){}}
@@ -31383,6 +31490,8 @@ function _fillFactoryList(){
     const dl = document.getElementById('factoryList');
     if(!dl) return;
     const set = new Set();
+    // 공장DB 우선 (활성 공장)
+    (typeof factories!=='undefined'?factories:[]).forEach(fa=>{ if(fa.status!=='inactive'){ const n=(fa.name||'').trim(); if(n) set.add(n); } });
     (typeof samples!=='undefined'?samples:[]).forEach(s=>{ const f=(s.factory||'').trim(); if(f) set.add(f); });
     (typeof orders!=='undefined'?orders:[]).forEach(o=>{ const f=(o.factory||'').trim(); if(f) set.add(f); });
     dl.innerHTML = Array.from(set).sort().map(f=>`<option value="${_escAttr(f)}">`).join('');
@@ -31455,7 +31564,7 @@ function openFactoryPicker(scope){
       const st=s.status||'의뢰';
       if(st==='확정'||st==='완료'||st==='취소') return;
       const f=(s.factory||'').trim()||'(공장 미지정)';
-      (count[f]=count[f]||{s:0,o:0}).s++;
+      (count[f]=count[f]||{s:0,o:0,as:0}).s++;
     });
   }
   if(scope==='all' || scope==='order'){
@@ -31463,7 +31572,16 @@ function openFactoryPicker(scope){
       const st=(typeof normalizeOrderStatus==='function')?normalizeOrderStatus(o.status):(o.status||'의뢰');
       if(st==='확정'||st==='취소보류') return;
       const f=(o.factory||'').trim()||'(공장 미지정)';
-      (count[f]=count[f]||{s:0,o:0}).o++;
+      (count[f]=count[f]||{s:0,o:0,as:0}).o++;
+    });
+  }
+  // 🔧 중국 공장 AS — 수리주체가 공장명(한국/빈값 아님)이고 진행중(완료/반송 제외)
+  {
+    (asItems||[]).forEach(a=>{
+      const rp=(a.repairer||'').trim();
+      if(!rp || rp==='한국') return;               // 국내 처리·미지정 제외
+      if(a.status==='완료'||a.status==='반송') return; // 완료된 AS 제외
+      (count[rp]=count[rp]||{s:0,o:0,as:0}).as++;
     });
   }
   const names = Object.keys(count).sort((a,b)=>{
@@ -31472,11 +31590,12 @@ function openFactoryPicker(scope){
     return a.localeCompare(b);
   });
   if(!names.length){
-    if(typeof showToast==='function') showToast('진행중인 샘플/발주가 없습니다','var(--t2)',2500);
+    if(typeof showToast==='function') showToast('진행중인 샘플/발주/AS가 없습니다','var(--t2)',2500);
     return;
   }
   const totalS = names.reduce((a,f)=>a+count[f].s,0);
   const totalO = names.reduce((a,f)=>a+count[f].o,0);
+  const totalAS = names.reduce((a,f)=>a+(count[f].as||0),0);
 
   const esc = (typeof _escAttr==='function')?_escAttr:(x=>String(x||''));
   const rowBtn = (label, sub, arg, isAll)=>{
@@ -31487,10 +31606,11 @@ function openFactoryPicker(scope){
     </button>`;
   };
 
-  let body = rowBtn('📦 전체 공장', `샘플 ${totalS} · 발주 ${totalO}건`, "'__ALL__'", true);
+  const allSub = `샘플 ${totalS} · 발주 ${totalO}${totalAS?(' · AS '+totalAS):''}건`;
+  let body = rowBtn('📦 전체 공장', allSub, "'__ALL__'", true);
   body += names.map(f=>{
     const c=count[f];
-    const parts=[]; if(c.s)parts.push('샘플 '+c.s); if(c.o)parts.push('발주 '+c.o);
+    const parts=[]; if(c.s)parts.push('샘플 '+c.s); if(c.o)parts.push('발주 '+c.o); if(c.as)parts.push('AS '+c.as);
     const warn = f==='(공장 미지정)' ? ' ⚠' : '';
     return rowBtn('🏭 '+esc(f)+warn, parts.join(' · ')+'건', "'"+esc(f).replace(/'/g,"\\'")+"'", false);
   }).join('');
@@ -31561,8 +31681,39 @@ function exportFactoryDelivery(scope, onlyFactory){
     });
   }
 
+  // ── 중국 공장 AS 수집 (수리주체=공장명, 진행중=완료/반송 제외) ──
+  //    scope와 무관하게 항상 포함 — 공장이 자기 담당 AS도 함께 봐야 하므로.
+  (typeof asItems!=='undefined'?asItems:[]).forEach(a=>{
+    const rp=(a.repairer||'').trim();
+    if(!rp || rp==='한국') return;
+    if(a.status==='완료'||a.status==='반송') return;
+    // AS 썸네일: AS 사진(files) 우선 → 없으면 품목명으로 제품DB 매칭
+    let thumb='';
+    if(Array.isArray(a.files)){
+      const im=a.files.find(i=>i && i.url && /^https?:\/\//.test(i.url));
+      if(im) thumb=im.url;
+    }
+    if(!thumb) thumb=_thumbByCode(a.item);
+    // 증상+비고를 비고칸에
+    const noteParts=[];
+    if(a.desc) noteParts.push('증상: '+a.desc);
+    if(a.note) noteParts.push(a.note);
+    rows.push({
+      factory: rp,
+      kind: 'AS',
+      code: a.date||'',   // AS는 발주번호 대신 접수일 표시
+      name: a.item||'',
+      thumb: thumb,
+      qty: (a.qty||1)+'',
+      status: 'AS '+(a.status||'접수'),
+      note: noteParts.join(' / '),
+      factShip: a.due||'',   // AS는 완료예정일을 출고일 칸에
+      extraItems: [],
+    });
+  });
+
   if(!rows.length){
-    if(typeof showToast==='function') showToast('진행중인 샘플/발주가 없습니다','var(--t2)',2500);
+    if(typeof showToast==='function') showToast('진행중인 샘플/발주/AS가 없습니다','var(--t2)',2500);
     return;
   }
 
@@ -31590,9 +31741,10 @@ function exportFactoryDelivery(scope, onlyFactory){
   const stColor = (st)=>{
     const map = {
       '의뢰':'#6b7280', '제작중':'#2563eb', '수정중':'#d97706',
-      '진행중':'#2563eb', '부분출고':'#7c3aed'
+      '진행중':'#2563eb', '부분출고':'#7c3aed',
+      'AS 접수':'#a11a1a', 'AS 수리중':'#c0392b'
     };
-    return map[st] || '#6b7280';
+    return map[st] || (String(st).indexOf('AS')===0 ? '#a11a1a' : '#6b7280');
   };
 
   // ── 공장별 섹션 HTML ──
@@ -31622,7 +31774,7 @@ function exportFactoryDelivery(scope, onlyFactory){
       return `<tr>
         <td class="c num">${i+1}</td>
         <td class="c"><div class="thumb ${r.thumb?'':'noimg'}">${thumb}</div></td>
-        <td class="c"><span class="kind kind-${r.kind==='샘플'?'s':'o'}">${r.kind}</span></td>
+        <td class="c"><span class="kind kind-${r.kind==='샘플'?'s':(r.kind==='AS'?'as':'o')}">${r.kind}</span></td>
         <td class="code">${_escHtml(r.code)}</td>
         <td class="nmcell">${vendorTag}<span class="nm">${_escHtml(r.name)}</span>${extra}</td>
         <td class="c qty">${_escHtml(r.qty)}</td>
@@ -31694,6 +31846,7 @@ function exportFactoryDelivery(scope, onlyFactory){
       .kind{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:700}
       .kind-s{background:#dbeafe;color:#1e40af}
       .kind-o{background:#ffedd5;color:#9a3412}
+      .kind-as{background:#fde4e4;color:#a11a1a}
       .st{display:inline-block;color:#fff;padding:3px 10px;border-radius:8px;font-size:12.5px;font-weight:700;white-space:nowrap}
       td.note{font-size:13px;color:#333}
       @media print{
@@ -31719,7 +31872,7 @@ function exportFactoryDelivery(scope, onlyFactory){
   w.document.write(html);
   w.document.close();
   const shownCount = factoryNames.reduce((a,f)=>a+(groups[f]?groups[f].length:0),0);
-  if(typeof showToast==='function') showToast(`✓ 공장별 진행현황 생성 — ${factoryNames.length}개 공장 · ${scopeLabel} ${shownCount}건`,'var(--grn)',3500);
+  if(typeof showToast==='function') showToast(`✓ 공장별 진행현황 생성 — ${factoryNames.length}개 공장 · 총 ${shownCount}건 (샘플·발주·AS 포함)`,'var(--grn)',3500);
 }
 function _orderItemsSummaryPlain(o){
   const rows = Array.isArray(o.rows)?o.rows:[];
@@ -37276,6 +37429,7 @@ function renderSalesTab(){
     <button class="sl-subtab ${_salesSubTab==='pgen'?'on':''}" onclick="setSalesSubTab('pgen')">📑 제안서 생성기</button>
     <button class="sl-subtab ${_salesSubTab==='quotes'?'on':''}" onclick="setSalesSubTab('quotes')">📋 견적서</button>
     <button class="sl-subtab ${_salesSubTab==='clients'?'on':''}" onclick="setSalesSubTab('clients')">🏢 고객사</button>
+    <button class="sl-subtab ${_salesSubTab==='factories'?'on':''}" onclick="setSalesSubTab('factories')">🏭 공장</button>
     <button class="sl-subtab ${_salesSubTab==='salestool'?'on':''}" onclick="setSalesSubTab('salestool')">📁 영업 자료</button>
   </div>
   <div id="slTabContent"></div>`;
@@ -37288,7 +37442,7 @@ function setSalesSubTab(tab){
   try{ localStorage.setItem('ek3_salesSubTab', tab); }catch(e){}
   // update tab buttons
   document.querySelectorAll('.sl-subtab').forEach(b=>{
-    const label = {inquiry:'문의',proposals:'신규 제안',pgen:'제안서 생성기',quotes:'견적',clients:'고객사',salestool:'영업 자료'}[tab];
+    const label = {inquiry:'문의',proposals:'신규 제안',pgen:'제안서 생성기',quotes:'견적',clients:'고객사',factories:'공장',salestool:'영업 자료'}[tab];
     b.classList.toggle('on', label && b.textContent.includes(label));
   });
   renderSalesSubTab();
@@ -37303,6 +37457,7 @@ function renderSalesSubTab(){
   else if(_salesSubTab==='pgen') vProposalGen(c);
   else if(_salesSubTab==='quotes') vQuotes(c);
   else if(_salesSubTab==='clients') vClients(c);
+  else if(_salesSubTab==='factories') vFactories(c);
   else if(_salesSubTab==='salestool') vSalesTools(c);
   else { _salesSubTab='inquiry'; vInquiry(c); } // fallback (월별 실적은 경영지원으로 이동)
 }
@@ -38891,6 +39046,102 @@ function _renderContractBody(){
       + '</div>';
   }).join('') + '</div>';
 }
+
+// ════════════════════════════════════════════════════════════════
+// 🏭 공장 관리 (고객사와 동일 패턴) — 카드 그리드 + 등록/수정/삭제
+// ════════════════════════════════════════════════════════════════
+function _facInitHtml(fa){
+  // 국가 색상 배지 (중국=빨강, 한국=파랑, 기타=회색)
+  const nm=(fa.name||'').trim();
+  const init = nm.replace(/공장|工厂/g,'').trim().slice(0,2) || nm.slice(0,2) || '??';
+  const color = fa.country==='한국' ? '#2b5aa8' : (fa.country==='기타' ? '#6b7280' : '#c0392b');
+  return `<span style="display:inline-flex;width:34px;height:34px;border-radius:8px;background:${color};color:#fff;align-items:center;justify-content:center;font-size:13px;font-weight:800;flex-shrink:0">${_escHtml(init)}</span>`;
+}
+
+function vFactories(c){
+  _ensureIds(factories, '공장');
+  const active = factories.filter(f=>f.status!=='inactive');
+  const cards = factories.map(fa=>{
+    const cid = String(fa.id).replace(/'/g,"\\'");
+    const sub = [];
+    if(fa.contact) sub.push('👤 '+_escHtml(fa.contact));
+    if(fa.items) sub.push(_escHtml(fa.items));
+    return `<div class="cl-card" onclick="openFacModal('${cid}')" title="클릭해서 수정" style="position:relative">
+      <button class="cl-card-edit" onclick="event.stopPropagation();openFacModal('${cid}')" title="수정">✏️</button>
+      <div class="cl-card-top">${_facInitHtml(fa)}<span class="cl-card-name" title="${_escAttr(fa.name)}">${_escHtml(fa.name)}</span></div>
+      <div class="cl-card-cats">
+        <span class="cl-cat-chip" style="background:${fa.country==='한국'?'#eaf2ff':(fa.country==='기타'?'#eee':'#fdeaea')};color:${fa.country==='한국'?'#2b5aa8':(fa.country==='기타'?'#666':'#a11a1a')}">${_escHtml(fa.country||'중국')}</span>
+        ${sub.length?`<span style="font-size:11px;color:var(--t3)">${sub.join(' · ')}</span>`:'<span style="font-size:11px;color:var(--t3)">정보 미입력</span>'}
+      </div>
+      ${fa.status==='inactive'?'<span class="cl-card-inactive">미활성</span>':''}
+    </div>`;
+  }).join('');
+  c.innerHTML=`<div class="card"><div class="ch"><div><div class="ch-t">공장 관리 <span style="font-size:11px;color:var(--t3);font-weight:400">${factories.length}곳</span></div></div><button class="btn bp bs" onclick="openFacModal(null)">+ 등록</button></div>
+  ${factories.length? `<div class="cl-grid">${cards}</div>` : '<div style="padding:32px;text-align:center;color:var(--t3);font-size:13px">등록된 공장이 없습니다. <b>+ 등록</b>으로 첫 공장을 추가하세요.<br><span style="font-size:11.5px">공장을 등록하면 발주·샘플·AS의 공장 선택과 납기확인서에서 함께 관리됩니다.</span></div>'}
+  </div>`;
+}
+
+function openFacModal(idOrNull){
+  const fa = idOrNull ? factories.find(x=>x.id==idOrNull) : null;
+  document.getElementById('mFac_t').textContent = fa ? '🏭 공장 수정' : '🏭 공장 등록';
+  sv('fac_id', fa?fa.id:'');
+  sv('fac_nm', fa?fa.name:'');
+  setSelect('fac_country', fa?(fa.country||'중국'):'중국');
+  sv('fac_ct', fa?fa.contact||'':'');
+  sv('fac_ph', fa?fa.phone||'':'');
+  sv('fac_wc', fa?fa.wechat||'':'');
+  sv('fac_em', fa?fa.email||'':'');
+  sv('fac_addr', fa?fa.address||'':'');
+  sv('fac_items', fa?fa.items||'':'');
+  sv('fac_pay', fa?fa.payTerms||'':'');
+  sv('fac_mo', fa?fa.memo||'':'');
+  const delBtn=document.getElementById('fac_delBtn');
+  if(delBtn) delBtn.style.display = fa ? '' : 'none';
+  if(typeof openM==='function') openM('mFac');
+}
+
+async function saveFactory(){
+  if(!_validateRequired([{id:'fac_nm',label:'공장명'}])) return;
+  const id=gv('fac_id');
+  if(!id && !requireNotion('factoryDb', '공장')) return;
+  const obj={
+    name:gv('fac_nm'), country:gv('fac_country')||'중국',
+    contact:gv('fac_ct'), phone:gv('fac_ph'), wechat:gv('fac_wc'), email:gv('fac_em'),
+    address:gv('fac_addr'), items:gv('fac_items'), payTerms:gv('fac_pay'),
+    memo:gv('fac_mo'), status:'active',
+  };
+  if(id){
+    const i=factories.findIndex(f=>f.id==id);
+    if(i>=0){ factories[i]={...factories[i],...obj}; }
+    slSave();
+    if(typeof debouncedSync==='function') debouncedSync('factory', factories[i], true);
+    showToast('✓ 공장 수정됨','var(--grn)');
+    closeM('mFac');
+    renderSalesSubTab();
+  } else {
+    const nc={id:Date.now(),...obj};
+    const ok = await createWithNotion(factories, nc, syncFactoryToNotion, '공장');
+    if(!ok) return;
+    slSave();
+    showToast('✓ 공장 등록됨','var(--grn)');
+    closeM('mFac');
+    renderSalesSubTab();
+  }
+}
+
+function deleteFactory(){
+  const id=gv('fac_id');
+  const fa=factories.find(f=>f.id==id);
+  if(!fa) return;
+  if(!confirm(`'${fa.name}' 공장을 삭제할까요?\n(이미 지정된 발주·샘플·AS의 공장명 텍스트는 그대로 남습니다)`)) return;
+  factories=factories.filter(f=>f.id!=id);
+  slSave();
+  if(typeof deleteFactoryFromNotion==='function') deleteFactoryFromNotion(fa).catch(e=>console.warn('[공장삭제]',e&&e.message));
+  showToast('공장 삭제됨','var(--t2)');
+  closeM('mFac');
+  renderSalesSubTab();
+}
+
 
 function vClients(c){
   _ensureIds(clients, '고객사');
