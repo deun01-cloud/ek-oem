@@ -7549,7 +7549,13 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>납기일 *</label><input class="fi" type="date" id="s_due"></div>
   </div>
   <div class="fr3">
-    <div class="fg"><label>🏭 제작 공장 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(중국 공장명 — 납기확인서 추출 기준)</span></label><input class="fi" id="s_factory" list="factoryList" placeholder="공장명 입력/선택"></div>
+    <div class="fg"><label>🏭 제작 공장 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(중국 공장명 — 납기확인서 추출 기준)</span></label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input class="fi" id="s_factory" list="factoryList" placeholder="공장명 입력 또는 🔍 선택" style="flex:1">
+        <button type="button" onclick="openFacSearch('s_factory')" title="등록된 공장 목록에서 선택"
+          style="padding:6px 10px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;cursor:pointer;font-size:15px;line-height:1;flex-shrink:0">🔍</button>
+      </div>
+    </div>
   </div>
   <div class="fr3">
     <div class="fg"><label>공장 출고일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(중국 출고 일정)</span></label><input class="fi" type="date" id="s_factShip"></div>
@@ -7770,7 +7776,13 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>발주번호 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(빈칸이면 자동생성: 이니셜+MMDD)</span></label><input class="fi" id="o_no" placeholder="예: VT0414 (자동생성)"></div>
   </div>
   <div class="fr3">
-    <div class="fg"><label>🏭 제작 공장 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(중국 공장명 — 납기확인서 추출 기준)</span></label><input class="fi" id="o_factory" list="factoryList" placeholder="공장명 입력/선택"></div>
+    <div class="fg"><label>🏭 제작 공장 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(중국 공장명 — 납기확인서 추출 기준)</span></label>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input class="fi" id="o_factory" list="factoryList" placeholder="공장명 입력 또는 🔍 선택" style="flex:1">
+        <button type="button" onclick="openFacSearch('o_factory')" title="등록된 공장 목록에서 선택"
+          style="padding:6px 10px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;cursor:pointer;font-size:15px;line-height:1;flex-shrink:0">🔍</button>
+      </div>
+    </div>
   </div>
   <div class="fr3">
     <div class="fg"><label>진행 상태</label>
@@ -8044,6 +8056,16 @@ window.addEventListener('message', function(ev){
     style="font-size:13px;padding:8px 12px;margin-bottom:10px">
   <div id="vendorSearchList" style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:4px"></div>
   <div class="ma"><button class="btn bgo" onclick="closeM('mVendorSearch')">닫기</button></div>
+</div></div>
+
+<div class="ov" id="mFacSearch"><div class="modal" style="max-width:500px">
+  <div class="mt">🏭 공장 선택</div>
+  <input class="fi" id="facSearchQ" placeholder="공장명으로 검색..." oninput="renderFacSearchList(this.value)"
+    style="font-size:13px;padding:8px 12px;margin-bottom:10px">
+  <div id="facSearchList" style="max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:4px"></div>
+  <div class="ma">
+    <button class="btn bgo" onclick="closeM('mFacSearch')">닫기</button>
+  </div>
 </div></div>
 
 <!-- 출하 수량 편집 모달 -->
@@ -15731,6 +15753,51 @@ function selectVendorFromModal(name,contact){
   const cl=findClientByVendor(name);
   const initBadge=cl&&cl.initials?` [${cl.initials.toUpperCase()}]`:'';
   showToast(`✓ "${name}"${initBadge} 선택됨`,'var(--gold-lt)');
+}
+
+// 🏭 공장 검색 팝업 — 등록된 공장 목록에서 선택해 지정 필드(o_factory/s_factory 등)에 채움
+let _facSearchTarget = 'o_factory';
+function openFacSearch(targetId){
+  _facSearchTarget = targetId || 'o_factory';
+  try{ if(typeof slLoad==='function') slLoad(); }catch(e){}   // 공장 데이터 최신화
+  sv('facSearchQ','');
+  renderFacSearchList('');
+  openM('mFacSearch');
+  setTimeout(()=>document.getElementById('facSearchQ')?.focus(),100);
+}
+function renderFacSearchList(q){
+  const el=document.getElementById('facSearchList'); if(!el) return;
+  const query=(q||'').toLowerCase().trim();
+  const list=(typeof factories!=='undefined'?factories:[])
+    .filter(f=>f.status!=='inactive')
+    .filter(f=>!query || (f.name||'').toLowerCase().includes(query) || (f.contact||'').toLowerCase().includes(query));
+  if(!list.length){
+    el.innerHTML=`<div style="padding:16px;text-align:center;color:var(--t3);font-size:12px">${(typeof factories!=='undefined'&&factories.length)?'검색 결과 없음':'등록된 공장이 없습니다 — 세일즈 › 공장 탭에서 먼저 등록하세요'}</div>`;
+    return;
+  }
+  el.innerHTML=list.map(f=>{
+    const nm=(f.name||'').replace(/'/g,'&#39;');
+    const sub=[f.contact,f.phone,f.items].filter(Boolean).join(' · ');
+    const flag = f.country==='한국'?'🇰🇷':(f.country==='기타'?'🏳️':'🇨🇳');
+    return `<div onclick="selectFacFromModal('${nm}')"
+      style="padding:10px 13px;cursor:pointer;border:1px solid var(--bdr);border-radius:6px;background:var(--s1)"
+      onmouseover="this.style.background='var(--gold-bg)';this.style.borderColor='var(--gold-line)'"
+      onmouseout="this.style.background='var(--s1)';this.style.borderColor='var(--bdr)'">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:15px;flex-shrink:0">${flag}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--t1)">${_escHtml(f.name)}</div>
+          ${sub?`<div style="font-size:11px;color:var(--t3);margin-top:1px">${_escHtml(sub)}</div>`:''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function selectFacFromModal(name){
+  const decoded = String(name).replace(/&#39;/g,"'");
+  sv(_facSearchTarget, decoded);
+  closeM('mFacSearch');
+  showToast(`✓ 공장 "${decoded}" 선택됨`,'var(--gold-lt)');
 }
 
 // Worker URL: Cloudflare Worker 프록시
