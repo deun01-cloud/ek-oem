@@ -29682,6 +29682,7 @@ function renderSample(){
             <th>품번</th>
             <th>유형</th>
             <th>상태</th>
+            <th>🏭 공장</th>
             <th style="cursor:pointer;user-select:none" onclick="smpToggleSort('req')" title="클릭하여 정렬 (처음 클릭 = 최신순)">의뢰일${_smpSortIndicator('req')}</th>
             <th>공장출고일</th>
             <th>납기일</th>
@@ -29752,6 +29753,7 @@ function renderSample(){
                 <span class="chip ${SMP_CLS[s.status]||''}" style="font-size:9.5px;cursor:pointer;user-select:none"
                   onclick="openSmpStatusDropdown(event,'${s.id}')" title="클릭하여 상태 변경">${smpStatusLabel(s.status)} ▾</span>
               </td>
+              <td onclick="event.stopPropagation()">${_factoryInlineCell(s.factory, 's', s.id)}</td>
               <td style="font-size:10.5px;color:var(--t2);white-space:nowrap">${s.reqDate||'—'}</td>
               <td style="font-size:10.5px;white-space:nowrap;${s.factShip?'color:var(--t2)':missFs?'color:var(--red);font-weight:600':'color:var(--t3)'}">${s.factShip||'—'}</td>
               <td style="font-size:11px;white-space:nowrap">${s.due||'—'}${(()=>{
@@ -29770,7 +29772,7 @@ function renderSample(){
               </td>
             </tr>`;
           }).join(''):
-          `<tr><td colspan="12" style="text-align:center;padding:32px;color:var(--t3)">
+          `<tr><td colspan="13" style="text-align:center;padding:32px;color:var(--t3)">
             등록된 샘플이 없습니다 — 위 드롭존에 샘플의뢰서 파일을 올려주세요
           </td></tr>`}
         </tbody>
@@ -31951,6 +31953,75 @@ function _orderItemsSummaryPlain(o){
 }
 
 
+// 🏭 샘플/발주 테이블용 인라인 공장 셀 — 클릭하면 공장 선택 드롭다운.
+//   kind: 's'(샘플) | 'o'(발주),  id: 항목 id
+function _factoryInlineCell(factory, kind, id){
+  const cur = (factory||'').trim();
+  const disp = cur
+    ? `<span style="font-size:10.5px;font-weight:600;color:var(--t1)">🏭 ${_escHtml(cur)}</span>`
+    : `<span style="font-size:10.5px;color:var(--t3)">공장 지정 ▾</span>`;
+  const safeId = String(id).replace(/'/g,"\\'");
+  return `<span onclick="event.stopPropagation();openInlineFactoryPicker(event,'${kind}','${safeId}')"
+    style="cursor:pointer;display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border:1px solid ${cur?'var(--gold-line)':'var(--bdr)'};border-radius:12px;background:${cur?'var(--gold-bg)':'var(--s1)'};white-space:nowrap"
+    title="클릭해서 공장 선택/변경">${disp}</span>`;
+}
+
+// 인라인 공장 선택 드롭다운 (테이블 셀에서 호출)
+function openInlineFactoryPicker(ev, kind, id){
+  if(ev) ev.stopPropagation();
+  // 기존 드롭다운 제거
+  const old=document.getElementById('inlineFacDrop'); if(old) old.remove();
+  const list=(typeof factories!=='undefined'?factories:[]).filter(f=>f.status!=='inactive');
+  const drop=document.createElement('div');
+  drop.id='inlineFacDrop';
+  drop.style.cssText='position:fixed;background:var(--s1);border:1px solid var(--gold-line);border-radius:8px;z-index:10000;max-height:280px;overflow-y:auto;box-shadow:0 6px 20px rgba(0,0,0,.2);min-width:180px;padding:4px';
+  const rows=[];
+  // 공장 목록
+  if(list.length){
+    list.forEach(f=>{
+      const nm=(f.name||'').replace(/'/g,"\\'");
+      const flag=f.country==='한국'?'🇰🇷':(f.country==='기타'?'🏳️':'🇨🇳');
+      rows.push(`<div onclick="setInlineFactory('${kind}','${String(id).replace(/'/g,"\\'")}','${nm}')" style="padding:8px 12px;cursor:pointer;border-radius:6px;font-size:12.5px;display:flex;align-items:center;gap:7px" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background=''"><span>${flag}</span><span style="font-weight:600;color:var(--t1)">${_escHtml(f.name)}</span></div>`);
+    });
+  } else {
+    rows.push(`<div style="padding:10px 12px;font-size:11.5px;color:var(--t3)">등록된 공장 없음<br>세일즈 › 공장 탭에서 등록</div>`);
+  }
+  // 지정 해제
+  rows.push(`<div onclick="setInlineFactory('${kind}','${String(id).replace(/'/g,"\\'")}','')" style="padding:7px 12px;cursor:pointer;border-radius:6px;font-size:11.5px;color:var(--t3);border-top:1px solid var(--bdr);margin-top:2px" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">✕ 공장 지정 해제</div>`);
+  drop.innerHTML=rows.join('');
+  document.body.appendChild(drop);
+  // 위치: 클릭 지점 기준
+  const x=ev?ev.clientX:200, y=ev?ev.clientY:200;
+  const dw=drop.offsetWidth, dh=drop.offsetHeight;
+  drop.style.left=Math.min(x, window.innerWidth-dw-12)+'px';
+  drop.style.top=Math.min(y+6, window.innerHeight-dh-12)+'px';
+  // 바깥 클릭 시 닫기
+  setTimeout(()=>{
+    const close=(e)=>{ if(!drop.contains(e.target)){ drop.remove(); document.removeEventListener('click',close); } };
+    document.addEventListener('click',close);
+  },0);
+}
+
+// 인라인에서 공장 지정 → 해당 샘플/발주 저장 + 동기화
+function setInlineFactory(kind, id, name){
+  const drop=document.getElementById('inlineFacDrop'); if(drop) drop.remove();
+  const decoded=String(name).replace(/\\'/g,"'");
+  if(kind==='s'){
+    const i=samples.findIndex(x=>x.id==id); if(i<0) return;
+    samples[i]={...samples[i], factory:decoded, _ts:Date.now()};
+    if(typeof save==='function') save();
+    if(samples[i]._notionId && typeof debouncedSync==='function') debouncedSync('sample', samples[i], true);
+    if(typeof renderTab==='function') renderTab();
+  } else {
+    const i=orders.findIndex(x=>x.id==id); if(i<0) return;
+    orders[i]={...orders[i], factory:decoded, _ts:Date.now()};
+    if(typeof save==='function') save();
+    if(orders[i]._notionId && typeof debouncedSync==='function') debouncedSync('order', orders[i], true);
+    if(typeof renderOrder==='function') renderOrder();
+  }
+  if(typeof showToast==='function') showToast(decoded?`✓ 공장 "${decoded}" 지정됨`:'공장 지정 해제됨', decoded?'var(--gold-lt)':'var(--t2)', 1800);
+}
+
 function renderOrder(){
   _ensureIds(orders, '발주');
   const c=document.getElementById('content');
@@ -32275,6 +32346,7 @@ function renderOrder(){
               return `<input type="checkbox" onclick="event.stopPropagation();toggleAllOrdChk()" ${checked?'checked':''} title="전체선택/해제 토글">`;
             })()}</th>
             <th>업체</th>
+            <th>🏭 공장</th>
             <th>발주번호</th>
             <th style="cursor:pointer;user-select:none" onclick="ordToggleSort('date')" title="클릭하여 정렬 (처음 클릭 = 최신순)">발주일${_ordSortIndicator('date')}</th>
             ${ordSubTab==='done' ? `
@@ -32387,6 +32459,7 @@ function renderOrder(){
                 </div>
                 ${o.manager?`<div style="font-size:10px;color:var(--t3);margin-top:2px;margin-left:26px">${o.manager}</div>`:''}
               </td>
+              <td onclick="event.stopPropagation()" style="vertical-align:middle;border-bottom:none">${_factoryInlineCell(o.factory, 'o', o.id)}</td>
               <td style="font-size:12px;color:var(--t1);font-family:monospace;font-weight:700;white-space:nowrap;vertical-align:middle;border-bottom:none">${o.no||'—'}</td>
               <td style="font-size:12px;color:var(--t1);font-weight:700;white-space:nowrap;vertical-align:middle;border-bottom:none">${fmt(o.date)||'—'}</td>
               ${ordSubTab==='done' ? `
@@ -32414,7 +32487,7 @@ function renderOrder(){
               </td>
             </tr>
             <tr class="${rowCls} ord-row-bottom" style="${rowStyle};cursor:pointer" onclick="${openModal}">
-              <td colspan="${ordSubTab==='done'?8:10}" style="padding:4px 12px 10px 12px;vertical-align:top">
+              <td colspan="${ordSubTab==='done'?9:11}" style="padding:4px 12px 10px 12px;vertical-align:top">
                 <div style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px;overflow:hidden">
                   <span style="font-size:9.5px;color:var(--t3);font-weight:700;letter-spacing:.3px;margin-right:2px;flex-shrink:0">품목 ${rows.length}건</span>
                   ${itemChips}
