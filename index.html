@@ -24701,6 +24701,79 @@ function purgeAllBase64Images(){
   }catch(e){ showToast('정리 실패: '+e.message,'var(--red)',4000); }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 💾 IndexedDB 저장소 — 제품DB처럼 큰 데이터용 (localStorage 5~10MB 한계 회피)
+//    제품 6,000건이 넘어가면 localStorage로는 저장이 불가능하므로 제품DB만 이쪽에 보관한다.
+//    쓰기는 비동기지만 앱 코드는 기존처럼 동기로 두고, 로드 시에만 await 한다.
+// ═══════════════════════════════════════════════════════════════
+const IDB_NAME='ek_bigstore', IDB_STORE='kv';
+let _idbPromise=null;
+function _idbOpen(){
+  if(_idbPromise) return _idbPromise;
+  _idbPromise = new Promise((resolve,reject)=>{
+    try{
+      const req=indexedDB.open(IDB_NAME,1);
+      req.onupgradeneeded=()=>{ const db=req.result; if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE); };
+      req.onsuccess=()=>resolve(req.result);
+      req.onerror=()=>reject(req.error);
+    }catch(e){ reject(e); }
+  });
+  return _idbPromise;
+}
+async function idbSet(key,val){
+  const db=await _idbOpen();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(IDB_STORE,'readwrite');
+    tx.objectStore(IDB_STORE).put(val,key);
+    tx.oncomplete=()=>resolve(true);
+    tx.onerror=()=>reject(tx.error);
+  });
+}
+async function idbGet(key){
+  const db=await _idbOpen();
+  return new Promise((resolve,reject)=>{
+    const tx=db.transaction(IDB_STORE,'readonly');
+    const r=tx.objectStore(IDB_STORE).get(key);
+    r.onsuccess=()=>resolve(r.result);
+    r.onerror=()=>reject(r.error);
+  });
+}
+// 제품DB 저장 — 디바운스로 잦은 쓰기를 묶는다 (IndexedDB는 비동기라 UI를 막지 않음)
+let _pdSaveTimer=null;
+function _savePdToIdb(){
+  clearTimeout(_pdSaveTimer);
+  _pdSaveTimer=setTimeout(()=>{
+    idbSet('products', productDB).catch(e=>{
+      console.error('[IDB] 제품DB 저장 실패:', e);
+      if(typeof showToast==='function') showToast('⚠ 제품DB 저장 실패 — 브라우저 저장소를 확인하세요','var(--red)',5000);
+    });
+  }, 300);
+}
+
+// 제품DB를 IndexedDB에서 로드 (없으면 localStorage에서 1회 이관)
+async function _loadProductsFromIdb(){
+  try{
+    const v = await idbGet('products');
+    if(Array.isArray(v) && v.length){
+      productDB = v;
+      console.log('[IDB] 제품DB 로드:', v.length, '건');
+      // 이관 완료됐으므로 localStorage의 옛 제품 데이터는 비워 용량 확보
+      try{ if(localStorage.getItem(SK.pd)){ localStorage.removeItem(SK.pd); console.log('[IDB] localStorage 제품DB 제거 — 용량 확보'); } }catch(e){}
+    } else if(Array.isArray(productDB) && productDB.length){
+      // 최초 1회: localStorage에 있던 제품을 IDB로 이관
+      await idbSet('products', productDB);
+      try{ localStorage.removeItem(SK.pd); }catch(e){}
+      console.log('[IDB] 제품DB 이관 완료:', productDB.length, '건 — localStorage 정리됨');
+      if(typeof showToast==='function') showToast(`✓ 제품DB ${productDB.length}건을 대용량 저장소로 이전했습니다 — 저장공간 문제 해결`,'var(--grn)',5000);
+    }
+    // 로드/이관 후 화면 갱신
+    if(typeof renderTab==='function') try{ renderTab(); }catch(e){}
+    if(typeof updateBadges==='function') try{ updateBadges(); }catch(e){}
+  }catch(e){
+    console.error('[IDB] 제품DB 로드 실패 — localStorage 값 유지:', e);
+  }
+}
+
 function save(){
   _pushUndoSnapshot(_lastUndoLabel);  // 변경 전 상태 보존 (이번 save로 덮어쓰기 직전)
   _lastUndoLabel = '';
@@ -24738,7 +24811,9 @@ function save(){
     proc: saveKey(SK.p, procItems, '공정'),
     tasks: saveKey(SK.t, tasks, '업무'),
     as: saveKey(SK.a, asItems, 'AS'),
-    products: saveKey(SK.pd, productDB, '제품DB'),
+    // 💾 제품DB는 용량이 커서(6,000건 5MB+) localStorage 한계를 넘으므로 IndexedDB에 저장.
+    //    localStorage에는 더 이상 쓰지 않는다 → 다른 데이터의 저장 공간도 함께 확보됨.
+    products: (function(){ try{ _savePdToIdb(); return true; }catch(e){ console.error('[save] 제품DB(IDB):',e); return false; } })(),
     invoices: saveKey(SK.iv, invoiceHistory, '청구이력'),
     stockHist: saveKey(SK.sh, stockHistory, '재고이력'),
     io: saveKey(SK.io, ioItems, '입출고'),
@@ -24754,7 +24829,7 @@ function save(){
       [samples,orders,procItems,tasks,asItems,productDB,invoiceHistory,stockHistory,ioItems].forEach(_purge);
       const _retry=(key,d)=>{ try{ localStorage.setItem(key, JSON.stringify(d)); return true; }catch(e){ return false; } };
       _retry(SK.s,samples); _retry(SK.o,orders); _retry(SK.p,procItems); _retry(SK.t,tasks);
-      _retry(SK.a,asItems); _retry(SK.pd,productDB); _retry(SK.iv,invoiceHistory); _retry(SK.sh,stockHistory); _retry(SK.io,ioItems);
+      _retry(SK.a,asItems); _retry(SK.iv,invoiceHistory); _retry(SK.sh,stockHistory); _retry(SK.io,ioItems);
       showToast('⚠ 저장공간이 가득 찼습니다 — 사진은 저장되지 않았지만 나머지 데이터는 저장됐어요. R2 저장소 연결을 확인하세요','var(--red)',7000);
     }catch(e){ console.warn('[save] 전역 base64 정리 실패:', e); }
   }
@@ -24780,7 +24855,10 @@ function load(){
   if((v=loadKey(SK.p,'공정'))!==undefined) procItems=v;
   if((v=loadKey(SK.t,'업무'))!==undefined) tasks=v;
   if((v=loadKey(SK.a,'AS'))!==undefined) asItems=v;
-  if((v=loadKey(SK.pd,'제품DB'))!==undefined) productDB=v;
+  // 💾 제품DB: IndexedDB에서 비동기 로드 (localStorage는 용량 한계로 사용 중단).
+  //    아직 IDB에 없고 localStorage에 남아 있으면 1회 자동 이관한다.
+  if((v=loadKey(SK.pd,'제품DB'))!==undefined) productDB=v;   // 이관 전 임시(옛 데이터)
+  _loadProductsFromIdb();
   if((v=loadKey(SK.iv,'청구이력'))!==undefined) invoiceHistory=v;
   if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   if((v=loadKey(SK.sh,'재고이력'))!==undefined) stockHistory=v;
@@ -25882,6 +25960,8 @@ function resetAllData(){
   showConfirm('모든 데이터를 삭제합니다.\n(샘플·발주·공정·업무·AS·제품DB·청구이력·달력 일정)\n\n설정(API키, 회사정보, Notion 연동)은 유지됩니다.\n이 작업은 되돌릴 수 없습니다.',()=>{
     // OEM 데이터 (청구이력 SK.iv 포함)
     [SK.s,SK.o,SK.p,SK.t,SK.a,SK.pd,SK.iv].forEach(k=>localStorage.removeItem(k));
+    // 💾 제품DB는 IndexedDB에 있으므로 함께 삭제
+    try{ if(typeof idbSet==='function') idbSet('products', []).catch(()=>{}); }catch(e){}
     // 영업 데이터
     [SL_K.cli,SL_K.prop,SL_K.prj].forEach(k=>localStorage.removeItem(k));
     // 체크리스트
