@@ -23213,7 +23213,12 @@ async function testNotionConnection(){
 // ══ 헬퍼: _notionId 저장 ══
 function saveNotionId(arr, id, notionId, storageKey){
   const idx=arr.findIndex(x=>x.id==id);
-  if(idx>=0){ arr[idx]._notionId=notionId; try{localStorage.setItem(storageKey,JSON.stringify(arr));}catch(e){} }
+  if(idx>=0){
+    arr[idx]._notionId=notionId;
+    // 💾 제품DB는 용량이 커서 localStorage에 쓰면 안 됨 → IndexedDB로 (그 외는 기존대로)
+    if(storageKey===SK.pd){ try{ if(typeof _savePdToIdb==='function') _savePdToIdb(); }catch(e){} return; }
+    try{localStorage.setItem(storageKey,JSON.stringify(arr));}catch(e){}
+  }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -24446,7 +24451,8 @@ const SK={s:'ek3_smp',o:'ek3_ord',p:'ek3_proc',t:'ek3_task',a:'ek3_as',pd:'ek3_p
 // ══════════════════════════════════════════════════════════════
 //  ↩️ 전역 실행취소 (Ctrl+Z) — 모든 변경은 save()를 거치므로 그 직전 상태를 스냅샷
 // ══════════════════════════════════════════════════════════════
-const _UNDO_KEYS = [SK.s, SK.o, SK.p, SK.t, SK.a, SK.pd, SK.iv, SK.sh, SK.io];
+// 💾 제품DB(SK.pd)는 IndexedDB로 이전되어 localStorage 스냅샷 대상에서 제외한다.
+const _UNDO_KEYS = [SK.s, SK.o, SK.p, SK.t, SK.a, SK.iv, SK.sh, SK.io];
 let _undoStack = [];      // [{label, snap:{key:json}}]
 let _undoMax = 30;
 let _undoSuppressed = false;  // 복원 중에는 스냅샷 안 찍음
