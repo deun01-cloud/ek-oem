@@ -6777,10 +6777,25 @@ window.addEventListener('message', function(ev){
           out={ok:true, rows:rows};
         } else if(op==='create'){
           var res = (typeof nCreate==='function') ? await nCreate(DB, d.props||{}) : null;
-          out={ok:!!(res&&res.id), id:res&&res.id};
+          // 실패 시 원인을 함께 반환 (없으면 '저장 실패: 오류'로만 표시돼 진단 불가)
+          if(res && res.id){ out={ok:true, id:res.id}; }
+          else {
+            var _e1 = (typeof _notionLastError!=='undefined' && _notionLastError) ? _notionLastError : null;
+            var _msg1 = _e1 ? ('HTTP '+(_e1.status||'?')+' '+String(_e1.message||'').slice(0,300)) : '';
+            if(!_msg1 && typeof notionCfg!=='undefined' && !notionCfg.workerUrl) _msg1='Notion 워커 URL 미설정';
+            if(!_msg1 && typeof _notionCircuitOpen!=='undefined' && _notionCircuitOpen) _msg1='Notion 연결 일시 차단됨(반복 실패) — 설정에서 재연결하세요';
+            out={ok:false, error:_msg1||'Notion 응답 없음 (네트워크/워커 확인)'};
+          }
         } else if(op==='update'){
           var r2 = (typeof nUpdate==='function') ? await nUpdate(d.pageId, d.props||{}) : null;
-          out={ok:!!(r2&&r2.id), id:r2&&r2.id};
+          if(r2 && r2.id){ out={ok:true, id:r2.id}; }
+          else {
+            var _e2 = (typeof _notionLastError!=='undefined' && _notionLastError) ? _notionLastError : null;
+            var _msg2 = _e2 ? ('HTTP '+(_e2.status||'?')+' '+String(_e2.message||'').slice(0,300)) : '';
+            if(!_msg2 && typeof notionCfg!=='undefined' && !notionCfg.workerUrl) _msg2='Notion 워커 URL 미설정';
+            if(!_msg2 && typeof _notionCircuitOpen!=='undefined' && _notionCircuitOpen) _msg2='Notion 연결 일시 차단됨(반복 실패) — 설정에서 재연결하세요';
+            out={ok:false, error:_msg2||'Notion 응답 없음 (네트워크/워커 확인)'};
+          }
         } else if(op==='delete'){
           if(typeof nDelete==='function'){ await nDelete(d.pageId); }
           out={ok:true};
