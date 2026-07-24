@@ -26193,6 +26193,49 @@ function applyOrderReceiveToStock(o, rowIdx, hist){
   return true;
 }
 
+// 📥 발주 입고분이 재고에 반영됐는지 점검/보정
+//    checkOrderStock()      → 점검만
+//    checkOrderStock(true)  → 누락분 재고 반영
+window.checkOrderStock = function(apply){
+  if(typeof orders==='undefined' || !orders.length){ console.warn('발주 데이터 없음'); return; }
+  const rows=[]; let totalRecv=0, totalApplied=0, missProduct=0;
+  orders.forEach(function(o){
+    (o.rows||[]).forEach(function(r){
+      const hist=r.rcvHistory||[];
+      if(!hist.length) return;
+      const recvQty=hist.reduce(function(a,h){ return a+(+h.qty||0); },0);
+      if(!recvQty) return;
+      totalRecv+=recvQty;
+      const p=(typeof findProductByOrderRow==='function')? findProductByOrderRow(r) : null;
+      if(!p){ missProduct++; rows.push({발주:o.no||'', 품목:(r.name||'').slice(0,18), 품번:r.itemCode||'', 입고량:recvQty, 반영됨:0, 누락:recvQty, 상태:'❌ 제품DB 미매칭'}); return; }
+      const applied=(typeof stockHistory!=='undefined'? stockHistory:[]).filter(function(sh){
+        return sh && sh.type==='order_recv' && String(sh.refId)===String(o.id) && String(sh.productId)===String(p.id);
+      }).reduce(function(a,sh){ return a+(+sh.delta||0); },0);
+      totalApplied+=applied;
+      const gap=recvQty-applied;
+      rows.push({발주:o.no||'', 품목:(p.name||r.name||'').slice(0,18), 품번:p.code||'', 입고량:recvQty, 반영됨:applied, 누락:gap, 상태: gap>0?'⚠ 누락':'✅ 정상'});
+      if(gap>0 && apply && typeof applyStockChange==='function'){
+        applyStockChange({ productId:p.id, delta:gap, type:'order_recv', refId:o.id, refLabel:o.no||'',
+          note:'발주 '+(o.vendor||'')+' '+(o.no||'')+' 입고 누락분 보정' });
+      }
+    });
+  });
+  if(!rows.length){ console.log('[재고점검] 입고 기록이 있는 발주가 없습니다.'); return; }
+  console.log('%c[재고점검] 총입고 '+totalRecv+' / 재고반영 '+totalApplied+' / 제품미매칭 '+missProduct+'건','color:#1a6dB5;font-weight:bold');
+  console.table(rows);
+  const gapRows=rows.filter(function(x){ return x.누락>0; });
+  if(apply){
+    if(gapRows.length){
+      if(typeof save==='function') save();
+      if(typeof renderTab==='function') renderTab();
+      console.log('%c✅ 누락분 반영 완료 ('+gapRows.length+'건)','color:green;font-weight:bold');
+      if(typeof showToast==='function') showToast('📥 발주 입고 누락분 '+gapRows.length+'건 재고 반영 완료','var(--grn)',4000);
+    } else console.log('반영할 누락분이 없습니다.');
+  } else if(gapRows.length){
+    console.log('%c누락 '+gapRows.length+'건 — 반영하려면 checkOrderStock(true) 실행','color:orange;font-weight:bold');
+  }
+};
+
 // 안전재고 미만 SKU 목록
 function getLowStockProducts(){
   return productDB.filter(p=>{
