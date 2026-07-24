@@ -26263,6 +26263,61 @@ function applyOrderReceiveToStock(o, rowIdx, hist){
 // 🔍 재고 정합성 진단 v2 — 발주의 입고(rcvHistory)·출고(shipLog)를 모두 반영
 //    규칙: 입고 입력 없이 출고만 있는 발주는 '기존 재고에서 출고'된 것이므로 입고 보정 대상이 아니다.
 //    사용법: diagStock()  /  diagStock('품번')
+// ✅ 안전 보정 — '이력 없음 + 출고 0 + 현재재고 0'인 품목만 입고분을 재고에 반영한다.
+//    (이미 반영된 건·부분반영·출고가 있는 건은 절대 건드리지 않음)
+//    사용법: fixStockSafe()        → 대상 목록만 표시
+//            fixStockSafe(true)    → 실제 반영
+window.fixStockSafe = function(apply){
+  if(typeof productDB==='undefined' || productDB.length<100){ console.log('⛔ 제품DB 미로드 — 제품 DB 탭을 먼저 여세요'); return; }
+  var recv={}, ship={}, hist={}, ordRef={};
+  (orders||[]).forEach(function(o){
+    (o.rows||[]).forEach(function(r){
+      var p=(typeof findProductByOrderRow==='function')? findProductByOrderRow(r):null; if(!p) return;
+      var rq=(r.rcvHistory||[]).reduce(function(a,h){return a+(+((h&&h.qty)||0));},0);
+      var sq=(r.shipLog||[]).reduce(function(a,h){return a+(+((h&&h.qty)||0));},0);
+      if(rq){ recv[p.code]=(recv[p.code]||0)+rq; if(!ordRef[p.code]) ordRef[p.code]={id:o.id,no:o.no||'',vendor:o.vendor||''}; }
+      if(sq) ship[p.code]=(ship[p.code]||0)+sq;
+    });
+  });
+  (typeof ioItems!=='undefined'?ioItems:[]).forEach(function(io){
+    if(io.kind!=='출고') return;
+    var code=(String(io.items||'').match(/^[A-Z0-9]+/)||[])[0]; if(!code) return;
+    ship[code]=(ship[code]||0)+(+io.qty||0);
+  });
+  (typeof stockHistory!=='undefined'?stockHistory:[]).forEach(function(sh){
+    if(!sh||sh.type!=='order_recv') return;
+    var p=productDB.find(function(x){return String(x.id)===String(sh.productId);});
+    if(p) hist[p.code]=(hist[p.code]||0)+(+sh.delta||0);
+  });
+  var targets=[];
+  Object.keys(recv).forEach(function(code){
+    var p=productDB.find(function(x){return String(x.code)===code;}); if(!p) return;
+    var R=recv[code], S=ship[code]||0, cur=+p.stock||0, ap=hist[code]||0;
+    // 엄격 조건: 재고이력 전혀 없음 + 출고 없음 + 현재재고 0  → 확실한 미반영
+    if(ap===0 && S===0 && cur===0 && R>0){
+      targets.push({품번:code, 품목:(p.name||'').slice(0,20), 반영할수량:R, 발주:(ordRef[code]||{}).no||'', _p:p, _o:ordRef[code]||{}});
+    }
+  });
+  if(!targets.length){ console.log('보정 대상이 없습니다. (조건: 이력없음+출고0+재고0)'); return; }
+  console.log('%c[안전보정] 대상 '+targets.length+'품목 · 총 '+targets.reduce(function(a,t){return a+t.반영할수량;},0)+'개','color:#1a6dB5;font-weight:bold');
+  console.table(targets.map(function(t){ return {품번:t.품번, 품목:t.품목, 반영할수량:t.반영할수량, 발주:t.발주}; }));
+  if(!apply){ console.log('%c실제 반영하려면: fixStockSafe(true)','color:#1a7a3a;font-weight:bold'); return targets; }
+  var n=0;
+  targets.forEach(function(t){
+    if(typeof applyStockChange==='function'){
+      applyStockChange({ productId:t._p.id, delta:t.반영할수량, type:'order_recv',
+        refId:t._o.id||null, refLabel:t._o.no||'',
+        note:'발주 '+(t._o.vendor||'')+' '+(t._o.no||'')+' 입고 반영(누락 보정)' });
+      n++;
+    }
+  });
+  if(n){ if(typeof save==='function') save(); if(typeof renderTab==='function') renderTab();
+    console.log('%c✅ '+n+'품목 재고 반영 완료','color:green;font-weight:bold');
+    if(typeof showToast==='function') showToast('📥 재고 보정 완료 — '+n+'품목','var(--grn)',4000);
+  }
+  return targets;
+};
+
 window.diagStock = function(codeFilter){
   if(typeof productDB==='undefined' || productDB.length<100){ console.log('⛔ 제품DB 미로드 — 제품 DB 탭을 먼저 여세요'); return; }
   var recv={}, ship={}, hist={};
