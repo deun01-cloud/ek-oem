@@ -21063,10 +21063,29 @@ function applyIoProductMatch(code){
   io._matchedProductName = p.name||'';
   io.matchStatus = '수동확인';
   io._ts = Date.now();
-  save();
   try{ _syncIoStageToNotion(io); }catch(e){}
+
+  // 🔁 같은 품목·같은 규격의 미매칭 건을 자동으로 함께 매칭 (과거 출고분 포함)
+  const key = _ioMatchKey(io);
+  let auto = 0;
+  if(key){
+    ioItems.forEach(function(o){
+      if(o===io || o._matchedProductCode) return;
+      if(_ioMatchKey(o) !== key) return;
+      o._matchedProductCode = p.code;
+      o._matchedProductName = p.name||'';
+      o.matchStatus = '자동매칭';
+      o._ts = Date.now();
+      auto++;
+      try{ _syncIoStageToNotion(o); }catch(e){}
+    });
+  }
+  save();
   closeM('mIoMatch');
-  showToast(`✓ "${p.code}" 매칭됨`,'var(--grn)',2200);
+  showToast(auto
+    ? `✓ "${p.code}" 매칭 · 같은 품목 ${auto}건 자동 적용`
+    : `✓ "${p.code}" 매칭됨`, 'var(--grn)', auto?3500:2200);
+  if(auto) console.log('[제품매칭] 수동 1건 + 자동 '+auto+'건 ('+key+')');
   _renderIoCommerce();
 }
 
