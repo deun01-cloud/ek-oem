@@ -20548,6 +20548,7 @@ function _renderIoCommerce(){
             <div style="font-size:13px;font-weight:700;color:var(--gold-lt)">AI 주문건 자동인식</div>
             <div style="font-size:11px;color:var(--t3);margin-top:2px">주문 엑셀·스크린샷·PDF 드래그 · 클릭 · <b>Ctrl+V</b> 붙여넣기 → 자동으로 수령인·주소·품목 추출</div>
           </div>
+          <button onclick="event.stopPropagation();openInvoiceMatchDialog()" title="택배사 송장 엑셀을 올리면 수령인·연락처·주소로 주문을 찾아 송장번호 입력 + 출고 처리" style="padding:6px 12px;font-size:11.5px;background:#eaf7ee;border:1px solid #1a7a3a;border-radius:5px;color:#1a7a3a;cursor:pointer;font-family:inherit;font-weight:700;margin-right:6px">🚚 송장 일괄 등록</button>
           <button onclick="event.stopPropagation();openCommerceUpload()" style="padding:6px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;color:var(--t2);cursor:pointer;font-family:inherit">📥 엑셀 직접 업로드</button>
           <button onclick="event.stopPropagation();openCommerceManual()" style="padding:6px 12px;font-size:11.5px;background:var(--gold);border:1px solid var(--gold);border-radius:5px;color:#fff;cursor:pointer;font-family:inherit;font-weight:600">✏️ 수동 입력</button>
         </div>
@@ -20791,6 +20792,172 @@ function _renderIoCommerce(){
   }).join('') : emptyState;
 
   sub.innerHTML = modeTab + shipStatBar + aiArea + searchBar + brandFilter + returnFilters + batchBar + tablesHtml;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🚚 송장 엑셀 일괄 매칭 — 택배사 송장 파일을 올리면
+//    수령인·연락처·주소로 주문을 찾아 송장번호를 넣고 출고 처리한다.
+// ═══════════════════════════════════════════════════════════════
+function _invNorm(s){ return String(s==null?'':s).replace(/\s+/g,'').toLowerCase(); }
+function _invPhone(s){ return String(s==null?'':s).replace(/[^0-9]/g,'').replace(/^82/,'0'); }
+// 주소 앞부분(동/번지 전까지)만 비교해 표기 차이를 흡수
+function _invAddrKey(s){
+  return _invNorm(s).replace(/[()]/g,'').slice(0,18);
+}
+
+// 품목/옵션 유사도 — 동일인 다건일 때 어느 주문인지 가려내는 보조 판별용.
+//   · 브랜드 태그([...]), 괄호, 기호를 걷어내고 핵심 단어만 비교
+//   · 옵션은 '각인 문구' 같은 자유 텍스트를 제외하고 규격(S/M, 사이즈, 색상)만 사용
+function _invItemKey(s){
+  return String(s==null?'':s)
+    .replace(/\[[^\]]*\]/g,' ')      // [브랜드콜라보] 제거
+    .replace(/\([^)]*\)/g,' ')       // (각인형) 등 제거
+    .replace(/[^\uac00-\ud7a3a-zA-Z0-9]+/g,' ')
+    .trim().toLowerCase();
+}
+// 옵션에서 규격 토큰만 추출: S/M/L, 숫자+cm, 호수, 색상 등
+function _invOptTokens(s){
+  const t=String(s==null?'':s).toLowerCase();
+  const out=new Set();
+  // 줄길이 S(50cm) / M(60cm) 형태
+  (t.match(/\b([sml])\s*\(/g)||[]).forEach(x=>out.add('sz:'+x.replace(/[^sml]/g,'')));
+  (t.match(/\d+\s*cm/g)||[]).forEach(x=>out.add('cm:'+x.replace(/[^0-9]/g,'')));
+  (t.match(/\d+\s*호/g)||[]).forEach(x=>out.add('ho:'+x.replace(/[^0-9]/g,'')));
+  ['silver','gold','실버','골드','로즈','beige','아쿠아'].forEach(c=>{ if(t.includes(c)) out.add('c:'+c); });
+  return out;
+}
+// 0~1 유사도 (품목 단어 겹침 70% + 옵션 규격 일치 30%)
+function _invSimilarity(aItem,aOpt,bItem,bOpt){
+  const A=_invItemKey(aItem).split(' ').filter(w=>w.length>1);
+  const B=_invItemKey(bItem).split(' ').filter(w=>w.length>1);
+  let itemScore=0;
+  if(A.length && B.length){
+    const setB=new Set(B);
+    const hit=A.filter(w=>setB.has(w)).length;
+    itemScore = hit / Math.max(A.length, B.length);
+    // 한쪽이 잘린 경우(…) 대비: 짧은 쪽 기준 포함율도 반영
+    const inclusion = hit / Math.min(A.length, B.length);
+    itemScore = Math.max(itemScore, inclusion*0.9);
+  }
+  const oa=_invOptTokens(aOpt), ob=_invOptTokens(bOpt);
+  let optScore=0;
+  if(oa.size && ob.size){
+    let hit=0; oa.forEach(x=>{ if(ob.has(x)) hit++; });
+    optScore = hit / Math.max(oa.size, ob.size);
+  } else if(!oa.size && !ob.size){ optScore=0.5; }  // 둘 다 옵션 없으면 중립
+  return itemScore*0.7 + optScore*0.3;
+}
+
+// 엑셀 헤더에서 컬럼 위치 자동 탐지
+function _invDetectCols(header){
+  const idx = {};
+  header.forEach((h,i)=>{
+    const t=_invNorm(h);
+    if(!t) return;
+    if(idx.name==null && (t.includes('수령인명')||t==='수령인'||t.includes('받는분')||t.includes('수하인'))) idx.name=i;
+    if(idx.phone==null && (t.includes('연락처1')||t.includes('수령인연락처')||t.includes('전화')||t.includes('휴대'))) idx.phone=i;
+    if(idx.addr==null && (t.includes('배송주소')||t==='주소'||t.includes('수령인주소'))) idx.addr=i;
+    if(idx.inv==null && (t.includes('송장번호')||t.includes('운송장'))) idx.inv=i;
+    if(idx.courier==null && (t.includes('택배사명')||t==='택배사')) idx.courier=i;
+    if(idx.item==null && (t==='상품'||t.includes('상품명')||t.includes('품목'))) idx.item=i;
+    if(idx.opt==null && (t==='옵션'||t.includes('옵션명'))) idx.opt=i;
+  });
+  return idx;
+}
+
+// 파일 선택 → 파싱 → 매칭 → 확인 → 일괄 출고
+function openInvoiceMatchDialog(){
+  const inp=document.createElement('input');
+  inp.type='file'; inp.accept='.xlsx,.xls,.csv';
+  inp.onchange=function(){
+    const f=inp.files && inp.files[0]; if(!f) return;
+    const rd=new FileReader();
+    rd.onload=function(e){
+      try{
+        const wb=XLSX.read(e.target.result,{type:'array'});
+        const ws=wb.Sheets[wb.SheetNames[0]];
+        const rows=XLSX.utils.sheet_to_json(ws,{defval:'',header:1});
+        if(!rows.length){ showToast('빈 파일입니다','var(--red)',2500); return; }
+        // 헤더 행 찾기 (송장번호 컬럼이 있는 첫 행)
+        let hi=0, cols=null;
+        for(let i=0;i<Math.min(5,rows.length);i++){
+          const c=_invDetectCols(rows[i]);
+          if(c.inv!=null && (c.name!=null || c.phone!=null)){ hi=i; cols=c; break; }
+        }
+        if(!cols){ showToast('⚠ 송장번호·수령인 컬럼을 찾지 못했습니다','var(--red)',4000); return; }
+        _invRunMatch(rows.slice(hi+1), cols);
+      }catch(err){
+        console.error('[송장매칭]',err);
+        showToast('파일을 읽지 못했습니다: '+(err&&err.message||''),'var(--red)',4000);
+      }
+    };
+    rd.readAsArrayBuffer(f);
+  };
+  inp.click();
+}
+
+function _invRunMatch(rows, cols){
+  // 주문(미출고) 목록만 대상
+  const targets = ioItems.filter(io => !!io.brand && (!io.returnStatus||io.returnStatus==='정상') && _ioStage(io)==='order');
+  const matched=[], unmatched=[];
+  const usedIds=new Set();
+
+  rows.forEach(r=>{
+    const inv=String(r[cols.inv]==null?'':r[cols.inv]).replace(/[^0-9A-Za-z]/g,'');
+    if(!inv) return;
+    const nm=_invNorm(r[cols.name]);
+    const ph=_invPhone(r[cols.phone]);
+    const ad=_invAddrKey(r[cols.addr]);
+    const courier=cols.courier!=null? String(r[cols.courier]||'').trim() : '';
+
+    const sItem = cols.item!=null ? r[cols.item] : '';
+    const sOpt  = cols.opt!=null  ? r[cols.opt]  : '';
+    // 후보가 2건 이상이면 품목·옵션 유사도로 가려낸다 (동일인 다건 주문 대응)
+    const pick = function(list){
+      if(!list.length) return null;
+      if(list.length===1) return list[0];
+      let best=list[0], bestScore=-1;
+      list.forEach(function(t){
+        const sc=_invSimilarity(sItem, sOpt, t.items||'', t.option||'');
+        if(sc>bestScore){ bestScore=sc; best=t; }
+      });
+      return best;
+    };
+    // 1순위: 연락처  2순위: 이름+주소  3순위: 이름
+    let hit = ph ? pick(targets.filter(t=>!usedIds.has(t.id) && _invPhone(t.phone)===ph)) : null;
+    if(!hit && nm && ad) hit = pick(targets.filter(t=>!usedIds.has(t.id) && _invNorm(t.recipient)===nm && _invAddrKey(t.address)===ad));
+    if(!hit && nm)       hit = pick(targets.filter(t=>!usedIds.has(t.id) && _invNorm(t.recipient)===nm));
+
+    if(hit){ usedIds.add(hit.id); matched.push({io:hit, inv, courier}); }
+    else unmatched.push({name:r[cols.name]||'', phone:r[cols.phone]||'', inv});
+  });
+
+  if(!matched.length){
+    showToast(`⚠ 매칭된 주문이 없습니다 (송장 ${rows.length}행 · 미출고 주문 ${targets.length}건)`,'var(--red)',5000);
+    return;
+  }
+  const msg = `송장 매칭 결과\n\n`
+    + `✅ 매칭: ${matched.length}건 → 송장번호 입력 후 출고 처리\n`
+    + (unmatched.length? `⚠ 미매칭: ${unmatched.length}건 (수령인/연락처가 주문과 다름)\n` : '')
+    + `\n계속 진행할까요?`;
+  if(!confirm(msg)) return;
+
+  const today=new Date().toISOString().slice(0,10);
+  matched.forEach(m=>{
+    m.io.invoice = m.inv;
+    if(m.courier) m.io.courier = m.courier;
+    m.io.shipStage = 'shipped';
+    m.io.shipDate  = m.io.shipDate || today;
+    _ioCommerceChecked.delete(m.io.id);
+    try{ _syncIoStageToNotion(m.io); }catch(e){}
+  });
+  save();
+  showToast(`🚚 ${matched.length}건 송장 입력 + 출고 완료`+(unmatched.length?` · 미매칭 ${unmatched.length}건`:''),'var(--grn)',5000);
+  if(unmatched.length){
+    console.log('%c[송장매칭] 미매칭 목록','color:#c0392b;font-weight:bold');
+    console.table(unmatched);
+  }
+  _renderIoCommerce();
 }
 
 // ── 주문 → 출고 처리 ──
