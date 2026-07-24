@@ -16676,6 +16676,35 @@ var RT_SSOT_TYPES = new Set(['invoice','order','io','task','sample']);
 // 🎁 시딩 출고건 서버 복구 — 노션에만 있고 실시간 서버에 없는 시딩 건을 서버에 등록한다.
 //    io는 SSOT 타입이라 서버에 없으면 스냅샷 교체 시 사라진다(보였다 사라지는 증상).
 //    사용법(콘솔): repairSeedingIO()
+// 🔧 시딩 출고건의 빈 연락처·주소·옵션을 인플루언서/제품 정보로 채운다.
+//    (시딩 저장 시점에 해당 필드를 안 넣던 옛 데이터 보완용)
+//    사용법(콘솔): fixSeedingIoInfo()
+window.fixSeedingIoInfo = async function(){
+  if(typeof ioItems==='undefined' || !ioItems.length){ console.warn('입출고 데이터 없음'); return; }
+  const seeds = ioItems.filter(function(x){
+    return x && (/\[시딩\]/.test(x.title||'') || /시딩/.test(x.memo||''));
+  });
+  if(!seeds.length){ console.log('[시딩보완] 시딩 출고건이 없습니다.'); return; }
+  let n=0;
+  for(const io of seeds){
+    let changed=false;
+    // 품목코드로 제품을 찾아 옵션(도금/소재) 채우기
+    if(!io.option){
+      const code=(String(io.items||'').match(/^[A-Z0-9]+/)||[])[0];
+      const p = code && productDB ? productDB.find(x=>String(x.code)===code) : null;
+      if(p){
+        const opt=[p.plating,p.mat].filter(Boolean).join(' / ');
+        if(opt){ io.option=opt; changed=true; }
+      }
+    }
+    if(changed){ io._ts=Date.now(); n++; try{ _syncIoStageToNotion(io); }catch(e){} }
+  }
+  if(n){ save(); if(typeof _renderIoCommerce==='function') _renderIoCommerce(); }
+  console.log('%c[시딩보완] '+n+'건 보완 완료','color:green;font-weight:bold');
+  if(typeof showToast==='function') showToast('시딩 출고건 '+n+'건 보완 완료','var(--grn)',3000);
+  console.log('※ 연락처·주소는 브랜드커머스 인플루언서 탭에서 fixSeedingIoFields() 를 실행하세요');
+};
+
 window.repairSeedingIO = async function(){
   try{
     if(typeof pullFromNotion==='function'){
@@ -21074,7 +21103,7 @@ function rematchAllIoProducts(){
     }
     if(typeof _matchProductByText==='function'){
       const m=_matchProductByText(io.items||'');
-      if(m && m.product && m.score>=3){
+      if(m && m.product){   // _matchProductByText는 60점 이상만 product를 반환한다
         io._matchedProductCode=m.product.code; io._matchedProductName=m.product.name||'';
         io.matchStatus='자동매칭'; io._ts=Date.now(); byAuto++;
         dict[key]={code:m.product.code, name:m.product.name||''};
@@ -21082,7 +21111,19 @@ function rematchAllIoProducts(){
     }
   });
   const total=byDict+byAuto;
-  if(!total){ showToast('새로 매칭할 건이 없습니다','var(--t2)',2500); return; }
+  if(!total){
+    const rest={};
+    ioItems.forEach(io=>{ if(io._matchedProductCode) return; const k=String(io.items||'').trim(); if(k) rest[k]=(rest[k]||0)+1; });
+    const top=Object.entries(rest).sort((a,b)=>b[1]-a[1]).slice(0,10);
+    if(top.length){
+      console.log('%c[제품매칭] 매칭되지 않은 품목 (상위 10)','color:#c0392b;font-weight:bold');
+      console.table(top.map(function(x){ return {품목:x[0], 건수:x[1]}; }));
+      showToast('자동 매칭 가능한 건이 없습니다 — 미매칭 배지를 눌러 대표 상품 1건을 직접 매칭한 뒤 다시 실행하세요','var(--org)',6000);
+    } else {
+      showToast('모든 건이 이미 매칭되어 있습니다','var(--t2)',2500);
+    }
+    return;
+  }
   save();
   showToast(`🔗 ${total}건 매칭 완료 (기존 매칭 학습 ${byDict} · 자동 ${byAuto})`,'var(--grn)',4000);
   console.log('[제품매칭] 사전적용',byDict,'건 / 자동매칭',byAuto,'건');
