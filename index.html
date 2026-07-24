@@ -26260,50 +26260,51 @@ function applyOrderReceiveToStock(o, rowIdx, hist){
 // 🔍 재고 정합성 진단 — 입고·출고·현재재고를 대조해 실제 미반영 여부를 판단
 //    사용법(콘솔): diagStock()            → 전체 요약
 //                  diagStock('품번')      → 특정 품목 상세
+// 🔍 재고 정합성 진단 v2 — 발주의 입고(rcvHistory)·출고(shipLog)를 모두 반영
+//    규칙: 입고 입력 없이 출고만 있는 발주는 '기존 재고에서 출고'된 것이므로 입고 보정 대상이 아니다.
+//    사용법: diagStock()  /  diagStock('품번')
 window.diagStock = function(codeFilter){
   if(typeof productDB==='undefined' || productDB.length<100){ console.log('⛔ 제품DB 미로드 — 제품 DB 탭을 먼저 여세요'); return; }
-  var recvMap={}, shipMap={};
-  // 발주 입고 집계
+  var recv={}, ship={}, hist={};
   (orders||[]).forEach(function(o){
     (o.rows||[]).forEach(function(r){
-      var hist=r.rcvHistory||[]; if(!hist.length) return;
-      var q=hist.reduce(function(a,h){return a+(+((h&&h.qty)||0));},0); if(!q) return;
       var p=(typeof findProductByOrderRow==='function')? findProductByOrderRow(r):null; if(!p) return;
-      recvMap[p.code]=(recvMap[p.code]||0)+q;
+      var rq=(r.rcvHistory||[]).reduce(function(a,h){return a+(+((h&&h.qty)||0));},0);
+      var sq=(r.shipLog||[]).reduce(function(a,h){return a+(+((h&&h.qty)||0));},0);
+      if(rq) recv[p.code]=(recv[p.code]||0)+rq;
+      if(sq) ship[p.code]=(ship[p.code]||0)+sq;
     });
   });
-  // 출고 집계 (입출고 데이터)
+  // 커머스 출고(입출고 데이터)도 합산
   (typeof ioItems!=='undefined'?ioItems:[]).forEach(function(io){
     if(io.kind!=='출고') return;
-    var code=(String(io.items||'').match(/^[A-Z0-9]+/)||[])[0];
-    if(!code) return;
-    shipMap[code]=(shipMap[code]||0)+(+io.qty||0);
+    var code=(String(io.items||'').match(/^[A-Z0-9]+/)||[])[0]; if(!code) return;
+    ship[code]=(ship[code]||0)+(+io.qty||0);
   });
-  // 재고이력의 반영량
-  var histMap={};
   (typeof stockHistory!=='undefined'?stockHistory:[]).forEach(function(sh){
     if(!sh||sh.type!=='order_recv') return;
     var p=productDB.find(function(x){return String(x.id)===String(sh.productId);});
-    if(p) histMap[p.code]=(histMap[p.code]||0)+(+sh.delta||0);
+    if(p) hist[p.code]=(hist[p.code]||0)+(+sh.delta||0);
   });
   var out=[];
-  Object.keys(recvMap).forEach(function(code){
+  Object.keys(recv).forEach(function(code){
     if(codeFilter && code!==codeFilter) return;
     var p=productDB.find(function(x){return String(x.code)===code;}); if(!p) return;
-    var recv=recvMap[code], ship=shipMap[code]||0, cur=+p.stock||0, applied=histMap[code]||0;
-    var expect=recv-ship;              // 입고분이 반영됐다면 기대되는 재고
-    var diff=cur-expect;               // 0에 가까우면 이미 반영된 것
-    out.push({품번:code, 품목:(p.name||'').slice(0,16), 입고:recv, 출고:ship, 현재재고:cur,
-      기대재고:expect, 차이:diff, 이력반영:applied,
-      판정: Math.abs(diff)<=2 ? '✅ 이미 반영됨' : (diff<0 ? '⚠ 부족(미반영 의심)' : '❓ 초과')});
+    var R=recv[code], S=ship[code]||0, cur=+p.stock||0, ap=hist[code]||0;
+    // 입고가 재고에 반영됐다면: 현재재고 ≈ (반영된입고 − 출고). 미반영이면 현재재고는 그보다 R만큼 작다.
+    var gapIfMissing = (R - S) - cur;   // 이 값이 R에 가까우면 미반영
+    out.push({품번:code, 품목:(p.name||'').slice(0,16), 입고:R, 출고:S, 현재재고:cur, 이력반영:ap,
+      미반영추정: Math.max(0, Math.min(R, R-ap)),
+      판정: (ap>=R? '✅ 이력상 반영완료' : (ap>0? '◐ 부분반영' : '⚠ 이력 없음'))});
   });
-  out.sort(function(a,b){ return a.차이-b.차이; });
-  var ok=out.filter(function(x){return x.판정.indexOf('이미')>=0;}).length;
-  var miss=out.filter(function(x){return x.판정.indexOf('부족')>=0;}).length;
-  console.log('%c[재고진단] 총 '+out.length+'품목 — 이미 반영 '+ok+' / 미반영 의심 '+miss,'color:#1a6dB5;font-weight:bold');
+  out.sort(function(a,b){ return b.미반영추정-a.미반영추정; });
+  var none=out.filter(function(x){return x.판정.indexOf('없음')>=0;}).length;
+  var part=out.filter(function(x){return x.판정.indexOf('부분')>=0;}).length;
+  var done=out.filter(function(x){return x.판정.indexOf('완료')>=0;}).length;
+  console.log('%c[재고진단v2] '+out.length+'품목 — 이력반영완료 '+done+' / 부분 '+part+' / 이력없음 '+none,'color:#1a6dB5;font-weight:bold');
   console.table(out.slice(0,60));
-  console.log('※ 차이 = 현재재고 − (입고−출고). 0에 가까우면 이미 정상 반영된 것입니다.');
-  console.log('※ 특정 품목 상세: diagStock("품번")');
+  console.log('※ 출고에는 발주 shipLog + 커머스 출고가 모두 포함됩니다.');
+  console.log('※ 현재재고가 음수면 출고 집계가 아직 불완전하다는 뜻이니, 그 품목은 보정 대상에서 제외하세요.');
   return out;
 };
 
