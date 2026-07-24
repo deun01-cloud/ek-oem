@@ -16707,6 +16707,29 @@ window.fixSeedingIoInfo = async function(){
 
 // 🔧 시딩 출고건의 빈 연락처·주소·옵션을 노션 인플루언서/제품DB로 채운다.
 //    사용법(콘솔): fixSeedingIoAll()
+// 🚀 시딩 출고건을 실시간 서버에 강제 재발행 — 서버의 옛 값이 화면을 덮어쓰는 문제 해결
+//    사용법: pushSeedingToServer()
+window.pushSeedingToServer = async function(){
+  if(typeof ioItems==='undefined' || !ioItems.length){ console.warn('입출고 데이터 없음'); return; }
+  var seeds = ioItems.filter(function(x){
+    return x && (/\[시딩\]/.test(x.title||'') || /시딩/.test(x.memo||''));
+  });
+  if(!seeds.length){ console.log('[시딩서버] 시딩 출고건 없음'); return; }
+  if(typeof realtimePublish!=='function'){ console.warn('[시딩서버] 실시간 동기화가 꺼져 있습니다'); return; }
+  var tbl=[];
+  seeds.forEach(function(io){
+    io._ts = Date.now();   // 서버가 최신으로 인식하도록 타임스탬프 갱신
+    try{ realtimePublish('io', io); }catch(e){}
+    tbl.push({제목:(io.title||'').slice(0,26), 수령인:io.recipient||'-', 연락처:io.phone||'-', 옵션:io.option||'-', 주소:(io.address||'-').slice(0,18)});
+  });
+  if(typeof save==='function') save();
+  console.log('%c[시딩서버] '+seeds.length+'건 서버 재발행 완료','color:green;font-weight:bold');
+  console.table(tbl);
+  console.log('※ 위 값이 비어 있으면 로컬에도 값이 없는 것 → fixSeedingIoAll() 먼저 실행하세요.');
+  if(typeof showToast==='function') showToast('🚀 시딩 '+seeds.length+'건 서버 반영 완료','var(--grn)',3500);
+  if(typeof _renderIoCommerce==='function') _renderIoCommerce();
+};
+
 window.fixSeedingIoAll = async function(){
   if(typeof ioItems==='undefined' || !ioItems.length){ console.warn('입출고 데이터 없음'); return; }
   const seeds = ioItems.filter(function(x){
