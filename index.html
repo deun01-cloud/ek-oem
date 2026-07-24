@@ -20548,6 +20548,7 @@ function _renderIoCommerce(){
             <div style="font-size:13px;font-weight:700;color:var(--gold-lt)">AI 주문건 자동인식</div>
             <div style="font-size:11px;color:var(--t3);margin-top:2px">주문 엑셀·스크린샷·PDF 드래그 · 클릭 · <b>Ctrl+V</b> 붙여넣기 → 자동으로 수령인·주소·품목 추출</div>
           </div>
+          <button onclick="event.stopPropagation();rematchAllIoProducts()" title="이미 매칭된 건을 학습해 같은 품목의 미매칭 건(과거 출고 포함)을 일괄 매칭합니다" style="padding:6px 12px;font-size:11.5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:5px;color:var(--gold-lt);cursor:pointer;font-family:inherit;font-weight:700;margin-right:6px">🔗 제품 일괄 매칭</button>
           <button onclick="event.stopPropagation();openInvoiceMatchDialog()" title="택배사 송장 엑셀을 올리면 수령인·연락처·주소로 주문을 찾아 송장번호 입력 + 출고 처리" style="padding:6px 12px;font-size:11.5px;background:#eaf7ee;border:1px solid #1a7a3a;border-radius:5px;color:#1a7a3a;cursor:pointer;font-family:inherit;font-weight:700;margin-right:6px">🚚 송장 일괄 등록</button>
           <button onclick="event.stopPropagation();openCommerceUpload()" style="padding:6px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;color:var(--t2);cursor:pointer;font-family:inherit">📥 엑셀 직접 업로드</button>
           <button onclick="event.stopPropagation();openCommerceManual()" style="padding:6px 12px;font-size:11.5px;background:var(--gold);border:1px solid var(--gold);border-radius:5px;color:#fff;cursor:pointer;font-family:inherit;font-weight:600">✏️ 수동 입력</button>
@@ -20673,7 +20674,7 @@ function _renderIoCommerce(){
         <td style="padding:7px 10px;font-size:10.5px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(_o_opt||'')}">${_o_opt?escHtml(_o_opt):'-'}</td>
         <td style="padding:7px 10px;font-size:11px;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.address||'')}">${escHtml(io.address||'-')}</td>
         <td style="padding:7px 10px;font-size:10.5px;font-family:monospace;color:${_o_late?'var(--red)':'var(--t2)'};font-weight:${_o_late?'700':'400'}" title="주문일 기준 영업일 10일">${escHtml(_o_req||'-')}</td>
-        <td style="padding:7px 10px;text-align:center">${io.matchStatus?`<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap;${matchCls}">${escHtml(io.matchStatus)}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
+        <td style="padding:7px 10px;text-align:center"><span onclick="event.stopPropagation();openIoProductMatch('${io.id}')" title="${io._matchedProductCode?('매칭됨: '+escHtml(io._matchedProductCode)+' — 클릭해서 변경'):'클릭해서 제품 매칭'}" style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;white-space:nowrap;cursor:pointer;${matchCls||'background:var(--s2);color:var(--t3)'}">${escHtml(io.matchStatus||'매칭')}${io._matchedProductCode?' ✓':''}</span></td>
         <td style="padding:7px 10px;text-align:center"><button onclick="event.stopPropagation();_ioExportInvoiceXlsx('${io.id}')" title="송장 등록용 엑셀 내려받기" style="padding:3px 6px;font-size:13px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit">📊</button></td>
         <td style="padding:7px 10px;text-align:center"><button onclick="event.stopPropagation();_ioMarkShipped('${io.id}')" style="padding:4px 11px;font-size:11px;background:var(--grn);border:1px solid var(--grn);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:700">📤 출고</button></td>
       </tr>`;
@@ -20958,6 +20959,142 @@ function _invRunMatch(rows, cols){
     console.table(unmatched);
   }
   _renderIoCommerce();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🔗 주문 접수 후 제품 수동 매칭 + 기존 건 일괄 재매칭
+//    (재고 관리를 위해 각 출입고 건에 실제 제품코드를 연결한다)
+// ═══════════════════════════════════════════════════════════════
+let _ioMatchTargetId = null;
+
+function openIoProductMatch(id){
+  const io = ioItems.find(x=>String(x.id)===String(id)); if(!io) return;
+  _ioMatchTargetId = io.id;
+  let ov = document.getElementById('mIoMatch');
+  if(!ov){
+    ov = document.createElement('div');
+    ov.className='ov'; ov.id='mIoMatch';
+    ov.innerHTML = `<div class="modal" style="max-width:560px">
+      <div class="mt">🔗 제품 매칭</div>
+      <div id="ioMatchInfo" style="font-size:12px;color:var(--t2);background:var(--s2);border-radius:6px;padding:9px 12px;margin-bottom:10px"></div>
+      <input class="fi" id="ioMatchQ" placeholder="품번 또는 품명으로 검색…" oninput="renderIoMatchList(this.value)" autocomplete="off" style="margin-bottom:8px">
+      <div id="ioMatchList" style="max-height:340px;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px"></div>
+      <div class="ma">
+        <button class="btn bgo" onclick="closeM('mIoMatch')">닫기</button>
+        <button class="btn bg" onclick="clearIoProductMatch()">매칭 해제</button>
+      </div>
+    </div>`;
+    document.body.appendChild(ov);
+  }
+  const info = document.getElementById('ioMatchInfo');
+  if(info){
+    info.innerHTML = `<b>${escHtml(io.items||'-')}</b>`
+      + (io.option?`<div style="font-size:11px;color:var(--t3);margin-top:2px">옵션: ${escHtml(io.option)}</div>`:'')
+      + (io._matchedProductCode?`<div style="font-size:11px;color:var(--grn);margin-top:3px">현재 매칭: ${escHtml(io._matchedProductCode)} ${escHtml(io._matchedProductName||'')}</div>`:'');
+  }
+  const q = document.getElementById('ioMatchQ');
+  // 품목명에서 검색어 자동 추출(브랜드 태그 제거)
+  const seed = String(io.items||'').replace(/\[[^\]]*\]/g,' ').trim().split(/\s+/).slice(0,2).join(' ');
+  if(q){ q.value = seed; }
+  renderIoMatchList(seed);
+  if(typeof openM==='function') openM('mIoMatch');
+  setTimeout(()=>{ try{ q && q.select(); }catch(e){} }, 100);
+}
+
+function renderIoMatchList(q){
+  const box=document.getElementById('ioMatchList'); if(!box) return;
+  const query=String(q||'').toLowerCase().trim();
+  if(!productDB || !productDB.length){ box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--t3)">제품DB가 비어 있습니다.</div>'; return; }
+  let list = productDB;
+  if(query){
+    list = productDB.filter(p=>{
+      const hay=[p.code,p.name,p.mat,p.plating,p.type].filter(Boolean).join(' ').toLowerCase();
+      return query.split(/\s+/).every(w=>hay.includes(w));
+    });
+  }
+  const hits=list.slice(0,60);
+  if(!hits.length){ box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--t3)">검색 결과가 없습니다.</div>'; return; }
+  box.innerHTML = hits.map(p=>{
+    const img=(Array.isArray(p.imgs)&&p.imgs[0]&&p.imgs[0].url)?p.imgs[0].url:'';
+    const code=String(p.code||'').replace(/'/g,"\\'");
+    return `<div onclick="applyIoProductMatch('${code}')" style="display:flex;align-items:center;gap:10px;padding:8px 11px;cursor:pointer;border-bottom:1px solid var(--bdr)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background=''">
+      ${img?`<img src="${escHtml(img)}" style="width:38px;height:38px;object-fit:cover;border-radius:5px;border:1px solid var(--bdr);flex-shrink:0" referrerpolicy="no-referrer" onerror="this.style.display='none'">`:'<div style="width:38px;height:38px;border-radius:5px;background:var(--s2);flex-shrink:0"></div>'}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:12.5px;font-weight:600;color:var(--t1)">${escHtml(p.name||'')}</div>
+        <div style="font-size:10.5px;color:var(--t3);font-family:monospace">${escHtml(p.code||'')} · ${escHtml(p.type||'')} ${escHtml(p.plating||'')} · 재고 ${p.stock!=null?p.stock:'-'}</div>
+      </div>
+    </div>`;
+  }).join('') + (list.length>hits.length?`<div style="padding:8px 11px;font-size:11px;color:var(--t3);text-align:center;background:var(--s2)">총 ${list.length}건 중 ${hits.length}건 표시 — 검색어를 좁혀주세요</div>`:'');
+}
+
+function applyIoProductMatch(code){
+  const io = ioItems.find(x=>String(x.id)===String(_ioMatchTargetId)); if(!io) return;
+  const p = productDB.find(x=>String(x.code)===String(code)); if(!p) return;
+  io._matchedProductCode = p.code;
+  io._matchedProductName = p.name||'';
+  io.matchStatus = '수동확인';
+  io._ts = Date.now();
+  save();
+  try{ _syncIoStageToNotion(io); }catch(e){}
+  closeM('mIoMatch');
+  showToast(`✓ "${p.code}" 매칭됨`,'var(--grn)',2200);
+  _renderIoCommerce();
+}
+
+function clearIoProductMatch(){
+  const io = ioItems.find(x=>String(x.id)===String(_ioMatchTargetId)); if(!io) return;
+  delete io._matchedProductCode; delete io._matchedProductName;
+  io.matchStatus = '미매칭';
+  io._ts = Date.now();
+  save();
+  try{ _syncIoStageToNotion(io); }catch(e){}
+  closeM('mIoMatch');
+  showToast('매칭 해제됨','var(--t2)',1800);
+  _renderIoCommerce();
+}
+
+// 🔁 같은 품목명으로 이미 매칭된 건이 있으면 그 제품코드를 전체에 적용 (과거 출고분 포함)
+function rematchAllIoProducts(){
+  if(typeof ioItems==='undefined' || !ioItems.length){ showToast('입출고 데이터가 없습니다','var(--t2)',2500); return; }
+  // 1) 품목명 → 제품코드 사전 구축 (이미 매칭된 건에서 학습)
+  const dict={};
+  ioItems.forEach(io=>{
+    const key=_ioMatchKey(io);
+    if(key && io._matchedProductCode && !dict[key]) dict[key]={code:io._matchedProductCode, name:io._matchedProductName||''};
+  });
+  // 2) 미매칭 건에 사전 적용 + 사전에 없으면 제품DB 텍스트 매칭 시도
+  let byDict=0, byAuto=0;
+  ioItems.forEach(io=>{
+    if(io._matchedProductCode) return;
+    const key=_ioMatchKey(io); if(!key) return;
+    if(dict[key]){
+      io._matchedProductCode=dict[key].code; io._matchedProductName=dict[key].name;
+      io.matchStatus='자동매칭'; io._ts=Date.now(); byDict++;
+      return;
+    }
+    if(typeof _matchProductByText==='function'){
+      const m=_matchProductByText(io.items||'');
+      if(m && m.product && m.score>=3){
+        io._matchedProductCode=m.product.code; io._matchedProductName=m.product.name||'';
+        io.matchStatus='자동매칭'; io._ts=Date.now(); byAuto++;
+        dict[key]={code:m.product.code, name:m.product.name||''};
+      }
+    }
+  });
+  const total=byDict+byAuto;
+  if(!total){ showToast('새로 매칭할 건이 없습니다','var(--t2)',2500); return; }
+  save();
+  showToast(`🔗 ${total}건 매칭 완료 (기존 매칭 학습 ${byDict} · 자동 ${byAuto})`,'var(--grn)',4000);
+  console.log('[제품매칭] 사전적용',byDict,'건 / 자동매칭',byAuto,'건');
+  _renderIoCommerce();
+}
+// 매칭 기준 키: 품목명 + 옵션 규격 (각인 등 자유 텍스트 제외)
+function _ioMatchKey(io){
+  const item=String(io.items||'').replace(/\[[^\]]*\]/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
+  if(!item) return '';
+  const opt=String(io.option||'').toLowerCase();
+  const sz=(opt.match(/\b[sml]\s*\(/g)||[]).join('')+(opt.match(/\d+\s*cm/g)||[]).join('')+(opt.match(/\d+\s*호/g)||[]).join('');
+  return item+'|'+sz.replace(/\s+/g,'');
 }
 
 // ── 주문 → 출고 처리 ──
