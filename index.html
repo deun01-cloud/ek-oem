@@ -26259,9 +26259,21 @@ function applyOrderReceiveToStock(o, rowIdx, hist){
 //    checkOrderStock(true)  → 누락분 재고 반영
 window.checkOrderStock = function(apply){
   if(typeof orders==='undefined' || !orders.length){ console.warn('발주 데이터 없음'); return; }
+  // 🛑 제품DB가 덜 로드된 상태에서 실행하면 정상 품목까지 '미매칭'으로 나온다(IndexedDB 비동기 로드)
+  if(typeof productDB==='undefined' || productDB.length < 100){
+    console.log('%c⛔ 제품DB가 아직 로드되지 않았습니다 ('+((typeof productDB!=='undefined')?productDB.length:0)+'건)','color:#c0392b;font-weight:bold');
+    console.log('제품 DB 탭을 한 번 연 뒤(또는 몇 초 기다린 뒤) 다시 실행하세요.');
+    return;
+  }
   // ⚠ 안전장치: '반영됨 0'은 재고이력(stockHistory)에 order_recv 기록이 없다는 뜻일 뿐,
   //    재고 수치 자체는 이미 맞을 수 있다(엑셀 업로드·노션 직접 입력 등 다른 경로로 반영된 경우).
   //    그 상태에서 보정하면 재고가 이중 계상되므로, 반드시 실제 재고와 대조한 뒤 진행한다.
+  // 미매칭이 20% 넘으면 보정 차단 (제품DB 연결부터 정리해야 함)
+  if(apply && rows.length && missProduct/rows.length > 0.2){
+    console.log('%c⛔ 보정 중단: 제품DB 미매칭이 '+missProduct+'/'+rows.length+'건입니다','color:#c0392b;font-weight:bold');
+    console.log('이 상태로 보정하면 일부만 반영돼 재고가 더 어긋납니다. 미매칭 품목의 품번을 제품DB와 맞춘 뒤 다시 실행하세요.');
+    return;
+  }
   if(apply && !window.__ORDSTOCK_CONFIRMED){
     // 이중 계상 방지 확인 — 표본 3건의 현재 재고를 보여주고 사용자가 판단하게 한다
     console.log('%c⚠ 보정 전 확인: 아래 품목의 현재 재고를 보세요','color:#c0392b;font-weight:bold;font-size:13px');
@@ -26279,7 +26291,7 @@ window.checkOrderStock = function(apply){
     console.log('%c보정 실행:  window.__ORDSTOCK_CONFIRMED=true; checkOrderStock(true)','color:#1a7a3a;font-weight:bold');
     return;
   }
-  const rows=[]; let totalRecv=0, totalApplied=0, missProduct=0;
+  const rows=[]; let totalRecv=0, totalApplied=0, missProduct=0; const _usedApplied={};
   orders.forEach(function(o){
     (o.rows||[]).forEach(function(r){
       const hist=r.rcvHistory||[];
@@ -26289,9 +26301,15 @@ window.checkOrderStock = function(apply){
       totalRecv+=recvQty;
       const p=(typeof findProductByOrderRow==='function')? findProductByOrderRow(r) : null;
       if(!p){ missProduct++; rows.push({발주:o.no||'', 품목:(r.name||'').slice(0,18), 품번:r.itemCode||'', 입고량:recvQty, 반영됨:0, 누락:recvQty, 상태:'❌ 제품DB 미매칭'}); return; }
-      const applied=(typeof stockHistory!=='undefined'? stockHistory:[]).filter(function(sh){
+      // ⚠ 같은 발주에 같은 품목이 여러 줄이면 반영량이 중복 집계된다
+      //    → 발주+제품 조합별로 '이미 쓴 반영량'을 차감해 한 번씩만 배분한다
+      var _ak = String(o.id)+'|'+String(p.id);
+      var _totApplied=(typeof stockHistory!=='undefined'? stockHistory:[]).filter(function(sh){
         return sh && sh.type==='order_recv' && String(sh.refId)===String(o.id) && String(sh.productId)===String(p.id);
       }).reduce(function(a,sh){ return a+(+sh.delta||0); },0);
+      _usedApplied[_ak] = _usedApplied[_ak]||0;
+      var applied = Math.max(0, Math.min(recvQty, _totApplied - _usedApplied[_ak]));
+      _usedApplied[_ak] += applied;
       totalApplied+=applied;
       const gap=recvQty-applied;
       rows.push({발주:o.no||'', 품목:(p.name||r.name||'').slice(0,18), 품번:p.code||'', 입고량:recvQty, 반영됨:applied, 누락:gap, 상태: gap>0?'⚠ 누락':'✅ 정상'});
