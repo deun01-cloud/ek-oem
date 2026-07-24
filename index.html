@@ -26268,12 +26268,6 @@ window.checkOrderStock = function(apply){
   // ⚠ 안전장치: '반영됨 0'은 재고이력(stockHistory)에 order_recv 기록이 없다는 뜻일 뿐,
   //    재고 수치 자체는 이미 맞을 수 있다(엑셀 업로드·노션 직접 입력 등 다른 경로로 반영된 경우).
   //    그 상태에서 보정하면 재고가 이중 계상되므로, 반드시 실제 재고와 대조한 뒤 진행한다.
-  // 미매칭이 20% 넘으면 보정 차단 (제품DB 연결부터 정리해야 함)
-  if(apply && rows.length && missProduct/rows.length > 0.2){
-    console.log('%c⛔ 보정 중단: 제품DB 미매칭이 '+missProduct+'/'+rows.length+'건입니다','color:#c0392b;font-weight:bold');
-    console.log('이 상태로 보정하면 일부만 반영돼 재고가 더 어긋납니다. 미매칭 품목의 품번을 제품DB와 맞춘 뒤 다시 실행하세요.');
-    return;
-  }
   if(apply && !window.__ORDSTOCK_CONFIRMED){
     // 이중 계상 방지 확인 — 표본 3건의 현재 재고를 보여주고 사용자가 판단하게 한다
     console.log('%c⚠ 보정 전 확인: 아래 품목의 현재 재고를 보세요','color:#c0392b;font-weight:bold;font-size:13px');
@@ -26320,6 +26314,13 @@ window.checkOrderStock = function(apply){
     });
   });
   if(!rows.length){ console.log('[재고점검] 입고 기록이 있는 발주가 없습니다.'); return; }
+  // 🛑 미매칭이 20% 넘으면 보정 차단 — 제품DB 연결부터 정리해야 한다
+  if(apply && missProduct/rows.length > 0.2){
+    console.log('%c⛔ 보정 중단: 제품DB 미매칭 '+missProduct+'/'+rows.length+'건','color:#c0392b;font-weight:bold');
+    console.log('이 상태로 보정하면 일부만 반영돼 재고가 더 어긋납니다. 미매칭 품번을 제품DB와 맞춘 뒤 다시 실행하세요.');
+    console.table(rows.filter(function(x){return x.상태.indexOf("미매칭")>=0;}).slice(0,20));
+    return;
+  }
   console.log('%c[재고점검] 총입고 '+totalRecv+' / 재고반영 '+totalApplied+' / 제품미매칭 '+missProduct+'건','color:#1a6dB5;font-weight:bold');
   console.table(rows);
   const gapRows=rows.filter(function(x){ return x.누락>0; });
