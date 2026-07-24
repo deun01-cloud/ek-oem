@@ -26257,6 +26257,56 @@ function applyOrderReceiveToStock(o, rowIdx, hist){
 // 📥 발주 입고분이 재고에 반영됐는지 점검/보정
 //    checkOrderStock()      → 점검만
 //    checkOrderStock(true)  → 누락분 재고 반영
+// 🔍 재고 정합성 진단 — 입고·출고·현재재고를 대조해 실제 미반영 여부를 판단
+//    사용법(콘솔): diagStock()            → 전체 요약
+//                  diagStock('품번')      → 특정 품목 상세
+window.diagStock = function(codeFilter){
+  if(typeof productDB==='undefined' || productDB.length<100){ console.log('⛔ 제품DB 미로드 — 제품 DB 탭을 먼저 여세요'); return; }
+  var recvMap={}, shipMap={};
+  // 발주 입고 집계
+  (orders||[]).forEach(function(o){
+    (o.rows||[]).forEach(function(r){
+      var hist=r.rcvHistory||[]; if(!hist.length) return;
+      var q=hist.reduce(function(a,h){return a+(+((h&&h.qty)||0));},0); if(!q) return;
+      var p=(typeof findProductByOrderRow==='function')? findProductByOrderRow(r):null; if(!p) return;
+      recvMap[p.code]=(recvMap[p.code]||0)+q;
+    });
+  });
+  // 출고 집계 (입출고 데이터)
+  (typeof ioItems!=='undefined'?ioItems:[]).forEach(function(io){
+    if(io.kind!=='출고') return;
+    var code=(String(io.items||'').match(/^[A-Z0-9]+/)||[])[0];
+    if(!code) return;
+    shipMap[code]=(shipMap[code]||0)+(+io.qty||0);
+  });
+  // 재고이력의 반영량
+  var histMap={};
+  (typeof stockHistory!=='undefined'?stockHistory:[]).forEach(function(sh){
+    if(!sh||sh.type!=='order_recv') return;
+    var p=productDB.find(function(x){return String(x.id)===String(sh.productId);});
+    if(p) histMap[p.code]=(histMap[p.code]||0)+(+sh.delta||0);
+  });
+  var out=[];
+  Object.keys(recvMap).forEach(function(code){
+    if(codeFilter && code!==codeFilter) return;
+    var p=productDB.find(function(x){return String(x.code)===code;}); if(!p) return;
+    var recv=recvMap[code], ship=shipMap[code]||0, cur=+p.stock||0, applied=histMap[code]||0;
+    var expect=recv-ship;              // 입고분이 반영됐다면 기대되는 재고
+    var diff=cur-expect;               // 0에 가까우면 이미 반영된 것
+    out.push({품번:code, 품목:(p.name||'').slice(0,16), 입고:recv, 출고:ship, 현재재고:cur,
+      기대재고:expect, 차이:diff, 이력반영:applied,
+      판정: Math.abs(diff)<=2 ? '✅ 이미 반영됨' : (diff<0 ? '⚠ 부족(미반영 의심)' : '❓ 초과')});
+  });
+  out.sort(function(a,b){ return a.차이-b.차이; });
+  var ok=out.filter(function(x){return x.판정.indexOf('이미')>=0;}).length;
+  var miss=out.filter(function(x){return x.판정.indexOf('부족')>=0;}).length;
+  console.log('%c[재고진단] 총 '+out.length+'품목 — 이미 반영 '+ok+' / 미반영 의심 '+miss,'color:#1a6dB5;font-weight:bold');
+  console.table(out.slice(0,60));
+  console.log('※ 차이 = 현재재고 − (입고−출고). 0에 가까우면 이미 정상 반영된 것입니다.');
+  console.log('※ 특정 품목 상세: diagStock("품번")');
+  return out;
+};
+
 window.checkOrderStock = function(apply){
   if(typeof orders==='undefined' || !orders.length){ console.warn('발주 데이터 없음'); return; }
   // 🛑 제품DB가 덜 로드된 상태에서 실행하면 정상 품목까지 '미매칭'으로 나온다(IndexedDB 비동기 로드)
