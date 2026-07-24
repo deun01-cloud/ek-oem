@@ -16730,11 +16730,12 @@ window.fixSeedingIoAll = async function(){
 
   var n=0, detail=[];
   seeds.forEach(function(io){
-    var before={ph:io.phone||'', ad:io.address||'', op:io.option||''};
+    var before={ph:io.phone||'', ad:io.address||'', op:io.option||'', rc:io.recipient||''};
     // 메모의 "· @핸들"에서 인플루언서 찾기
     var m=String(io.memo||'').match(/@([A-Za-z0-9._]+)/);
     var key=m? m[1].toLowerCase() : '';
     var inf=key? inflMap[key] : null;
+    if(!inf && key){ console.warn("[시딩보완] 인플루언서 못찾음: @"+key+" (제목: "+(io.title||"").slice(0,30)+")"); }
     if(inf){
       if(!io.phone && inf.phone) io.phone=inf.phone;
       if(!io.address && inf.addr) io.address=inf.addr;
@@ -16749,10 +16750,12 @@ window.fixSeedingIoAll = async function(){
         if(opt) io.option=opt;
       }
     }
-    if(io.phone!==before.ph || io.address!==before.ad || io.option!==before.op){
+    if(io.phone!==before.ph || io.address!==before.ad || io.option!==before.op || io.recipient!==before.rc){
       io._ts=Date.now(); n++;
-      detail.push({제목:(io.title||'').slice(0,28), 연락처:io.phone||'-', 옵션:io.option||'-'});
+      detail.push({제목:(io.title||'').slice(0,26), 수령인:io.recipient||'-', 연락처:io.phone||'-', 옵션:io.option||'-'});
       try{ _syncIoStageToNotion(io); }catch(e){}
+      // ⚠ io는 서버 SSOT 타입 — 서버에도 발행해야 스냅샷이 옛 값으로 덮어쓰지 않는다
+      try{ if(typeof realtimePublish==="function") realtimePublish("io", io); }catch(e){}
     }
   });
   if(n){
