@@ -7098,9 +7098,11 @@ window.addEventListener('message', function(ev){
       }).catch(function(){});
     }
     // 📦 제품DB가 비어있으면(모바일/새 기기 — 로컬에 제품 없음) Notion에서 끌어온 뒤 다시 전송
+    // 🛡 [FIX] force:true로 '전체(full) 풀' 강제 — 빈 상태에서 증분으로 받으면 변경분 몇 건만
+    //    들어와 제품이 통째로 사라져 보인다(워터마크 localStorage / 데이터 IndexedDB 불일치).
     if(sentCount===0 && typeof pullFromNotion==='function'){
       try{
-        pullFromNotion({silent:true}).then(function(){ sendProducts(); }).catch(function(){ sendProducts(); });
+        pullFromNotion({silent:true, force:true}).then(function(){ sendProducts(); }).catch(function(){ sendProducts(); });
       }catch(e){ /* pullFromNotion이 Promise 아닐 수도 — 잠시 후 재전송 */ setTimeout(sendProducts, 3000); }
     }
     return;
@@ -19277,6 +19279,11 @@ async function pullFromNotion(opts){
     const sinceFor = (dbId)=>{
       // 제품DB만 증분 (자동 폴링 시) — 나머지는 기존 정책(useIncremental) 따름
       if(dbId && dbId === notionCfg.productDb && _productIncremental){
+        // 🛡 [FIX] 로컬 제품DB가 비어있으면(IndexedDB 소실·새 기기·캐시 삭제 등)
+        //    증분이 아니라 전체(full)로 받아야 한다. 워터마크(_dbSyncTimes)는 localStorage,
+        //    제품 데이터는 IndexedDB로 저장소가 달라, IDB만 비워지고 워터마크가 남으면
+        //    증분 pull이 '워터마크 이후 변경분 몇 건'만 받아 6,000건이 통째로 사라져 보인다.
+        if(!Array.isArray(productDB) || productDB.length === 0) return null;
         return getDbSyncTime(dbId);
       }
       return (useIncremental && dbId) ? getDbSyncTime(dbId) : null;
