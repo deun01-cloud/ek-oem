@@ -27197,22 +27197,36 @@ function exportFactoryDelivery(scope, onlyFactory){
       const st = (typeof normalizeOrderStatus==='function')?normalizeOrderStatus(o.status):(o.status||'의뢰');
       if(st==='확정' || st==='취소보류') return;
       const oRows = Array.isArray(o.rows)?o.rows:[];
-      const first = oRows[0]||{};
-      const totalQty = oRows.reduce((a,r)=>a+(+r.qty||0),0);
-      rows.push({
-        factory: (o.factory||'').trim() || '(공장 미지정)',
-        kind: '발주',
-        code: o.no||'',
-        name: (first.name||first.itemName||first.code||'(품목없음)'),
-        vendor: o.vendor||'',
-        thumb: _orderThumb(o),
-        qty: totalQty ? (totalQty+'') : (first.qty||''),
-        status: st,
-        note: (o.factoryNotice||'').trim(),
-        factShip: o.factShip||'',
-        // 품목이 여러 개면 나머지를 별도 표시
-        extraItems: oRows.slice(1).map(r=>({ name:(r.name||r.itemName||r.code||''), qty:(r.qty||'') })),
-      });
+      const _fac = (o.factory||'').trim() || '(공장 미지정)';
+      // 🛡 [FIX] 발주도 샘플처럼 각 품목을 개별 행 + 품목별 썸네일로 표시.
+      //   발주번호는 각 품목 행의 품번/발주번호 칸에 함께 넣는다(공장이 어느 발주인지 바로 식별).
+      if(!oRows.length){
+        rows.push({ factory:_fac, kind:'발주', code:o.no||'', name:'(품목없음)', vendor:o.vendor||'',
+          thumb:_orderThumb(o), qty:'', status:st, note:(o.factoryNotice||'').trim(), factShip:o.factShip||'', extraItems:[] });
+      } else {
+        oRows.forEach((r, ri)=>{
+          const itemName = (r.name||r.itemName||r.code||'(품목)');
+          // 품목별 썸네일: 행 자체 이미지 → 품목코드/이름으로 제품DB 매칭 → 발주 대표 이미지
+          let th='';
+          if(Array.isArray(r.imgs)){ const im=r.imgs.find(x=>x&&x.url&&/^https?:\/\//.test(x.url)); if(im) th=im.url; }
+          if(!th && r.img && /^https?:\/\//.test(String(r.img))) th=r.img;
+          if(!th && typeof _thumbByCode==='function') th=_thumbByCode(r.code||itemName);
+          if(!th) th=_orderThumb(o);
+          rows.push({
+            factory: _fac,
+            kind: '발주',
+            code: o.no||'',                                  // 발주번호 — 각 품목 행에 표시
+            name: itemName,
+            vendor: ri===0 ? (o.vendor||'') : '',            // 벤더 태그는 발주 첫 행에만
+            thumb: th,
+            qty: (r.qty||''),
+            status: st,
+            note: ri===0 ? (o.factoryNotice||'').trim() : '', // 비고는 발주 첫 행에만
+            factShip: o.factShip||'',
+            extraItems: [],
+          });
+        });
+      }
     });
   }
 
