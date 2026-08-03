@@ -5370,6 +5370,33 @@ function _getPdDateFilterLabel(){
   }
 }
 
+// 🛡 [FIX] 제품DB를 노션 기준으로 완전 재구축 — 중복 폭증·품목코드 소실 복구용.
+//    로컬을 비우고 노션에서 전체를 다시 받는다. 로컬을 먼저 비우므로 '데이터 급감' 안전장치에
+//    막히지 않고(빈 로컬 → 정상 pull), mapNotionProduct가 이제 코드·_notionId를 채우므로
+//    중복이 정리되고 품목코드가 복원된다. 노션(5,983건)이 원본이라 데이터 손실 없음.
+async function rebuildProductDBFromNotion(){
+  if(!notionCfg.workerUrl || !notionCfg.productDb){
+    if(typeof showToast==='function') showToast('⚠ 노션 미연결 — 먼저 Notion 설정에서 연결하세요','var(--red)',3500);
+    return;
+  }
+  const before = Array.isArray(productDB) ? productDB.length : 0;
+  if(!confirm('제품DB를 노션 기준으로 완전히 재구축합니다.\n\n· 현재 로컬 제품 '+before.toLocaleString()+'건을 비우고\n· 노션에서 전체를 다시 받아옵니다 (약 6,000건)\n\n중복이 정리되고 품목코드가 복원됩니다.\n노션 데이터가 원본이라 손실은 없습니다. 계속할까요?')) return;
+  try{ if(typeof showToast==='function') showToast('제품DB 재구축 중… 잠시만요 (약 20초)','var(--org)',8000); }catch(e){}
+  try{
+    productDB = [];
+    if(typeof idbSet==='function'){ try{ await idbSet('products', []); }catch(e){} }
+    if(typeof setDbSyncTime==='function'){ try{ setDbSyncTime(notionCfg.productDb, ''); }catch(e){} }  // 워터마크 초기화 → 전체 풀
+  }catch(e){ console.warn('[rebuild] clear', e); }
+  try{
+    await pullFromNotion({silent:false, force:true});   // force+비-silent → 전체(full) 풀
+  }catch(e){ console.warn('[rebuild] pull', e); }
+  try{ if(typeof save==='function') save(); }catch(e){}
+  try{ if(typeof renderProducts==='function') renderProducts(); }catch(e){}
+  const after = Array.isArray(productDB) ? productDB.length : 0;
+  const emptyCode = productDB.filter(p=>!p.code || !String(p.code).trim()).length;
+  try{ if(typeof showToast==='function') showToast('✓ 제품DB 재구축 완료 — '+after.toLocaleString()+'건'+(emptyCode?(' · 코드없음 '+emptyCode+'건 남음'):' · 코드 정상'),'var(--grn)',6000); }catch(e){}
+}
+
 // ── 제품 목록 렌더 ──
 function renderProducts(){
   const c=document.getElementById('content');
@@ -5494,6 +5521,14 @@ function renderProducts(){
   <div style="padding:9px 13px;background:${notionStatus.ok?'rgba(46,139,44,.06)':'rgba(192,48,48,.06)'};border:1px solid ${notionStatus.ok?'rgba(46,139,44,.25)':'rgba(192,48,48,.3)'};border-radius:6px;font-size:11.5px;color:${notionStatus.ok?'var(--grn)':'var(--red)'};margin-bottom:10px;font-weight:500">
     ${notionStatus.msg}
   </div>`;
+  // 🛡 [FIX] 동기화 손상(품목코드 없는 제품 대량·중복 폭증) 감지 시 노션 기준 재구축 안내
+  const _emptyCodeCnt = productDB.filter(p=>!p.code || !String(p.code).trim()).length;
+  const _needsRebuild = _emptyCodeCnt > 50;
+  const rebuildBar = notionStatus.ok ? `
+  <div style="padding:9px 13px;background:${_needsRebuild?'rgba(192,48,48,.08)':'var(--s2)'};border:1px solid ${_needsRebuild?'rgba(192,48,48,.35)':'var(--bdr)'};border-radius:6px;font-size:11.5px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    ${_needsRebuild ? `<span style="color:var(--red);font-weight:600">⚠ 품목코드 없는 제품 ${_emptyCodeCnt.toLocaleString()}건 · 중복 의심 — 노션 기준으로 재구축이 필요합니다</span>` : `<span style="color:var(--t3)">제품DB가 노션과 어긋나거나 중복이 쌓였다면 노션 기준으로 다시 받아올 수 있어요</span>`}
+    <button onclick="rebuildProductDBFromNotion()" style="margin-left:auto;padding:6px 13px;font-size:11.5px;background:${_needsRebuild?'var(--red)':'var(--gold-bg)'};color:${_needsRebuild?'#fff':'var(--gold-lt)'};border:1px solid ${_needsRebuild?'var(--red)':'var(--gold-line)'};border-radius:6px;font-weight:700;cursor:pointer;font-family:inherit">🔧 노션에서 제품DB 재구축</button>
+  </div>` : '';
   const kpiRow=`
   <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
     <div class="kpi"><div class="kpi-l">전체 품목</div><div class="kpi-v">${productDB.length}<span class="kpi-d">개</span></div></div>
@@ -5666,7 +5701,7 @@ function renderProducts(){
     <span style="font-size:11px;color:var(--t3);margin-left:auto">전체 DB 삭제: <button onclick="pdDeleteAll()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:11px;text-decoration:underline;font-family:inherit">전체 삭제</button></span>
   </div>`;
 
-  c.innerHTML=subTabBar+notionBanner+kpiRow+filters+`
+  c.innerHTML=subTabBar+notionBanner+rebuildBar+kpiRow+filters+`
   <div class="card" style="padding:0">
     <div style="padding:10px 14px;border-bottom:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:center">
       <div style="font-size:12px;font-weight:600;color:var(--t2)">총 <b style="color:var(--t1)">${list.length.toLocaleString()}</b>개 품목</div>
@@ -14260,7 +14295,7 @@ function _ioExportInvoiceXlsx(id){
 //    · 각인비 1,400원 (부가세 별도)  · 물류비 3,100원 (부가세 포함)  · 도서산간 5,000원 추가 (부가세 포함)
 //    · 발행 시 각 건에 명세서 번호를 기록해 중복 청구를 막는다
 // ══════════════════════════════════════════════
-var KKO_FEE = { engrave: 1400, logistics: 3100, remote: 5000 };   // 각인비(VAT별도) · 물류비(VAT포함) · 도서산간(VAT포함)
+var KKO_FEE = { engrave: 1400, logistics: 3100, remote: 5000, pack: 400 };   // 각인비(VAT별도) · 물류비(VAT포함) · 도서산간(VAT포함) · 포장용역비(VAT별도, 배송건당)
 var _kkoBillSel = new Set();
 var _kkoBillRemote = {};   // {id:true} — 도서산간 지정
 
@@ -14294,13 +14329,14 @@ function openKakaoBillModal(){
   back.innerHTML = '<div style="background:var(--s1);border-radius:12px;max-width:1000px;width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.3)">'
     + '<div style="padding:16px 20px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:10px">'
     +   '<div style="font-size:15px;font-weight:700">🧾 카카오 정산 거래명세서 발행</div>'
-    +   '<div style="font-size:11.5px;color:var(--t3)">출고 완료된 카카오 주문건에 각인비·물류비를 청구합니다</div>'
+    +   '<div style="font-size:11.5px;color:var(--t3)">출고 완료된 카카오 주문건에 각인비·물류비·포장 용역비를 청구합니다</div>'
     +   '<button onclick="document.getElementById(\'kkoBillBack\').remove()" style="margin-left:auto;padding:5px 10px;background:none;border:1px solid var(--bdr);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--t2)">✕ 닫기</button>'
     + '</div>'
     + '<div style="padding:12px 20px;border-bottom:1px solid var(--bdr);display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px">'
     +   '<label style="display:flex;align-items:center;gap:5px">각인비 <input type="number" id="kko_engrave" value="'+KKO_FEE.engrave+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도)</span></label>'
     +   '<label style="display:flex;align-items:center;gap:5px">물류비 <input type="number" id="kko_logi" value="'+KKO_FEE.logistics+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함)</span></label>'
     +   '<label style="display:flex;align-items:center;gap:5px">도서산간 <input type="number" id="kko_remote" value="'+KKO_FEE.remote+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함)</span></label>'
+    +   '<label style="display:flex;align-items:center;gap:5px">포장 용역비 <input type="number" id="kko_pack" value="'+KKO_FEE.pack+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도 · 배송건당)</span></label>'
     +   '<label style="display:flex;align-items:center;gap:5px;margin-left:auto">발행일 <input type="date" id="kko_date" value="'+new Date().toISOString().slice(0,10)+'" style="padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit"></label>'
     + '</div>'
     + '<div id="kkoBillBody" style="overflow:auto;flex:1;padding:0 20px"></div>'
@@ -14320,6 +14356,7 @@ function _kkoBillCalc(){
   var eng = +(document.getElementById('kko_engrave')||{}).value || 0;
   var logi = +(document.getElementById('kko_logi')||{}).value || 0;
   var rmt = +(document.getElementById('kko_remote')||{}).value || 0;
+  var pack = +(document.getElementById('kko_pack')||{}).value || 0;
   var ids = Array.from(_kkoBillSel);
   var n = ids.length;
   var m = ids.filter(function(id){ return _kkoBillRemote[id]; }).length;
@@ -14328,12 +14365,15 @@ function _kkoBillCalc(){
   // 물류비·도서산간: VAT 포함 → 공급가 = 총액/1.1
   var logiTotal = logi * n, logiSupply = Math.round(logiTotal/1.1), logiTax = logiTotal - logiSupply;
   var rmtTotal = rmt * m,  rmtSupply = Math.round(rmtTotal/1.1),  rmtTax = rmtTotal - rmtSupply;
-  var supply = engSupply + logiSupply + rmtSupply;
-  var tax = engTax + logiTax + rmtTax;
-  return { n:n, m:m, eng:eng, logi:logi, rmt:rmt,
+  // 포장 용역비: VAT 별도 → 공급가 그대로 (배송건당, 배송비와 분리해 별도 청구)
+  var packSupply = pack * n, packTax = Math.round(packSupply*0.1);
+  var supply = engSupply + logiSupply + rmtSupply + packSupply;
+  var tax = engTax + logiTax + rmtTax + packTax;
+  return { n:n, m:m, eng:eng, logi:logi, rmt:rmt, pack:pack,
            engSupply:engSupply, engTax:engTax,
            logiSupply:logiSupply, logiTax:logiTax, logiTotal:logiTotal,
            rmtSupply:rmtSupply, rmtTax:rmtTax, rmtTotal:rmtTotal,
+           packSupply:packSupply, packTax:packTax,
            supply:supply, tax:tax, total:supply+tax };
 }
 function _kkoBillRender(){
@@ -14368,6 +14408,7 @@ function _kkoBillRender(){
     +   '<div>각인비 <b>'+c.n+'건</b> × '+_w(c.eng)+' <span style="color:var(--t3)">(VAT별도)</span> → 공급가 <b>'+_w(c.engSupply)+'</b> · 부가세 '+_w(c.engTax)+'</div>'
     +   '<div>물류비 <b>'+c.n+'건</b> × '+_w(c.logi)+' <span style="color:var(--t3)">(VAT포함)</span> → 공급가 <b>'+_w(c.logiSupply)+'</b> · 부가세 '+_w(c.logiTax)+'</div>'
     +   (c.m ? '<div>도서산간 <b>'+c.m+'건</b> × '+_w(c.rmt)+' <span style="color:var(--t3)">(VAT포함)</span> → 공급가 <b>'+_w(c.rmtSupply)+'</b> · 부가세 '+_w(c.rmtTax)+'</div>' : '')
+    +   (c.pack ? '<div>포장 용역비 <b>'+c.n+'건</b> × '+_w(c.pack)+' <span style="color:var(--t3)">(VAT별도)</span> → 공급가 <b>'+_w(c.packSupply)+'</b> · 부가세 '+_w(c.packTax)+'</div>' : '')
     + '</div>'
     + '<div style="text-align:right;min-width:180px">'
     +   '<div style="font-size:11.5px;color:var(--t3)">공급가액 '+_w(c.supply)+' · 부가세 '+_w(c.tax)+'</div>'
@@ -14384,6 +14425,7 @@ async function _kkoBillIssue(){
   items.push({ name:'각인비', code:'', qty:c.n, unit:c.eng, amt:c.engSupply, note:'건당 '+c.eng.toLocaleString()+'원 (부가세 별도)' });
   items.push({ name:'물류비', code:'', qty:c.n, unit:Math.round(c.logiSupply/(c.n||1)), amt:c.logiSupply, note:'건당 '+c.logi.toLocaleString()+'원 (부가세 포함)' });
   if(c.m) items.push({ name:'도서산간 추가배송비', code:'', qty:c.m, unit:Math.round(c.rmtSupply/(c.m||1)), amt:c.rmtSupply, note:'건당 '+c.rmt.toLocaleString()+'원 (부가세 포함)' });
+  if(c.pack) items.push({ name:'포장 용역비', code:'', qty:c.n, unit:c.pack, amt:c.packSupply, note:'건당 '+c.pack.toLocaleString()+'원 (부가세 별도) — 배송비와 별도 청구' });
   var invNo = 'KKO-'+issuedAt.replace(/-/g,'').slice(2)+'-'+String((invoiceHistory.filter(function(v){return String(v.invNo||'').startsWith('KKO-');}).length||0)+1).padStart(2,'0');
   var inv = {
     id: (typeof genId==='function' ? genId() : Date.now()),
@@ -14811,7 +14853,7 @@ function _renderIoCommerce(){
         return `<div style="margin-top:10px;display:flex;align-items:center;gap:10px;padding:9px 13px;background:rgba(250,225,60,.10);border:1px solid rgba(200,160,20,.35);border-radius:7px;flex-wrap:wrap">
           <span style="font-size:12px;font-weight:700;color:var(--t1)">🧾 카카오 정산</span>
           <span style="font-size:11.5px;color:var(--t2)">출고 ${_kko.length}건 · 미청구 <b style="color:${_un?'var(--org)':'var(--grn)'}">${_un}건</b></span>
-          <span style="font-size:10.5px;color:var(--t3)">각인비 1,400원(VAT별도) · 물류비 3,100원(VAT포함) · 도서산간 5,000원(VAT포함)</span>
+          <span style="font-size:10.5px;color:var(--t3)">각인비 1,400원(VAT별도) · 물류비 3,100원(VAT포함) · 도서산간 5,000원(VAT포함) · 포장 용역비 400원(VAT별도)</span>
           <button onclick="openKakaoBillModal()" style="margin-left:auto;padding:6px 14px;font-size:12px;background:var(--gold);border:none;border-radius:5px;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">거래명세서 발행</button>
         </div>`;
       })()}
