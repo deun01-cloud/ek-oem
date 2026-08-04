@@ -4870,6 +4870,8 @@ async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
     _fromAS: true,        // AS 발생 거래명세서 표시 — 거래명세서 탭에서 시각적 구분 가능
     _asSourceIds: selected.map(a => a.id), // 원본 AS ID 목록
     _stockApplied: false, // AS는 재고와 무관 (이미 출고된 상품의 수리)
+    _shipped: false,      // 🛡 [FIX] 발행 직후엔 '출고완료'(미청구) 단계로 — 청구는 별도
+    _invStage: 'draft',
   };
 
   // 🔒 노션-우선: 노션 push 성공 후에만 invoiceHistory + AS 상태 업데이트
@@ -36761,9 +36763,11 @@ function inferInvStage(v){
     return (v.status === '발행완료' || v.status === '청구완료' || v.status === '미수')
       ? 'billing' : 'draft';
   }
-  // AS 명세서 — 출고일 있으면 billing, 없으면 draft
+  // 🛡 [FIX] AS 명세서도 출고 ≠ 청구 — 발행 직후엔 '출고완료'(draft)로 둔다.
+  //    이전엔 출고일(shipDate)만 있으면 billing(청구)으로 분류돼 청구 탭으로 새던 문제.
+  //    입금·계산서가 진행되면 위쪽 검사(paid/taxIssued)에서 billing/done으로 자동 승격된다.
   if(v._fromAS){
-    return v.shipDate ? 'billing' : 'draft';
+    return v._shipped === true ? 'billing' : 'draft';
   }
   // 그 외 (발주 기반 미출고, 재고 출고 STOCK-, 독립 명세서 등) → draft (미청구)
   return 'draft';
