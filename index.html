@@ -46633,6 +46633,65 @@ function totalFixed(month){
   return S.fixed.reduce(function(s,f){ return _fixedAppliesTo(f,m)? s+(f.amount||0) : s; }, 0);
 }
 
+// 🔎 '비용 구조' 항목 클릭 → 그 비용을 구성하는 세부 항목(항목명·금액) 모달
+window._showCostDetail = function(key){
+  var period = (document.getElementById('g-period')||{}).value || '';
+  var rate = parseFloat((document.getElementById('usd-rate')||{}).value)||1350;
+  var title='', desc='', items=[];
+  if(key==='exp'){
+    title='지출내역 원가'; desc='⑤ 지출내역서에 입력한 매입·경비 항목';
+    (S.exp||[]).forEach(function(e){ if(+e.amount) items.push({name:(e.vendor||'(거래처 미상)'), amount:+e.amount||0, sub:[(e.category||''),(e._paid?'입금완료':'입금대기')].filter(Boolean).join(' · ')}); });
+  } else if(key==='cn' || key==='man' || key==='factory'){
+    title = (key==='man') ? '직접 입력' : (key==='cn' ? '중국 인보이스' : '공장 인보이스');
+    desc = '⑥ 공장 인보이스 — 업로드/AI 인식분 + 직접입력분';
+    var seen={};
+    // 업로드/AI 인식분 (파일로 등록한 매입)
+    if((key==='cn' || key==='factory') && typeof _buildInvoiceItems==='function'){
+      _buildInvoiceItems().forEach(function(it){
+        if(it._manual) return;
+        if(period && it.period!==period) return;
+        var usd=+it.usd||0; if(!usd && !it.krw) return;
+        var kk=it.grp||it.invNo||it.key; if(seen[kk]) return; seen[kk]=1;
+        var krw = usd ? Math.round(usd*(it.rate||rate)) : (+it.krw||0);
+        items.push({name:(it.vendor||it.invNo||'인보이스'), amount:krw, sub:'업로드'+(usd?(' · $'+usd+' × '+(it.rate||rate)):'')});
+      });
+    }
+    // 직접입력분 ("+ 직접입력"으로 금액만 넣은 매입)
+    if(key==='man' || key==='factory'){
+      (S.manual||[]).forEach(function(m){ if(+m.amount) items.push({name:(m.label||m.vendor||'(무제)'), amount:+m.amount||0, sub:'직접입력'+[(m.cur==='USD'&&m.usd?('$'+m.usd):''),(m.invDate||m.date||'')].filter(Boolean).map(function(t){return ' · '+t;}).join('')}); });
+    }
+  } else if(key==='fx'){
+    title='고정비'; desc='재무계획 · 이 달에 적용되는 고정비/일회성';
+    (S.fixed||[]).forEach(function(f){ if(typeof _fixedAppliesTo==='function' && !_fixedAppliesTo(f,period)) return; if(!(+f.amount)) return; items.push({name:(f.name||f.label||f.item||'(무제)'), amount:+f.amount||0, sub:(f.type==='once'?'일회성':'고정비')}); });
+  } else if(key==='var'){
+    title='변동비 (지급완료 출금)'; desc='재무계획 · 연간 주요 출금 중 이 달에 지급완료된 건';
+    if(typeof finVariableItemsFor==='function'){ finVariableItemsFor(period).forEach(function(o){ if(!(+o.amount)) return; items.push({name:o.item, amount:+o.amount||0, sub:o.cat||''}); }); }
+  } else if(key==='legacy'){
+    title='기타 원가 (구 EK정산)'; desc='예전 EK정산 방식으로 저장돼 있던 원가 (항목 상세는 남아있지 않음)';
+  } else { return; }
+  items.sort(function(a,b){ return b.amount - a.amount; });
+  var tot = items.reduce(function(s,x){return s+(+x.amount||0);},0);
+  var esc=function(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');};
+  var rowsHtml = items.length ? items.map(function(x){
+    return '<div style="display:flex;align-items:baseline;gap:8px;padding:8px 4px;border-bottom:1px solid var(--bdr)">'
+      +'<div style="flex:1;min-width:0"><div style="font-size:12.5px;font-weight:600;word-break:break-word">'+esc(x.name)+'</div>'
+      +(x.sub?'<div style="font-size:10.5px;color:var(--mu);margin-top:1px">'+esc(x.sub)+'</div>':'')+'</div>'
+      +'<div style="font-size:12.5px;font-weight:700;white-space:nowrap">'+won(x.amount)+'</div></div>';
+  }).join('') : '<div style="padding:18px 4px;color:var(--mu);font-size:12.5px;text-align:center;line-height:1.6">이 달에 해당하는 세부 항목이 없습니다.<br><span style="font-size:11px">(저장된 합계만 있는 경우, 데이터 입력 탭에서 원본을 확인하세요)</span></div>';
+  var ex=document.getElementById('costDetailOv'); if(ex) ex.remove();
+  var ov=document.createElement('div'); ov.id='costDetailOv';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.addEventListener('click', function(e){ if(e.target===ov) ov.remove(); });
+  ov.innerHTML='<div style="background:var(--s1);border-radius:14px;padding:20px 22px;max-width:460px;width:100%;max-height:84vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.25)">'
+    +'<div style="font-size:15px;font-weight:700;margin-bottom:3px">🧾 '+esc(title)+' 세부내역</div>'
+    +'<div style="font-size:11px;color:var(--mu);margin-bottom:8px">'+esc(period||'')+' · '+esc(desc)+'</div>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px;border-bottom:2px solid var(--bdr)"><span style="font-size:11.5px;color:var(--mu);font-weight:600">'+items.length+'건</span><span style="font-size:13px;font-weight:700">합계 '+won(tot)+'</span></div>'
+    + rowsHtml
+    +'<div style="display:flex;justify-content:flex-end;margin-top:16px"><button onclick="document.getElementById(\'costDetailOv\').remove()" style="padding:8px 18px;border-radius:8px;border:none;background:var(--ac);color:#fff;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600">닫기</button></div>'
+    +'</div>';
+  document.body.appendChild(ov);
+};
+
 // ─────────────────────────────────────────
 //  [수정] 손익 계산 — 저장 데이터에서도 매입원가 항목별 정확히 표시
 //  [수정] 고정비는 항상 현재 S.fixed 사용 (수정 가능)
@@ -46742,25 +46801,29 @@ function calcPnL(){
   });
   document.getElementById('tb-pnl-cust').innerHTML=custHtml||'<tr><td colspan="5" style="text-align:center;color:var(--mu);padding:20px">매출 데이터를 먼저 입력해주세요</td></tr>';
 
+  // 🔧 '비용 구조' = 비용 항목만 표시하고, 비중은 '각 비용 ÷ 총비용'으로 계산(합계 100%).
+  //    (이전엔 매출 항목까지 섞고 비중을 전부 '총매출 대비 %'로 내서 비중이 서로 안 맞았음)
   var brkRows=[];
-  if(revDelivery>0) brkRows.push({l:'납품 매출',     v:revDelivery, rev:true});
-  if(revSample>0)   brkRows.push({l:'샘플 청구',     v:revSample,   rev:true});
-  if(revDev>0)      brkRows.push({l:'개발비 청구',   v:revDev,      rev:true});
-  if(revAS>0)       brkRows.push({l:'AS 매출',       v:revAS,       rev:true});
-  if(revCommerce>0) brkRows.push({l:'커머스 매출',   v:revCommerce, rev:true});
-  if(expCogs>0)     brkRows.push({l:'지출내역 원가', v:expCogs,     rev:false});
-  if(cnCogs>0)      brkRows.push({l:'중국 인보이스', v:cnCogs,      rev:false});
-  if(manCogs>0)     brkRows.push({l:'직접 입력',     v:manCogs,     rev:false});
-  // [신규] 저장 데이터에 옛 EK정산 원가가 있으면 "기타 원가"로 표시 (합계 일관성 유지)
+  if(expCogs>0)     brkRows.push({l:'지출내역 원가', v:expCogs, k:'exp'});
+  // 🏭 중국 인보이스(업로드/AI) + 직접입력 매입 = 모두 공장 인보이스 → 하나로 통합
+  var factoryCogs = cnCogs + manCogs;
+  if(factoryCogs>0) brkRows.push({l:'공장 인보이스', v:factoryCogs, k:'factory'});
+  // 저장 데이터에 옛 EK정산 원가가 있으면 "기타 원가"로 표시 (합계 일관성 유지)
   var legacyExtra = cogs - (expCogs + cnCogs + manCogs);
-  if(legacyExtra > 0) brkRows.push({l:'기타 원가 (구 EK정산)', v:legacyExtra, rev:false});
-  if(fx>0)          brkRows.push({l:'고정비',         v:fx,          rev:false});
-  if(varCost>0)     brkRows.push({l:'변동비 (지급완료 출금)', v:varCost, rev:false});
+  if(legacyExtra > 0) brkRows.push({l:'기타 원가 (구 EK정산)', v:legacyExtra, k:'legacy'});
+  if(fx>0)          brkRows.push({l:'고정비',         v:fx, k:'fx'});
+  if(varCost>0)     brkRows.push({l:'변동비 (지급완료 출금)', v:varCost, k:'var'});
+  var totalCostBrk = brkRows.reduce(function(s,it){ return s + (+it.v||0); }, 0);
   var brkHtml=brkRows.map(function(it){
-    var r=rev>0?Math.round(it.v/rev*100):0;
-    var col=it.rev?'color:var(--ac)':'';
-    return'<tr><td>'+it.l+'</td><td class="r" style="'+col+'">'+won(it.v)+'</td><td class="r">'+r+'%</td></tr>';
+    var r=totalCostBrk>0?Math.round(it.v/totalCostBrk*100):0;
+    // 🔎 행 클릭 → 이 비용 항목의 세부내역 모달
+    return'<tr onclick="_showCostDetail(\''+it.k+'\')" style="cursor:pointer" title="클릭하면 세부내역을 봅니다"><td>'+it.l+' <span style="color:var(--mu);font-size:10px">▸</span></td><td class="r">'+won(it.v)+'</td><td class="r">'+r+'%</td></tr>';
   }).join('');
+  if(brkRows.length){
+    brkHtml+='<tr style="border-top:2px solid var(--bdr);font-weight:700"><td>총비용</td><td class="r">'+won(totalCostBrk)+'</td><td class="r">100%</td></tr>';
+  } else {
+    brkHtml='<tr><td colspan="3" style="text-align:center;color:var(--mu);padding:16px">비용 데이터가 없습니다</td></tr>';
+  }
   document.getElementById('tb-pnl-brk').innerHTML=brkHtml;
 
   var stmt=[
