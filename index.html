@@ -43246,22 +43246,43 @@ function _finEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/
 
 // 💸 변동비 — '연간 주요 출금' 중 지급완료된 건을 지급일(월) 기준으로 해당 월 손익에 반영.
 //    period 'YYYY-MM'을 넘기면 그 달에 지급완료된 출금의 합계(원)를 돌려준다.
+// 🏭 '원자재/공장' 성격의 출금은 변동비가 아니라 매입원가로 분류한다.
+//    (cat이 원자재/공장/매입 이거나, 항목명에 '공장'이 들어가면 매입원가로 본다)
+function _finIsRawMaterial(o){
+  var cat=String((o&&o.cat)||'').trim();
+  var nm =String((o&&o.name)||'');
+  return cat==='원자재' || cat==='공장' || cat==='매입' || /공장/.test(nm);
+}
 function finVariableCostFor(period){
   if(!period || !FIN || !Array.isArray(FIN.outflows)) return 0;
   var ym = String(period).slice(0,7);
   var sum = 0;
   FIN.outflows.forEach(function(o){
     if(!o || !o.paid) return;                       // 지급완료된 건만
+    if(_finIsRawMaterial(o)) return;                // 원자재/공장 = 매입원가로 분류 → 변동비 제외
     var payMonth = String(o.month||'').slice(0,7);  // 지급일의 연-월
     if(payMonth && payMonth===ym) sum += _finNum(o.amount);
   });
   return sum;
 }
-// 변동비 상세(항목명·금액) — 대시보드/툴팁용
+// 변동비 상세(항목명·금액) — 대시보드/툴팁용 (원자재/공장 제외)
 function finVariableItemsFor(period){
   if(!period || !FIN || !Array.isArray(FIN.outflows)) return [];
   var ym = String(period).slice(0,7);
-  return FIN.outflows.filter(function(o){ return o && o.paid && String(o.month||'').slice(0,7)===ym; })
+  return FIN.outflows.filter(function(o){ return o && o.paid && !_finIsRawMaterial(o) && String(o.month||'').slice(0,7)===ym; })
+    .map(function(o){ return {item:o.name||'(무제목)', cat:o.cat||'', amount:_finNum(o.amount)}; });
+}
+// 🏭 원자재/공장 출금(= 매입원가로 잡히는 재무 출금) 합계·상세
+function finRawMaterialCostFor(period){
+  if(!period || !FIN || !Array.isArray(FIN.outflows)) return 0;
+  var ym=String(period).slice(0,7), sum=0;
+  FIN.outflows.forEach(function(o){ if(o && o.paid && _finIsRawMaterial(o) && String(o.month||'').slice(0,7)===ym) sum+=_finNum(o.amount); });
+  return sum;
+}
+function finRawMaterialItemsFor(period){
+  if(!period || !FIN || !Array.isArray(FIN.outflows)) return [];
+  var ym=String(period).slice(0,7);
+  return FIN.outflows.filter(function(o){ return o && o.paid && _finIsRawMaterial(o) && String(o.month||'').slice(0,7)===ym; })
     .map(function(o){ return {item:o.name||'(무제목)', cat:o.cat||'', amount:_finNum(o.amount)}; });
 }
 
@@ -46655,11 +46676,13 @@ window._showCostDetail = function(key){
       (S.manual||[]).forEach(function(m){ if(+m.amount) items.push({name:(m.label||m.vendor||'(무제)'), amount:+m.amount||0, sub:'공장·직접입력'+[(m.cur==='USD'&&m.usd?('$'+m.usd):''),(m.invDate||m.date||'')].filter(Boolean).map(function(t){return ' · '+t;}).join('')}); });
     }
   };
+  var addMatOut = function(){ if(typeof finRawMaterialItemsFor==='function'){ finRawMaterialItemsFor(period).forEach(function(o){ if(!(+o.amount)) return; items.push({name:o.item, amount:+o.amount||0, sub:['재무 출금',(o.cat||'')].filter(Boolean).join(' · ')}); }); } };
   if(key==='exp'){ title='지출내역 원가'; desc='⑤ 지출내역서에 입력한 매입·경비 항목'; addExp(); }
   else if(key==='cn'){ title='중국 인보이스'; desc='⑥ 공장 인보이스 — 파일 업로드/AI 인식분'; addFactory('upload'); }
   else if(key==='man'){ title='직접 입력'; desc='⑥ 공장 인보이스 — "+ 직접입력"으로 금액만 넣은 매입'; addFactory('manual'); }
   else if(key==='factory'){ title='공장 인보이스'; desc='⑥ 공장 인보이스 — 업로드/AI 인식분 + 직접입력분'; addFactory('all'); }
-  else if(key==='purchase'){ title='매입원가'; desc='공장 인보이스 + 지출내역 원가'; addFactory('all'); addExp(); }
+  else if(key==='matout'){ title='공장 결제 (재무 출금)'; desc='재무계획 · 원자재/공장 성격의 지급완료 출금 (매입원가)'; addMatOut(); }
+  else if(key==='purchase'){ title='매입원가'; desc='공장 인보이스 + 지출내역 원가 + 원자재 출금'; addFactory('all'); addMatOut(); addExp(); }
   else if(key==='fx'){
     title='고정비'; desc='재무계획 · 이 달에 적용되는 고정비/일회성';
     (S.fixed||[]).forEach(function(f){ if(typeof _fixedAppliesTo==='function' && !_fixedAppliesTo(f,period)) return; if(!(+f.amount)) return; items.push({name:(f.name||f.label||f.item||'(무제)'), amount:+f.amount||0, sub:(f.type==='once'?'일회성':'고정비')}); });
@@ -46746,15 +46769,18 @@ function calcPnL(){
     fx = currentFx;
   }
 
-  gross = rev - cogs;
-  // 💸 변동비 — 재무계획 '연간 주요 출금' 중 이 달에 지급완료된 건
+  // 🏭 재무계획 출금 중 '원자재/공장' 성격 = 매입원가로 편입 (변동비에서 제외)
+  var matOutflow = (typeof finRawMaterialCostFor==='function') ? finRawMaterialCostFor(period) : 0;
+  var cogsAll = cogs + matOutflow;   // 매입원가 총액 = 공장 인보이스/지출내역 + 원자재 출금
+  gross = rev - cogsAll;
+  // 💸 변동비 — 재무계획 '연간 주요 출금' 중 이 달 지급완료 (원자재/공장 제외)
   var varCost = (typeof finVariableCostFor==='function') ? finVariableCostFor(period) : 0;
   op    = gross - fx - varCost;
-  cogsR = rev>0 ? cogs/rev*100 : 0;
+  cogsR = rev>0 ? cogsAll/rev*100 : 0;
 
   document.getElementById('p-rev').textContent    = won(rev);
   document.getElementById('p-rev-s').textContent  = '납품 '+won(revDelivery)+' · 샘플/개발비 '+won(revSample+revDev)+(revAS?' · AS '+won(revAS):'')+(revCommerce?' · 커머스 '+won(revCommerce):'');
-  document.getElementById('p-cogs').textContent   = won(cogs);
+  document.getElementById('p-cogs').textContent   = won(cogsAll);
   document.getElementById('p-cogs-s').textContent = pct(cogsR);
   document.getElementById('p-fx').textContent     = won(fx);
   // 변동비 카드(있으면) 갱신
@@ -46808,7 +46834,8 @@ function calcPnL(){
   var _factory = cnCogs + manCogs;                       // 공장 인보이스 = 중국(업로드/AI) + 직접입력
   var _legacy  = cogs - (expCogs + cnCogs + manCogs);    // 옛 EK정산 원가(있으면)
   if(_legacy < 0) _legacy = 0;
-  var _purchase = expCogs + _factory + _legacy;          // 매입원가 = 공장 인보이스 + 지출내역(+기타)
+  var _matOut  = matOutflow||0;                          // 재무 출금 중 원자재/공장 결제
+  var _purchase = expCogs + _factory + _legacy + _matOut; // 매입원가 = 공장 인보이스 + 지출내역 + 원자재 출금(+기타)
   var totalCostBrk = _purchase + (fx>0?fx:0) + (varCost>0?varCost:0);
   var _pctOf = function(v){ return totalCostBrk>0? Math.round(v/totalCostBrk*100):0; };
   var _mainRow = function(label,v,k){ return '<tr onclick="_showCostDetail(\''+k+'\')" style="cursor:pointer" title="클릭하면 세부내역"><td style="font-weight:600">'+label+' <span style="color:var(--mu);font-size:10px">▸</span></td><td class="r" style="font-weight:600">'+won(v)+'</td><td class="r" style="font-weight:600">'+_pctOf(v)+'%</td></tr>'; };
@@ -46817,6 +46844,7 @@ function calcPnL(){
   if(_purchase>0){
     brkHtml += '<tr onclick="_showCostDetail(\'purchase\')" style="cursor:pointer;background:var(--s2)" title="클릭하면 매입원가 전체 세부"><td style="font-weight:700">매입원가 <span style="color:var(--mu);font-size:10px">▸</span></td><td class="r" style="font-weight:700">'+won(_purchase)+'</td><td class="r" style="font-weight:700">'+_pctOf(_purchase)+'%</td></tr>';
     if(_factory>0) brkHtml += _subRow('공장 인보이스', _factory, 'factory');
+    if(_matOut>0)  brkHtml += _subRow('공장 결제 (재무 출금)', _matOut, 'matout');
     if(expCogs>0)  brkHtml += _subRow('지출내역 원가', expCogs, 'exp');
     if(_legacy>0)  brkHtml += _subRow('기타 원가 (구 EK정산)', _legacy, 'legacy');
   }
@@ -46839,10 +46867,11 @@ function calcPnL(){
     {label:'(-) 지출내역 원가',     val:expCogs,     note:'월말 청구내역서 (운송·부자재 등)', bold:false, sub:true},
     {label:'(-) 중국 인보이스',     val:cnCogs,      note:'USD × '+rate+'원',                bold:false, sub:true},
     {label:'(-) 직접 입력 원가',    val:manCogs,     note:'수동 입력',                        bold:false, sub:true},
-    {label:'(-) 기타 원가',         val:legacyExtra, note:'구 EK정산 등 (저장 시점 기준)',    bold:false, sub:true},
+    {label:'(-) 공장 결제 (재무 출금)', val:matOutflow, note:'원자재/공장 지급완료 출금 (매입원가)', bold:false, sub:true},
+    {label:'(-) 기타 원가',         val:_legacy,     note:'구 EK정산 등 (저장 시점 기준)',    bold:false, sub:true},
     {label:'= 매출 총이익',         val:gross,       note:'',                                bold:true,  sub:false},
     {label:'(-) 고정비',            val:fx,          note:'임직원·임대·통신 등 (현재 고정비 기준)', bold:false, sub:true},
-    {label:'(-) 변동비',            val:varCost,     note:'재무계획 지급완료 출금 ('+(period||'')+')', bold:false, sub:true},
+    {label:'(-) 변동비',            val:varCost,     note:'재무계획 지급완료 출금 · 원자재/공장 제외 ('+(period||'')+')', bold:false, sub:true},
     {label:'= 영업이익',            val:op,          note:'',                                bold:true,  sub:false},
   ];
   var stHtml=stmt.filter(function(r){return r.bold||r.val!==0}).map(function(row){
