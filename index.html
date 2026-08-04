@@ -3258,6 +3258,7 @@ const ORD_CATS=[
   {key:'의뢰',     label:'의뢰'},
   {key:'제작중',    label:'제작중'},
   {key:'수정중',    label:'수정중'},
+  {key:'부분출고',  label:'부분출고'},   // 🛡 [FIX] 부분출고 발주가 전체 탭에서만 보이던 문제 — 전용 탭 추가
   {key:'확정',     label:'완료'},   // '확정' 데이터값 = 출고완료. 표시는 '완료'로 통일
   {key:'취소보류',  label:'취소보류'},
   {key:'전체',     label:'전체'},
@@ -13020,7 +13021,9 @@ function normalizeOrderStatus(st){
   if(!st) return '의뢰';
   const s = String(st).trim();
   // 옛 값 매핑
-  if(s === '진행중') return '의뢰';
+  // 🛡 [FIX] '진행중'(제작 진행)은 '의뢰'(초기)가 아니라 '제작중'으로 매핑해야 맞다.
+  //    출고완료 해제 시 상태를 '진행중'으로 되돌리는데, 이게 '의뢰'로 매핑돼 의뢰 탭으로 튕기던 버그.
+  if(s === '진행중') return '제작중';
   if(s === '확정' || s === '출고완료' || s === '완료') return '확정';
   if(s === '부분출고') return '부분출고';
   if(s === '보류' || s === '취소') return '취소보류';
@@ -27664,7 +27667,7 @@ function renderOrder(){
       ${(()=>{
         // 5단계 카운트 — normalize 적용해서 옛 데이터도 정확히 카운트
         // (순서: 의뢰 → 제작중 → 수정중 → 완료(확정) → 취소보류 → 전체)
-        const ordCounts = {의뢰:0, 제작중:0, 수정중:0, 확정:0, 취소보류:0, 전체: orders.length};
+        const ordCounts = {의뢰:0, 제작중:0, 수정중:0, 부분출고:0, 확정:0, 취소보류:0, 전체: orders.length};
         orders.forEach(o => {
           const st = normalizeOrderStatus(o.status);
           if(ordCounts[st] !== undefined) ordCounts[st]++;
@@ -40280,8 +40283,10 @@ async function saveStandaloneInvoice(){
           o.status = '부분출고';
         }
         if(o._notionId && typeof debouncedSync === 'function') debouncedSync('order', o, true);
-        // 명세서는 미청구 단계로
-        if(!(ratio >= 100)){ invRec._shipped = false; invRec._invStage = 'draft'; }
+        // 🛡 [FIX] 발주 출고완료 발행 명세서는 선금(결제율) 여부와 무관하게 항상 '출고완료'(draft).
+        //    출고 ≠ 청구. 이전엔 선금 100%(ratio>=100)면 이 줄을 건너뛰어, 위(40233)에서 잡힌
+        //    'done'/inferInvStage의 'billing'이 그대로 남아 출고완료가 아니라 청구/완료 탭으로 새던 버그.
+        invRec._shipped = false; invRec._invStage = 'draft';
       }
     }
 
@@ -40294,7 +40299,8 @@ async function saveStandaloneInvoice(){
         smp.invNo = invRec.invNo || smp.invNo;
         if(smp._notionId && typeof debouncedSync === 'function') debouncedSync('sample', smp, true);
       }
-      if(!(ratio >= 100)){ invRec._shipped = false; invRec._invStage = 'draft'; }
+      // 🛡 [FIX] 샘플 완료 발행도 선금 여부와 무관하게 항상 '출고완료'(draft) — 발주와 동일.
+      invRec._shipped = false; invRec._invStage = 'draft';
     }
 
     save();
