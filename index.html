@@ -14346,6 +14346,7 @@ function _ioExportInvoiceXlsx(id){
 var KKO_FEE = { engrave: 1400, logistics: 3100, remote: 5000, pack: 400, exchange: 6200, refund: 3100 };   // 각인비(VAT별도) · 물류비(VAT포함) · 도서산간(VAT포함) · 포장용역비(VAT별도) · 교환물류비(VAT포함) · 환불물류비(VAT포함)
 var _kkoBillSel = new Set();
 var _kkoBillRemote = {};   // {id:true} — 도서산간 지정
+var _kkoBillMonth = '';    // 📅 청구월 필터 ('' = 전체, 'YYYY-MM' = 해당 월만)
 
 // 주소로 도서산간 추정 (제주·울릉·도서지역)
 function _kkoIsRemote(addr){
@@ -14370,16 +14371,44 @@ function _kkoReturnList(){
     return (rt === '교환' || rt === '환불');
   });
 }
+// 📅 월별 청구 — 주문/교환·환불 건의 귀속 월 (출고일/반품일 기준)
+function _kkoMonthOf(io){ return String((io&&(io.shipDate||io.returnDate||io.date||io.orderDate))||'').slice(0,7); }
+function _kkoShippedFiltered(){ var m=_kkoBillMonth; var l=_kkoShippedList(); return m ? l.filter(function(io){ return _kkoMonthOf(io)===m; }) : l; }
+function _kkoReturnFiltered(){ var m=_kkoBillMonth; var l=_kkoReturnList(); return m ? l.filter(function(io){ return _kkoMonthOf(io)===m; }) : l; }
+// 청구월 드롭다운 후보 (출고·교환·환불 건에 존재하는 월들, 최신순)
+function _kkoMonthOptions(){
+  var s={};
+  _kkoShippedList().forEach(function(io){ var m=_kkoMonthOf(io); if(m) s[m]=1; });
+  _kkoReturnList().forEach(function(io){ var m=_kkoMonthOf(io); if(m) s[m]=1; });
+  return Object.keys(s).sort().reverse();
+}
+// 청구월 변경 → 그 달의 미청구 건으로 선택 초기화 후 재렌더
+function _kkoBillSetMonth(m){
+  _kkoBillMonth = m || '';
+  _kkoBillSel = new Set();
+  _kkoShippedFiltered().forEach(function(io){
+    if(!io.billNo) _kkoBillSel.add(String(io.id));
+    _kkoBillRemote[String(io.id)] = (io.isRemote!=null) ? !!io.isRemote : _kkoIsRemote(io.address);
+  });
+  _kkoBillRender();
+}
 function openKakaoBillModal(){
   var list = _kkoShippedList();
   var _retN = _kkoReturnList().filter(function(io){ return !io.billNo; }).length;
   if(!list.length && !_retN){ showToast('⚠ 청구할 카카오 출고·교환/환불 건이 없습니다','var(--org)',2500); return; }
   _kkoBillSel = new Set();
   _kkoBillRemote = {};
-  list.forEach(function(io){
-    if(!io.billNo) _kkoBillSel.add(String(io.id));                       // 미청구 건 기본 선택
+  var _kkoMonths = _kkoMonthOptions();
+  _kkoBillMonth = _kkoMonths[0] || '';                                    // 📅 기본 = 가장 최근 월
+  _kkoShippedFiltered().forEach(function(io){
+    if(!io.billNo) _kkoBillSel.add(String(io.id));                       // 그 달 미청구 건 기본 선택
     _kkoBillRemote[String(io.id)] = (io.isRemote!=null) ? !!io.isRemote : _kkoIsRemote(io.address);
   });
+  var _kkoMonthSel = '<label style="display:flex;align-items:center;gap:5px;font-weight:700;color:var(--gold-lt)">📅 청구월 '
+    + '<select id="kko_month" onchange="_kkoBillSetMonth(this.value)" style="padding:4px 9px;border:1.5px solid var(--gold-lt);border-radius:6px;font-family:inherit;font-size:12px;cursor:pointer;font-weight:600">'
+    + '<option value="">전체 기간</option>'
+    + _kkoMonths.map(function(m){ return '<option value="'+m+'"'+(m===_kkoBillMonth?' selected':'')+'>'+m+'</option>'; }).join('')
+    + '</select></label>';
   var back = document.createElement('div');
   back.id = 'kkoBillBack';
   back.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px';
@@ -14391,6 +14420,7 @@ function openKakaoBillModal(){
     +   '<button onclick="document.getElementById(\'kkoBillBack\').remove()" style="margin-left:auto;padding:5px 10px;background:none;border:1px solid var(--bdr);border-radius:5px;cursor:pointer;font-family:inherit;color:var(--t2)">✕ 닫기</button>'
     + '</div>'
     + '<div style="padding:12px 20px;border-bottom:1px solid var(--bdr);display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px">'
+    +   _kkoMonthSel
     +   '<label style="display:flex;align-items:center;gap:5px">각인비 <input type="number" id="kko_engrave" value="'+KKO_FEE.engrave+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도)</span></label>'
     +   '<label style="display:flex;align-items:center;gap:5px">물류비 <input type="number" id="kko_logi" value="'+KKO_FEE.logistics+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함)</span></label>'
     +   '<label style="display:flex;align-items:center;gap:5px">도서산간 <input type="number" id="kko_remote" value="'+KKO_FEE.remote+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함)</span></label>'
@@ -14408,7 +14438,7 @@ function openKakaoBillModal(){
 function _kkoBillToggle(id, on){ if(on) _kkoBillSel.add(String(id)); else _kkoBillSel.delete(String(id)); _kkoBillRender(); }
 function _kkoBillToggleRemote(id, on){ _kkoBillRemote[String(id)] = !!on; _kkoBillRender(); }
 function _kkoBillAll(on){
-  var list=_kkoShippedList();
+  var list=_kkoShippedFiltered();
   list.forEach(function(io){ if(io.billNo) return; if(on) _kkoBillSel.add(String(io.id)); else _kkoBillSel.delete(String(io.id)); });
   _kkoBillRender();
 }
@@ -14419,11 +14449,13 @@ function _kkoBillCalc(){
   var pack = +(document.getElementById('kko_pack')||{}).value || 0;
   var exch = +(document.getElementById('kko_exchange')||{}).value || 0;
   var refu = +(document.getElementById('kko_refund')||{}).value || 0;
-  var ids = Array.from(_kkoBillSel);
+  // 📅 청구월 필터 적용: 선택된 건 중 '이 달·미청구'만 집계
+  var _shipF = _kkoShippedFiltered();
+  var ids = _shipF.filter(function(io){ return !io.billNo && _kkoBillSel.has(String(io.id)); }).map(function(io){ return String(io.id); });
   var n = ids.length;
   var m = ids.filter(function(id){ return _kkoBillRemote[id]; }).length;
-  // 교환/환불 물류비: 미청구 카카오 교환·환불 건수 집계 (VAT 포함)
-  var _ret = _kkoReturnList();
+  // 교환/환불 물류비: 이 달 미청구 카카오 교환·환불 건수 집계 (VAT 포함)
+  var _ret = _kkoReturnFiltered();
   var xn = _ret.filter(function(io){ return io.returnType==='교환' && !io.billNo; }).length;
   var rn = _ret.filter(function(io){ return io.returnType==='환불' && !io.billNo; }).length;
   // 각인비: VAT 별도 → 공급가 그대로
@@ -14449,7 +14481,7 @@ function _kkoBillCalc(){
 }
 function _kkoBillRender(){
   var body = document.getElementById('kkoBillBody'); if(!body) return;
-  var list = _kkoShippedList();
+  var list = _kkoShippedFiltered();
   var _w = function(v){ return '₩'+(Math.round(v)||0).toLocaleString(); };
   body.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px">'
     + '<thead><tr style="background:var(--s2)">'
@@ -14493,6 +14525,8 @@ function _kkoBillRender(){
 async function _kkoBillIssue(){
   var c = _kkoBillCalc();
   if(!c.n && !c.xn && !c.rn){ showToast('⚠ 청구할 건이 없습니다','var(--red)',2000); return; }
+  // 📅 청구월 필터 적용: 실제로 청구·표기할 대상은 '이 달·선택·미청구' 건만
+  var _billIds = _kkoShippedFiltered().filter(function(io){ return !io.billNo && _kkoBillSel.has(String(io.id)); }).map(function(io){ return String(io.id); });
   var issuedAt = (document.getElementById('kko_date')||{}).value || new Date().toISOString().slice(0,10);
   if(!confirm('카카오에 청구할 거래명세서를 발행합니다.\n\n· 출고 '+c.n+'건 (도서산간 '+c.m+'건)'+((c.xn||c.rn)?('\n· 교환 '+c.xn+'건 · 환불 '+c.rn+'건'):'')+'\n· 공급가액 ₩'+c.supply.toLocaleString()+' / 부가세 ₩'+c.tax.toLocaleString()+'\n· 합계 ₩'+c.total.toLocaleString()+'\n\n계속할까요?')) return;
   var items = [];
@@ -14521,22 +14555,22 @@ async function _kkoBillIssue(){
     memo: '카카오 정산 — 출고 '+c.n+'건'+(c.m?(' (도서산간 '+c.m+'건)'):'')+((c.xn||c.rn)?(' · 교환 '+c.xn+'건 · 환불 '+c.rn+'건'):''),
     _shipped: false,
     _invStage: 'draft',
-    _kkoIds: Array.from(_kkoBillSel)
+    _kkoIds: _billIds
   };
   invoiceHistory.unshift(inv);
   if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
-  // 각 출고건에 명세서 번호·도서산간 기록 (중복 청구 방지)
+  // 각 출고건에 명세서 번호·도서산간 기록 (중복 청구 방지) — 이 달 대상만
   var src = (typeof ioItems!=='undefined' && Array.isArray(ioItems)) ? ioItems : [];
-  _kkoBillSel.forEach(function(id){
+  _billIds.forEach(function(id){
     var io = src.find(function(x){ return String(x.id)===String(id); });
     if(!io) return;
     io.billNo = invNo;
     io.isRemote = !!_kkoBillRemote[String(id)];
     try{ if(typeof syncIOToNotion==='function') syncIOToNotion(io); }catch(e){}
   });
-  // 🛡 [FIX] 교환/환불 물류비로 청구된 건에도 명세서 번호 기록 (중복 청구 방지)
+  // 🛡 [FIX] 교환/환불 물류비로 청구된 건에도 명세서 번호 기록 (중복 청구 방지) — 이 달 대상만
   if(c.xn || c.rn){
-    _kkoReturnList().forEach(function(io){
+    _kkoReturnFiltered().forEach(function(io){
       if(io.billNo) return;
       if(io.returnType!=='교환' && io.returnType!=='환불') return;
       io.billNo = invNo;
