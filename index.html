@@ -15689,6 +15689,36 @@ function _ioMatchKey(io){
   const sz=(opt.match(/\b[sml]\s*\(/g)||[]).join('')+(opt.match(/\d+\s*cm/g)||[]).join('')+(opt.match(/\d+\s*호/g)||[]).join('');
   return item+'|'+sz.replace(/\s+/g,'');
 }
+// 🎓 업로드 미리보기용 학습 사전 — 이미 매칭된 기존 io(품목+규격)에서 제품코드를 배운다.
+//    (엑셀 품목명이 길어 텍스트 매칭이 실패해도, 같은 상품을 과거에 매칭한 적이 있으면 그대로 매칭)
+function _buildIoLearnDict(){
+  var full={}, item={}, ambig={};
+  if(typeof ioItems!=='undefined' && Array.isArray(ioItems)){
+    for(var i=0;i<ioItems.length;i++){ var io=ioItems[i];
+      if(!io || !io._matchedProductCode) continue;
+      var k=_ioMatchKey(io); if(!k) continue;
+      var rec={code:io._matchedProductCode, name:io._matchedProductName||''};
+      if(!full[k]) full[k]=rec;
+      // 규격(호수/줄길이) 무시한 품목-only 키 — 같은 상품이면 사이즈 달라도 같은 제품에 매칭
+      var ki=k.split('|')[0];
+      if(ki){
+        if(item[ki]===undefined) item[ki]=rec;
+        else if(item[ki] && String(item[ki].code)!==String(rec.code)) ambig[ki]=true;  // 품목명이 여러 제품에 걸치면 모호 → 사용 안 함
+      }
+    }
+  }
+  return {full:full, item:item, ambig:ambig};
+}
+function _learnMatchProduct(dict, itemName, option){
+  if(!dict) return null;
+  var k=_ioMatchKey({items:itemName, option:option});
+  if(!k) return null;
+  var hit=dict.full[k];
+  if(!hit){ var ki=k.split('|')[0]; if(ki && dict.item[ki] && !dict.ambig[ki]) hit=dict.item[ki]; }
+  if(!hit) return null;
+  var p=(typeof productDB!=='undefined'&&Array.isArray(productDB)) ? productDB.find(function(x){return String(x.code||'')===String(hit.code);}) : null;
+  return {product:p||null, name:(p&&p.name)||hit.name||'', code:hit.code};
+}
 
 // ── 주문 → 출고 처리 ──
 function _ioMarkShipped(id){
@@ -16495,7 +16525,7 @@ function openCommerceUpload(){
           </div>
         </div>
         <div class="fg">
-          <label>출고 일자 *</label>
+          <label>출고 일자 * <span style="font-weight:400;color:var(--t3);font-size:10px">(엑셀에 '출고일' 열 있으면 그 값 우선, 없는 행만 이 날짜)</span></label>
           <input class="fi" type="date" id="cu_date" value="${today}">
         </div>
       </div>
@@ -16507,7 +16537,7 @@ function openCommerceUpload(){
         <div style="font-size:32px;margin-bottom:8px">📂</div>
         <div style="font-size:13px;font-weight:700;color:var(--gold-lt);margin-bottom:4px">엑셀 파일 드래그 또는 클릭해서 선택</div>
         <div style="font-size:11px;color:var(--t3)">파일명에서 날짜 자동 추출 (예: 비비케이트주문_0511 → 5월 11일)</div>
-        <div style="font-size:10.5px;color:var(--t3);margin-top:6px">컬럼: 수령인 / 연락처 / 주소 / 배송메모 / 품목(여러 개는 줄바꿈)</div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:6px">컬럼: 수령인 / 연락처 / 주소 / 배송메모 / 품목(여러 개는 줄바꿈) · 카카오 주문서면 상품·옵션·수량·주문번호·<b>출고일</b>·<b>송장번호</b> 열도 자동 인식</div>
       </div>
       <input type="file" id="cu_fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="_handleCommerceFile(this.files[0])">
       <div id="cu_preview" style="margin-top:14px"></div>
@@ -16639,8 +16669,13 @@ function _parseCommerceRows(rawRows){
         cPh=_idx(['수령인 연락처1','연락처1','수령인 연락처','수령인연락처','연락처','휴대폰','전화번호','핸드폰']),
         cAddr=_idx(['배송주소','주소','배송지','받는분주소']), cMemo=_idx(['배송메시지','배송메모','배송요청','요청사항']),
         cItem=_idx(['상품','품목','제품','주문상품','상품명']), cOpt=_idx(['옵션','옵션명','상품옵션']), cQty=_idx(['수량','주문수량']),
-        cOrd=_idx(['주문일시','주문일','결제일시','결제일']), cNo=_idx(['주문번호','주문no','주문 번호']);
+        cOrd=_idx(['주문일시','주문일','결제일시','결제일']), cNo=_idx(['주문번호','주문no','주문 번호']),
+        cShip=_idx(['출고일','출고일자','출고 일자','발송일','배송일','출고날짜']),   // 🆕 행별 출고일
+        cInv=_idx(['송장번호(하이픈 없이 입력)','송장번호','송장','운송장번호','운송장']);  // 🆕 행별 송장번호
     var firstOrderDate='';
+    var _normDate=function(s){ s=String(s||'').trim(); if(!s) return ''; s=s.slice(0,10).replace(/[.\/]/g,'-'); var mm=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); return mm ? (mm[1]+'-'+('0'+mm[2]).slice(-2)+'-'+('0'+mm[3]).slice(-2)) : s; };
+    var _normInv=function(s){ s=String(s||'').trim().replace(/[-\s]/g,''); return (/^#?N\/?A$/i.test(s)) ? '' : s; };
+    var _learnDict=(typeof _buildIoLearnDict==='function')?_buildIoLearnDict():null;   // 🎓 기존 매칭 학습
     for(var i=_hdrRowIdx+1;i<rawRows.length;i++){
       var row = rawRows[i];
       if(!row || !row.length) continue;
@@ -16651,7 +16686,9 @@ function _parseCommerceRows(rawRows){
       var od = cOrd>=0 ? String(row[cOrd]||'').trim().slice(0,10).replace(/[./]/g,'-') : '';
       if(od && !firstOrderDate) firstOrderDate = od;
       var qtyN = cQty>=0 ? (parseInt(String(row[cQty]||'1').replace(/[^\d]/g,''),10)||1) : 1;
-      var m = _matchProductByText((itemName+' '+option).trim());
+      // 🎓 학습 사전 우선(과거 매칭) → 없으면 품목명 텍스트 매칭(옵션 제외 — 옵션 토큰이 많아 매칭 방해)
+      var _lm = (typeof _learnMatchProduct==='function') ? _learnMatchProduct(_learnDict, itemName, option) : null;
+      var m = (_lm && _lm.product) ? {product:_lm.product, score:100} : _matchProductByText(itemName);
       _commerceUploadRows.push({
         recipient: recipient,
         phone: cPh>=0 ? String(row[cPh]||'').trim() : '',
@@ -16662,6 +16699,8 @@ function _parseCommerceRows(rawRows){
         qty: qtyN,
         orderDate: od,
         orderNo: cNo>=0 ? String(row[cNo]||'').trim() : '',
+        shipDate: cShip>=0 ? _normDate(row[cShip]) : '',      // 🆕 행별 출고일 (있으면 이 값 사용)
+        invoice:  cInv>=0 ? _normInv(row[cInv]) : '',          // 🆕 행별 송장번호
         matched: m.product,
         matchedName: m.product ? (m.product.name||'') : '',
         matchStatus: m.product ? '자동매칭' : '미매칭',
@@ -16808,7 +16847,9 @@ function _renderCommercePreview(){
   const stockShortageCount = rows.filter(r => r._stockOk === false).length;
   const totalDemandLines = Object.keys(stockDemand).length;
 
-  let statsHtml = `<b style="color:var(--t1)">${rows.length}건</b> · ${recipients}명 · <span style="color:var(--grn);font-weight:600">✓ 매칭 ${matched}</span> · <span style="color:var(--org);font-weight:600">⚠ 미매칭 ${unmatched}</span>`;
+  const noEngCnt = rows.filter(r => /사용\s*안\s*함/.test(r.option||'')).length;
+  const engCnt = rows.filter(r => /각인/.test(r.option||'') && !/사용\s*안\s*함/.test(r.option||'')).length;
+  let statsHtml = `<b style="color:var(--t1)">${rows.length}건</b> · ${recipients}명 · <span style="color:var(--grn);font-weight:600">✓ 매칭 ${matched}</span> · <span style="color:var(--org);font-weight:600">⚠ 미매칭 ${unmatched}</span> · <span style="color:var(--gold-lt);font-weight:600">✍ 각인 ${engCnt}</span> · <span style="color:var(--t3)">미각인 ${noEngCnt}</span>`;
   if(stockShortageCount > 0){
     statsHtml += ` · <span style="color:var(--red);font-weight:700">⛔ 재고부족 ${stockShortageCount}건</span>`;
   } else if(totalDemandLines > 0){
@@ -16831,6 +16872,7 @@ function _renderCommercePreview(){
             <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:80px">수령인</th>
             <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:115px">연락처</th>
             <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr)">엑셀 품목</th>
+            <th style="padding:7px 8px;text-align:center;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:56px">각인</th>
             <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:180px">주소</th>
             <th style="padding:7px 8px;text-align:left;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:200px">매칭된 제품DB</th>
             <th style="padding:7px 8px;text-align:center;font-weight:600;color:var(--t2);font-size:10.5px;border-bottom:1px solid var(--bdr);width:90px">재고</th>
@@ -16859,6 +16901,7 @@ function _renderCommercePreview(){
               <td style="padding:4px 6px"><input type="text" value="${escHtml(r.recipient||'')}" oninput="_updateCommerceRow(${i},'recipient',this.value)" placeholder="수령인" style="width:100%;padding:4px 6px;font-size:11.5px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);font-weight:600"></td>
               <td style="padding:4px 6px"><input type="text" value="${escHtml(r.phone||'')}" oninput="_updateCommerceRow(${i},'phone',this.value)" placeholder="010-0000-0000" style="width:100%;padding:4px 6px;font-size:11.5px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);font-family:monospace"></td>
               <td style="padding:4px 6px"><input type="text" value="${escHtml(r.itemText||'')}" oninput="_updateCommerceRowItemText(${i},this.value)" placeholder="품명 입력 → 자동 매칭" style="width:100%;padding:4px 6px;font-size:11.5px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1)" title="${escHtml(r.itemText||'')}"></td>
+              <td style="padding:6px 4px;text-align:center;font-size:10.5px" title="${escHtml(r.option||'')}">${/사용\s*안\s*함/.test(r.option||'') ? '<span style="color:var(--t3)">미각인</span>' : (/각인/.test(r.option||'') ? '<span style="color:var(--gold-lt);font-weight:700">각인</span>' : '<span style="color:var(--t3)">-</span>')}</td>
               <td style="padding:4px 6px"><input type="text" value="${escHtml(r.address||'')}" oninput="_updateCommerceRow(${i},'address',this.value)" placeholder="주소 (선택)" style="width:100%;padding:4px 6px;font-size:11px;border:1px solid var(--bdr);border-radius:3px;background:var(--s1);color:var(--t3)" title="${escHtml(r.address||'')}"></td>
               <td style="padding:6px 8px;color:${r.matched?'var(--grn)':'var(--t3)'};font-weight:${r.matched?'600':'400'}">${r.matched ? escHtml(r.matchedName) + (r.matched.code?`<span style="font-family:monospace;color:var(--gold-lt);font-size:10px;margin-left:5px">${escHtml(r.matched.code)}</span>`:'') + (r.score?`<span style="font-size:10px;color:var(--t3);margin-left:4px">(${Math.round(r.score)}점)</span>`:'') : '<span style="color:var(--org)">매칭 안 됨</span>'}</td>
               <td style="padding:6px 8px;text-align:center">${stockCell}</td>
@@ -17322,6 +17365,9 @@ async function _registerCommerce(){
     const title = `${brand}_${row.recipient||'주문'}_${date.slice(5).replace('-','')}`;
     const _ordDate = row.orderDate || date;                      // 주문일 (카카오 주문서면 주문일시)
     const _reqShip = _addBusinessDays(_ordDate, 10);             // 요청출고일 = 주문일 + 영업일 10일
+    // 🆕 행별 출고일: 엑셀에 출고일 열이 있으면 그 값, 없으면 상단 '출고 일자' 필드 사용
+    const _shipDate = (row.shipDate && String(row.shipDate).trim()) ? String(row.shipDate).trim() : date;
+    const _shipped = !!_shipDate;   // 출고일이 있으면 이미 출고된 건으로 등록
     return {
       id: baseTs + i,
       kind: '출고',
@@ -17332,7 +17378,9 @@ async function _registerCommerce(){
       items: row.itemText || '',
       option: row.option || '',
       orderNo: row.orderNo || '',
+      invoice: row.invoice || '',                                // 🆕 송장번호(엑셀 열에서)
       reqShipDate: _reqShip,
+      shipDate: _shipDate,                                        // 🆕 행별 출고일
       qty: row.qty || 1,
       memo: row.matched ? `매칭: ${row.matched.name}${row.matched.code?` (${row.matched.code})`:''}` : '',
       user: '',
@@ -17342,8 +17390,8 @@ async function _registerCommerce(){
       phone: row.phone || '',
       address: row.address || '',
       deliveryMemo: row.deliveryMemo || '',
-      shipStatus: '미발급',
-      shipStage: 'order',   // 송장 업로드 시 '주문' 단계로 시작 → 출고 버튼 누르면 'shipped'
+      shipStatus: row.invoice ? '발급완료' : '미발급',            // 🆕 송장 있으면 발급완료
+      shipStage: _shipped ? 'shipped' : 'order',   // 🆕 출고일 있으면 출고완료, 없으면 주문 단계
       matchStatus: row.matchStatus || '미매칭',
       _matchedProductId: row.matched ? row.matched.id : null,
       _matchedProductCode: row.matched ? row.matched.code : null,
