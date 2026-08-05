@@ -14712,6 +14712,14 @@ function _ioStage(io){
   if(io.shipStage === 'shipped') return 'shipped';
   return 'shipped'; // 과거 데이터(필드 없음)는 이미 출고된 것으로 처리
 }
+// 🔄 교환/환불 3단계 판정: 입고대기(pending) → 출고대기(reship, 교환 입고됐지만 재출고 전) → 완료(done)
+//    환불은 재출고가 없으므로 환불완료 = 완료. 교환은 재출고까지 끝나야 완료.
+function _ioReturnStageOf(io){
+  var rs = (io && io.returnStatus) || '';
+  if(rs === '교환요청' || rs === '환불요청') return 'pending';
+  if(rs === '교환완료' && !io.exchReshipped) return 'reship';
+  return 'done';
+}
 
 function renderIo(){
   _ensureIds(ioItems, '입출고');
@@ -14925,9 +14933,12 @@ function _renderIoCommerce(){
     const s = io.returnStatus || '정상';
     if(returnCount.hasOwnProperty(s)) returnCount[s]++;
   });
-  const requestPending = returnCount.교환요청 + returnCount.환불요청;
-  const returnDone = returnCount.교환완료 + returnCount.환불완료;
-  const returnTotalAll = requestPending + returnDone;
+  // 🔄 3단계 카운트: 입고대기 / 출고대기(교환 입고완료·재출고 전) / 완료
+  const _retItemsAll = allItems.filter(io => io.returnStatus && io.returnStatus !== '정상');
+  const requestPending = _retItemsAll.filter(io => _ioReturnStageOf(io)==='pending').length;
+  const reshipPending  = _retItemsAll.filter(io => _ioReturnStageOf(io)==='reship').length;
+  const returnDone     = _retItemsAll.filter(io => _ioReturnStageOf(io)==='done').length;
+  const returnTotalAll = requestPending + reshipPending + returnDone;
   // 주문/출고 단계별 카운트 (정상 건만 대상)
   const normalItems = allItems.filter(io => !io.returnStatus || io.returnStatus === '정상');
   const orderTotal = normalItems.filter(io => _ioStage(io) === 'order').length;
@@ -14978,11 +14989,13 @@ function _renderIoCommerce(){
     } else if(_ioCommerceReturnType === '환불'){
       list = list.filter(io => io.returnStatus.includes('환불'));
     }
-    // 단계 필터 (입고대기/완료)
+    // 단계 필터 (입고대기 / 출고대기 / 완료) — 3단계
     if(_ioCommerceReturnStage === 'pending'){
-      list = list.filter(io => io.returnStatus === '교환요청' || io.returnStatus === '환불요청');
+      list = list.filter(io => _ioReturnStageOf(io) === 'pending');
+    } else if(_ioCommerceReturnStage === 'reship'){
+      list = list.filter(io => _ioReturnStageOf(io) === 'reship');
     } else if(_ioCommerceReturnStage === 'done'){
-      list = list.filter(io => io.returnStatus === '교환완료' || io.returnStatus === '환불완료');
+      list = list.filter(io => _ioReturnStageOf(io) === 'done');
     }
   }
 
@@ -15131,6 +15144,7 @@ function _renderIoCommerce(){
       <span style="font-size:11px;color:var(--t3);font-weight:600;margin-right:2px">단계</span>
       <button onclick="_setIoCommerceReturnStage('all')" class="ek-chip ${_ioCommerceReturnStage==='all'?'active':''}" style="font-size:11px;padding:4px 9px">전체</button>
       <button onclick="_setIoCommerceReturnStage('pending')" class="ek-chip ${_ioCommerceReturnStage==='pending'?'active':''}" style="font-size:11px;padding:4px 9px;${requestPending>0&&_ioCommerceReturnStage!=='pending'?'background:rgba(168,90,16,.10);border-color:rgba(168,90,16,.3);color:var(--org)':''}">⏳ 입고대기 <span class="cnt">${requestPending}</span></button>
+      <button onclick="_setIoCommerceReturnStage('reship')" class="ek-chip ${_ioCommerceReturnStage==='reship'?'active':''}" style="font-size:11px;padding:4px 9px;${reshipPending>0&&_ioCommerceReturnStage!=='reship'?'background:rgba(26,109,181,.10);border-color:rgba(26,109,181,.3);color:var(--blu)':''}">📤 출고대기 <span class="cnt">${reshipPending}</span></button>
       <button onclick="_setIoCommerceReturnStage('done')" class="ek-chip ${_ioCommerceReturnStage==='done'?'active':''}" style="font-size:11px;padding:4px 9px">✓ 완료 <span class="cnt">${returnDone}</span></button>
     </div>
   ` : '';
@@ -15241,8 +15255,14 @@ function _renderIoCommerce(){
       const typeIcon = isExchange ? '🔄' : '↩';
       const typeLabel = isExchange ? '교환' : '환불';
       const typeCls = isExchange ? 'background:rgba(26,109,181,.12);color:var(--blu)' : 'background:rgba(192,48,48,.10);color:var(--red)';
-      const rowStyle = isReturnDone
-        ? 'border-bottom:1px solid var(--bdr-lt);cursor:pointer;text-decoration:line-through;color:var(--t3);opacity:.65'
+      const _rstage = _ioReturnStageOf(io);                 // 'pending' | 'reship' | 'done'
+      const isReshipWait = _rstage === 'reship';            // 입고완료·재출고 전 (출고대기)
+      const isFullyDone  = _rstage === 'done';              // 최종 완료 (환불완료 or 교환 재출고까지)
+      // 🎨 최종 완료된 건만 음영+삭선. 출고대기(입고완료)는 아직 할 일 남았으므로 강조 유지.
+      const rowStyle = isFullyDone
+        ? 'border-bottom:1px solid var(--bdr-lt);cursor:pointer;text-decoration:line-through;color:var(--t3);opacity:.6'
+        : isReshipWait
+        ? 'border-bottom:1px solid var(--bdr-lt);cursor:pointer;background:rgba(26,109,181,.06)'
         : isReturnPending
         ? 'border-bottom:1px solid var(--bdr-lt);cursor:pointer;background:rgba(168,90,16,.05)'
         : 'border-bottom:1px solid var(--bdr-lt);cursor:pointer';
@@ -15256,10 +15276,16 @@ function _renderIoCommerce(){
             <button onclick="event.stopPropagation();cancelReturn('${io._notionId||io.id}')" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="요청 취소">✕</button>
           </div>
         </div>`;
-      } else {
-        // 완료
+      } else if(isReshipWait){
+        // 입고완료 → 출고대기 (아직 완료 아님, 재출고 필요)
         stageActionCell = `<div style="display:flex;flex-direction:column;gap:3px;align-items:stretch">
-          <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(46,139,44,.12);color:var(--grn)">✓ 완료${io.returnCompletedAt?` ${escHtml(io.returnCompletedAt.slice(5))}`:''}</span>
+          <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(26,109,181,.14);color:var(--blu)">📤 출고대기${io.returnCompletedAt?` <span style="font-weight:400;color:var(--t3)">(입고 ${escHtml(io.returnCompletedAt.slice(5))})</span>`:''}</span>
+          <button onclick="event.stopPropagation();undoReturnComplete('${io._notionId||io.id}')" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="입고 확인을 취소하고 요청 상태로 되돌립니다">↶ 입고취소</button>
+        </div>`;
+      } else {
+        // 최종 완료
+        stageActionCell = `<div style="display:flex;flex-direction:column;gap:3px;align-items:stretch">
+          <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(46,139,44,.12);color:var(--grn)">✓ 완료${io.exchReshipped&&io.exchReshipDate?` ${escHtml(io.exchReshipDate.slice(5))}`:(io.returnCompletedAt?` ${escHtml(io.returnCompletedAt.slice(5))}`:'')}</span>
           <button onclick="event.stopPropagation();undoReturnComplete('${io._notionId||io.id}')" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="입고 확인을 취소하고 요청 상태로 되돌립니다">↶ 되돌리기</button>
         </div>`;
       }
@@ -15283,9 +15309,10 @@ function _renderIoCommerce(){
           exchCell = `<div style="margin-top:5px;font-size:9px;color:var(--t3);text-align:center" title="입고확인 후 재출고할 수 있습니다">↳ 입고확인 후 재출고</div>`;
         }
       }
-      return `<tr style="${rowStyle}" onclick="openIoDetail('${io.id}')" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${isReturnPending&&!isReturnDone?'rgba(168,90,16,.05)':''}'">
+      const _bgRestore = isReshipWait ? 'rgba(26,109,181,.06)' : (isReturnPending ? 'rgba(168,90,16,.05)' : '');
+      return `<tr style="${rowStyle}" onclick="openIoDetail('${io.id}')" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${_bgRestore}'">
         <td style="padding:7px 10px"><span style="display:inline-block;padding:2px 7px;border-radius:3px;font-size:10.5px;font-weight:700;${typeCls}">${typeIcon} ${typeLabel}</span></td>
-        <td style="padding:7px 10px;font-size:11px;font-weight:600;color:${isReturnDone?'var(--t3)':'var(--t1)'}">${escHtml(io.brand||'-')}</td>
+        <td style="padding:7px 10px;font-size:11px;font-weight:600;color:${isFullyDone?'var(--t3)':'var(--t1)'}">${escHtml(io.brand||'-')}</td>
         <td style="padding:7px 10px;font-size:12px;font-weight:600">${escHtml(io.recipient||'-')}${_ioIsSeeding(io)?'<span title="인플루언서 시딩 발송" style="display:inline-block;margin-left:5px;padding:1px 6px;border-radius:8px;background:#fde4e4;color:#a11a1a;font-size:9.5px;font-weight:700;vertical-align:middle">🎁 시딩</span>':''}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);font-family:monospace">${escHtml(io.phone||'-')}</td>
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(io.items||'-')}</td>
@@ -15316,7 +15343,7 @@ function _renderIoCommerce(){
     emptyState = `
     <div style="padding:60px 20px;text-align:center;color:var(--t3);background:var(--s1);border:1px solid var(--bdr);border-radius:var(--r)">
       <div style="font-size:42px;margin-bottom:10px">🔄</div>
-      <div style="font-size:13px">${_ioCommerceReturnStage==='pending'?'입고 대기 중인 교환·환불이 없습니다':_ioCommerceReturnStage==='done'?'완료된 교환·환불이 없습니다':'교환·환불 건이 없습니다'}</div>
+      <div style="font-size:13px">${_ioCommerceReturnStage==='pending'?'입고 대기 중인 교환·환불이 없습니다':_ioCommerceReturnStage==='reship'?'재출고 대기 중인 교환이 없습니다':_ioCommerceReturnStage==='done'?'완료된 교환·환불이 없습니다':'교환·환불 건이 없습니다'}</div>
       <div style="font-size:11px;color:var(--t3);margin-top:6px">출고 탭에서 <b>🔄/↩ 교환·환불</b> 버튼으로 등록할 수 있습니다</div>
     </div>`;
   }
