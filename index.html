@@ -14386,6 +14386,7 @@ var KKO_FEE = { engrave: 1400, logistics: 3100, remote: 5000, pack: 400, exchang
 var _kkoBillSel = new Set();
 var _kkoBillRemote = {};   // {id:true} — 도서산간 지정
 var _kkoBillMonth = '';    // 📅 청구월 필터 ('' = 전체, 'YYYY-MM' = 해당 월만)
+var _kkoBillReissue = false; // ♻ 재발행 모드: 이미 청구된 건도 다시 선택·수정·재발행 허용
 
 // 주소로 도서산간 추정 (제주·울릉·도서지역)
 function _kkoIsRemote(addr){
@@ -14437,6 +14438,7 @@ function openKakaoBillModal(){
   if(!list.length && !_retN){ showToast('⚠ 청구할 카카오 출고·교환/환불 건이 없습니다','var(--org)',2500); return; }
   _kkoBillSel = new Set();
   _kkoBillRemote = {};
+  _kkoBillReissue = false;                                                // ♻ 열 때는 항상 일반(미청구) 모드
   var _kkoMonths = _kkoMonthOptions();
   _kkoBillMonth = _kkoMonths[0] || '';                                    // 📅 기본 = 가장 최근 월
   _kkoShippedFiltered().forEach(function(io){
@@ -14448,6 +14450,8 @@ function openKakaoBillModal(){
     + '<option value="">전체 기간</option>'
     + _kkoMonths.map(function(m){ return '<option value="'+m+'"'+(m===_kkoBillMonth?' selected':'')+'>'+m+'</option>'; }).join('')
     + '</select></label>';
+  var _kkoReissueToggle = '<label style="display:flex;align-items:center;gap:5px;font-weight:700;color:var(--org);cursor:pointer;padding:2px 8px;border:1.5px solid var(--org);border-radius:6px" title="이미 청구된 건을 다시 선택해 수정·재발행합니다 (기존 명세서는 남아있으니 필요 시 SCM>거래명세서에서 삭제)">'
+    + '<input type="checkbox" id="kko_reissue"'+(_kkoBillReissue?' checked':'')+' onchange="_kkoBillSetReissue(this.checked)"> ♻ 재발행(청구된 건 포함)</label>';
   var back = document.createElement('div');
   back.id = 'kkoBillBack';
   back.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px';
@@ -14460,6 +14464,7 @@ function openKakaoBillModal(){
     + '</div>'
     + '<div style="padding:12px 20px;border-bottom:1px solid var(--bdr);display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px">'
     +   _kkoMonthSel
+    +   _kkoReissueToggle
     +   '<label style="display:flex;align-items:center;gap:5px">각인비 <input type="number" id="kko_engrave" value="'+KKO_FEE.engrave+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도)</span></label>'
     +   '<label style="display:flex;align-items:center;gap:5px">물류비 <input type="number" id="kko_logi" value="'+KKO_FEE.logistics+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함)</span></label>'
     +   '<label style="display:flex;align-items:center;gap:5px">도서산간 <input type="number" id="kko_remote" value="'+KKO_FEE.remote+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함)</span></label>'
@@ -14476,9 +14481,17 @@ function openKakaoBillModal(){
 }
 function _kkoBillToggle(id, on){ if(on) _kkoBillSel.add(String(id)); else _kkoBillSel.delete(String(id)); _kkoBillRender(); }
 function _kkoBillToggleRemote(id, on){ _kkoBillRemote[String(id)] = !!on; _kkoBillRender(); }
+// ♻ 재발행 모드 토글 — 켜면 이미 청구된 건도 체크박스로 선택 가능, 끄면 청구된 건 선택 해제
+function _kkoBillSetReissue(on){
+  _kkoBillReissue = !!on;
+  if(!_kkoBillReissue){
+    _kkoShippedFiltered().forEach(function(io){ if(io.billNo) _kkoBillSel.delete(String(io.id)); });
+  }
+  _kkoBillRender();
+}
 function _kkoBillAll(on){
   var list=_kkoShippedFiltered();
-  list.forEach(function(io){ if(io.billNo) return; if(on) _kkoBillSel.add(String(io.id)); else _kkoBillSel.delete(String(io.id)); });
+  list.forEach(function(io){ if(io.billNo && !_kkoBillReissue) return; if(on) _kkoBillSel.add(String(io.id)); else _kkoBillSel.delete(String(io.id)); });
   _kkoBillRender();
 }
 // 🚚 합배송 그룹키 — 같은 송장번호(io.invoice)면 하나의 배송으로 묶는다.
@@ -14496,7 +14509,7 @@ function _kkoBillCalc(){
   var refu = +(document.getElementById('kko_refund')||{}).value || 0;
   // 📅 청구월 필터 적용: 선택된 건 중 '이 달·미청구'만 집계
   var _shipF = _kkoShippedFiltered();
-  var _selRows = _shipF.filter(function(io){ return !io.billNo && _kkoBillSel.has(String(io.id)); });
+  var _selRows = _shipF.filter(function(io){ return (_kkoBillReissue || !io.billNo) && _kkoBillSel.has(String(io.id)); });
   var ids = _selRows.map(function(io){ return String(io.id); });
   var n = ids.length;   // 품목(각인비) 단위 건수
   // 🚚 합배송 집계: 같은 송장번호는 물류비·포장·도서산간을 1회만 청구.
@@ -14550,13 +14563,14 @@ function _kkoBillRender(){
     + '</tr></thead><tbody>'
     + list.map(function(io){
         var id=String(io.id), billed=!!io.billNo, sel=_kkoBillSel.has(id), rmt=!!_kkoBillRemote[id];
-        return '<tr style="border-bottom:1px solid var(--bdr-lt);'+(billed?'opacity:.5':'')+'">'
-        + '<td style="padding:6px;text-align:center">'+(billed?'—':'<input type="checkbox" '+(sel?'checked':'')+' onclick="_kkoBillToggle(\''+id+'\',this.checked)">')+'</td>'
+        var locked=(billed && !_kkoBillReissue);   // 청구된 건은 재발행 모드에서만 선택 가능
+        return '<tr style="border-bottom:1px solid var(--bdr-lt);'+(locked?'opacity:.5':(billed&&sel?'background:rgba(255,150,0,.08)':''))+'">'
+        + '<td style="padding:6px;text-align:center">'+(locked?'—':'<input type="checkbox" '+(sel?'checked':'')+' onclick="_kkoBillToggle(\''+id+'\',this.checked)">')+'</td>'
         + '<td style="padding:6px;font-family:monospace;font-size:11px">'+escHtml(io.shipDate||io.date||'-')+'</td>'
         + '<td style="padding:6px;font-weight:600">'+escHtml(io.recipient||'-')+'</td>'
         + '<td style="padding:6px;color:var(--t2);font-size:11px">'+escHtml((io.address||'-').slice(0,46))+'</td>'
-        + '<td style="padding:6px;text-align:center">'+(billed?'':'<input type="checkbox" '+(rmt?'checked':'')+' onclick="_kkoBillToggleRemote(\''+id+'\',this.checked)" title="도서산간 추가배송비 대상">')+'</td>'
-        + '<td style="padding:6px;text-align:center;font-size:10.5px">'+(billed?'<span style="color:var(--grn);font-weight:700">✓ '+escHtml(io.billNo)+'</span>':'<span style="color:var(--org)">미청구</span>')+'</td>'
+        + '<td style="padding:6px;text-align:center">'+(locked?'':'<input type="checkbox" '+(rmt?'checked':'')+' onclick="_kkoBillToggleRemote(\''+id+'\',this.checked)" title="도서산간 추가배송비 대상">')+'</td>'
+        + '<td style="padding:6px;text-align:center;font-size:10.5px">'+(billed?('<span style="color:'+((_kkoBillReissue&&sel)?'var(--org)':'var(--grn)')+';font-weight:700">'+((_kkoBillReissue&&sel)?'♻ 재발행: ':'✓ ')+escHtml(io.billNo)+'</span>'):'<span style="color:var(--org)">미청구</span>')+'</td>'
         + '</tr>';
       }).join('')
     + '</tbody></table>';
@@ -14576,16 +14590,18 @@ function _kkoBillRender(){
     +   '<div style="font-size:11.5px;color:var(--t3)">공급가액 '+_w(c.supply)+' · 부가세 '+_w(c.tax)+'</div>'
     +   '<div style="font-size:20px;font-weight:800;color:var(--gold-lt);margin:2px 0 8px">'+_w(c.total)+'</div>'
     +   ((c.xn||c.rn) ? '<div style="font-size:10.5px;color:var(--t3);margin-bottom:6px">교환 '+c.xn+'건 · 환불 '+c.rn+'건 함께 청구됩니다</div>' : '')
-    +   '<button onclick="_kkoBillIssue()" '+((c.n||c.xn||c.rn)?'':'disabled')+' style="padding:8px 18px;font-size:13px;background:'+((c.n||c.xn||c.rn)?'var(--grn)':'var(--bdr)')+';border:none;border-radius:6px;color:#fff;font-weight:800;cursor:'+((c.n||c.xn||c.rn)?'pointer':'not-allowed')+';font-family:inherit">🧾 거래명세서 발행 ('+(c.n+c.xn+c.rn)+'건)</button>'
+    +   (_kkoBillReissue ? '<div style="font-size:10.5px;color:var(--org);margin-bottom:6px;font-weight:700">♻ 재발행 모드 — 선택한 청구건은 새 명세서로 재발행됩니다 (기존 명세서는 SCM>거래명세서에서 삭제)</div>' : '')
+    +   '<button onclick="_kkoBillIssue()" '+((c.n||c.xn||c.rn)?'':'disabled')+' style="padding:8px 18px;font-size:13px;background:'+((c.n||c.xn||c.rn)?(_kkoBillReissue?'var(--org)':'var(--grn)'):'var(--bdr)')+';border:none;border-radius:6px;color:#fff;font-weight:800;cursor:'+((c.n||c.xn||c.rn)?'pointer':'not-allowed')+';font-family:inherit">'+(_kkoBillReissue?'♻ 재발행':'🧾 거래명세서 발행')+' ('+(c.n+c.xn+c.rn)+'건)</button>'
     + '</div></div>';
 }
 async function _kkoBillIssue(){
   var c = _kkoBillCalc();
   if(!c.n && !c.xn && !c.rn){ showToast('⚠ 청구할 건이 없습니다','var(--red)',2000); return; }
   // 📅 청구월 필터 적용: 실제로 청구·표기할 대상은 '이 달·선택·미청구' 건만
-  var _billIds = _kkoShippedFiltered().filter(function(io){ return !io.billNo && _kkoBillSel.has(String(io.id)); }).map(function(io){ return String(io.id); });
+  var _billIds = _kkoShippedFiltered().filter(function(io){ return (_kkoBillReissue || !io.billNo) && _kkoBillSel.has(String(io.id)); }).map(function(io){ return String(io.id); });
   var issuedAt = (document.getElementById('kko_date')||{}).value || new Date().toISOString().slice(0,10);
-  if(!confirm('카카오에 청구할 거래명세서를 발행합니다.\n\n· 출고 '+c.n+'건 → 배송 '+c.ships+'건'+((c.n>c.ships)?(' (합배송 '+(c.n-c.ships)+'건 물류비·포장 중복 제외)'):'')+' · 도서산간 '+c.m+'건'+((c.xn||c.rn)?('\n· 교환 '+c.xn+'건 · 환불 '+c.rn+'건'):'')+'\n· 공급가액 ₩'+c.supply.toLocaleString()+' / 부가세 ₩'+c.tax.toLocaleString()+'\n· 합계 ₩'+c.total.toLocaleString()+'\n\n계속할까요?')) return;
+  var _reN = _kkoShippedFiltered().filter(function(io){ return io.billNo && _kkoBillSel.has(String(io.id)); }).length;
+  if(!confirm((_kkoBillReissue?'♻ 재발행 — 이미 청구된 '+_reN+'건을 새 명세서로 재발행합니다.\n(기존 명세서는 자동 삭제되지 않으니 SCM>거래명세서에서 정리하세요)\n\n':'')+'카카오에 청구할 거래명세서를 발행합니다.\n\n· 출고 '+c.n+'건 → 배송 '+c.ships+'건'+((c.n>c.ships)?(' (합배송 '+(c.n-c.ships)+'건 물류비 중복 제외)'):'')+' · 도서산간 '+c.m+'건'+((c.xn||c.rn)?('\n· 교환 '+c.xn+'건 · 환불 '+c.rn+'건'):'')+'\n· 공급가액 ₩'+c.supply.toLocaleString()+' / 부가세 ₩'+c.tax.toLocaleString()+'\n· 합계 ₩'+c.total.toLocaleString()+'\n\n계속할까요?')) return;
   var items = [];
   if(c.n){
     items.push({ name:'각인비', code:'', qty:c.n, unit:c.eng, amt:c.engSupply, note:'품목당 '+c.eng.toLocaleString()+'원 (부가세 별도)' });
