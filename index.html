@@ -14006,7 +14006,7 @@ async function pullFromNotion(opts){
     if(invRows && invRows.length){ console.log('[invoice] ℹ Notion 풀', invRows.length, '건 수신했으나 적용 안 함 (서버가 기준점)'); }
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
-    ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files'], '입출고',   notionCfg.ioDb);
+    ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files','exchNewCode','exchNewName','exchNewOption','exchReshipInvoice','exchReshipDate','exchReshipped'], '입출고',   notionCfg.ioDb);
     // 🛡 [FIX] 동기화 직후 학습식 자동매칭 적용 — 이전에 매칭해둔 (품목+옵션)과 같은 새 주문을
     //    UI 조작 없이 자동으로 매칭한다. 매칭 링크가 노션에 보존되므로 매 동기화마다 유효.
     try{ if(typeof _autoApplyIoMatchLearning==='function') _autoApplyIoMatchLearning(); }catch(e){}
@@ -15261,6 +15261,22 @@ function _renderIoCommerce(){
           <button onclick="event.stopPropagation();undoReturnComplete('${io.id}')" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="입고 확인을 취소하고 요청 상태로 되돌립니다">↶ 되돌리기</button>
         </div>`;
       }
+      // 🔄📤 교환 재출고 컨트롤 (교환 건에만) — 바뀐 제품 출고 + 재고 -1
+      let exchCell = '';
+      if(isExchange){
+        if(io.exchReshipped){
+          exchCell = `<div style="margin-top:5px;padding-top:5px;border-top:1px dashed var(--bdr-lt);display:flex;flex-direction:column;gap:2px;align-items:stretch">
+            <span style="padding:2px 6px;border-radius:3px;font-size:9.5px;font-weight:700;background:rgba(26,109,181,.12);color:var(--blu)">📤 재출고 ${escHtml((io.exchReshipDate||'').slice(5))}</span>
+            <span style="font-size:9.5px;color:var(--t2)" title="${escHtml((io.exchNewName||'')+' '+(io.exchNewOption||''))}">→ ${escHtml(io.exchNewName||'-')}${io.exchNewOption?(' '+escHtml(io.exchNewOption)):''}</span>
+            <div style="display:flex;gap:3px;justify-content:center">
+              <button onclick="event.stopPropagation();openExchangeReship('${io.id}')" style="flex:1;padding:2px 6px;font-size:9.5px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">수정</button>
+              <button onclick="event.stopPropagation();_undoExchangeReship('${io.id}')" style="padding:2px 6px;font-size:9.5px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="재출고 취소·재고 복원">✕</button>
+            </div>
+          </div>`;
+        } else {
+          exchCell = `<button onclick="event.stopPropagation();openExchangeReship('${io.id}')" title="바뀐 제품을 골라 재출고 + 재고 -1" style="margin-top:5px;padding:3px 8px;font-size:10px;background:var(--blu);border:1px solid var(--blu);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:700;width:100%">📤 재출고</button>`;
+        }
+      }
       return `<tr style="${rowStyle}" onclick="openIoDetail('${io.id}')" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${isReturnPending&&!isReturnDone?'rgba(168,90,16,.05)':''}'">
         <td style="padding:7px 10px"><span style="display:inline-block;padding:2px 7px;border-radius:3px;font-size:10.5px;font-weight:700;${typeCls}">${typeIcon} ${typeLabel}</span></td>
         <td style="padding:7px 10px;font-size:11px;font-weight:600;color:${isReturnDone?'var(--t3)':'var(--t1)'}">${escHtml(io.brand||'-')}</td>
@@ -15269,7 +15285,7 @@ function _renderIoCommerce(){
         <td style="padding:7px 10px;font-size:11.5px;color:var(--t2);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.items||'')}">${escHtml(io.items||'-')}</td>
         <td style="padding:7px 10px;font-size:11px;color:var(--t3);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(io.returnReason||'')}">${escHtml(io.returnReason||'-')}</td>
         <td style="padding:7px 10px;font-size:10.5px;color:var(--t3);font-family:monospace">${escHtml(io.date||'-')}</td>
-        <td style="padding:7px 10px;text-align:center">${stageActionCell}</td>
+        <td style="padding:7px 10px;text-align:center">${stageActionCell}${exchCell}</td>
       </tr>`;
     }
   };
@@ -17310,6 +17326,146 @@ async function cancelReturn(ioId){
   if(notionCfg.workerUrl && notionCfg.ioDb && io._notionId){
     syncIOToNotion(io).then(ok => { if(ok) save(); });
   }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 🔄📤 교환 재출고 — 교환건에서 '바뀐 제품'을 골라 재출고 + 재고 -1 반영
+// ═══════════════════════════════════════════════════════════════
+var _exchReshipPick = null;  // 선택된 제품 {id, code, name}
+function openExchangeReship(ioId){
+  const io = ioItems.find(x => x.id == ioId);
+  if(!io){ showToast('⚠ 항목을 찾을 수 없습니다','var(--red)',2000); return; }
+  if((io.returnType||'') !== '교환' && !(io.returnStatus||'').includes('교환')){
+    showToast('⚠ 교환 건만 재출고할 수 있습니다','var(--org)',2500); return;
+  }
+  const today = new Date().toISOString().slice(0,10);
+  // 기본 선택 = 기존 매칭 제품(같은 제품, 사이즈만 변경인 경우 그대로)
+  const _mp = (typeof _resolveIoMatchedProduct==='function') ? _resolveIoMatchedProduct(io) : null;
+  _exchReshipPick = null;
+  if(io.exchNewCode){ var _p=productDB.find(x=>String(x.code||'')===String(io.exchNewCode)); if(_p) _exchReshipPick={id:_p.id,code:_p.code,name:_p.name}; }
+  if(!_exchReshipPick && _mp) _exchReshipPick={id:_mp.id, code:_mp.code, name:_mp.name};
+  let mE = document.getElementById('mExchReship');
+  if(!mE){ mE=document.createElement('div'); mE.id='mExchReship'; mE.className='ov'; document.body.appendChild(mE); }
+  mE.innerHTML = `<div class="modal" style="max-width:560px">
+    <div class="mt">📤 교환 재출고 — 바뀐 제품 출고</div>
+    <div style="padding:0 16px 14px">
+      <div style="background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:12px">
+        <div style="color:var(--t3);font-size:10.5px;margin-bottom:3px">교환 대상</div>
+        <div style="font-weight:600">${escHtml(io.brand||'-')} · ${escHtml(io.recipient||'-')} · <span style="font-family:monospace;color:var(--t2)">${escHtml(io.phone||'-')}</span></div>
+        <div style="color:var(--t2);font-size:11.5px;margin-top:3px">원 품목: ${escHtml(io.items||'-')}</div>
+        ${io.returnReason?`<div style="color:var(--blu);font-size:11px;margin-top:3px">사유: ${escHtml(io.returnReason)}</div>`:''}
+        ${io.address?`<div style="color:var(--t3);font-size:11px;margin-top:3px">${escHtml(io.address)}</div>`:''}
+      </div>
+      <div class="fg" style="margin-bottom:10px">
+        <label>바뀐 제품 검색 * <span style="font-weight:400;color:var(--t3);font-size:10px">(품명·품번으로 검색 후 선택)</span></label>
+        <input class="fi" id="exch_q" placeholder="예: 서지컬 반지 / 품번" oninput="_exchReshipSearch(this.value)" autocomplete="off">
+        <div id="exch_results" style="max-height:170px;overflow:auto;border:1px solid var(--bdr);border-radius:6px;margin-top:6px;display:none"></div>
+        <div id="exch_selected" style="margin-top:6px"></div>
+      </div>
+      <div class="fr3" style="grid-template-columns:1fr 1fr;gap:10px">
+        <div class="fg"><label>새 옵션(사이즈 등)</label><input class="fi" id="exch_opt" placeholder="예: 15호(58mm)" value="${escHtml(io.exchNewOption||'')}"></div>
+        <div class="fg"><label>재출고일</label><input class="fi" type="date" id="exch_date" value="${escHtml(io.exchReshipDate||today)}"></div>
+      </div>
+      <div class="fg" style="margin-top:6px"><label>새 송장번호 (선택)</label><input class="fi" id="exch_inv" placeholder="재발송 택배 송장번호" value="${escHtml(io.exchReshipInvoice||'')}"></div>
+      <div style="background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:6px;padding:8px 10px;margin-top:10px;font-size:11px;color:var(--t2)">
+        💡 재출고하면 선택한 제품의 <b>재고가 -1 차감</b>됩니다. (반품 입고확인 시 원 제품이 +1 복원되므로, 같은 제품이면 재고 합계는 변동 없음)
+      </div>
+    </div>
+    <div class="mb" style="display:flex;justify-content:flex-end;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px">
+      <button class="btn bg bs" onclick="closeM('mExchReship')">취소</button>
+      <button class="btn bp bs" onclick="_confirmExchangeReship('${io.id}')">📤 재출고 등록</button>
+    </div>
+  </div>`;
+  openM('mExchReship');
+  _exchReshipRenderSelected();
+}
+function _exchReshipSearch(q){
+  const box = document.getElementById('exch_results'); if(!box) return;
+  q = String(q||'').trim().toLowerCase();
+  if(!q){ box.style.display='none'; box.innerHTML=''; return; }
+  const hits = (productDB||[]).filter(function(p){
+    return String(p.name||'').toLowerCase().indexOf(q)>=0 || String(p.code||'').toLowerCase().indexOf(q)>=0;
+  }).slice(0,30);
+  box.style.display = hits.length?'block':'none';
+  box.innerHTML = hits.map(function(p){
+    return `<div onclick="_exchReshipSelect(${p.id})" style="padding:7px 10px;border-bottom:1px solid var(--bdr-lt);cursor:pointer;font-size:12px" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
+      <b>${escHtml(p.name||'-')}</b>${p.code?` <span style="font-family:monospace;color:var(--gold-lt);font-size:10px">${escHtml(p.code)}</span>`:''}
+      <span style="color:var(--t3);font-size:10.5px;margin-left:6px">재고 ${(+p.stock||0)}</span></div>`;
+  }).join('') || '';
+}
+function _exchReshipSelect(pid){
+  const p = (productDB||[]).find(x=>x.id==pid); if(!p) return;
+  _exchReshipPick = {id:p.id, code:p.code, name:p.name};
+  const box=document.getElementById('exch_results'); if(box){ box.style.display='none'; }
+  const qi=document.getElementById('exch_q'); if(qi){ qi.value=''; }
+  _exchReshipRenderSelected();
+}
+function _exchReshipRenderSelected(){
+  const el = document.getElementById('exch_selected'); if(!el) return;
+  if(!_exchReshipPick){ el.innerHTML = '<span style="font-size:11px;color:var(--org)">아직 제품을 선택하지 않았습니다</span>'; return; }
+  const p = (productDB||[]).find(x=>x.id==_exchReshipPick.id);
+  const stock = p ? (+p.stock||0) : '?';
+  el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(46,139,44,.08);border:1px solid var(--grn);border-radius:6px;font-size:12px">
+    <span style="color:var(--grn);font-weight:700">✓ 선택</span>
+    <b>${escHtml(_exchReshipPick.name||'-')}</b>${_exchReshipPick.code?`<span style="font-family:monospace;color:var(--gold-lt);font-size:10.5px">${escHtml(_exchReshipPick.code)}</span>`:''}
+    <span style="color:var(--t3);font-size:10.5px">현재고 ${stock} → 출고 후 ${stock===''||stock==='?'?'?':(stock-1)}</span></div>`;
+}
+async function _confirmExchangeReship(ioId){
+  const io = ioItems.find(x => x.id == ioId); if(!io) return;
+  if(!_exchReshipPick){ showToast('⚠ 바뀐 제품을 검색해서 선택하세요','var(--red)',2500); return; }
+  const opt = (document.getElementById('exch_opt')||{}).value || '';
+  const date = (document.getElementById('exch_date')||{}).value || new Date().toISOString().slice(0,10);
+  const inv = (document.getElementById('exch_inv')||{}).value || '';
+  const p = (productDB||[]).find(x=>x.id==_exchReshipPick.id);
+  // 이미 재출고된 상태면 이전 차감을 되돌리고 새로 차감 (제품 변경 대응)
+  if(io.exchReshipped && io.exchNewCode){
+    const prevP = productDB.find(x=>String(x.code||'')===String(io.exchNewCode));
+    if(prevP && typeof applyStockChange==='function'){
+      applyStockChange({productId:prevP.id, delta:+1, type:'commerce_exchange_reship_undo', refId:io.id, refLabel:`🔄 재출고 변경 복원 / ${io.recipient||''}`, note:'재출고 제품 변경'});
+    }
+  }
+  // 새 제품 재고 -1
+  if(p && typeof applyStockChange==='function'){
+    applyStockChange({productId:p.id, delta:-1, type:'commerce_exchange_reship', refId:io.id, refLabel:`🔄📤 교환 재출고 / ${io.brand||''} / ${io.recipient||''}`, note:`${_exchReshipPick.name||''}${opt?(' · '+opt):''}`});
+    if(notionCfg.workerUrl && notionCfg.productDb) syncProductToNotion(p, true).catch(function(){});
+  }
+  io.exchReshipped = true;
+  io.exchNewCode = _exchReshipPick.code || '';
+  io.exchNewName = _exchReshipPick.name || '';
+  io.exchNewOption = opt;
+  io.exchReshipDate = date;
+  io.exchReshipInvoice = inv;
+  // 메모에 재출고 내역 누적 기록(노션에도 남도록)
+  var _rlog = `[재출고 ${date}] ${_exchReshipPick.name||''}${opt?(' '+opt):''}${inv?(' 송장 '+inv):''}`;
+  io.memo = (io.memo? (io.memo.replace(/\s*\[재출고[^\]]*\][^\n]*/g,'').trim()+' ') : '') + _rlog;
+  io._ts = Date.now();
+  save();
+  try{ if(typeof realtimePublish==='function') realtimePublish('io', io); }catch(e){}
+  if(notionCfg.workerUrl && notionCfg.ioDb && io._notionId){ syncIOToNotion(io).then(function(ok){ if(ok) save(); }); }
+  closeM('mExchReship');
+  showToast(`📤 교환 재출고 등록 — ${_exchReshipPick.name||''} 재고 -1`, 'var(--grn)', 3200);
+  renderIo();
+}
+async function _undoExchangeReship(ioId){
+  const io = ioItems.find(x => x.id == ioId); if(!io) return;
+  if(!io.exchReshipped){ return; }
+  if(!confirm('교환 재출고를 취소합니다.\n차감했던 재고가 +1 복원됩니다.\n계속할까요?')) return;
+  if(io.exchNewCode){
+    const p = productDB.find(x=>String(x.code||'')===String(io.exchNewCode));
+    if(p && typeof applyStockChange==='function'){
+      applyStockChange({productId:p.id, delta:+1, type:'commerce_exchange_reship_undo', refId:io.id, refLabel:`🔄 교환 재출고 취소 / ${io.recipient||''}`, note:'재출고 취소'});
+      if(notionCfg.workerUrl && notionCfg.productDb) syncProductToNotion(p, true).catch(function(){});
+    }
+  }
+  io.exchReshipped = false;
+  io.exchNewOption=''; io.exchReshipInvoice='';
+  io.memo = (io.memo||'').replace(/\s*\[재출고[^\]]*\][^\n]*/g,'').trim();
+  io._ts = Date.now();
+  save();
+  try{ if(typeof realtimePublish==='function') realtimePublish('io', io); }catch(e){}
+  if(notionCfg.workerUrl && notionCfg.ioDb && io._notionId){ syncIOToNotion(io).then(function(ok){ if(ok) save(); }); }
+  showToast('↶ 교환 재출고 취소 — 재고 +1 복원', 'var(--org)', 2800);
+  renderIo();
 }
 
 // 미리보기 행들을 ioItems에 일괄 등록 + 노션 동기화 + 재고 차감
