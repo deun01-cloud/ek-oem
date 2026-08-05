@@ -14413,13 +14413,15 @@ function _kkoReturnList(){
 }
 // 📅 월별 청구 — 주문/교환·환불 건의 귀속 월 (출고일/반품일 기준)
 function _kkoMonthOf(io){ return String((io&&(io.shipDate||io.returnDate||io.date||io.orderDate))||'').slice(0,7); }
+// 🔄↩ 교환·환불 정산 월은 '요청일(returnRequestedAt)' 기준 — 출고월이 아니라 반품 요청한 달로 청구
+function _kkoReturnMonthOf(io){ return String((io&&(io.returnRequestedAt||io.returnCompletedAt||io.date))||'').slice(0,7); }
 function _kkoShippedFiltered(){ var m=_kkoBillMonth; var l=_kkoShippedList(); return m ? l.filter(function(io){ return _kkoMonthOf(io)===m; }) : l; }
-function _kkoReturnFiltered(){ var m=_kkoBillMonth; var l=_kkoReturnList(); return m ? l.filter(function(io){ return _kkoMonthOf(io)===m; }) : l; }
-// 청구월 드롭다운 후보 (출고·교환·환불 건에 존재하는 월들, 최신순)
+function _kkoReturnFiltered(){ var m=_kkoBillMonth; var l=_kkoReturnList(); return m ? l.filter(function(io){ return _kkoReturnMonthOf(io)===m; }) : l; }
+// 청구월 드롭다운 후보 (출고=출고월, 교환·환불=요청월, 최신순)
 function _kkoMonthOptions(){
   var s={};
   _kkoShippedList().forEach(function(io){ var m=_kkoMonthOf(io); if(m) s[m]=1; });
-  _kkoReturnList().forEach(function(io){ var m=_kkoMonthOf(io); if(m) s[m]=1; });
+  _kkoReturnList().forEach(function(io){ var m=_kkoReturnMonthOf(io); if(m) s[m]=1; });
   return Object.keys(s).sort().reverse();
 }
 // 청구월 변경 → 그 달의 미청구 건으로 선택 초기화 후 재렌더
@@ -14599,8 +14601,8 @@ function _kkoBillRender(){
     +   (c.m ? '<div>도서산간 <b>'+c.m+'건</b> × '+_w(c.rmt)+' <span style="color:var(--t3)">(VAT포함·송장당)</span> → 공급가 <b>'+_w(c.rmtSupply)+'</b> · 부가세 '+_w(c.rmtTax)+'</div>' : '')
     +   (c.pack ? '<div>포장 용역비 <b>'+c.prodQty+'개</b> × '+_w(c.pack)+' <span style="color:var(--t3)">(VAT별도·제품 수량당)</span> → 공급가 <b>'+_w(c.packSupply)+'</b> · 부가세 '+_w(c.packTax)+(c.prodQty>c.n?' <span style="color:var(--t3)">· 라인 '+c.n+'건 중 수량 '+c.prodQty+'개</span>':'')+'</div>' : '')
     +   ((c.n>c.ships) ? '<div style="color:var(--grn);font-size:11px">🚚 합배송 적용: 출고 '+c.n+'건 → 배송 '+c.ships+'건 (같은 송장번호 '+(c.n-c.ships)+'건 물류비 중복 제외 · 포장은 제품당 · 각인비는 각인 제품만)</div>' : '')
-    +   (c.xn ? '<div>교환 물류비 <b>'+c.xn+'건</b> × '+_w(c.exch)+' <span style="color:var(--t3)">(VAT포함)</span> → 공급가 <b>'+_w(c.exchSupply)+'</b> · 부가세 '+_w(c.exchTax)+'</div>' : '')
-    +   (c.rn ? '<div>환불 물류비 <b>'+c.rn+'건</b> × '+_w(c.refu)+' <span style="color:var(--t3)">(VAT포함)</span> → 공급가 <b>'+_w(c.refuSupply)+'</b> · 부가세 '+_w(c.refuTax)+'</div>' : '')
+    +   (c.xn ? '<div>교환 물류비 <b>'+c.xn+'건</b> × '+_w(c.exch)+' <span style="color:var(--t3)">(VAT포함·요청일 기준)</span> → 공급가 <b>'+_w(c.exchSupply)+'</b> · 부가세 '+_w(c.exchTax)+'</div>' : '')
+    +   (c.rn ? '<div>환불 물류비 <b>'+c.rn+'건</b> × '+_w(c.refu)+' <span style="color:var(--t3)">(VAT포함·요청일 기준)</span> → 공급가 <b>'+_w(c.refuSupply)+'</b> · 부가세 '+_w(c.refuTax)+'</div>' : '')
     + '</div>'
     + '<div style="text-align:right;min-width:180px">'
     +   '<div style="font-size:11.5px;color:var(--t3)">공급가액 '+_w(c.supply)+' · 부가세 '+_w(c.tax)+'</div>'
@@ -15217,7 +15219,7 @@ function _renderIoCommerce(){
     } else if(_ioCommerceMode === 'ship'){
       // ── 출고 모드 행 (송장번호·출고일 표시 + 교환환불 등록 + 주문으로 되돌리기) ──
       const actionCell = `<div style="display:flex;gap:3px;justify-content:center;flex-wrap:nowrap">
-        <button onclick="event.stopPropagation();openReturnModal('${io.id}')" style="padding:3px 7px;font-size:10px;background:var(--s1);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2);white-space:nowrap">🔄/↩ 교환·환불</button>
+        <button onclick="event.stopPropagation();openReturnModal('${io._notionId||io.id}')" style="padding:3px 7px;font-size:10px;background:var(--s1);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2);white-space:nowrap">🔄/↩ 교환·환불</button>
         <button onclick="event.stopPropagation();_ioUnship('${io.id}')" style="padding:3px 7px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3);white-space:nowrap" title="출고를 취소하고 주문 단계로 되돌립니다">↶ 주문</button>
       </div>`;
       const _io_split = _ioSplitItemOpt(io.items||'');
@@ -15250,18 +15252,18 @@ function _renderIoCommerce(){
         stageActionCell = `<div style="display:flex;flex-direction:column;gap:3px;align-items:stretch">
           <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(168,90,16,.15);color:var(--org)">⏳ 입고대기</span>
           <div style="display:flex;gap:3px;justify-content:center">
-            <button onclick="event.stopPropagation();confirmReturnComplete('${io.id}')" style="flex:1;padding:3px 6px;font-size:10px;background:var(--grn);border:1px solid var(--grn);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:600">✓ 입고확인</button>
-            <button onclick="event.stopPropagation();cancelReturn('${io.id}')" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="요청 취소">✕</button>
+            <button onclick="event.stopPropagation();confirmReturnComplete('${io._notionId||io.id}')" style="flex:1;padding:3px 6px;font-size:10px;background:var(--grn);border:1px solid var(--grn);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:600">✓ 입고확인</button>
+            <button onclick="event.stopPropagation();cancelReturn('${io._notionId||io.id}')" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="요청 취소">✕</button>
           </div>
         </div>`;
       } else {
         // 완료
         stageActionCell = `<div style="display:flex;flex-direction:column;gap:3px;align-items:stretch">
           <span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(46,139,44,.12);color:var(--grn)">✓ 완료${io.returnCompletedAt?` ${escHtml(io.returnCompletedAt.slice(5))}`:''}</span>
-          <button onclick="event.stopPropagation();undoReturnComplete('${io.id}')" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="입고 확인을 취소하고 요청 상태로 되돌립니다">↶ 되돌리기</button>
+          <button onclick="event.stopPropagation();undoReturnComplete('${io._notionId||io.id}')" style="padding:3px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="입고 확인을 취소하고 요청 상태로 되돌립니다">↶ 되돌리기</button>
         </div>`;
       }
-      // 🔄📤 교환 재출고 컨트롤 (교환 건에만) — 바뀐 제품 출고 + 재고 -1
+      // 🔄📤 교환 재출고 컨트롤 — 순서: 입고확인(완료) 후에만 재출고 가능
       let exchCell = '';
       if(isExchange){
         if(io.exchReshipped){
@@ -15269,12 +15271,16 @@ function _renderIoCommerce(){
             <span style="padding:2px 6px;border-radius:3px;font-size:9.5px;font-weight:700;background:rgba(26,109,181,.12);color:var(--blu)">📤 재출고 ${escHtml((io.exchReshipDate||'').slice(5))}</span>
             <span style="font-size:9.5px;color:var(--t2)" title="${escHtml((io.exchNewName||'')+' '+(io.exchNewOption||''))}">→ ${escHtml(io.exchNewName||'-')}${io.exchNewOption?(' '+escHtml(io.exchNewOption)):''}</span>
             <div style="display:flex;gap:3px;justify-content:center">
-              <button onclick="event.stopPropagation();openExchangeReship('${io.id}')" style="flex:1;padding:2px 6px;font-size:9.5px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">수정</button>
-              <button onclick="event.stopPropagation();_undoExchangeReship('${io.id}')" style="padding:2px 6px;font-size:9.5px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="재출고 취소·재고 복원">✕</button>
+              <button onclick="event.stopPropagation();openExchangeReship('${io._notionId||io.id}')" style="flex:1;padding:2px 6px;font-size:9.5px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">수정</button>
+              <button onclick="event.stopPropagation();_undoExchangeReship('${io._notionId||io.id}')" style="padding:2px 6px;font-size:9.5px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t3)" title="재출고 취소·재고 복원">✕</button>
             </div>
           </div>`;
+        } else if(isReturnDone){
+          // 입고확인 완료된 교환만 재출고 버튼 노출
+          exchCell = `<button onclick="event.stopPropagation();openExchangeReship('${io._notionId||io.id}')" title="바뀐 제품을 골라 재출고 + 재고 -1" style="margin-top:5px;padding:3px 8px;font-size:10px;background:var(--blu);border:1px solid var(--blu);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:700;width:100%">📤 재출고</button>`;
         } else {
-          exchCell = `<button onclick="event.stopPropagation();openExchangeReship('${io.id}')" title="바뀐 제품을 골라 재출고 + 재고 -1" style="margin-top:5px;padding:3px 8px;font-size:10px;background:var(--blu);border:1px solid var(--blu);border-radius:4px;cursor:pointer;font-family:inherit;color:#fff;font-weight:700;width:100%">📤 재출고</button>`;
+          // 입고대기 상태 — 재출고 전에 입고확인 먼저
+          exchCell = `<div style="margin-top:5px;font-size:9px;color:var(--t3);text-align:center" title="입고확인 후 재출고할 수 있습니다">↳ 입고확인 후 재출고</div>`;
         }
       }
       return `<tr style="${rowStyle}" onclick="openIoDetail('${io.id}')" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${isReturnPending&&!isReturnDone?'rgba(168,90,16,.05)':''}'">
@@ -16307,10 +16313,10 @@ function _showCommerceDetail(io){
           <div style="font-weight:700;font-size:13px">${icon} ${escHtml(rs)}</div>
           ${isReturnPending ? `
             <div style="display:flex;gap:6px">
-              <button onclick="confirmReturnComplete('${io.id}');closeM('mIoDetail')" style="padding:5px 12px;font-size:11.5px;background:var(--grn);border:1px solid var(--grn);border-radius:5px;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">✓ 입고확인</button>
-              <button onclick="cancelReturn('${io.id}');closeM('mIoDetail')" style="padding:5px 8px;font-size:11.5px;background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--t3);cursor:pointer;font-family:inherit">요청 취소</button>
+              <button onclick="confirmReturnComplete('${io._notionId||io.id}');closeM('mIoDetail')" style="padding:5px 12px;font-size:11.5px;background:var(--grn);border:1px solid var(--grn);border-radius:5px;color:#fff;font-weight:700;cursor:pointer;font-family:inherit">✓ 입고확인</button>
+              <button onclick="cancelReturn('${io._notionId||io.id}');closeM('mIoDetail')" style="padding:5px 8px;font-size:11.5px;background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--t3);cursor:pointer;font-family:inherit">요청 취소</button>
             </div>` : isReturnDone ? `
-            <button onclick="undoReturnComplete('${io.id}');closeM('mIoDetail')" style="padding:5px 10px;font-size:11.5px;background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--t3);cursor:pointer;font-family:inherit">↶ 되돌리기</button>` : ''}
+            <button onclick="undoReturnComplete('${io._notionId||io.id}');closeM('mIoDetail')" style="padding:5px 10px;font-size:11.5px;background:none;border:1px solid var(--bdr);border-radius:5px;color:var(--t3);cursor:pointer;font-family:inherit">↶ 되돌리기</button>` : ''}
         </div>
         <div style="font-size:11.5px;color:var(--t2);line-height:1.6">
           ${io.returnRequestedAt ? `<div><span style="color:var(--t3)">요청일:</span> ${escHtml(io.returnRequestedAt)}</div>` : ''}
@@ -16324,7 +16330,7 @@ function _showCommerceDetail(io){
     returnSection = `
       <div style="margin-top:14px;padding:10px 14px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px;display:flex;justify-content:space-between;align-items:center">
         <div style="font-size:11.5px;color:var(--t3)">정상 출고 상태입니다</div>
-        <button onclick="openReturnModal('${io.id}');closeM('mIoDetail')" style="padding:5px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;color:var(--t2);cursor:pointer;font-family:inherit">🔄/↩ 교환·환불 등록</button>
+        <button onclick="openReturnModal('${io._notionId||io.id}');closeM('mIoDetail')" style="padding:5px 12px;font-size:11.5px;background:var(--s1);border:1px solid var(--bdr);border-radius:5px;color:var(--t2);cursor:pointer;font-family:inherit">🔄/↩ 교환·환불 등록</button>
       </div>
     `;
   }
@@ -17200,7 +17206,7 @@ function _updateReturnTypeUI(){
 }
 
 async function saveReturn(ioId){
-  const io = ioItems.find(x => x.id == ioId);
+  const io = _findIoByKey(ioId);
   if(!io) return;
   const type = document.querySelector('input[name="rt_type"]:checked')?.value || '교환';
   const date = document.getElementById('rt_date')?.value || new Date().toISOString().slice(0,10);
@@ -17258,8 +17264,16 @@ function _resolveIoMatchedProduct(io){
 }
 
 // 입고 확인 → 교환/환불 완료 처리 + 재고 복원
+// 🔑 교환/환불 조회 — id 충돌(노션 해시 id 겹침) 시 다른 사람 것이 선택되는 버그 방지.
+//    _notionId(유일)로 먼저 찾고, 없으면 id로 폴백.
+function _findIoByKey(key){
+  key = String(key);
+  var hit = ioItems.find(function(x){ return x._notionId && String(x._notionId)===key; });
+  if(hit) return hit;
+  return ioItems.find(function(x){ return String(x.id)===key; }) || null;
+}
 async function confirmReturnComplete(ioId){
-  const io = ioItems.find(x => x.id == ioId);
+  const io = _findIoByKey(ioId);
   if(!io) return;
   if(!io.returnStatus || (io.returnStatus !== '교환요청' && io.returnStatus !== '환불요청')){
     showToast('⚠ 입고 대기 상태가 아닙니다','var(--org)',2500);
@@ -17307,7 +17321,7 @@ async function confirmReturnComplete(ioId){
 
 // 입고 확인을 되돌리기 (재고 다시 -1, 요청 상태로 복귀)
 async function undoReturnComplete(ioId){
-  const io = ioItems.find(x => x.id == ioId);
+  const io = _findIoByKey(ioId);
   if(!io) return;
   if(io.returnStatus !== '교환완료' && io.returnStatus !== '환불완료') return;
   const type = io.returnType || (io.returnStatus === '교환완료' ? '교환' : '환불');
@@ -17340,7 +17354,7 @@ async function undoReturnComplete(ioId){
 
 // 교환/환불 요청 자체 취소 (실수로 등록한 경우)
 async function cancelReturn(ioId){
-  const io = ioItems.find(x => x.id == ioId);
+  const io = _findIoByKey(ioId);
   if(!io) return;
   if(io.returnStatus !== '교환요청' && io.returnStatus !== '환불요청') return;
   if(!confirm(`이 교환/환불 요청을 취소하시겠습니까?\n(아직 입고 전이므로 재고에는 영향 없음)`)) return;
@@ -17366,6 +17380,9 @@ function openExchangeReship(ioId){
   if(!io){ showToast('⚠ 항목을 찾을 수 없습니다','var(--red)',2000); return; }
   if((io.returnType||'') !== '교환' && !(io.returnStatus||'').includes('교환')){
     showToast('⚠ 교환 건만 재출고할 수 있습니다','var(--org)',2500); return;
+  }
+  if((io.returnStatus||'') !== '교환완료'){
+    showToast('⚠ 입고확인(완료) 후에 재출고할 수 있습니다','var(--org)',3000); return;
   }
   const today = new Date().toISOString().slice(0,10);
   // 기본 선택 = 기존 매칭 제품(같은 제품, 사이즈만 변경인 경우 그대로)
@@ -17440,7 +17457,7 @@ function _exchReshipRenderSelected(){
     <span style="color:var(--t3);font-size:10.5px">현재고 ${stock} → 출고 후 ${stock===''||stock==='?'?'?':(stock-1)}</span></div>`;
 }
 async function _confirmExchangeReship(ioId){
-  const io = ioItems.find(x => x.id == ioId); if(!io) return;
+  const io = _findIoByKey(ioId); if(!io) return;
   if(!_exchReshipPick){ showToast('⚠ 바뀐 제품을 검색해서 선택하세요','var(--red)',2500); return; }
   const opt = (document.getElementById('exch_opt')||{}).value || '';
   const date = (document.getElementById('exch_date')||{}).value || new Date().toISOString().slice(0,10);
@@ -17476,7 +17493,7 @@ async function _confirmExchangeReship(ioId){
   renderIo();
 }
 async function _undoExchangeReship(ioId){
-  const io = ioItems.find(x => x.id == ioId); if(!io) return;
+  const io = _findIoByKey(ioId); if(!io) return;
   if(!io.exchReshipped){ return; }
   if(!confirm('교환 재출고를 취소합니다.\n차감했던 재고가 +1 복원됩니다.\n계속할까요?')) return;
   if(io.exchNewCode){
