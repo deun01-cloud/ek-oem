@@ -14500,6 +14500,14 @@ function _kkoShipKey(io){
   var t = (io && io.invoice!=null) ? String(io.invoice).trim() : '';
   return t ? ('inv:'+t) : ('id:'+(io ? io.id : ''));
 }
+// ✍ 각인 사용안함(미각인) 판별 — 옵션 텍스트에 '각인 … 사용안함'이 있으면 미각인.
+//    미각인 제품은 각인비 청구에서 제외한다.
+function _kkoNoEngrave(io){
+  if(!io) return false;
+  var s = String(io.option || io.opt || io.items || '');
+  // '각인' 문구가 있고 그 값이 '사용안함'인 경우만 미각인으로 판정
+  return /사용\s*안\s*함/.test(s);
+}
 function _kkoBillCalc(){
   var eng = +(document.getElementById('kko_engrave')||{}).value || 0;
   var logi = +(document.getElementById('kko_logi')||{}).value || 0;
@@ -14511,7 +14519,10 @@ function _kkoBillCalc(){
   var _shipF = _kkoShippedFiltered();
   var _selRows = _shipF.filter(function(io){ return (_kkoBillReissue || !io.billNo) && _kkoBillSel.has(String(io.id)); });
   var ids = _selRows.map(function(io){ return String(io.id); });
-  var n = ids.length;   // 품목(각인비) 단위 건수
+  var n = ids.length;   // 품목 단위 건수 (포장 용역비 기준)
+  // ✍ 각인비: 각인 '사용안함'(미각인) 제품은 제외 → 각인 새긴 제품만 청구
+  var noEngN = _selRows.filter(function(io){ return _kkoNoEngrave(io); }).length;
+  var engN = n - noEngN;   // 각인비 청구 대상(각인 있는 제품)
   // 🚚 합배송 집계: 같은 송장번호는 물류비·포장·도서산간을 1회만 청구.
   //    그룹 안에 도서산간 대상이 하나라도 있으면 그 배송을 도서산간 1건으로 계산.
   var _ship = {};
@@ -14527,8 +14538,8 @@ function _kkoBillCalc(){
   var _ret = _kkoReturnFiltered();
   var xn = _ret.filter(function(io){ return io.returnType==='교환' && !io.billNo; }).length;
   var rn = _ret.filter(function(io){ return io.returnType==='환불' && !io.billNo; }).length;
-  // 각인비: VAT 별도 → 공급가 그대로
-  var engSupply = eng * n, engTax = Math.round(engSupply*0.1);   // 각인비: 품목 단위(합배송이어도 품목별 부과)
+  // 각인비: VAT 별도 → 공급가 그대로 (✍ 각인 새긴 제품 engN건만, 미각인 noEngN건 제외)
+  var engSupply = eng * engN, engTax = Math.round(engSupply*0.1);
   // 물류비·도서산간: VAT 포함 → 공급가 = 총액/1.1  (🚚 합배송 = 송장 단위로 1회만)
   var logiTotal = logi * ships, logiSupply = Math.round(logiTotal/1.1), logiTax = logiTotal - logiSupply;
   var rmtTotal = rmt * m,  rmtSupply = Math.round(rmtTotal/1.1),  rmtTax = rmtTotal - rmtSupply;
@@ -14539,7 +14550,7 @@ function _kkoBillCalc(){
   var refuTotal = refu * rn, refuSupply = Math.round(refuTotal/1.1), refuTax = refuTotal - refuSupply;
   var supply = engSupply + logiSupply + rmtSupply + packSupply + exchSupply + refuSupply;
   var tax = engTax + logiTax + rmtTax + packTax + exchTax + refuTax;
-  return { n:n, ships:ships, m:m, eng:eng, logi:logi, rmt:rmt, pack:pack, exch:exch, refu:refu, xn:xn, rn:rn,
+  return { n:n, engN:engN, noEngN:noEngN, ships:ships, m:m, eng:eng, logi:logi, rmt:rmt, pack:pack, exch:exch, refu:refu, xn:xn, rn:rn,
            engSupply:engSupply, engTax:engTax,
            logiSupply:logiSupply, logiTax:logiTax, logiTotal:logiTotal,
            rmtSupply:rmtSupply, rmtTax:rmtTax, rmtTotal:rmtTotal,
@@ -14558,17 +14569,20 @@ function _kkoBillRender(){
     +   '<th style="padding:7px;text-align:left;width:84px">출고일</th>'
     +   '<th style="padding:7px;text-align:left;width:86px">수령인</th>'
     +   '<th style="padding:7px;text-align:left">주소</th>'
+    +   '<th style="padding:7px;text-align:center;width:74px">각인</th>'
     +   '<th style="padding:7px;text-align:center;width:88px">도서산간</th>'
     +   '<th style="padding:7px;text-align:center;width:120px">청구 상태</th>'
     + '</tr></thead><tbody>'
     + list.map(function(io){
         var id=String(io.id), billed=!!io.billNo, sel=_kkoBillSel.has(id), rmt=!!_kkoBillRemote[id];
         var locked=(billed && !_kkoBillReissue);   // 청구된 건은 재발행 모드에서만 선택 가능
+        var noEng=_kkoNoEngrave(io);   // ✍ 미각인 여부
         return '<tr style="border-bottom:1px solid var(--bdr-lt);'+(locked?'opacity:.5':(billed&&sel?'background:rgba(255,150,0,.08)':''))+'">'
         + '<td style="padding:6px;text-align:center">'+(locked?'—':'<input type="checkbox" '+(sel?'checked':'')+' onclick="_kkoBillToggle(\''+id+'\',this.checked)">')+'</td>'
         + '<td style="padding:6px;font-family:monospace;font-size:11px">'+escHtml(io.shipDate||io.date||'-')+'</td>'
         + '<td style="padding:6px;font-weight:600">'+escHtml(io.recipient||'-')+'</td>'
         + '<td style="padding:6px;color:var(--t2);font-size:11px">'+escHtml((io.address||'-').slice(0,46))+'</td>'
+        + '<td style="padding:6px;text-align:center;font-size:10.5px">'+(noEng?'<span style="color:var(--t3)">미각인</span>':'<span style="color:var(--gold-lt);font-weight:700">각인</span>')+'</td>'
         + '<td style="padding:6px;text-align:center">'+(locked?'':'<input type="checkbox" '+(rmt?'checked':'')+' onclick="_kkoBillToggleRemote(\''+id+'\',this.checked)" title="도서산간 추가배송비 대상">')+'</td>'
         + '<td style="padding:6px;text-align:center;font-size:10.5px">'+(billed?('<span style="color:'+((_kkoBillReissue&&sel)?'var(--org)':'var(--grn)')+';font-weight:700">'+((_kkoBillReissue&&sel)?'♻ 재발행: ':'✓ ')+escHtml(io.billNo)+'</span>'):'<span style="color:var(--org)">미청구</span>')+'</td>'
         + '</tr>';
@@ -14578,11 +14592,11 @@ function _kkoBillRender(){
   var foot = document.getElementById('kkoBillFoot'); if(!foot) return;
   foot.innerHTML = '<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">'
     + '<div style="font-size:12px;color:var(--t2);line-height:1.9;flex:1;min-width:280px">'
-    +   '<div>각인비 <b>'+c.n+'건</b> × '+_w(c.eng)+' <span style="color:var(--t3)">(VAT별도·품목당)</span> → 공급가 <b>'+_w(c.engSupply)+'</b> · 부가세 '+_w(c.engTax)+'</div>'
+    +   '<div>각인비 <b>'+c.engN+'건</b> × '+_w(c.eng)+' <span style="color:var(--t3)">(VAT별도·각인 제품만)</span> → 공급가 <b>'+_w(c.engSupply)+'</b> · 부가세 '+_w(c.engTax)+(c.noEngN?' <span style="color:var(--org)">· 미각인 '+c.noEngN+'건 제외</span>':'')+'</div>'
     +   '<div>물류비 <b>'+c.ships+'건</b> × '+_w(c.logi)+' <span style="color:var(--t3)">(VAT포함·합배송 송장당)</span> → 공급가 <b>'+_w(c.logiSupply)+'</b> · 부가세 '+_w(c.logiTax)+'</div>'
     +   (c.m ? '<div>도서산간 <b>'+c.m+'건</b> × '+_w(c.rmt)+' <span style="color:var(--t3)">(VAT포함·송장당)</span> → 공급가 <b>'+_w(c.rmtSupply)+'</b> · 부가세 '+_w(c.rmtTax)+'</div>' : '')
     +   (c.pack ? '<div>포장 용역비 <b>'+c.n+'건</b> × '+_w(c.pack)+' <span style="color:var(--t3)">(VAT별도·제품당)</span> → 공급가 <b>'+_w(c.packSupply)+'</b> · 부가세 '+_w(c.packTax)+'</div>' : '')
-    +   ((c.n>c.ships) ? '<div style="color:var(--grn);font-size:11px">🚚 합배송 적용: 출고 '+c.n+'건 → 배송 '+c.ships+'건 (같은 송장번호 '+(c.n-c.ships)+'건 물류비 중복 제외 · 포장·각인비는 제품당)</div>' : '')
+    +   ((c.n>c.ships) ? '<div style="color:var(--grn);font-size:11px">🚚 합배송 적용: 출고 '+c.n+'건 → 배송 '+c.ships+'건 (같은 송장번호 '+(c.n-c.ships)+'건 물류비 중복 제외 · 포장은 제품당 · 각인비는 각인 제품만)</div>' : '')
     +   (c.xn ? '<div>교환 물류비 <b>'+c.xn+'건</b> × '+_w(c.exch)+' <span style="color:var(--t3)">(VAT포함)</span> → 공급가 <b>'+_w(c.exchSupply)+'</b> · 부가세 '+_w(c.exchTax)+'</div>' : '')
     +   (c.rn ? '<div>환불 물류비 <b>'+c.rn+'건</b> × '+_w(c.refu)+' <span style="color:var(--t3)">(VAT포함)</span> → 공급가 <b>'+_w(c.refuSupply)+'</b> · 부가세 '+_w(c.refuTax)+'</div>' : '')
     + '</div>'
@@ -14601,10 +14615,10 @@ async function _kkoBillIssue(){
   var _billIds = _kkoShippedFiltered().filter(function(io){ return (_kkoBillReissue || !io.billNo) && _kkoBillSel.has(String(io.id)); }).map(function(io){ return String(io.id); });
   var issuedAt = (document.getElementById('kko_date')||{}).value || new Date().toISOString().slice(0,10);
   var _reN = _kkoShippedFiltered().filter(function(io){ return io.billNo && _kkoBillSel.has(String(io.id)); }).length;
-  if(!confirm((_kkoBillReissue?'♻ 재발행 — 이미 청구된 '+_reN+'건을 새 명세서로 재발행합니다.\n(기존 명세서는 자동 삭제되지 않으니 SCM>거래명세서에서 정리하세요)\n\n':'')+'카카오에 청구할 거래명세서를 발행합니다.\n\n· 출고 '+c.n+'건 → 배송 '+c.ships+'건'+((c.n>c.ships)?(' (합배송 '+(c.n-c.ships)+'건 물류비 중복 제외)'):'')+' · 도서산간 '+c.m+'건'+((c.xn||c.rn)?('\n· 교환 '+c.xn+'건 · 환불 '+c.rn+'건'):'')+'\n· 공급가액 ₩'+c.supply.toLocaleString()+' / 부가세 ₩'+c.tax.toLocaleString()+'\n· 합계 ₩'+c.total.toLocaleString()+'\n\n계속할까요?')) return;
+  if(!confirm((_kkoBillReissue?'♻ 재발행 — 이미 청구된 '+_reN+'건을 새 명세서로 재발행합니다.\n(기존 명세서는 자동 삭제되지 않으니 SCM>거래명세서에서 정리하세요)\n\n':'')+'카카오에 청구할 거래명세서를 발행합니다.\n\n· 출고 '+c.n+'건 → 배송 '+c.ships+'건'+((c.n>c.ships)?(' (합배송 '+(c.n-c.ships)+'건 물류비 중복 제외)'):'')+' · 도서산간 '+c.m+'건\n· 각인비 대상 '+c.engN+'건 (미각인 '+c.noEngN+'건 제외)'+((c.xn||c.rn)?('\n· 교환 '+c.xn+'건 · 환불 '+c.rn+'건'):'')+'\n· 공급가액 ₩'+c.supply.toLocaleString()+' / 부가세 ₩'+c.tax.toLocaleString()+'\n· 합계 ₩'+c.total.toLocaleString()+'\n\n계속할까요?')) return;
   var items = [];
+  if(c.engN) items.push({ name:'각인비', code:'', qty:c.engN, unit:c.eng, amt:c.engSupply, note:'각인 제품당 '+c.eng.toLocaleString()+'원 (부가세 별도)'+(c.noEngN?(' · 미각인 '+c.noEngN+'건 제외'):'') });
   if(c.n){
-    items.push({ name:'각인비', code:'', qty:c.n, unit:c.eng, amt:c.engSupply, note:'품목당 '+c.eng.toLocaleString()+'원 (부가세 별도)' });
     items.push({ name:'물류비', code:'', qty:c.ships, unit:Math.round(c.logiSupply/(c.ships||1)), amt:c.logiSupply, note:'배송(송장)당 '+c.logi.toLocaleString()+'원 (부가세 포함) — 합배송 1회'+((c.n>c.ships)?(' · 출고 '+c.n+'건→배송 '+c.ships+'건'):'') });
   }
   if(c.m) items.push({ name:'도서산간 추가배송비', code:'', qty:c.m, unit:Math.round(c.rmtSupply/(c.m||1)), amt:c.rmtSupply, note:'배송(송장)당 '+c.rmt.toLocaleString()+'원 (부가세 포함)' });
@@ -14625,7 +14639,7 @@ async function _kkoBillIssue(){
     itemSummary: items.map(function(it){ return it.name+' ×'+it.qty; }).join(', '),
     supplyAmt: c.supply, tax: c.tax, total: c.total,
     status: '작성중',
-    memo: '카카오 정산 — 출고 '+c.n+'건 · 배송(합배송) '+c.ships+'건'+(c.m?(' · 도서산간 '+c.m+'건'):'')+((c.xn||c.rn)?(' · 교환 '+c.xn+'건 · 환불 '+c.rn+'건'):''),
+    memo: '카카오 정산 — 출고 '+c.n+'건 · 배송(합배송) '+c.ships+'건 · 각인 '+c.engN+'건(미각인 '+c.noEngN+'건 제외)'+(c.m?(' · 도서산간 '+c.m+'건'):'')+((c.xn||c.rn)?(' · 교환 '+c.xn+'건 · 환불 '+c.rn+'건'):''),
     _shipped: false,
     _invStage: 'draft',
     _kkoIds: _billIds
