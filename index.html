@@ -17151,7 +17151,7 @@ function _closeCommercePick(){
 //   4. 실수로 입고 확인했으면 "↶ 되돌리기"로 요청 상태로 복귀 (재고 다시 -1)
 
 function openReturnModal(ioId){
-  const io = ioItems.find(x => x.id == ioId);
+  const io = _findIoByKey(ioId);
   if(!io){ showToast('⚠ 항목을 찾을 수 없습니다','var(--red)',2000); return; }
   if(io.returnStatus && io.returnStatus !== '정상'){
     showToast('⚠ 이미 교환/환불이 등록된 항목입니다','var(--org)',2500);
@@ -17203,7 +17203,7 @@ function openReturnModal(ioId){
     </div>
     <div class="mb" style="display:flex;justify-content:flex-end;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px">
       <button class="btn bg bs" onclick="closeM('mReturn')">취소</button>
-      <button class="btn bp bs" onclick="saveReturn('${io.id}')">등록</button>
+      <button class="btn bp bs" onclick="saveReturn('${io._notionId||io.id}')">등록</button>
     </div>
   </div>`;
   openM('mReturn');
@@ -17403,7 +17403,7 @@ async function cancelReturn(ioId){
 // ═══════════════════════════════════════════════════════════════
 var _exchReshipPick = null;  // 선택된 제품 {id, code, name}
 function openExchangeReship(ioId){
-  const io = ioItems.find(x => x.id == ioId);
+  const io = _findIoByKey(ioId);
   if(!io){ showToast('⚠ 항목을 찾을 수 없습니다','var(--red)',2000); return; }
   if((io.returnType||'') !== '교환' && !(io.returnStatus||'').includes('교환')){
     showToast('⚠ 교환 건만 재출고할 수 있습니다','var(--org)',2500); return;
@@ -17446,7 +17446,7 @@ function openExchangeReship(ioId){
     </div>
     <div class="mb" style="display:flex;justify-content:flex-end;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px">
       <button class="btn bg bs" onclick="closeM('mExchReship')">취소</button>
-      <button class="btn bp bs" onclick="_confirmExchangeReship('${io.id}')">📤 재출고 등록</button>
+      <button class="btn bp bs" onclick="_confirmExchangeReship('${io._notionId||io.id}')">📤 재출고 등록</button>
     </div>
   </div>`;
   openM('mExchReship');
