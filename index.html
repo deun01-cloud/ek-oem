@@ -11213,6 +11213,43 @@ function _rtHandleSnapshot(msg){
   //    → 골격(자식-합본 연결 등)이 서버에 저장된 그대로 들어오므로 로컬 옛 데이터가 섞이지 않는다.
   //    (한 건씩 머지하면 로컬의 더 최신 _ts가 옛 데이터를 살려내 기기마다 달라지는 문제를 원천 차단)
   if(RT_SSOT_TYPES.has(msg.type)){
+    // 🩹 io(입출고)는 예외: 서버 스냅샷이 노션보다 '불완전'할 수 있는 타입이다.
+    //    (입출고 항목은 노션이 완전한 원본, 서버는 빠른 동기화 캐시. 과거 항목/발행 실패분은
+    //     노션엔 있지만 서버 스냅샷엔 없을 수 있다.) 여기서 로컬을 서버 것으로 '통째 교체'하면
+    //    노션에만 있는 항목이 사라져 기기마다 건수/내용이 달라진다(PC 55 / 모바일 105·106 현상의 원인).
+    //    → 파괴적 교체 대신 '합집합 머지'(_applyRemoteItem: _notionId/id 키, 묘비·LWW 존중)로 처리하고,
+    //      서버 스냅샷에 빠진 로컬(노션 동기화된) io 항목을 서버로 되올려 서버를 완전하게 복구한다.
+    //      → 한 기기라도 완전한 노션 세트를 로드하면 서버가 완전해지고, 모든 기기가 같은 합집합으로 수렴한다.
+    if(msg.type === 'io'){
+      try{
+        var _srvKeys = new Set();
+        msg.items.forEach(function(it){
+          if(!it) return;
+          var k = it._notionId || (it.id!==undefined ? String(it.id) : null);
+          if(k) _srvKeys.add(k);
+          _applyRemoteItem('io', it, msg.ts || Date.now(), null, true);
+        });
+        // 서버 스냅샷에 없는 로컬(노션 동기화된) io 항목 → 서버로 재발행하여 서버 복구
+        try{
+          var _ioArr = _rtGetLocalArray('io') || [];
+          var _healed = 0;
+          _ioArr.forEach(function(io){
+            if(!io || !io._notionId) return;                                   // 노션 미동기 임시항목은 제외
+            if(_srvKeys.has(io._notionId)) return;                             // 이미 서버에 있음
+            if(io.id!==undefined && _srvKeys.has(String(io.id))) return;
+            if(typeof _isNotionIdDeleted==='function' && _isNotionIdDeleted(io._notionId)) return; // 삭제된 건 재발행 금지
+            try{ if(typeof realtimePublish==='function'){ realtimePublish('io', io); _healed++; } }catch(_e){}
+          });
+          if(_healed>0) console.log(RT_LOG_PREFIX, '🩹 io 서버 복구: 서버 스냅샷 누락분', _healed, '건 로컬→서버 재발행');
+        }catch(_e){}
+        if(typeof save==='function') save();
+        _rtSuppressRefresh = true;
+        try{ if(typeof renderTab==='function'){ renderTab(); updateBadges(); } }catch(_){}
+        finally{ _rtSuppressRefresh = false; }
+        console.log(RT_LOG_PREFIX, '🩹 io 서버 스냅샷 합집합 머지:', msg.items.length, '건 수신 (교체 대신 병합)');
+      }catch(e){ console.warn('io 스냅샷 머지 실패:', e.message); }
+      return;
+    }
     try{
       var serverList = msg.items.map(function(it){ return JSON.parse(JSON.stringify(it)); });
       var arr = _rtGetLocalArray(msg.type);
@@ -13797,11 +13834,13 @@ async function pullFromNotion(opts){
     function isSafePull(remoteRows, localArr, label){
       if(remoteRows.length>0){
         // 🛡 데이터 급감 감지: remote가 local의 80% 미만이면 의심 상황
-        // ⚠ 예외: 재고이력은 "생성 전용 불변 기록 + 서버(Realtime) 실시간 발행" 타입.
+        // ⚠ 예외: 재고이력·입출고는 "생성 전용 기록 + 서버(Realtime) 실시간 발행" 타입.
         //    입출고 때마다 로컬/서버에 먼저 쌓이고 노션은 보조 백업이라, 노션이 로컬보다
         //    적은 것이 '정상'이다. 따라서 이 타입은 급감 감지에서 제외한다.
         //    (노션 206 / 로컬 267 같은 정상 상황에서 가짜 경고가 뜨던 문제 해결)
-        const _isAppendOnlyServerType = (label === '재고이력');
+        //    입출고를 예외에 포함해야 노션의 전체 항목이 항상 병합되어(합집합) 서버 스냅샷
+        //    누락분까지 모든 기기가 같은 세트로 수렴한다.
+        const _isAppendOnlyServerType = (label === '재고이력' || label === '입출고');
         const localCount = localArr.length;
         const remoteCount = remoteRows.length;
         if(!_isAppendOnlyServerType && localCount >= 50 && remoteCount < localCount * 0.8){
