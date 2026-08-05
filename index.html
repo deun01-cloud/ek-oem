@@ -15739,15 +15739,55 @@ function _learnMatchProduct(dict, itemName, option){
 }
 
 // ── 주문 → 출고 처리 ──
+// 📅 출고일 선택 모달 (단일·일괄 공용) — 클릭 시차 있어도 실제 출고일을 지정 가능
+var _ioShipIds = [];
+function _ioLocalToday(delta){
+  var d=new Date(); if(delta) d.setDate(d.getDate()+delta);
+  return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+}
+function _ioShipDateModal(ids){
+  ids = (ids||[]).map(String).filter(Boolean);
+  if(!ids.length){ showToast('출고할 항목이 없습니다','var(--org)',2000); return; }
+  _ioShipIds = ids;
+  var today = _ioLocalToday(0);
+  var m = document.getElementById('mIoShip');
+  if(!m){ m=document.createElement('div'); m.id='mIoShip'; m.className='ov'; document.body.appendChild(m); }
+  m.innerHTML = '<div class="modal" style="max-width:390px">'
+    + '<div class="mt">📤 출고 처리 — 출고일 선택</div>'
+    + '<div style="padding:0 16px 14px">'
+    +   '<div style="font-size:12px;color:var(--t2);margin-bottom:10px"><b>'+ids.length+'건</b>을 출고 처리합니다. 실제 출고한 날짜를 선택하세요.</div>'
+    +   '<div class="fg"><label>출고일 *</label><input class="fi" type="date" id="ioship_date" value="'+today+'" max="'+today+'"></div>'
+    +   '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'
+    +     '<button class="btn bg bs" onclick="_ioShipQuick(0)" style="font-size:11px">오늘</button>'
+    +     '<button class="btn bg bs" onclick="_ioShipQuick(-1)" style="font-size:11px">어제</button>'
+    +     '<button class="btn bg bs" onclick="_ioShipQuick(-2)" style="font-size:11px">그저께</button>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="mb" style="display:flex;justify-content:flex-end;padding:10px 16px;border-top:1px solid var(--bdr);gap:8px">'
+    +   '<button class="btn bg bs" onclick="closeM(\'mIoShip\')">취소</button>'
+    +   '<button class="btn bp bs" onclick="_ioDoShip()">📤 출고 ('+ids.length+'건)</button>'
+    + '</div></div>';
+  openM('mIoShip');
+}
+function _ioShipQuick(delta){ var el=document.getElementById('ioship_date'); if(el) el.value=_ioLocalToday(delta); }
+function _ioDoShip(){
+  var date=(document.getElementById('ioship_date')||{}).value || _ioLocalToday(0);
+  var shipped=[];
+  _ioShipIds.forEach(function(id){
+    var io=ioItems.find(function(x){ return String(x.id)===String(id); });
+    if(io){ io.shipStage='shipped'; io.shipDate=date; io._ts=Date.now(); shipped.push(io); }
+    _ioCommerceChecked.delete(String(id)); _ioCommerceChecked.delete(id);
+  });
+  _ioShipIds=[];
+  save();
+  shipped.forEach(function(io){ try{ _syncIoStageToNotion(io); }catch(e){} });
+  closeM('mIoShip');
+  showToast('📤 '+shipped.length+'건 출고 완료 ('+date+')','var(--grn)',3000);
+  _renderIoCommerce();
+}
 function _ioMarkShipped(id){
   const io = ioItems.find(x=>x.id==id); if(!io) return;
-  io.shipStage = 'shipped';
-  io.shipDate = io.shipDate || new Date().toISOString().slice(0,10); // 출고 버튼 누른 날짜 = 출고일
-  _ioCommerceChecked.delete(id);
-  save();
-  _syncIoStageToNotion(io);
-  showToast('📤 출고 처리 완료 — 출고 탭으로 이동', 'var(--grn)', 2500);
-  _renderIoCommerce();
+  _ioShipDateModal([id]);   // 출고일 선택 모달 열기
 }
 
 // ── 출고 → 주문 되돌리기 ──
@@ -15802,18 +15842,7 @@ function _ioToggleDateChecked(dateKey, on){
 function _ioBatchShip(){
   const ids = Array.from(_ioCommerceChecked);
   if(!ids.length) return;
-  if(!confirm(`${ids.length}건을 일괄 출고 처리합니다.\n출고일은 오늘(${new Date().toISOString().slice(0,10)})로 기록됩니다.\n계속하시겠습니까?`)) return;
-  const today = new Date().toISOString().slice(0,10);
-  const shipped = [];
-  ids.forEach(id => {
-    const io = ioItems.find(x=>x.id==id);
-    if(io){ io.shipStage='shipped'; io.shipDate = io.shipDate||today; shipped.push(io); }
-  });
-  _ioCommerceChecked = new Set();
-  save();
-  shipped.forEach(io=>_syncIoStageToNotion(io));
-  showToast(`📤 ${shipped.length}건 일괄 출고 완료`, 'var(--grn)', 3000);
-  _renderIoCommerce();
+  _ioShipDateModal(ids);   // 출고일 선택 모달 (일괄)
 }
 
 // ── 송장번호 입력 (출고 탭) ──
