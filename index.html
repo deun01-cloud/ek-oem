@@ -11421,9 +11421,13 @@ function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
     if(_nk){ idx2 = arr.findIndex(x => _natKeyOf(x) === _nk); }
   }
   // 🛡 io(입출고): 같은 배송건(송장+수령인+옵션)이면 자연키로 매칭해 중복 추가를 애초에 차단.
+  //    (단, 깊은정리 모드 'ek_io_dedup_off'=1 이면 원본 중복을 그대로 불러오도록 이 합치기도 끔)
   if(idx2 < 0 && type === 'io' && typeof _ioDupKey === 'function'){
-    const _iok = _ioDupKey(item);
-    if(_iok){ idx2 = arr.findIndex(x => _ioDupKey(x) === _iok); }
+    var _rawMode=false; try{ _rawMode = (localStorage.getItem('ek_io_dedup_off')==='1'); }catch(_e){}
+    if(!_rawMode){
+      const _iok = _ioDupKey(item);
+      if(_iok){ idx2 = arr.findIndex(x => _ioDupKey(x) === _iok); }
+    }
   }
   if(idx2 >= 0){
     const local = arr[idx2];
