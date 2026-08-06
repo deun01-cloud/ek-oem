@@ -14479,8 +14479,14 @@ function _kkoReturnList(){
 function _kkoMonthOf(io){ return String((io&&(io.shipDate||io.returnDate||io.date||io.orderDate))||'').slice(0,7); }
 // 🔄↩ 교환·환불 정산 월은 '요청일(returnRequestedAt)' 기준 — 출고월이 아니라 반품 요청한 달로 청구
 function _kkoReturnMonthOf(io){ return String((io&&(io.returnRequestedAt||io.returnCompletedAt||io.date))||'').slice(0,7); }
-function _kkoShippedFiltered(){ var m=_kkoBillMonth; var l=_kkoShippedList(); return m ? l.filter(function(io){ return _kkoMonthOf(io)===m; }) : l; }
-function _kkoReturnFiltered(){ var m=_kkoBillMonth; var l=_kkoReturnList(); return m ? l.filter(function(io){ return _kkoReturnMonthOf(io)===m; }) : l; }
+// 청구월 필터: ''=전체, 'YYYY-MM'=해당 월, '~YYYY-MM'=그 달 이하(=그 달 포함 이전 전체)
+function _kkoMonthMatch(mv, itemMonth){
+  if(!mv) return true;
+  if(mv.charAt(0)==='~') return !!itemMonth && itemMonth <= mv.slice(1);   // 이하(이전 전체)
+  return itemMonth===mv;
+}
+function _kkoShippedFiltered(){ var m=_kkoBillMonth; var l=_kkoShippedList(); return m ? l.filter(function(io){ return _kkoMonthMatch(m, _kkoMonthOf(io)); }) : l; }
+function _kkoReturnFiltered(){ var m=_kkoBillMonth; var l=_kkoReturnList(); return m ? l.filter(function(io){ return _kkoMonthMatch(m, _kkoReturnMonthOf(io)); }) : l; }
 // 청구월 드롭다운 후보 (출고=출고월, 교환·환불=요청월, 최신순)
 function _kkoMonthOptions(){
   var s={};
@@ -14511,9 +14517,13 @@ function openKakaoBillModal(){
     if(!io.billNo) _kkoBillSel.add(String(io.id));                       // 그 달 미청구 건 기본 선택
     _kkoBillRemote[String(io.id)] = (io.isRemote!=null) ? !!io.isRemote : _kkoIsRemote(io.address);
   });
+  // 🗓 '이번 달 이전 전체' = 지난달까지 모든 월 (예: 오늘 8월이면 ~2026-07 = 6·7월 전부)
+  var _prevM=(function(){ var d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-1); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2); })();
+  var _curMonthNo=(new Date()).getMonth()+1;
   var _kkoMonthSel = '<label style="display:flex;align-items:center;gap:5px;font-weight:700;color:var(--gold-lt)">📅 청구월 '
     + '<select id="kko_month" onchange="_kkoBillSetMonth(this.value)" style="padding:4px 9px;border:1.5px solid var(--gold-lt);border-radius:6px;font-family:inherit;font-size:12px;cursor:pointer;font-weight:600">'
     + '<option value="">전체 기간</option>'
+    + '<option value="~'+_prevM+'"'+(_kkoBillMonth==='~'+_prevM?' selected':'')+'>🗓 '+_curMonthNo+'월 이전 전체 (~'+_prevM+')</option>'
     + _kkoMonths.map(function(m){ return '<option value="'+m+'"'+(m===_kkoBillMonth?' selected':'')+'>'+m+'</option>'; }).join('')
     + '</select></label>';
   var _kkoReissueToggle = '<label style="display:flex;align-items:center;gap:5px;font-weight:700;color:var(--org);cursor:pointer;padding:2px 8px;border:1.5px solid var(--org);border-radius:6px" title="이미 청구된 건을 다시 선택해 수정·재발행합니다 (기존 명세서는 남아있으니 필요 시 SCM>거래명세서에서 삭제)">'
