@@ -11293,20 +11293,25 @@ function _rtHandleSnapshot(msg){
     //      서버 스냅샷에 빠진 로컬(노션 동기화된) io 항목을 서버로 되올려 서버를 완전하게 복구한다.
     //      → 한 기기라도 완전한 노션 세트를 로드하면 서버가 완전해지고, 모든 기기가 같은 합집합으로 수렴한다.
     if(msg.type === 'io'){
+      // 🏛️ io도 다른 SSOT 타입처럼 '서버가 단일 기준' — 서버 스냅샷으로 로컬을 통째 교체한다.
+      //    (과거 '합집합 병합'은 로컬에 쌓인 유령 중복을 절대 못 줄여서 건수가 무한정 부풀던 근본원인.
+      //     서버는 이미 정리된 정본이므로 교체가 맞다. 노션에만 있고 서버에 없는 건은 repairSeedingIO()로 복구.)
       try{
-        msg.items.forEach(function(it){
-          if(!it) return;
-          _applyRemoteItem('io', it, msg.ts || Date.now(), null, true);
-        });
-        // 🧹 중복 제거 안전장치 — 합집합 병합이 자연키 어긋난 항목을 중복 추가해도 즉시 하나로 합침.
-        //    (이전 버전의 '서버 복구 재발행'은 중복·루프를 유발해 제거함)
+        var serverList = msg.items.map(function(it){ return JSON.parse(JSON.stringify(it)); });
+        // 🪦 내가 명시적으로 지운(묘비) 건은 서버가 아직 보냈더라도 되살리지 않는다.
+        if(typeof _isNotionIdDeleted === 'function'){
+          serverList = serverList.filter(function(it){ return !(it && it._notionId && _isNotionIdDeleted(it._notionId)); });
+        }
+        var arr = _rtGetLocalArray('io');
+        if(arr){ arr.length = 0; serverList.forEach(function(it){ arr.push(it); }); }
+        // 🧹 서버 자체에 자연키 중복이 있어도 하나로 합침
         try{ if(typeof _dedupIoItems==='function') _dedupIoItems(); }catch(_e){}
         if(typeof save==='function') save();
         _rtSuppressRefresh = true;
         try{ if(typeof renderTab==='function'){ renderTab(); updateBadges(); } }catch(_){}
         finally{ _rtSuppressRefresh = false; }
-        console.log(RT_LOG_PREFIX, 'io 서버 스냅샷 병합 + 중복정리:', msg.items.length, '건 수신');
-      }catch(e){ console.warn('io 스냅샷 머지 실패:', e.message); }
+        console.log(RT_LOG_PREFIX, '🏛️ io 서버 기준 로드:', (arr?arr.length:0), '건 (로컬 교체 + 중복정리)');
+      }catch(e){ console.warn('io 스냅샷 교체 실패:', e.message); }
       return;
     }
     try{
