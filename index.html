@@ -14477,7 +14477,7 @@ function _ioExportInvoiceXlsx(id){
 //    · 각인비 1,400원 (부가세 별도)  · 물류비 3,100원 (부가세 포함)  · 도서산간 5,000원 추가 (부가세 포함)
 //    · 발행 시 각 건에 명세서 번호를 기록해 중복 청구를 막는다
 // ══════════════════════════════════════════════
-var KKO_FEE = { engrave: 1400, logistics: 3100, remote: 5000, pack: 400, exchange: 6200, refund: 3100 };   // 각인비(VAT별도) · 물류비(VAT포함) · 도서산간(VAT포함) · 포장용역비(VAT별도) · 교환물류비(VAT포함) · 환불물류비(VAT포함)
+var KKO_FEE = { engrave: 1400, logistics: 2818, remote: 7272, pack: 400, exchange: 2818, refund: 2818 };   // 🧾 카카오 공식 견적서 = 전부 공급가(VAT 별도). 각인 1,400 · 일반물류 2,818 · 도서산간 7,272 · 포장 400 · 교환/환불 2,818 (각 ×수량, 부가세 10% 별도)
 var _kkoBillSel = new Set();
 var _kkoBillRemote = {};   // {id:true} — 도서산간 지정
 var _kkoBillMonth = '';    // 📅 청구월 필터 ('' = 전체, 'YYYY-MM' = 해당 월만)
@@ -14573,11 +14573,11 @@ function openKakaoBillModal(){
     +   _kkoMonthSel
     +   _kkoReissueToggle
     +   '<label style="display:flex;align-items:center;gap:5px">각인비 <input type="number" id="kko_engrave" value="'+KKO_FEE.engrave+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도)</span></label>'
-    +   '<label style="display:flex;align-items:center;gap:5px">물류비 <input type="number" id="kko_logi" value="'+KKO_FEE.logistics+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함)</span></label>'
-    +   '<label style="display:flex;align-items:center;gap:5px">도서산간 <input type="number" id="kko_remote" value="'+KKO_FEE.remote+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함)</span></label>'
-    +   '<label style="display:flex;align-items:center;gap:5px">포장 용역비 <input type="number" id="kko_pack" value="'+KKO_FEE.pack+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도 · 배송건당)</span></label>'
-    +   '<label style="display:flex;align-items:center;gap:5px">교환 물류비 <input type="number" id="kko_exchange" value="'+KKO_FEE.exchange+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함 · 교환건당)</span></label>'
-    +   '<label style="display:flex;align-items:center;gap:5px">환불 물류비 <input type="number" id="kko_refund" value="'+KKO_FEE.refund+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 포함 · 환불건당)</span></label>'
+    +   '<label style="display:flex;align-items:center;gap:5px">물류비 <input type="number" id="kko_logi" value="'+KKO_FEE.logistics+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도·일반배송)</span></label>'
+    +   '<label style="display:flex;align-items:center;gap:5px">도서산간 <input type="number" id="kko_remote" value="'+KKO_FEE.remote+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도·도서배송)</span></label>'
+    +   '<label style="display:flex;align-items:center;gap:5px">포장 용역비 <input type="number" id="kko_pack" value="'+KKO_FEE.pack+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도 · 주문 라인당)</span></label>'
+    +   '<label style="display:flex;align-items:center;gap:5px">교환 물류비 <input type="number" id="kko_exchange" value="'+KKO_FEE.exchange+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도 · 교환건당)</span></label>'
+    +   '<label style="display:flex;align-items:center;gap:5px">환불 물류비 <input type="number" id="kko_refund" value="'+KKO_FEE.refund+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도 · 환불건당)</span></label>'
     +   '<label style="display:flex;align-items:center;gap:5px;margin-left:auto">발행일 <input type="date" id="kko_date" value="'+new Date().toISOString().slice(0,10)+'" style="padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit"></label>'
     + '</div>'
     + '<div id="kkoBillBody" style="overflow:auto;flex:1;padding:0 20px"></div>'
@@ -14647,19 +14647,19 @@ function _kkoBillCalc(){
   var _ret = _kkoReturnFiltered();
   var xn = _ret.filter(function(io){ return io.returnType==='교환' && !io.billNo; }).length;
   var rn = _ret.filter(function(io){ return io.returnType==='환불' && !io.billNo; }).length;
-  // 각인비: VAT 별도 → 공급가 그대로 (✍ 각인 새긴 제품 engN건만, 미각인 noEngN건 제외)
+  // 💡 카카오 공식 견적서 방식: 모든 단가 = '공급가(VAT 별도)'. 부가세 = 공급가 × 10%.
+  //    · 물류비 = 일반 배송(ships-m)만  · 도서산간(m)은 별도 단가로 대체(추가가 아님)
+  //    · 포장 = 주문 라인수(n)  (수량 아님 — 카카오 견적서 기준)  · 각인 = 각인 제품 수량(engN)
+  var genShips = Math.max(0, ships - m);                 // 일반 배송 건수(도서산간 제외)
   var engSupply = eng * engN, engTax = Math.round(engSupply*0.1);
-  // 물류비·도서산간: VAT 포함 → 공급가 = 총액/1.1  (🚚 합배송 = 송장 단위로 1회만)
-  var logiTotal = logi * ships, logiSupply = Math.round(logiTotal/1.1), logiTax = logiTotal - logiSupply;
-  var rmtTotal = rmt * m,  rmtSupply = Math.round(rmtTotal/1.1),  rmtTax = rmtTotal - rmtSupply;
-  // 포장 용역비: VAT 별도 → 공급가 그대로 (제품 수량당, 합배송이어도 제품별 부과)
-  var packSupply = pack * prodQty, packTax = Math.round(packSupply*0.1);
-  // 교환·환불 물류비: VAT 포함 → 공급가 = 총액/1.1
-  var exchTotal = exch * xn, exchSupply = Math.round(exchTotal/1.1), exchTax = exchTotal - exchSupply;
-  var refuTotal = refu * rn, refuSupply = Math.round(refuTotal/1.1), refuTax = refuTotal - refuSupply;
+  var logiSupply = logi * genShips, logiTax = Math.round(logiSupply*0.1), logiTotal = logiSupply + logiTax;
+  var rmtSupply  = rmt * m,         rmtTax  = Math.round(rmtSupply*0.1),  rmtTotal  = rmtSupply + rmtTax;
+  var packSupply = pack * n,        packTax = Math.round(packSupply*0.1);
+  var exchSupply = exch * xn, exchTax = Math.round(exchSupply*0.1), exchTotal = exchSupply + exchTax;
+  var refuSupply = refu * rn, refuTax = Math.round(refuSupply*0.1), refuTotal = refuSupply + refuTax;
   var supply = engSupply + logiSupply + rmtSupply + packSupply + exchSupply + refuSupply;
   var tax = engTax + logiTax + rmtTax + packTax + exchTax + refuTax;
-  return { n:n, prodQty:prodQty, engN:engN, noEngN:noEngN, ships:ships, m:m, eng:eng, logi:logi, rmt:rmt, pack:pack, exch:exch, refu:refu, xn:xn, rn:rn,
+  return { n:n, prodQty:prodQty, engN:engN, noEngN:noEngN, ships:ships, genShips:genShips, m:m, eng:eng, logi:logi, rmt:rmt, pack:pack, exch:exch, refu:refu, xn:xn, rn:rn,
            engSupply:engSupply, engTax:engTax,
            logiSupply:logiSupply, logiTax:logiTax, logiTotal:logiTotal,
            rmtSupply:rmtSupply, rmtTax:rmtTax, rmtTotal:rmtTotal,
@@ -14702,12 +14702,12 @@ function _kkoBillRender(){
   foot.innerHTML = '<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">'
     + '<div style="font-size:12px;color:var(--t2);line-height:1.9;flex:1;min-width:280px">'
     +   '<div>각인비 <b>'+c.engN+'개</b> × '+_w(c.eng)+' <span style="color:var(--t3)">(VAT별도·각인 제품 수량)</span> → 공급가 <b>'+_w(c.engSupply)+'</b> · 부가세 '+_w(c.engTax)+(c.noEngN?' <span style="color:var(--org)">· 미각인 '+c.noEngN+'개 제외</span>':'')+'</div>'
-    +   '<div>물류비 <b>'+c.ships+'건</b> × '+_w(c.logi)+' <span style="color:var(--t3)">(VAT포함·합배송 송장당)</span> → 공급가 <b>'+_w(c.logiSupply)+'</b> · 부가세 '+_w(c.logiTax)+'</div>'
-    +   (c.m ? '<div>도서산간 <b>'+c.m+'건</b> × '+_w(c.rmt)+' <span style="color:var(--t3)">(VAT포함·송장당)</span> → 공급가 <b>'+_w(c.rmtSupply)+'</b> · 부가세 '+_w(c.rmtTax)+'</div>' : '')
-    +   (c.pack ? '<div>포장 용역비 <b>'+c.prodQty+'개</b> × '+_w(c.pack)+' <span style="color:var(--t3)">(VAT별도·제품 수량당)</span> → 공급가 <b>'+_w(c.packSupply)+'</b> · 부가세 '+_w(c.packTax)+(c.prodQty>c.n?' <span style="color:var(--t3)">· 라인 '+c.n+'건 중 수량 '+c.prodQty+'개</span>':'')+'</div>' : '')
-    +   ((c.n>c.ships) ? '<div style="color:var(--grn);font-size:11px">🚚 합배송 적용: 출고 '+c.n+'건 → 배송 '+c.ships+'건 (같은 송장번호 '+(c.n-c.ships)+'건 물류비 중복 제외 · 포장은 제품당 · 각인비는 각인 제품만)</div>' : '')
-    +   (c.xn ? '<div>교환 물류비 <b>'+c.xn+'건</b> × '+_w(c.exch)+' <span style="color:var(--t3)">(VAT포함·요청일 기준)</span> → 공급가 <b>'+_w(c.exchSupply)+'</b> · 부가세 '+_w(c.exchTax)+'</div>' : '')
-    +   (c.rn ? '<div>환불 물류비 <b>'+c.rn+'건</b> × '+_w(c.refu)+' <span style="color:var(--t3)">(VAT포함·요청일 기준)</span> → 공급가 <b>'+_w(c.refuSupply)+'</b> · 부가세 '+_w(c.refuTax)+'</div>' : '')
+    +   '<div>물류비 <b>'+c.genShips+'건</b> × '+_w(c.logi)+' <span style="color:var(--t3)">(VAT별도·일반 배송 송장당)</span> → 공급가 <b>'+_w(c.logiSupply)+'</b> · 부가세 '+_w(c.logiTax)+'</div>'
+    +   (c.m ? '<div>도서산간 <b>'+c.m+'건</b> × '+_w(c.rmt)+' <span style="color:var(--t3)">(VAT별도·도서 배송 송장당)</span> → 공급가 <b>'+_w(c.rmtSupply)+'</b> · 부가세 '+_w(c.rmtTax)+'</div>' : '')
+    +   (c.pack ? '<div>포장 용역비 <b>'+c.n+'건</b> × '+_w(c.pack)+' <span style="color:var(--t3)">(VAT별도·주문 라인당)</span> → 공급가 <b>'+_w(c.packSupply)+'</b> · 부가세 '+_w(c.packTax)+'</div>' : '')
+    +   ((c.n>c.ships) ? '<div style="color:var(--grn);font-size:11px">🚚 합배송 적용: 출고 '+c.n+'건 → 배송 '+c.ships+'건 (같은 송장번호 '+(c.n-c.ships)+'건 물류비 중복 제외 · 포장은 라인당 · 각인비는 각인 제품만)</div>' : '')
+    +   (c.xn ? '<div>교환 물류비 <b>'+c.xn+'건</b> × '+_w(c.exch)+' <span style="color:var(--t3)">(VAT별도·요청일 기준)</span> → 공급가 <b>'+_w(c.exchSupply)+'</b> · 부가세 '+_w(c.exchTax)+'</div>' : '')
+    +   (c.rn ? '<div>환불 물류비 <b>'+c.rn+'건</b> × '+_w(c.refu)+' <span style="color:var(--t3)">(VAT별도·요청일 기준)</span> → 공급가 <b>'+_w(c.refuSupply)+'</b> · 부가세 '+_w(c.refuTax)+'</div>' : '')
     + '</div>'
     + '<div style="text-align:right;min-width:180px">'
     +   '<div style="font-size:11.5px;color:var(--t3)">공급가액 '+_w(c.supply)+' · 부가세 '+_w(c.tax)+'</div>'
@@ -14724,16 +14724,14 @@ async function _kkoBillIssue(){
   var _billIds = _kkoShippedFiltered().filter(function(io){ return (_kkoBillReissue || !io.billNo) && _kkoBillSel.has(String(io.id)); }).map(function(io){ return String(io.id); });
   var issuedAt = (document.getElementById('kko_date')||{}).value || new Date().toISOString().slice(0,10);
   var _reN = _kkoShippedFiltered().filter(function(io){ return io.billNo && _kkoBillSel.has(String(io.id)); }).length;
-  if(!confirm((_kkoBillReissue?'♻ 재발행 — 이미 청구된 '+_reN+'건을 새 명세서로 재발행합니다.\n(기존 명세서는 자동 삭제되지 않으니 SCM>거래명세서에서 정리하세요)\n\n':'')+'카카오에 청구할 거래명세서를 발행합니다.\n\n· 출고 '+c.n+'건 → 배송 '+c.ships+'건'+((c.n>c.ships)?(' (합배송 '+(c.n-c.ships)+'건 물류비 중복 제외)'):'')+' · 도서산간 '+c.m+'건\n· 제품 수량 '+c.prodQty+'개 (각인 '+c.engN+' / 미각인 '+c.noEngN+') → 포장 '+c.prodQty+'개, 각인비 '+c.engN+'개'+((c.xn||c.rn)?('\n· 교환 '+c.xn+'건 · 환불 '+c.rn+'건'):'')+'\n· 공급가액 ₩'+c.supply.toLocaleString()+' / 부가세 ₩'+c.tax.toLocaleString()+'\n· 합계 ₩'+c.total.toLocaleString()+'\n\n계속할까요?')) return;
+  if(!confirm((_kkoBillReissue?'♻ 재발행 — 이미 청구된 '+_reN+'건을 새 명세서로 재발행합니다.\n(기존 명세서는 자동 삭제되지 않으니 SCM>거래명세서에서 정리하세요)\n\n':'')+'카카오에 청구할 거래명세서를 발행합니다.\n\n· 출고 '+c.n+'라인 → 배송 '+c.ships+'건 (일반 '+c.genShips+' + 도서산간 '+c.m+')'+((c.n>c.ships)?(' · 합배송 '+(c.n-c.ships)+'건 물류비 제외'):'')+'\n· 포장 '+c.n+'건 · 각인 '+c.engN+'개 (미각인 '+c.noEngN+' 제외)'+((c.xn||c.rn)?('\n· 교환 '+c.xn+'건 · 환불 '+c.rn+'건'):'')+'\n· 공급가액 ₩'+c.supply.toLocaleString()+' / 부가세 ₩'+c.tax.toLocaleString()+'\n· 합계 ₩'+c.total.toLocaleString()+'\n\n계속할까요?')) return;
   var items = [];
   if(c.engN) items.push({ name:'각인비', code:'', qty:c.engN, unit:c.eng, amt:c.engSupply, note:'각인 제품 수량당 '+c.eng.toLocaleString()+'원 (부가세 별도)'+(c.noEngN?(' · 미각인 '+c.noEngN+'개 제외'):'') });
-  if(c.n){
-    items.push({ name:'물류비', code:'', qty:c.ships, unit:Math.round(c.logiSupply/(c.ships||1)), amt:c.logiSupply, note:'배송(송장)당 '+c.logi.toLocaleString()+'원 (부가세 포함) — 합배송 1회'+((c.n>c.ships)?(' · 출고 '+c.n+'건→배송 '+c.ships+'건'):'') });
-  }
-  if(c.m) items.push({ name:'도서산간 추가배송비', code:'', qty:c.m, unit:Math.round(c.rmtSupply/(c.m||1)), amt:c.rmtSupply, note:'배송(송장)당 '+c.rmt.toLocaleString()+'원 (부가세 포함)' });
-  if(c.pack && c.prodQty) items.push({ name:'포장 용역비', code:'', qty:c.prodQty, unit:c.pack, amt:c.packSupply, note:'제품 수량당 '+c.pack.toLocaleString()+'원 (부가세 별도) — 배송비와 별도 청구' });
-  if(c.xn) items.push({ name:'교환 물류비', code:'', qty:c.xn, unit:Math.round(c.exchSupply/(c.xn||1)), amt:c.exchSupply, note:'교환 건당 '+c.exch.toLocaleString()+'원 (부가세 포함)' });
-  if(c.rn) items.push({ name:'환불 물류비', code:'', qty:c.rn, unit:Math.round(c.refuSupply/(c.rn||1)), amt:c.refuSupply, note:'환불 건당 '+c.refu.toLocaleString()+'원 (부가세 포함)' });
+  if(c.genShips) items.push({ name:'물류비', code:'', qty:c.genShips, unit:c.logi, amt:c.logiSupply, note:'일반 배송(송장)당 '+c.logi.toLocaleString()+'원 (부가세 별도) — 합배송 1회'+((c.n>c.ships)?(' · 출고 '+c.n+'라인→배송 '+c.ships+'건'):'') });
+  if(c.m) items.push({ name:'도서산간 배송비', code:'', qty:c.m, unit:c.rmt, amt:c.rmtSupply, note:'도서 배송(송장)당 '+c.rmt.toLocaleString()+'원 (부가세 별도)' });
+  if(c.pack && c.n) items.push({ name:'포장 용역비', code:'', qty:c.n, unit:c.pack, amt:c.packSupply, note:'주문 라인당 '+c.pack.toLocaleString()+'원 (부가세 별도) — 배송비와 별도 청구' });
+  if(c.xn) items.push({ name:'교환 물류비', code:'', qty:c.xn, unit:c.exch, amt:c.exchSupply, note:'교환 건당 '+c.exch.toLocaleString()+'원 (부가세 별도)' });
+  if(c.rn) items.push({ name:'환불 물류비', code:'', qty:c.rn, unit:c.refu, amt:c.refuSupply, note:'환불 건당 '+c.refu.toLocaleString()+'원 (부가세 별도)' });
   var invNo = 'KKO-'+issuedAt.replace(/-/g,'').slice(2)+'-'+String((invoiceHistory.filter(function(v){return String(v.invNo||'').startsWith('KKO-');}).length||0)+1).padStart(2,'0');
   var inv = {
     id: (typeof genId==='function' ? genId() : Date.now()),
