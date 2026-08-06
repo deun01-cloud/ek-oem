@@ -11405,11 +11405,15 @@ function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
     //    → 스냅샷이면 잘못된 묘비로 보고 제거하고 항목을 수용한다.
     //    (단, 실시간 단건 change는 아래 차단 유지 — 방금 내가 지운 걸 상대가 되살리는 핑퐁 방지)
     if(isSnapshot){
+      // 🛡️ io는 예외: 사용자가 명시적으로 지운 입출고 건은 스냅샷이 되살리지 못하게 '삭제 영구 유지'.
+      //    (서버가 아직 그 건을 스냅샷에 실어보내도 무시 → "지워도 계속 되살아남/숫자 안 바뀜"의 근본 차단)
+      //    묘비는 30일 TTL이며, 오삭제 복구는 clearTombstones()/_unmarkNotionIdDeleted()로 가능.
+      if(type === 'io'){ return; }
       try{
         var _ts2 = (typeof _loadTombstones==='function') ? _loadTombstones() : null;
         if(_ts2 && _ts2[item._notionId]){ delete _ts2[item._notionId]; if(typeof _saveTombstones==='function') _saveTombstones(_ts2); }
       }catch(_){}
-      // 묘비 제거 후 계속 진행 (return 안 함)
+      // (io 외 타입) 묘비 제거 후 계속 진행 (return 안 함)
     } else {
       return;
     }
