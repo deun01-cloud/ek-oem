@@ -9507,6 +9507,26 @@ function deleteInvRecord(id){
     // 2) 로컬에서 제거
     invoiceHistory=invoiceHistory.filter(function(x){return x.id!=id;});
     if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
+    // 🧾 정산 명세서 삭제 → 그 명세서로 청구됐던 출고·교환·환불 건을 다시 '미청구'로 복원.
+    //    (billNo가 이 명세서 번호와 같거나, 카카오 _kkoIds에 포함된 io를 해제)
+    try{
+      var _inv = String(v.invNo||'').trim();
+      var _kset = (Array.isArray(v._kkoIds) ? new Set(v._kkoIds.map(String)) : null);
+      if((_inv || _kset) && typeof ioItems!=='undefined' && Array.isArray(ioItems)){
+        var _reverted=0;
+        ioItems.forEach(function(io){
+          if(!io || !io.billNo) return;
+          var hit = (_inv && String(io.billNo)===_inv) || (_kset && _kset.has(String(io.id)));
+          if(hit){ io.billNo=''; io._ts=Date.now(); _reverted++;
+            try{ if(typeof syncIOToNotion==='function') syncIOToNotion(io); }catch(_e){} }
+        });
+        if(_reverted){
+          if(typeof save==='function') save();
+          try{ if(typeof _renderIoCommerce==='function') _renderIoCommerce(); }catch(_e){}
+          showToast('↩ '+_reverted+'건이 미청구로 복원됐습니다','var(--grn)',3500);
+        }
+      }
+    }catch(_e){ console.warn('명세서 삭제 후 미청구 복원 실패:', _e); }
     save();renderInvoiceHistory();
     // 🌐 실시간 동기화 — _notionId 기반으로 다른 기기에서도 즉시 삭제
     if(typeof realtimeDelete === 'function') realtimeDelete('invoice', v);
@@ -14351,7 +14371,9 @@ async function syncStockHistToNotion(h){
     "참조라벨": {rich_text:[{text:{content: (h.refLabel||'').slice(0,500)}}]},
     "메모": {rich_text:[{text:{content: (h.note||'').slice(0,2000)}}]},
   };
-  if(h.when) props["변동일시"] = {date:{start: h.when, is_datetime: true}};
+  // 📅 변동일시: 노션 생성 API의 date 객체는 start/end만 받음 (is_datetime는 무효 키 → 400 거부됨).
+  //    ISO 문자열이면 노션이 자동으로 날짜/시간 판정. 유효한 날짜일 때만 전송.
+  if(h.when){ var _w=String(h.when).trim(); if(_w && !isNaN(new Date(_w).getTime())) props["변동일시"] = {date:{start:_w}}; }
   try{
     const res = await nCreate(notionCfg.stockHistDb, props);
     if(res?.id){ h._notionId = res.id; return true; }
