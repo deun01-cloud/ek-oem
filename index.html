@@ -11199,6 +11199,55 @@ async function _rtRestorePendingToServer(){
 // 수신 핸들러 — 다른 기기 변경을 로컬에 반영
 // ────────────────────────────────────────────────
 
+// 🧹 입출고 중복 제거 — 같은 주문(주문번호) / 같은 배송라인(송장+수령인+옵션)이 여러 번
+//    들어간 것을 하나로 합친다. 자연키 없는(일반 입출고 등) 항목은 절대 건드리지 않음.
+function _ioDupKey(io){
+  if(!io) return null;
+  var brand = String(io.brand||'');
+  if(!brand) return null;                                   // 커머스(자체 브랜드) 건만 대상 — 일반 입출고 보호
+  var ord = String(io.orderNo||'').trim();
+  if(ord) return brand+'|o:'+ord;
+  var inv = String(io.invoice||'').replace(/[-\s]/g,'').trim();
+  if(inv){
+    var opt = String(io.option||'').replace(/\s+/g,'').trim();
+    var rcp = String(io.recipient||'').trim();
+    return brand+'|i:'+inv+'|'+rcp+'|'+opt;
+  }
+  return null;
+}
+function _dedupIoItems(){
+  if(typeof ioItems==='undefined' || !Array.isArray(ioItems)) return 0;
+  var groups={}, order=[];
+  ioItems.forEach(function(io){ var k=_ioDupKey(io); if(!k) return; if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(io); });
+  var removeIds={}, removed=0;
+  order.forEach(function(k){
+    var arr=groups[k]; if(arr.length<2) return;
+    // 대표 선정: _notionId 있음 > 정산완료(billNo) > 재출고 완료 > 반품상태 있음 순으로 우선
+    arr.sort(function(a,b){ return (b._notionId?1:0)-(a._notionId?1:0) || (b.billNo?1:0)-(a.billNo?1:0) || (b.exchReshipped?1:0)-(a.exchReshipped?1:0) || (b.returnStatus?1:0)-(a.returnStatus?1:0); });
+    var keep=arr[0];
+    for(var i=1;i<arr.length;i++){
+      var d=arr[i];
+      // 중요한 상태 정보는 대표로 보존
+      if(!keep.billNo && d.billNo) keep.billNo=d.billNo;
+      if((!keep.returnStatus || keep.returnStatus==='정상') && d.returnStatus && d.returnStatus!=='정상'){
+        keep.returnStatus=d.returnStatus; keep.returnType=d.returnType; keep.returnReason=d.returnReason;
+        keep.returnRequestedAt=d.returnRequestedAt; keep.returnCompletedAt=d.returnCompletedAt;
+      }
+      if(!keep.exchReshipped && d.exchReshipped){
+        keep.exchReshipped=true; keep.exchNewCode=d.exchNewCode; keep.exchNewName=d.exchNewName;
+        keep.exchNewOption=d.exchNewOption; keep.exchReshipDate=d.exchReshipDate; keep.exchReshipInvoice=d.exchReshipInvoice;
+      }
+      if(_ioStage(keep)!=='shipped' && _ioStage(d)==='shipped'){ keep.shipStage='shipped'; if(!keep.shipDate) keep.shipDate=d.shipDate; }
+      removeIds[String(d.id)]=1; removed++;
+    }
+  });
+  if(removed){
+    ioItems = ioItems.filter(function(io){ return !removeIds[String(io.id)]; });
+    console.log('[io-dedup] 중복', removed, '건 정리 (로컬)');
+  }
+  return removed;
+}
+window.dedupIo = function(){ var n=_dedupIoItems(); if(typeof save==='function') save(); if(typeof renderTab==='function') try{renderTab();}catch(e){} console.log('중복 제거:', n, '건'); return n; };
 function _rtHandleSnapshot(msg){
   // 초기 스냅샷 수신 — 서버 데이터를 로컬에 머지
   // (서버가 비어있으면 items=[], 무시)
@@ -11222,31 +11271,18 @@ function _rtHandleSnapshot(msg){
     //      → 한 기기라도 완전한 노션 세트를 로드하면 서버가 완전해지고, 모든 기기가 같은 합집합으로 수렴한다.
     if(msg.type === 'io'){
       try{
-        var _srvKeys = new Set();
         msg.items.forEach(function(it){
           if(!it) return;
-          var k = it._notionId || (it.id!==undefined ? String(it.id) : null);
-          if(k) _srvKeys.add(k);
           _applyRemoteItem('io', it, msg.ts || Date.now(), null, true);
         });
-        // 서버 스냅샷에 없는 로컬(노션 동기화된) io 항목 → 서버로 재발행하여 서버 복구
-        try{
-          var _ioArr = _rtGetLocalArray('io') || [];
-          var _healed = 0;
-          _ioArr.forEach(function(io){
-            if(!io || !io._notionId) return;                                   // 노션 미동기 임시항목은 제외
-            if(_srvKeys.has(io._notionId)) return;                             // 이미 서버에 있음
-            if(io.id!==undefined && _srvKeys.has(String(io.id))) return;
-            if(typeof _isNotionIdDeleted==='function' && _isNotionIdDeleted(io._notionId)) return; // 삭제된 건 재발행 금지
-            try{ if(typeof realtimePublish==='function'){ realtimePublish('io', io); _healed++; } }catch(_e){}
-          });
-          if(_healed>0) console.log(RT_LOG_PREFIX, '🩹 io 서버 복구: 서버 스냅샷 누락분', _healed, '건 로컬→서버 재발행');
-        }catch(_e){}
+        // 🧹 중복 제거 안전장치 — 합집합 병합이 자연키 어긋난 항목을 중복 추가해도 즉시 하나로 합침.
+        //    (이전 버전의 '서버 복구 재발행'은 중복·루프를 유발해 제거함)
+        try{ if(typeof _dedupIoItems==='function') _dedupIoItems(); }catch(_e){}
         if(typeof save==='function') save();
         _rtSuppressRefresh = true;
         try{ if(typeof renderTab==='function'){ renderTab(); updateBadges(); } }catch(_){}
         finally{ _rtSuppressRefresh = false; }
-        console.log(RT_LOG_PREFIX, '🩹 io 서버 스냅샷 합집합 머지:', msg.items.length, '건 수신 (교체 대신 병합)');
+        console.log(RT_LOG_PREFIX, 'io 서버 스냅샷 병합 + 중복정리:', msg.items.length, '건 수신');
       }catch(e){ console.warn('io 스냅샷 머지 실패:', e.message); }
       return;
     }
@@ -14007,6 +14043,7 @@ async function pullFromNotion(opts){
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
     ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files','exchNewCode','exchNewName','exchNewOption','exchReshipInvoice','exchReshipDate','exchReshipped'], '입출고',   notionCfg.ioDb);
+    try{ if(typeof _dedupIoItems==='function') _dedupIoItems(); }catch(_e){}   // 🧹 노션 풀 후 중복 제거 안전장치
     // 🛡 [FIX] 동기화 직후 학습식 자동매칭 적용 — 이전에 매칭해둔 (품목+옵션)과 같은 새 주문을
     //    UI 조작 없이 자동으로 매칭한다. 매칭 링크가 노션에 보존되므로 매 동기화마다 유효.
     try{ if(typeof _autoApplyIoMatchLearning==='function') _autoApplyIoMatchLearning(); }catch(e){}
@@ -20348,6 +20385,7 @@ function load(){
   if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   if((v=loadKey(SK.sh,'재고이력'))!==undefined) stockHistory=v;
   if((v=loadKey(SK.io,'입출고'))!==undefined) ioItems=v;
+  try{ if(typeof _dedupIoItems==='function'){ var _dn=_dedupIoItems(); if(_dn) console.log('[boot] io 중복', _dn, '건 정리'); } }catch(_e){}  // 🧹 로드 시 중복 제거 안전장치
   // 🧹 로드 직후 저장공간 정리 — R2 URL이 있는데 base64도 함께 들고 있으면 base64 제거(중복).
   //    R2 업로드 실패로 base64만 쌓여 localStorage가 꽉 차 저장이 막히는 문제를 완화한다.
   try{ _cleanupBase64Duplicates(); }catch(e){ console.warn('[cleanup] base64 정리 실패:', e); }
