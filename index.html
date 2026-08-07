@@ -5135,13 +5135,25 @@ function _saveCatSel(a){ try{ localStorage.setItem(CAT_SEL_KEY, JSON.stringify(a
 // 카탈로그 항목 식별 키 (code 우선 → id → name)
 function _catItemKey(x){ return String((x&&(x.code||x.id||x.name))||''); }
 // 개별 선택/해제
-function _toggleCatSel(key, on){
+function _toggleCatSel(key, on, el){
   var sel=_loadCatSel();
   var idx=sel.indexOf(key);
   if(on){ if(idx<0) sel.push(key); }
   else { if(idx>=0) sel.splice(idx,1); }
   _saveCatSel(sel);
-  if(typeof renderProducts==='function') renderProducts();
+  // '선택만 보기'가 켜져 있으면 목록 자체가 바뀌므로 전체 재렌더
+  if(typeof catSelOnly!=='undefined' && catSelOnly){ if(typeof renderProducts==='function') renderProducts(); return; }
+  // 🚀 부분 갱신 — 클릭한 카드 하나 + 선택 카운트만 (6천 카드 전체 재렌더 방지, 클릭 즉시 반응)
+  try{
+    var card = (el && el.closest) ? el.closest('.cat-card') : null;
+    if(card){
+      card.style.border = '1px solid '+(on?'var(--gold)':'var(--bdr)');
+      card.style.boxShadow = on ? '0 0 0 2px var(--gold-bg)' : '';
+    }
+  }catch(e){}
+  var n=sel.length;
+  var cs=document.getElementById('catSelCount'); if(cs) cs.textContent='선택 '+n+'건';
+  var pb=document.getElementById('catPdfBtn'); if(pb) pb.innerHTML='📄 PDF 출력'+(n?(' (선택 '+n+')'):'');
 }
 // 현재 화면(필터)에 보이는 항목 전체 선택
 function _catSelectAllVisible(){
@@ -6339,12 +6351,12 @@ function _renderCatalog(){
       <label style="font-size:12px;color:var(--t2);display:flex;align-items:center;gap:5px;cursor:pointer" title="체크한 항목만 화면에 표시">
         <input type="checkbox" ${catSelOnly?'checked':''} onchange="catSelOnly=this.checked;renderProducts()"> 선택만 보기
       </label>
-      <span style="font-size:12px;color:var(--gold-lt);font-weight:700">선택 ${_loadCatSel().length}건</span>
+      <span id="catSelCount" style="font-size:12px;color:var(--gold-lt);font-weight:700">선택 ${_loadCatSel().length}건</span>
       <button onclick="_catSelectAllVisible()" style="font-size:11px;color:var(--t2);background:var(--s1);border:1px solid var(--bdr);border-radius:6px;padding:4px 9px;cursor:pointer;font-family:inherit" title="현재 화면 목록 전체 선택">＋ 보이는 항목 전체선택</button>
       <button onclick="_catClearSel()" style="font-size:11px;color:var(--t3);background:none;border:none;cursor:pointer;text-decoration:underline;font-family:inherit">선택 해제</button>
       <button onclick="catType='전체';catMat='전체';catPlating='전체';catSearch='';catPriceMin='';catPriceMax='';catSource='all';catSelOnly=false;renderProducts()" style="font-size:11px;color:var(--t3);background:none;border:none;cursor:pointer;text-decoration:underline;font-family:inherit">필터 초기화</button>
       <div style="margin-left:auto;display:flex;gap:6px">
-        <button onclick="_catalogPDF()" style="padding:7px 14px;border-radius:7px;font-size:12px;font-weight:700;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold-lt);cursor:pointer;font-family:inherit" title="선택 항목이 있으면 그것만, 없으면 필터 전체를 PDF로">📄 PDF 출력${_loadCatSel().length?` (선택 ${_loadCatSel().length})`:''}</button>
+        <button id="catPdfBtn" onclick="_catalogPDF()" style="padding:7px 14px;border-radius:7px;font-size:12px;font-weight:700;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold-lt);cursor:pointer;font-family:inherit" title="선택 항목이 있으면 그것만, 없으면 필터 전체를 PDF로">📄 PDF 출력${_loadCatSel().length?` (선택 ${_loadCatSel().length})`:''}</button>
         <button onclick="_catalogShareLink()" style="padding:7px 14px;border-radius:7px;font-size:12px;font-weight:700;border:1px solid var(--bdr);background:var(--s1);color:var(--t2);cursor:pointer;font-family:inherit">🔗 공유 링크</button>
       </div>
     </div>
@@ -6370,8 +6382,8 @@ function _renderCatalog(){
     const spec=[x.type,x.mat,x.plating].filter(Boolean).join(' · ');
     const badge=x._src==='drop'?`<span style="position:absolute;top:8px;left:8px;background:rgba(180,140,40,.9);color:#fff;font-size:9px;font-weight:700;padding:2px 7px;border-radius:7px">오픈</span>`:'';
     const checkBtn=`<label onclick="event.stopPropagation()" style="position:absolute;top:6px;right:6px;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:rgba(255,255,255,.92);border-radius:7px;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.2)" title="PDF에 담기 선택">
-        <input type="checkbox" ${on?'checked':''} onchange="_toggleCatSel('${key.replace(/'/g,"\\'")}',this.checked)" style="width:16px;height:16px;cursor:pointer;accent-color:var(--gold)"></label>`;
-    return `<div style="border:1px solid ${on?'var(--gold)':'var(--bdr)'};border-radius:10px;overflow:hidden;background:var(--s1);${on?'box-shadow:0 0 0 2px var(--gold-bg)':''}">
+        <input type="checkbox" ${on?'checked':''} onchange="_toggleCatSel('${key.replace(/'/g,"\\'")}',this.checked,this)" style="width:16px;height:16px;cursor:pointer;accent-color:var(--gold)"></label>`;
+    return `<div class="cat-card" style="border:1px solid ${on?'var(--gold)':'var(--bdr)'};border-radius:10px;overflow:hidden;background:var(--s1);${on?'box-shadow:0 0 0 2px var(--gold-bg)':''}">
       <div style="position:relative;background:var(--s2)" class="${x.img?'':'noimg2'}">${img}${badge}${checkBtn}</div>
       <div style="padding:10px 11px">
         <div style="font-size:12.5px;font-weight:700;color:var(--t1);line-height:1.3;margin-bottom:2px">${(x.name||'').replace(/</g,'&lt;')}</div>
