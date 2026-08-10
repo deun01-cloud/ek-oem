@@ -46063,7 +46063,17 @@ function go(id,el){
     try{ if(typeof renderPurchase==='function') renderPurchase(); }catch(e){}
     try{ _initSalesAccordion(); }catch(e){}
   }
-  if(id==='pnl') calcPnL();
+  if(id==='pnl'){
+    calcPnL();
+    // 🛠 공장 인보이스 원가 누락 수정 — 손익계산을 새로고침 직후 바로 열면
+    //    _board.cn(공장 인보이스 게시판)이 아직 로드 전이라 원가가 0으로 잡히던 문제.
+    //    보드가 미로드면 지금 로드하고 재계산(데이터입력 탭을 거치지 않아도 반영).
+    try{
+      if(!_boardLoaded['cn'] && typeof loadBoardFiles==='function'){
+        loadBoardFiles('cn').then(function(){ try{ if(typeof _renderBoardRows==='function') _renderBoardRows(); }catch(_){} try{ calcPnL(); }catch(_){} }).catch(function(){});
+      }
+    }catch(e){}
+  }
   if(id==='archive'){
     try{
       var aup=document.getElementById('arc-up-period');
@@ -49087,44 +49097,70 @@ function renderMonthlyPnlTable(host){
     var months=[];
     for(var i=5;i>=0;i--){ var d=new Date(now.getFullYear(), now.getMonth()-i, 1); months.push({key:d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0'), label:(d.getMonth()+1)+'월'}); }
     var tR=0,tC=0,tF=0,tO=0, anyRec=false;
-    var rows = months.map(function(m){
+    months.forEach(function(m){
       var r=db[m.key];
-      if(!r) return '<tr><td style="padding:7px 6px"><b>'+m.label+'</b></td><td colspan="5" style="padding:7px 6px;text-align:center;color:var(--hi)">— (미저장)</td></tr>';
-      anyRec=true;
-      var rev=+r.rev||0, cogs=+r.cogs||0, fixed=+r.fixed||0, op=rev-cogs-fixed;
-      var ratio=rev>0?Math.round(cogs/rev*1000)/10:0;
-      tR+=rev; tC+=cogs; tF+=fixed; tO+=op;
-      var status=ratio>50?'🔴':ratio>35?'🟡':'🟢';
+      if(!r){ m.has=false; return; }
+      m.has=true; anyRec=true;
+      m.rev=+r.rev||0; m.cogs=+r.cogs||0; m.fixed=+r.fixed||0; m.op=m.rev-m.cogs-m.fixed;
+      m.margin = m.rev>0 ? Math.round(m.op/m.rev*1000)/10 : null;   // 영업이익률(%)
+      tR+=m.rev; tC+=m.cogs; tF+=m.fixed; tO+=m.op;
+    });
+    // 영업이익률 기준 이모지: 적자 🔴 · 0~10% 🟠 · 10~20% 🟡 · 20%+ 🟢
+    function _mEmoji(op, mg){ if(op<0||mg==null) return '🔴'; if(mg>=20) return '🟢'; if(mg>=10) return '🟡'; return '🟠'; }
+    var rows = months.map(function(m){
+      if(!m.has) return '<tr><td style="padding:7px 6px"><b>'+m.label+'</b></td><td colspan="5" style="padding:7px 6px;text-align:center;color:var(--hi)">— (미저장)</td></tr>';
+      var mgTxt = (m.rev>0) ? (m.margin+'%') : '—';
       return '<tr>'
         +'<td style="padding:7px 6px"><b>'+m.label+'</b></td>'
-        +'<td style="padding:7px 6px;text-align:right">'+won(rev)+'</td>'
-        +'<td style="padding:7px 6px;text-align:right">'+won(cogs)+'</td>'
-        +'<td style="padding:7px 6px;text-align:right">'+won(fixed)+'</td>'
-        +'<td style="padding:7px 6px;text-align:right;font-weight:700;color:'+(op>=0?'var(--gr)':'var(--rd)')+'">'+won(op)+'</td>'
-        +'<td style="padding:7px 6px;text-align:right">'+ratio+'% '+status+'</td>'
+        +'<td style="padding:7px 6px;text-align:right">'+won(m.rev)+'</td>'
+        +'<td style="padding:7px 6px;text-align:right">'+won(m.cogs)+'</td>'
+        +'<td style="padding:7px 6px;text-align:right">'+won(m.fixed)+'</td>'
+        +'<td style="padding:7px 6px;text-align:right;font-weight:700;color:'+(m.op>=0?'var(--gr)':'var(--rd)')+'">'+won(m.op)+'</td>'
+        +'<td style="padding:7px 6px;text-align:right;font-weight:700;color:'+(m.op>=0?'var(--gr)':'var(--rd)')+'">'+mgTxt+' '+_mEmoji(m.op,m.margin)+'</td>'
         +'</tr>';
     }).join('');
-    var tRatio = tR>0?Math.round(tC/tR*1000)/10:0;
+    var tMargin = tR>0?Math.round(tO/tR*1000)/10:0;
     var foot = '<tr style="border-top:2px solid var(--line);font-weight:700;background:var(--bg-2,transparent)">'
       +'<td style="padding:8px 6px">합계</td>'
       +'<td style="padding:8px 6px;text-align:right">'+won(tR)+'</td>'
       +'<td style="padding:8px 6px;text-align:right">'+won(tC)+'</td>'
       +'<td style="padding:8px 6px;text-align:right">'+won(tF)+'</td>'
       +'<td style="padding:8px 6px;text-align:right;color:'+(tO>=0?'var(--gr)':'var(--rd)')+'">'+won(tO)+'</td>'
-      +'<td style="padding:8px 6px;text-align:right">'+tRatio+'%</td>'
+      +'<td style="padding:8px 6px;text-align:right;color:'+(tO>=0?'var(--gr)':'var(--rd)')+'">'+tMargin+'%</td>'
       +'</tr>';
     var card = document.createElement('div');
     card.className='card'; card.id='mgt-monthly-pnl'; card.style.marginTop='14px';
     card.innerHTML = '<div class="card-h"><div class="card-t">월별 손익계산 (최근 6개월)</div><div class="card-badge">저장된 월 스냅샷 기준</div></div>'
+      + '<div style="padding:12px 14px 4px;height:190px"><canvas id="mgt-monthly-pnl-chart"></canvas></div>'
       + '<div style="padding:6px 12px 12px;overflow-x:auto">'
       + '<table style="width:100%;border-collapse:collapse;font-size:12.5px">'
       + '<thead><tr style="color:var(--mu);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em">'
-      + '<th style="padding:8px 6px;text-align:left">월</th><th style="padding:8px 6px;text-align:right">매출</th><th style="padding:8px 6px;text-align:right">매입원가</th><th style="padding:8px 6px;text-align:right">고정비</th><th style="padding:8px 6px;text-align:right">영업이익</th><th style="padding:8px 6px;text-align:right">원가율</th>'
+      + '<th style="padding:8px 6px;text-align:left">월</th><th style="padding:8px 6px;text-align:right">매출</th><th style="padding:8px 6px;text-align:right">매입원가</th><th style="padding:8px 6px;text-align:right">고정비</th><th style="padding:8px 6px;text-align:right">영업이익</th><th style="padding:8px 6px;text-align:right">영업이익률</th>'
       + '</tr></thead><tbody>'+rows+foot+'</tbody></table>'
       + (anyRec?'':'<div style="font-size:11.5px;color:var(--hi);padding:10px 4px">아직 저장된 월별 손익이 없습니다 — 데이터 입력 후 상단 <b>💾 지금 저장</b>을 누르면 그 달 손익이 이 표에 쌓입니다.</div>')
-      + '<div style="font-size:10.5px;color:var(--mu);padding:8px 4px 0">※ 영업이익 = 매출 − 매입원가 − 고정비 · 각 월은 해당 월 <b>저장 스냅샷</b> 기준 (미저장 월은 “—”)</div>'
+      + '<div style="font-size:10.5px;color:var(--mu);padding:8px 4px 0">※ 영업이익 = 매출 − 매입원가 − 고정비 · 영업이익률 = 영업이익 ÷ 매출 · 각 월은 저장 스냅샷 기준 (미저장 월은 “—”)</div>'
       + '</div>';
     host.appendChild(card);
+    // 📈 그래프 — 매출(막대) + 영업이익(선)
+    try{
+      if(window.Chart){
+        var cv=document.getElementById('mgt-monthly-pnl-chart');
+        if(cv){
+          if(Chart.getChart){ var ex=Chart.getChart(cv); if(ex) ex.destroy(); }
+          new Chart(cv, {
+            type:'bar',
+            data:{ labels:months.map(function(m){return m.label;}),
+              datasets:[
+                {label:'매출', data:months.map(function(m){return m.has?m.rev:0;}), backgroundColor:'#4f46e5', borderRadius:4, order:2},
+                {label:'영업이익', type:'line', data:months.map(function(m){return m.has?m.op:null;}), borderColor:'#16a34a', backgroundColor:'#16a34a', tension:0.3, spanGaps:true, order:1}
+              ]},
+            options:{ responsive:true, maintainAspectRatio:false,
+              scales:{ y:{ beginAtZero:true, ticks:{ callback:function(v){ return (typeof chartTick==='function')?chartTick(v):v; } } } },
+              plugins:{ legend:{ position:'bottom', labels:{ font:{size:11} } } } }
+          });
+        }
+      }
+    }catch(e){ console.warn('월별 손익 차트 실패:', e&&e.message); }
   }catch(e){ console.warn('월별 손익표 렌더 실패:', e && e.message); }
 }
 
