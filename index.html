@@ -43520,22 +43520,22 @@ function renderBoard(forceReload){
   var wrapE = document.getElementById('board-body-exp');
   var wrapC = document.getElementById('board-body-cn');
   if(!wrapE && !wrapC) return;
-  // 📌 지출내역서 '항목'(S.exp)은 파일과 별개로 노션 COGS에서 로드된다.
-  //    이 보드를 열 때 해당 월 항목이 아직 로드되지 않았으면 함께 불러온다 (파일만 보이던 문제 해결).
-  try{
-    var _per = (document.getElementById('g-period')||{}).value||'';
-    window._fpPeriodTried = window._fpPeriodTried || {};
-    if(forceReload && _per) delete window._fpPeriodTried[_per];
-    if(_per && !window._fpPeriodTried[_per] && typeof loadPeriodFromNotion==='function'){
-      window._fpPeriodTried[_per] = true;
-      loadPeriodFromNotion(_per, true).then(function(){ _renderBoardRows(); }).catch(function(){});
-    }
-  }catch(e){}
+  // 📌 지출내역서 '항목'(S.exp, 첨부 포함)과 파일 목록을 "함께" 로드한 뒤 한 번에 렌더한다.
+  //    (과거엔 파일이 먼저 로드돼 항목보다 빨리 그려지면서 첨부가 '연결 안 됨'으로 풀려 보이던 문제 해결)
+  var _per = '';
+  try{ _per = (document.getElementById('g-period')||{}).value||''; }catch(e){}
+  window._fpPeriodTried = window._fpPeriodTried || {};
+  if(forceReload && _per) delete window._fpPeriodTried[_per];
   var needExp = forceReload || !_boardLoaded['exp'];
   var needCn  = forceReload || !_boardLoaded['cn'];
   if(needExp && wrapE) wrapE.innerHTML = '<div class="empty" style="padding:16px"><div class="empty-ico">⏳</div><div style="font-size:12px;color:var(--mu)">불러오는 중...</div></div>';
   if(needCn && wrapC)  wrapC.innerHTML = '<div class="empty" style="padding:16px"><div class="empty-ico">⏳</div><div style="font-size:12px;color:var(--mu)">불러오는 중...</div></div>';
   var jobs = [];
+  // 지출 항목(첨부 포함)을 파일과 같은 배치에 넣어, 항목이 로드되기 전에 파일만 먼저 그려지는 일이 없게 한다.
+  if(_per && !window._fpPeriodTried[_per] && typeof loadPeriodFromNotion==='function'){
+    window._fpPeriodTried[_per] = true;
+    jobs.push(loadPeriodFromNotion(_per, true).catch(function(){}));
+  }
   if(needExp) jobs.push(loadBoardFiles('exp'));
   if(needCn)  jobs.push(loadBoardFiles('cn'));
   if(jobs.length){
@@ -48504,7 +48504,12 @@ async function loadPeriodFromNotion(period, silent){
       _merged.forEach(function(it){
         var key=(it.vendor||'')+'|'+Math.round(it.amount||0)+'|'+(it.period||period)+'|'+(it.category||(it._paid?'영수':'청구'));
         if(_ck[key]===undefined){ _ck[key]=_final.length; _final.push(it); }
-        else if(!_final[_ck[key]]._pageId && it._pageId){ _final[_ck[key]]=it; }
+        else {
+          var cur=_final[_ck[key]];
+          // 더 완전한 쪽(서버연결 _pageId · 첨부 많은 쪽)을 남긴다 — 첨부가 사라지지 않게
+          var better=(!cur._pageId && it._pageId) || ((it.files||[]).length > (cur.files||[]).length);
+          if(better) _final[_ck[key]]=it;
+        }
       });
       S.exp=_final; markDz('dz-exp','i-exp','s-exp','[Notion] '+period,_de.length+'건');
     }
