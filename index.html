@@ -4153,11 +4153,17 @@ function deleteSelectedAS(){
     // 로컬 삭제
     toDelete.forEach(id=>{
       const item=asItems.find(x=>String(x.id)===String(id));
-      // Notion에서도 삭제
-      if(item && item._notionId && notionCfg.workerUrl){
-        setTimeout(()=>{
-          nDelete(item._notionId).catch(e=>console.warn('Notion 삭제 실패:',e));
-        }, 50);
+      if(!item) return;
+      // 🛠 서버(realtime)에도 삭제 전파 — 안 하면 다른 사용자에게 되살아남
+      try{ if(typeof realtimeDelete==='function') realtimeDelete('as', item); }catch(e){}
+      // Notion에서도 삭제 (+ 묘비 등록 — 재유입 방지)
+      if(item._notionId){
+        try{ if(typeof _markNotionIdDeleted==='function') _markNotionIdDeleted(item._notionId,'as'); }catch(e){}
+        if(notionCfg.workerUrl){
+          setTimeout(()=>{
+            nDelete(item._notionId).catch(e=>console.warn('Notion 삭제 실패:',e));
+          }, 50);
+        }
       }
     });
     asItems = asItems.filter(x=>!_asSelected.has(String(x.id)));
@@ -11406,6 +11412,22 @@ function _rtGetLocalArray(type){
 
 function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
   if(!item) return;
+  // 🛠 checklist는 주간/월간 두 배열로 나뉘어 별도 라우팅 (다중 사용자 실시간 반영)
+  if(type === 'checklist'){
+    try{
+      var _clArr = (item.monthKey) ? (typeof monthChecklist!=='undefined'?monthChecklist:null)
+                                   : (typeof weekChecklist!=='undefined'?weekChecklist:null);
+      if(!_clArr) return;
+      var _clKey = item._notionId || (item.id!=null?String(item.id):null);
+      if(!_clKey) return;
+      var _ci = _clArr.findIndex(function(x){ var k=x._notionId||(x.id!=null?String(x.id):null); return k===_clKey; });
+      if(_ci>=0){ _clArr[_ci] = Object.assign({}, _clArr[_ci], item); }
+      else { _clArr.push(Object.assign({}, item)); }
+      if(typeof saveChecklists==='function') saveChecklists();
+      if(typeof renderChecklistBody==='function'){ try{ renderChecklistBody(); }catch(_){} }
+    }catch(e){}
+    return;
+  }
   const arr = _rtGetLocalArray(type);
   if(!arr) return;
   // 매칭 키: _notionId가 있으면 그것으로, 없으면 id로
@@ -11561,6 +11583,20 @@ function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
 
 function _applyRemoteDelete(type, id, ts){
   if(id === undefined || id === null) return;
+  // 🛠 checklist 삭제 — 주간/월간 두 배열 모두에서 제거
+  if(type === 'checklist'){
+    try{
+      var _ks=String(id);
+      [ (typeof weekChecklist!=='undefined'?weekChecklist:null), (typeof monthChecklist!=='undefined'?monthChecklist:null) ].forEach(function(_a){
+        if(!_a) return;
+        var _i=_a.findIndex(function(x){ var k=x._notionId||(x.id!=null?String(x.id):null); return k===_ks; });
+        if(_i>=0) _a.splice(_i,1);
+      });
+      if(typeof saveChecklists==='function') saveChecklists();
+      if(typeof renderChecklistBody==='function'){ try{ renderChecklistBody(); }catch(_){} }
+    }catch(e){}
+    return;
+  }
   const arr = _rtGetLocalArray(type);
   if(!arr) return;
   const keyStr = String(id);
@@ -15783,12 +15819,14 @@ function rematchAllIoProducts(){
   });
   // 2) 미매칭 건에 사전 적용 + 사전에 없으면 제품DB 텍스트 매칭 시도
   let byDict=0, byAuto=0;
+  const _changed=[];   // 🛠 바뀐 io는 서버·노션에 동기화해야 다른 사용자/새로고침에 유지됨
   ioItems.forEach(io=>{
     if(io._matchedProductCode) return;
     const key=_ioMatchKey(io); if(!key) return;
     if(dict[key]){
       io._matchedProductCode=dict[key].code; io._matchedProductName=dict[key].name;
       io.matchStatus='자동매칭'; io._ts=Date.now(); byDict++;
+      _changed.push(io);
       return;
     }
     if(typeof _matchProductByText==='function'){
@@ -15797,6 +15835,7 @@ function rematchAllIoProducts(){
         io._matchedProductCode=m.product.code; io._matchedProductName=m.product.name||'';
         io.matchStatus='자동매칭'; io._ts=Date.now(); byAuto++;
         dict[key]={code:m.product.code, name:m.product.name||''};
+        _changed.push(io);
       }
     }
   });
@@ -15815,8 +15854,10 @@ function rematchAllIoProducts(){
     return;
   }
   save();
+  // 🛠 바뀐 매칭을 서버·노션에 반영 (안 하면 로컬 전용 → 새로고침/다른 기기에서 소실)
+  _changed.forEach(function(io){ try{ if(typeof syncIOToNotion==='function') syncIOToNotion(io); }catch(e){} });
   showToast(`🔗 ${total}건 매칭 완료 (기존 매칭 학습 ${byDict} · 자동 ${byAuto})`,'var(--grn)',4000);
-  console.log('[제품매칭] 사전적용',byDict,'건 / 자동매칭',byAuto,'건');
+  console.log('[제품매칭] 사전적용',byDict,'건 / 자동매칭',byAuto,'건 · 서버동기화',_changed.length,'건');
   _renderIoCommerce();
 }
 
@@ -17016,7 +17057,7 @@ function _renderCommercePreview(){
   const stockDemand = {}; // {productId: totalQty}
   rows.forEach(r => {
     if(r.matched && r.matched.id != null){
-      stockDemand[r.matched.id] = (stockDemand[r.matched.id]||0) + 1; // 한 행 = 1개 기본
+      stockDemand[r.matched.id] = (stockDemand[r.matched.id]||0) + (parseInt(r.qty,10)||1); // 🛠 행별 실제 수량
     }
   });
   // 각 행에 "차감 후 재고" 계산 (등장 순서대로 누적)
@@ -17024,7 +17065,7 @@ function _renderCommercePreview(){
   rows.forEach(r => {
     if(r.matched && r.matched.id != null){
       const pid = r.matched.id;
-      running[pid] = (running[pid]||0) + 1;
+      running[pid] = (running[pid]||0) + (parseInt(r.qty,10)||1);   // 🛠 행별 실제 수량
       const currentStock = +r.matched.stock || 0;
       r._stockAfter = currentStock - running[pid];
       r._stockBefore = currentStock;
@@ -17455,10 +17496,8 @@ async function confirmReturnComplete(ioId){
   save();
   showToast(`✓ ${type} 완료${stockMsg}`, 'var(--grn)', 3000);
   renderIo();
-  // 노션 입출고 동기화
-  if(notionCfg.workerUrl && notionCfg.ioDb && io._notionId){
-    syncIOToNotion(io).then(ok => { if(ok) save(); });
-  }
+  // 🛠 서버·노션 즉시 동기화 (_notionId 없어도 syncIOToNotion이 페이지 생성 — 로컬 전용/소실 방지)
+  try{ if(typeof debouncedSync==='function') debouncedSync('io', io, true); }catch(e){}
 }
 
 // 입고 확인을 되돌리기 (재고 다시 -1, 요청 상태로 복귀)
@@ -17489,9 +17528,7 @@ async function undoReturnComplete(ioId){
   save();
   showToast(`↶ 되돌림 — ${type} 요청 상태`, 'var(--org)', 2500);
   renderIo();
-  if(notionCfg.workerUrl && notionCfg.ioDb && io._notionId){
-    syncIOToNotion(io).then(ok => { if(ok) save(); });
-  }
+  try{ if(typeof debouncedSync==='function') debouncedSync('io', io, true); }catch(e){}
 }
 
 // 교환/환불 요청 자체 취소 (실수로 등록한 경우)
@@ -17508,9 +17545,7 @@ async function cancelReturn(ioId){
   save();
   showToast('✓ 요청 취소됨', 'var(--t3)', 2000);
   renderIo();
-  if(notionCfg.workerUrl && notionCfg.ioDb && io._notionId){
-    syncIOToNotion(io).then(ok => { if(ok) save(); });
-  }
+  try{ if(typeof debouncedSync==='function') debouncedSync('io', io, true); }catch(e){}
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -17690,7 +17725,7 @@ async function _registerCommerce(){
       if(!stockChanges[pid]){
         stockChanges[pid] = {product: row.matched, qty: 0};
       }
-      stockChanges[pid].qty += 1;
+      stockChanges[pid].qty += (parseInt(row.qty,10)||1);   // 🛠 행별 실제 수량
     }
   });
   const stockChangeCount = Object.keys(stockChanges).length;
@@ -17751,12 +17786,13 @@ async function _registerCommerce(){
   _commerceUploadRows.forEach((row, i) => {
     if(row.matched && row.matched.id != null){
       const io = toRegister[i];
+      const _qd = (parseInt(row.qty,10)||1);   // 🛠 실제 수량만큼 차감 (삭제 복원 시 +qty와 대칭 — 유령재고 방지)
       const ok = applyStockChange({
         productId: row.matched.id,
-        delta: -1, // 커머스는 한 행당 1개
+        delta: -_qd,
         type: 'commerce_ship',
         refId: io.id,
-        refLabel: `🛍 ${brand} / ${row.recipient||'주문'} / ${date}`,
+        refLabel: `🛍 ${brand} / ${row.recipient||'주문'} / ${date}${_qd>1?' ×'+_qd:''}`,
         note: `${io.title}`
       });
       if(ok){
@@ -21057,6 +21093,8 @@ function applyStockChange({productId, delta, type, refId, refLabel, note}){
   try{ if(typeof realtimePublish==='function') realtimePublish('stockhist', h); }catch(e){}
   // 📊 Notion 재고변동이력 DB에 즉시 기록 (협업: 다른 사람도 변동 내역을 봄)
   try{ if(typeof syncStockHistToNotion==='function') syncStockHistToNotion(h).then(()=>{ if(typeof save==='function') save(); }).catch(()=>{}); }catch(e){}
+  // 🛠 제품 재고 자체도 서버·노션에 즉시 반영 — 다른 사용자 재고 수치가 실시간 갱신되도록
+  try{ if(typeof debouncedSync==='function') debouncedSync('product', p, true); }catch(e){}
   return true;
 }
 
@@ -30701,11 +30739,19 @@ function deleteProc(){
   s.status='확정';
   const ord={id:Date.now(),vendor:s.manager||'',date:todayStr,ship:s.due||'',no:genOrderNo(s.manager||'', todayStr),manager:'',memo:`샘플 확정 자동전환: ${s.name}`,rows:[{name:s.name,qty:s.qty||'',plating:s.plating||'',mat:s.mat||'',size:s.sz1||'',note:''}]};
   orders.push(ord);
-  if(s.due)procItems.push({id:Date.now()+1,name:s.name,vendor:(s.manager||'').substring(0,8),qty:s.qty||'',due:s.due,stageIdx:0,note:`확정: ${s.name}`,shipped:false});
+  let _newProc=null;
+  if(s.due){ _newProc={id:Date.now()+1,name:s.name,vendor:(s.manager||'').substring(0,8),qty:s.qty||'',due:s.due,stageIdx:0,note:`확정: ${s.name}`,shipped:false}; procItems.push(_newProc); }
   // 노션 동기화
   if(s._notionId && typeof debouncedSync === 'function'){
     debouncedSync('sample', s, true);
   }
+  // 🛠 자동 생성된 주문·발주도 서버·노션에 전파 (안 하면 로컬 전용 → 다른 사용자는 자동 발주를 못 봄)
+  try{
+    if(typeof debouncedSync === 'function'){
+      debouncedSync('order', ord, false);
+      if(_newProc) debouncedSync('proc', _newProc, false);
+    }
+  }catch(e){}
   save();closeM('mSmp');showToast(`✓ "${s.name}" 완료 처리 + 발주서 자동 생성`);renderTab();updateBadges();
 }
 
@@ -33471,14 +33517,16 @@ function addChecklistItem(){
     weekChecklist.push(newItem);
   }
   saveChecklists();inp.value='';renderChecklistBody();
-  // 노션 동기화 (백그라운드)
+  // 노션 동기화 (백그라운드) + 🛠 서버 실시간 전파 (다른 사용자도 즉시 봄)
   syncChecklistItemToNotion(newItem, _checklistMode, false);
+  try{ if(typeof realtimePublish==='function') realtimePublish('checklist', newItem); }catch(e){}
 }
 function toggleChecklist(idx){
   const list=_checklistMode==='month'?monthChecklist:weekChecklist;
   if(list[idx]){
     list[idx].done=!list[idx].done;
     syncChecklistItemToNotion(list[idx], _checklistMode, true);
+    try{ if(typeof realtimePublish==='function') realtimePublish('checklist', list[idx]); }catch(e){}
   }
   saveChecklists();renderChecklistBody();
 }
@@ -33486,6 +33534,7 @@ function deleteChecklist(idx){
   const list=_checklistMode==='month'?monthChecklist:weekChecklist;
   if(list[idx]){
     deleteChecklistFromNotion(list[idx]._notionId);
+    try{ if(typeof realtimeDelete==='function') realtimeDelete('checklist', list[idx]); }catch(e){}
   }
   list.splice(idx,1);saveChecklists();renderChecklistBody();
 }
@@ -33494,6 +33543,7 @@ function toggleChecklistInline(mode,idx){
   if(list[idx]){
     list[idx].done=!list[idx].done;
     syncChecklistItemToNotion(list[idx], mode, true);
+    try{ if(typeof realtimePublish==='function') realtimePublish('checklist', list[idx]); }catch(e){}
   }
   saveChecklists();if(currentTab==='schedule')renderSchedContent();
 }
@@ -35772,7 +35822,7 @@ function openQuoteModal(idOrNull){
         </select>
       </div>
       <div class="fg" style="display:flex;align-items:center;gap:6px;padding-top:18px">
-        <input type="checkbox" id="qt_vatIncluded" ${(q&&q.vatIncluded)?'checked':'checked'}>
+        <input type="checkbox" id="qt_vatIncluded" ${(q&&q.vatIncluded===false)?'':'checked'}>
         <label for="qt_vatIncluded" style="margin:0;cursor:pointer">부가세 포함 (10%)</label>
       </div>
     </div>
@@ -36930,7 +36980,8 @@ async function saveQuote(forceOverwrite){
 
   // 합계 계산
   const supply = _qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.unitPrice||0),0);
-  const tax = Math.round(supply*0.1);
+  const _vatInc = !!document.getElementById('qt_vatIncluded')?.checked;   // 🛠 '부가세 포함' 체크 반영 (해제 시 VAT 0)
+  const tax = _vatInc ? Math.round(supply*0.1) : 0;
   const total = supply+tax;
   // 내부 원가 합계 (수량 반영) — 노션 "중국입고원가합계" 필드에 저장
   const cnCostTotal = Math.round(_qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.cnPrice||0)*QUOTE_CN_RATE, 0));
@@ -36949,7 +37000,7 @@ async function saveQuote(forceOverwrite){
     validUntil: gv('qt_valid') || defaultValidUntil(issuedAt),
     status: gv('qt_status') || '작성중',
     type: gv('qt_type') || '신규',
-    vatIncluded: !!document.getElementById('qt_vatIncluded')?.checked,
+    vatIncluded: _vatInc,
     payment: gv('qt_payment'),
     // 📌 선금 % (0~100). 입력되면 PDF에서 "선금 X% (₩금액), 잔금 Y% (₩금액)" 자동 표시.
     //    빈값이면 payment 텍스트만 사용.
@@ -37044,7 +37095,9 @@ function deleteQuote(){
   const q = quotes.find(x=>String(x.id)===String(id));
   if(!q) return;
   showConfirm(`견적서 "${q.no||q.vendor||''}"을(를) 삭제합니다.`,()=>{
-    if(q._notionId) deleteQuoteFromNotion(q);
+    // 🛠 서버(realtime) 삭제는 _notionId 유무와 무관하게 항상 — 안 하면 서버에 남아 되살아남
+    try{ if(typeof realtimeDelete==='function') realtimeDelete('quote', q); }catch(e){}
+    if(q._notionId){ try{ if(typeof _markNotionIdDeleted==='function') _markNotionIdDeleted(q._notionId,'quote'); }catch(e){} deleteQuoteFromNotion(q); }
     quotes = quotes.filter(x=>String(x.id)!==String(id));
     slSave();
     closeM('mQuote');
@@ -40971,8 +41024,11 @@ function deleteStandaloneInvoice(){
       const result = applyInvoiceStockChange(v.items, +1);
       restoredCount = result.changed.length;
     }
+    // 🛠 묘비 + 서버(realtime) 삭제 — 안 하면 (1) 다른 사용자에게 안 지워지고 (2) 노션 archive 실패 시 되살아남(좀비)
+    if(v._notionId){ try{ if(typeof _markNotionIdDeleted==='function') _markNotionIdDeleted(v._notionId,'invoice'); }catch(e){} }
+    try{ if(typeof realtimeDelete==='function') realtimeDelete('invoice', v); }catch(e){}
     if(v._notionId && notionCfg.workerUrl && notionCfg.invDb){
-      try{ nUpdate(v._notionId, {}, true).catch(e=>console.warn('노션 archive 실패:',e)); }catch(e){}
+      try{ nUpdate(v._notionId, {}, true).catch(e=>{ console.warn('노션 archive 실패:',e); try{ if(typeof _enqueueNotionArchiveRetry==='function') _enqueueNotionArchiveRetry(v._notionId,'invoice'); }catch(_){} }); }catch(e){}
     }
     invoiceHistory = invoiceHistory.filter(x=>String(x.id)!==String(id));
     if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
@@ -41011,6 +41067,7 @@ function buildQuoteHtml(q){
   const supply = +q.supplyAmt||0;
   const tax = +q.tax||0;
   const total = +q.total||0;
+  const _vi = (q.vatIncluded !== false);   // 🛠 VAT 포함 여부 (미설정=포함으로 간주, 명시적 false만 별도)
 
   const rowsHtml = (q.rows||[]).map((r,i)=>`
     <tr>
@@ -41061,7 +41118,7 @@ function buildQuoteHtml(q){
     <div style="font-size:11.5px;color:#444;margin:10px 0 8px">귀사의 일익번창을 기원합니다. 아래와 같이 견적을 제출하오니 검토하여 주시기 바랍니다.</div>
 
     <div style="background:#f0e9d8;border:2px solid #b59850;border-radius:6px;padding:12px 16px;margin-bottom:14px;text-align:center">
-      <span style="font-size:12px;color:#7a5a18;font-weight:600">합 계 금 액 (VAT 포함)</span>
+      <span style="font-size:12px;color:#7a5a18;font-weight:600">합 계 금 액 (${_vi?'VAT 포함':'VAT 별도'})</span>
       <span style="font-size:22px;font-weight:700;color:#7a5a18;margin-left:10px">${fmt(total)}</span>
       <span style="font-size:12px;color:#7a5a18">원정</span>
     </div>
@@ -41083,7 +41140,7 @@ function buildQuoteHtml(q){
       <tbody style="border:1px solid #ddd">${rowsHtml}</tbody>
       <tfoot style="border-top:2px solid #3a6b3a">
         <tr><td colspan="8" style="padding:6px 10px;text-align:right;font-size:11px;color:#666">공급가액</td><td style="padding:6px 10px;text-align:right;font-size:11px">${fmt(supply)}</td></tr>
-        <tr><td colspan="8" style="padding:6px 10px;text-align:right;font-size:11px;color:#666">부가세 (10%)</td><td style="padding:6px 10px;text-align:right;font-size:11px">${fmt(tax)}</td></tr>
+        ${_vi?`<tr><td colspan="8" style="padding:6px 10px;text-align:right;font-size:11px;color:#666">부가세 (10%)</td><td style="padding:6px 10px;text-align:right;font-size:11px">${fmt(tax)}</td></tr>`:'<tr><td colspan="8" style="padding:6px 10px;text-align:right;font-size:11px;color:#666">부가세</td><td style="padding:6px 10px;text-align:right;font-size:11px">별도</td></tr>'}
         <tr style="background:#f0e9d8"><td colspan="8" style="padding:8px 10px;text-align:right;font-size:12px;font-weight:700;color:#7a5a18">합 계</td><td style="padding:8px 10px;text-align:right;font-size:13px;font-weight:700;color:#7a5a18">${fmt(total)}</td></tr>
       </tfoot>
     </table>
