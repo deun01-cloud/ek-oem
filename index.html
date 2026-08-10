@@ -48498,7 +48498,15 @@ async function loadPeriodFromNotion(period, silent){
       var _merged=Object.keys(_mById).map(function(k){return _mById[k];});
       // 다른 기간의 로컬 항목은 그대로 유지
       (S.exp||[]).forEach(function(it){ if(it && (it.period||period)!==period) _merged.push(it); });
-      S.exp=_merged; markDz('dz-exp','i-exp','s-exp','[Notion] '+period,_de.length+'건');
+      // 🧹 같은 내용(거래처|금액|기간|구분) 중복은 서버연결(_pageId) 항목을 우선해 1건으로 정리.
+      //    (다른 기기의 미저장 사본이 노션 정본과 겹칠 때 중복표시/중복저장 방지)
+      var _ck={}, _final=[];
+      _merged.forEach(function(it){
+        var key=(it.vendor||'')+'|'+Math.round(it.amount||0)+'|'+(it.period||period)+'|'+(it.category||(it._paid?'영수':'청구'));
+        if(_ck[key]===undefined){ _ck[key]=_final.length; _final.push(it); }
+        else if(!_final[_ck[key]]._pageId && it._pageId){ _final[_ck[key]]=it; }
+      });
+      S.exp=_final; markDz('dz-exp','i-exp','s-exp','[Notion] '+period,_de.length+'건');
     }
     var cnArr=Object.keys(loaded.cnList).map(function(k){return loaded.cnList[k];});
     if(cnArr.length){ S.cnList=cnArr; S.cn=cnArr[0]; markDz('dz-cn','i-cn','s-cn','[Notion] '+period,cnArr.length+'개 · USD '+cnArr.reduce(function(s,i){return s+i.usd;},0).toFixed(0)); }
