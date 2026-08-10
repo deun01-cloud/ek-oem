@@ -49105,8 +49105,11 @@ function renderMonthlyPnlTable(host){
       m.margin = m.rev>0 ? Math.round(m.op/m.rev*1000)/10 : null;   // 영업이익률(%)
       tR+=m.rev; tC+=m.cogs; tF+=m.fixed; tO+=m.op;
     });
-    // 영업이익률 기준 이모지: 적자 🔴 · 0~10% 🟠 · 10~20% 🟡 · 20%+ 🟢
-    function _mEmoji(op, mg){ if(op<0||mg==null) return '🔴'; if(mg>=20) return '🟢'; if(mg>=10) return '🟡'; return '🟠'; }
+    // 영업이익률 상태 점 — 이모지(🟢🟡) 대신 CSS 색상 점(폰트 미지원 □ 방지). 적자=빨강·0~10%=주황·10~20%=노랑·20%+=초록
+    function _mEmoji(op, mg){
+      var c = (op<0||mg==null) ? '#dc2626' : (mg>=20 ? '#16a34a' : (mg>=10 ? '#eab308' : '#f59e0b'));
+      return '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+c+';vertical-align:middle;margin-left:4px"></span>';
+    }
     var rows = months.map(function(m){
       if(!m.has) return '<tr><td style="padding:7px 6px"><b>'+m.label+'</b></td><td colspan="5" style="padding:7px 6px;text-align:center;color:var(--hi)">— (미저장)</td></tr>';
       var mgTxt = (m.rev>0) ? (m.margin+'%') : '—';
