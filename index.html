@@ -1406,6 +1406,7 @@ window.addEventListener('message', function(ev){
         <button class="btn btn-sm" onclick="MGT.addOtherSales('as')">+ 행 추가</button>
         <button class="btn btn-sm btn-ac" onclick="document.getElementById('fi-as-sales').click()">📥 엑셀</button>
         <input type="file" id="fi-as-sales" accept=".xlsx,.xls,.csv" style="display:none" onchange="MGT.lfOtherSales(this,'as')">
+        <button class="btn btn-sm btn-gr" onclick="MGT.saveOtherSalesNow('as')" title="AS 매출을 노션에 즉시 저장">💾 저장</button>
       </div>
     </div>
     <div style="padding:14px 16px">
@@ -1424,6 +1425,7 @@ window.addEventListener('message', function(ev){
         <button class="btn btn-sm" onclick="MGT.addOtherSales('commerce')">+ 행 추가</button>
         <button class="btn btn-sm btn-ac" onclick="document.getElementById('fi-cm-sales').click()">📥 엑셀</button>
         <input type="file" id="fi-cm-sales" accept=".xlsx,.xls,.csv" style="display:none" onchange="MGT.lfOtherSales(this,'commerce')">
+        <button class="btn btn-sm btn-gr" onclick="MGT.saveOtherSalesNow('commerce')" title="커머스 매출을 노션에 즉시 저장">💾 저장</button>
       </div>
     </div>
     <div style="padding:14px 16px">
@@ -35111,8 +35113,125 @@ function _vaultRenderList(){
   }).join('');
 }
 
+// ── 📝 회사 메모장 (문서 탭) — 로컬 + 노션 저장 ──
+var MEMO_DB = 'a407d2bc9a7a43f3a8bc4d96c01a36d7';   // 📝 회사 메모 (EK OEM 통합관리 하위)
+var MEMO_CATS = ['일반','계약','재무','거래처','아이디어','기타'];
+var _memoEditId = null;
+function _memoLoad(){ try{ return JSON.parse(localStorage.getItem('EK_COMPANY_MEMOS')||'[]'); }catch(e){ return []; } }
+function _memoSaveLocal(a){ try{ localStorage.setItem('EK_COMPANY_MEMOS', JSON.stringify(a||[])); }catch(e){} }
+function _memoEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _memoProps(m){
+  return {
+    '제목':{title:[{text:{content:(m.title||'(제목 없음)').slice(0,200)}}]},
+    '내용':{rich_text:[{text:{content:(m.body||'').slice(0,1900)}}]},
+    '분류':{select:{name:m.cat||'일반'}},
+    '작성일':{date:{start:m.date||new Date().toISOString().slice(0,10)}},
+    '작성자':{rich_text:[{text:{content:(m.author||'').slice(0,80)}}]}
+  };
+}
+async function _memoNotionCreate(m){
+  try{
+    if(typeof nCreate!=='function' || !notionCfg || !notionCfg.workerUrl) return null;
+    var d=await nCreate(MEMO_DB, _memoProps(m));
+    return (d && d.id) ? d.id : null;
+  }catch(e){ console.warn('[메모 노션 생성]', e.message); return null; }
+}
+async function _memoNotionUpdate(m){
+  if(!m._notionId) return _memoNotionCreate(m);
+  try{ if(typeof nUpdate==='function') await nUpdate(m._notionId, _memoProps(m)); return m._notionId; }
+  catch(e){ console.warn('[메모 노션 수정]', e.message); return m._notionId; }
+}
+async function _memoNotionDelete(nid){
+  if(!nid) return;
+  try{ if(typeof notionCall==='function') await notionCall('PATCH','/pages/'+nid,{archived:true},{bypassCircuit:true}); }catch(e){ console.warn('[메모 노션 삭제]', e.message); }
+}
+async function _memoLoadFromNotion(){
+  try{
+    if(typeof notionCall!=='function' || !notionCfg || !notionCfg.workerUrl) return;
+    var d=await notionCall('POST','/databases/'+MEMO_DB.replace(/-/g,'')+'/query',{page_size:100},{bypassCircuit:true});
+    if(!d||!d.results) return;
+    function txt(o){ if(!o) return ''; if(o.title&&o.title.length) return o.title.map(function(t){return t.plain_text||'';}).join(''); if(o.rich_text&&o.rich_text.length) return o.rich_text.map(function(t){return t.plain_text||'';}).join(''); return ''; }
+    var remote=d.results.map(function(p){ var pr=p.properties||{}; return { _notionId:p.id, title:txt(pr['제목']), body:txt(pr['내용']), cat:(pr['분류']&&pr['분류'].select&&pr['분류'].select.name)||'일반', date:(pr['작성일']&&pr['작성일'].date&&pr['작성일'].date.start)||'', author:txt(pr['작성자']) }; });
+    var local=_memoLoad(); var byNid={}; local.forEach(function(m){ if(m._notionId) byNid[m._notionId]=m; });
+    remote.forEach(function(r){ if(byNid[r._notionId]){ Object.assign(byNid[r._notionId], r); } else { r.id=Date.now()+Math.floor(Math.random()*100000); local.unshift(r); } });
+    _memoSaveLocal(local); _renderMemos();
+  }catch(e){ console.warn('[메모 노션 로드]', e.message); }
+}
+function _renderMemos(){
+  var host=document.getElementById('memo-list'); if(!host) return;
+  var list=_memoLoad().slice().sort(function(a,b){ return String(b.date||'').localeCompare(String(a.date||'')); });
+  var stat=document.getElementById('memo-stat'); if(stat) stat.textContent=list.length?(list.length+'개'):'';
+  if(!list.length){ host.innerHTML='<div style="text-align:center;color:var(--t3);font-size:12px;padding:16px 0">기록된 메모가 없습니다</div>'; return; }
+  var colors={일반:'#888',계약:'#3a6b94',재무:'#3a8b4a',거래처:'#c07a2a',아이디어:'#7a4db5',기타:'#999'};
+  host.innerHTML=list.map(function(m){
+    var cc=colors[m.cat]||'#888';
+    return '<div style="border:1px solid var(--bdr);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--s1)">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
+      +'<span style="font-size:10px;font-weight:700;color:#fff;background:'+cc+';padding:1px 7px;border-radius:8px">'+_memoEsc(m.cat||'일반')+'</span>'
+      +'<span style="font-size:12.5px;font-weight:700;color:var(--t1);flex:1">'+_memoEsc(m.title||'(제목 없음)')+'</span>'
+      +'<span style="font-size:10.5px;color:var(--t3)">'+_memoEsc(m.date||'')+(m.author?' · '+_memoEsc(m.author):'')+'</span>'
+      +'<button class="btn btn-sm" onclick="_memoEditStart(\''+m.id+'\')" title="수정">✏️</button>'
+      +'<button class="btn btn-sm" onclick="_memoDelete(\''+m.id+'\')" title="삭제" style="color:var(--red)">🗑</button>'
+      +'</div>'
+      +'<div style="font-size:12px;color:var(--t2);white-space:pre-wrap;line-height:1.55">'+_memoEsc(m.body||'')+'</div>'
+      +(m._notionId?'':'<div style="font-size:10px;color:var(--org);margin-top:4px">⏳ 노션 동기화 대기 중</div>')
+      +'</div>';
+  }).join('');
+}
+async function _memoSave(){
+  var t=((document.getElementById('memo-title')||{}).value||'');
+  var b=((document.getElementById('memo-body')||{}).value||'');
+  var cat=((document.getElementById('memo-cat')||{}).value||'일반');
+  if(!t.trim() && !b.trim()){ if(typeof showToast==='function') showToast('제목이나 내용을 입력하세요','var(--org)',2000); return; }
+  var author=''; try{ author=(typeof currentUser!=='undefined'&&currentUser)?currentUser:(localStorage.getItem('ek_username')||''); }catch(e){}
+  var list=_memoLoad();
+  if(_memoEditId){
+    var m=list.find(function(x){ return String(x.id)===String(_memoEditId); });
+    if(m){ m.title=t.trim(); m.body=b; m.cat=cat; }
+    _memoSaveLocal(list); _renderMemos();
+    if(m){ var nid=await _memoNotionUpdate(m); if(nid && !m._notionId){ m._notionId=nid; _memoSaveLocal(list); _renderMemos(); } }
+    _memoEditId=null;
+  } else {
+    var m2={ id:Date.now(), title:t.trim(), body:b, cat:cat, date:new Date().toISOString().slice(0,10), author:author };
+    list.unshift(m2); _memoSaveLocal(list); _renderMemos();
+    var nid2=await _memoNotionCreate(m2);
+    if(nid2){ m2._notionId=nid2; _memoSaveLocal(list); _renderMemos(); }
+  }
+  var ti=document.getElementById('memo-title'); if(ti) ti.value='';
+  var bo=document.getElementById('memo-body'); if(bo) bo.value='';
+  var sb=document.getElementById('memo-save-btn'); if(sb) sb.textContent='💾 메모 저장';
+  if(typeof showToast==='function') showToast('✓ 메모 저장됨 (로컬 + 노션)','var(--grn)',2000);
+}
+function _memoEditStart(id){
+  var m=_memoLoad().find(function(x){ return String(x.id)===String(id); }); if(!m) return;
+  var ti=document.getElementById('memo-title'); if(ti) ti.value=m.title||'';
+  var bo=document.getElementById('memo-body'); if(bo) bo.value=m.body||'';
+  var cs=document.getElementById('memo-cat'); if(cs) cs.value=m.cat||'일반';
+  _memoEditId=id;
+  var sb=document.getElementById('memo-save-btn'); if(sb) sb.textContent='✏️ 수정 저장';
+  try{ if(ti) ti.scrollIntoView({behavior:'smooth',block:'center'}); ti&&ti.focus(); }catch(e){}
+}
+async function _memoDelete(id){
+  if(!confirm('이 메모를 삭제할까요?')) return;
+  var list=_memoLoad(); var m=list.find(function(x){ return String(x.id)===String(id); });
+  _memoSaveLocal(list.filter(function(x){ return String(x.id)!==String(id); })); _renderMemos();
+  if(m && m._notionId) _memoNotionDelete(m._notionId);
+}
+
 function vContracts(c){
   c.innerHTML = `
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-h"><div class="card-h-t">📝 메모장 <span id="memo-stat" style="font-size:11.5px;color:var(--t3);font-weight:400;margin-left:6px"></span></div>
+      <div style="font-size:11.5px;color:var(--t3);margin-left:10px">회사 관련 메모를 기록하세요 · 로컬 + 노션 자동 저장</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <input id="memo-title" placeholder="메모 제목" style="flex:1;min-width:180px;font-size:13px;padding:8px 10px;border:1px solid var(--bdr);border-radius:7px;font-family:inherit;background:var(--s1);color:var(--t1)">
+      <select id="memo-cat" style="width:120px;font-size:13px;padding:8px 10px;border:1px solid var(--bdr);border-radius:7px;font-family:inherit;background:var(--s1);color:var(--t1)">${MEMO_CATS.map(k=>`<option value="${k}">${k}</option>`).join('')}</select>
+    </div>
+    <textarea id="memo-body" placeholder="내용을 입력하세요…" style="width:100%;min-height:90px;font-size:13px;line-height:1.55;resize:vertical;padding:9px 11px;border:1px solid var(--bdr);border-radius:7px;font-family:inherit;box-sizing:border-box;background:var(--s1);color:var(--t1)"></textarea>
+    <div style="text-align:right;margin-top:8px"><button id="memo-save-btn" class="btn btn-primary" onclick="_memoSave()">💾 메모 저장</button></div>
+    <div id="memo-list" style="margin-top:14px"></div>
+  </div>
   <div class="card" style="margin-bottom:14px">
     <div class="card-h"><div class="card-h-t">📄 문서 보관함</div>
       <div style="font-size:11.5px;color:var(--t3);margin-left:10px">계약서·증빙·인허가 등 회사 관련 문서를 게시판처럼 모아 보관하세요</div>
@@ -35148,6 +35267,8 @@ function vContracts(c){
     dz.ondrop=function(e){ e.preventDefault(); dz.classList.remove('drag'); if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length){ ctUploadFiles({files:e.dataTransfer.files, value:''}); } };
   }
   loadContracts(false);
+  // 📝 메모: 로컬 먼저 그리고 노션에서 최신 병합
+  try{ _renderMemos(); _memoLoadFromNotion(); }catch(e){ console.warn('[메모 init]', e && e.message); }
 }
 function ctPickFile(){ var i=document.getElementById('ct-up-file'); if(i){ i.value=''; i.click(); } }
 function _ctStat(msg,color){ var el=document.getElementById('ct-up-stat'); if(el){ el.textContent=msg||''; el.style.color=color||'var(--t3)'; } }
@@ -46841,6 +46962,19 @@ function autoSaveOtherSales(){
     if(period && typeof syncOtherSalesToNotion==='function') syncOtherSalesToNotion(period);
   }, 1800);
 }
+// 🛠 즉시 저장 (버튼용) — 디바운스 취소하고 바로 노션에 저장 + 성공/실패 알림
+async function saveOtherSalesNow(kind){
+  var period=(document.getElementById('g-period')||{}).value||'';
+  if(!/^\d{4}-\d{2}$/.test(period)){ toast('⚠ 상단 기간(YYYY-MM)을 먼저 선택하세요','err'); return; }
+  clearTimeout(_otherSalesSaveTimer);
+  var label=(kind==='as'?'AS':'커머스')+' 매출';
+  var status=document.getElementById('notion-sync-status'); if(status) status.textContent='🔄 '+label+' 저장 중…';
+  try{
+    var ok = await syncOtherSalesToNotion(period);
+    if(ok!==false) toast('✅ '+label+' 저장 완료 ('+period+')','ok');
+    else toast('⚠ '+label+' 저장 실패 — 노션 연결을 확인하세요','err');
+  }catch(e){ toast('⚠ '+label+' 저장 실패: '+(e&&e.message||''),'err'); }
+}
 
 // 엑셀 업로드 → AS/커머스 매출 파싱 (유연한 컬럼 매칭)
 function lfOtherSales(inp, kind){
@@ -47977,7 +48111,7 @@ async function syncSalesToNotion(period){
 
 // AS매출/커머스매출 → SALES_DB에 저장 (적요에 [AS]/[커머스] 태그로 구분, OEM 자동집계와 분리)
 async function syncOtherSalesToNotion(period){
-  if(!period) return;
+  if(!period) return false;
   var status = document.getElementById('notion-sync-status');
   try{
     // 이 기간의 기존 [AS]/[커머스] 태그 행만 archive (OEM 납품 행은 건드리지 않음)
@@ -48012,7 +48146,8 @@ async function syncOtherSalesToNotion(period){
       }})});
     }
     if(status && rows.length) status.textContent='✅ AS/커머스 매출 Notion 저장 완료 ('+rows.length+'건)';
-  }catch(e){ console.warn('AS/커머스 매출 저장 실패:', e.message); }
+    return true;
+  }catch(e){ console.warn('AS/커머스 매출 저장 실패:', e.message); return false; }
 }
 
 async function syncSampleToNotion(period){
@@ -49384,6 +49519,7 @@ return {
   updateOtherSalesTotal: (typeof updateOtherSalesTotal!=="undefined"?updateOtherSalesTotal:undefined),
   lfOtherSales: (typeof lfOtherSales!=="undefined"?lfOtherSales:undefined),
   autoSaveOtherSales: (typeof autoSaveOtherSales!=="undefined"?autoSaveOtherSales:undefined),
+  saveOtherSalesNow: (typeof saveOtherSalesNow!=="undefined"?saveOtherSalesNow:undefined),
   syncOtherSalesToNotion: (typeof syncOtherSalesToNotion!=="undefined"?syncOtherSalesToNotion:undefined)
 };
 })();
