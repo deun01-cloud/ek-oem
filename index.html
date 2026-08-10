@@ -7853,14 +7853,12 @@ function moveInvoiceToSettleMonth(invId, newMonth){
   }
   v._syncedAt = new Date().toISOString();
   if(typeof save === 'function') save();
-  // 노션에도 결산월 반영
-  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
-    syncInvoiceToNotion(v, true)
-      .then(()=>{ if(typeof showToast==='function') showToast('✓ 결산월 변경 → '+newMonth,'var(--grn)',1800); })
-      .catch(e=>{ console.warn('결산월 노션 저장 실패:',e); if(typeof showToast==='function') showToast('⚠ 노션 저장 실패 (로컬은 반영됨)','var(--org)',2500); });
-  } else {
-    if(typeof showToast==='function') showToast('✓ 결산월 변경 → '+newMonth,'var(--grn)',1800);
-  }
+  if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
+  // 🛠 서버(realtime)+노션 동시 반영 — invoice는 서버가 SSOT라, 서버에 안 보내면
+  //    다음 스냅샷이 예전 청구월로 되돌려버려 "변경이 저장 안 되는" 현상이 생긴다.
+  //    debouncedSync는 realtimePublish(즉시 서버) + 노션(디바운스)을 함께 처리 (_notionId 없어도 안전).
+  if(typeof debouncedSync === 'function'){ try{ debouncedSync('invoice', v, true); }catch(e){} }
+  if(typeof showToast==='function') showToast('✓ 청구월 변경 → '+newMonth,'var(--grn)',1800);
   renderInvoiceHistory();
   // 경영지원 매출 자동집계도 갱신 (청구월 변경 즉시 반영)
   try{ if(typeof mgtRefreshSales==='function') mgtRefreshSales(); }catch(e){}
@@ -7876,13 +7874,10 @@ function changeConsolidationMonth(invId, newMonth){
   if(v.itemSummary){ v.itemSummary = v.itemSummary.replace(/^\d{4}-\d{2}/, newMonth); }
   v._syncedAt = new Date().toISOString();
   if(typeof save === 'function') save();
-  if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && notionCfg.invDb && v._notionId && typeof syncInvoiceToNotion==='function'){
-    syncInvoiceToNotion(v, true)
-      .then(()=>{ if(typeof showToast==='function') showToast('✓ 합본 청구월 변경 → '+newMonth,'var(--grn)',1800); })
-      .catch(e=>{ console.warn('합본 청구월 노션 저장 실패:',e); if(typeof showToast==='function') showToast('⚠ 노션 저장 실패 (로컬은 반영됨)','var(--org)',2500); });
-  } else {
-    if(typeof showToast==='function') showToast('✓ 합본 청구월 변경 → '+newMonth,'var(--grn)',1800);
-  }
+  if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
+  // 🛠 서버(realtime)+노션 동시 반영 (합본도 invoice와 동일한 SSOT — 서버에 안 보내면 되돌려짐)
+  if(typeof debouncedSync === 'function'){ try{ debouncedSync('invoice', v, true); }catch(e){} }
+  if(typeof showToast==='function') showToast('✓ 합본 청구월 변경 → '+newMonth,'var(--grn)',1800);
   renderInvoiceHistory();
   try{ if(typeof mgtRefreshSales==='function') mgtRefreshSales(); }catch(e){}
 }
