@@ -5232,14 +5232,34 @@ function _getCatalogFiltered(){
   return list;
 }
 // PDF/공유용 — 선택 항목이 있으면 그것만, 없으면 현재 필터 결과 전체
+// ⚠ 식별키(_catItemKey = code||id||name)는 6천개 DB에서 유일하지 않을 수 있음.
+//   같은 품번/이름을 가진 다른 행이 있으면 한 선택이 여러 카드로 부풀려짐(17→19).
+//   → 선택 키 1개당 정확히 카드 1개만, 화면(현재 필터)에 보이는 항목을 우선 채택.
 function _getCatalogForOutput(){
   var sel=_loadCatSel();
-  if(sel.length){
-    var ss={}; sel.forEach(function(k){ss[k]=1;});
-    // 선택은 전체 풀 기준으로 뽑되(필터 무관), 순서는 풀 순서 유지
-    return _getCatalogPool().filter(function(x){ return ss[_catItemKey(x)]; });
-  }
-  return _getCatalogFiltered();
+  if(!sel.length) return _getCatalogFiltered();
+  var ss={}; sel.forEach(function(k){ if(k) ss[k]=1; });
+  var pool=_getCatalogPool();
+  var _q=(typeof catSearch!=='undefined'&&catSearch)?String(catSearch).toLowerCase().trim():'';
+  var passFilter=function(x){
+    if(typeof catSource!=='undefined'){
+      if(catSource==='product'&&x._src!=='product')return false;
+      if(catSource==='drop'&&x._src!=='drop')return false;
+    }
+    if(catType!=='전체'&&(x.type||'')!==catType)return false;
+    if(catMat!=='전체'&&(x.mat||'')!==catMat)return false;
+    if(catPlating!=='전체'&&(x.plating||'')!==catPlating)return false;
+    if(_q&&[x.name,x.code,x.type,x.mat,x.plating].filter(Boolean).join(' ').toLowerCase().indexOf(_q)<0)return false;
+    return true;
+  };
+  var chosen={};
+  // 1차: 현재 필터를 통과하는(=화면에 보이는) 항목으로 각 선택키 확정
+  pool.forEach(function(x){ var k=_catItemKey(x); if(k&&ss[k]&&!chosen[k]&&passFilter(x)) chosen[k]=x; });
+  // 2차: 필터 밖 선택분은 풀 전체에서 보충 (한 키당 최초 1개만)
+  pool.forEach(function(x){ var k=_catItemKey(x); if(k&&ss[k]&&!chosen[k]) chosen[k]=x; });
+  // 선택 순서 유지, 키당 카드 1개
+  var out=[]; sel.forEach(function(k){ if(k&&chosen[k]){ out.push(chosen[k]); chosen[k]=null; } });
+  return out;
 }
 
 // 한글 IME 안전 + 디바운스 검색
