@@ -6444,7 +6444,8 @@ function _catalogPDF(){
     const img=x.img?`<img src="${x.img}" class="ci">`:`<div class="ci noimg">◫</div>`;
     const price=(catShowPrice&&x.price!=null)?`<div class="cp">${(+x.price).toLocaleString()}원</div>`:'';
     const spec=[x.type,x.mat,x.plating].filter(Boolean).join(' · ');
-    return `<div class="card">${img}<div class="cinfo"><div class="cn">${(x.name||'').replace(/</g,'&lt;')}</div>${x.code?`<div class="cc">${x.code}</div>`:''}<div class="cs">${spec}</div>${price}</div></div>`;
+    const dkey=encodeURIComponent(_catItemKey(x));
+    return `<div class="card" data-key="${dkey}"><button class="del noprint" onclick="delCard(this)" title="이 항목 빼기">×</button>${img}<div class="cinfo"><div class="cn">${(x.name||'').replace(/</g,'&lt;')}</div>${x.code?`<div class="cc">${x.code}</div>`:''}<div class="cs">${spec}</div>${price}</div></div>`;
   }).join('');
   const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>EK 카탈로그 ${today}</title>
   <style>
@@ -6456,7 +6457,9 @@ function _catalogPDF(){
     .head .meta{font-size:11px;color:#aaa;text-align:right}
     .count{font-size:12px;color:#666;margin:10px 0 14px}
     .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-    .card{border:1px solid #e3ddd2;border-radius:8px;overflow:hidden;page-break-inside:avoid}
+    .card{position:relative;border:1px solid #e3ddd2;border-radius:8px;overflow:hidden;page-break-inside:avoid}
+    .del{position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:50%;border:none;background:rgba(214,60,60,.94);color:#fff;font-size:16px;font-weight:700;line-height:1;cursor:pointer;z-index:3;box-shadow:0 1px 5px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;padding:0}
+    .del:hover{background:#b0322c}
     .ci{width:100%;height:150px;object-fit:cover;display:block;background:#faf8f4}
     .ci.noimg{display:flex;align-items:center;justify-content:center;color:#ccc;font-size:30px}
     .cinfo{padding:9px 10px}
@@ -6469,9 +6472,24 @@ function _catalogPDF(){
   </style></head><body>
   <div class="head"><div><h1>EK 제품 카탈로그</h1><div class="sub">${subtitle}</div></div>
     <div class="meta">이케이아이엔티<br>${today}</div></div>
-  <div class="count">총 ${list.length}개 제품</div>
+  <div class="count"><span id="cnt">총 ${list.length}개 제품</span> <span class="noprint" style="color:#b0322c;margin-left:8px">· 각 카드의 × 를 눌러 뺄 수 있어요 (× 버튼은 인쇄엔 안 나옵니다)</span></div>
   <div class="grid">${cards}</div>
   <button class="noprint" onclick="window.print()" style="position:fixed;bottom:20px;right:20px;padding:12px 22px;background:#b8923a;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.2)">🖨 인쇄 / PDF 저장</button>
+  <script>
+  function delCard(btn){
+    var card=btn.closest('.card'); if(!card) return;
+    var key=card.getAttribute('data-key')||'';
+    card.parentNode.removeChild(card);
+    var n=document.querySelectorAll('.grid .card').length;
+    var c=document.getElementById('cnt'); if(c) c.textContent='총 '+n+'개 제품';
+    // 원본 카탈로그 선택에서도 영구 제거 (화면/다음 출력에도 반영)
+    try{
+      if(window.opener && !window.opener.closed && typeof window.opener._toggleCatSel==='function' && key){
+        window.opener._toggleCatSel(decodeURIComponent(key), false);
+      }
+    }catch(e){}
+  }
+  <\/script>
   </body></html>`;
   const w=window.open('','_blank');
   if(!w){ if(typeof showToast==='function') showToast('팝업이 차단됐어요 — 팝업 허용 후 다시 시도','var(--red)'); return; }
