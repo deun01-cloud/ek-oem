@@ -742,6 +742,11 @@ body.cio-only .topnav, body.cio-only .sub-bar, body.cio-only #notifPanel,
 body.cio-only #mgtRoot, body.cio-only #bcRoot{ display:none !important; }
 body.cio-only #content{ display:block !important; padding-top:8px; }
 body.cio-only{ background:#fff; }
+/* ===== 📱 모바일 셸 단일 탭 임베드(?view=tab): 상단 네비/알림만 숨기고 탭 콘텐츠는 그대로 ===== */
+body.tabonly .topnav{ display:none !important; }
+body.tabonly #notifPanel{ display:none !important; }
+body.tabonly #content{ padding-top:6px; }
+body.tabonly{ background:#fff; }
 </style>
 </head>
 <body>
@@ -976,6 +981,19 @@ function _bcEnsureFrame(){
 // 브랜드커머스 iframe이 제품 목록을 요청하면 회사 productDB를 정제해 응답
 window.addEventListener('message', function(ev){
   var d=ev.data;
+  // 📱 모바일 셸(m.html)이 임베드한 이 PC 화면의 탭을 전환 — 하나의 iframe으로 모든 탭을 최신 상태로 보여주기 위함
+  if(d && d.type==='EK_SET_TAB'){
+    try{
+      var _t=String(d.tab||'dash');
+      var _valid=['dash','sample','order','schedule','as','io','products','sales','invoices','mgt','commerce'];
+      if(_valid.indexOf(_t)<0) _t='dash';
+      // 커머스는 bcRoot를 top:0로 올려 전체를 덮는 전용 모드 유지, 그 외엔 해제
+      try{ document.body.classList.toggle('bc-only', _t==='commerce'); }catch(e){}
+      if(typeof navGo==='function') navGo(_t);
+      else if(typeof switchTab==='function') switchTab(_t, (typeof getTabBtn==='function'?getTabBtn(_t):null));
+    }catch(e){ console.warn('[EK_SET_TAB]', e && e.message); }
+    return;
+  }
   if(d && d.type==='EK_OPEN_COMMERCE_IO'){
     try{
       if(typeof navGo==='function') navGo('io');
@@ -33210,6 +33228,17 @@ function initLastTab(){
       document.body.classList.add('cio-only');
       try{ navGo('io'); }catch(e){}
       try{ setTimeout(function(){ if(typeof _setIoSubTab==='function') _setIoSubTab('commerce'); }, 50); }catch(e){}
+      return;
+    }
+    if(_params.get('view')==='tab'){
+      // 📱 모바일 셸 임베드용: 상단 네비를 숨기고 지정한 단일 탭만 표시.
+      //    이후 탭 전환은 부모(m.html)가 postMessage(EK_SET_TAB)로 제어한다.
+      var _t=_params.get('tab')||'dash';
+      var _valid=['dash','sample','order','schedule','as','io','products','sales','invoices','mgt','commerce'];
+      if(_valid.indexOf(_t)<0) _t='dash';
+      document.body.classList.add('tabonly');
+      if(_t==='commerce') document.body.classList.add('bc-only');
+      try{ if(typeof navGo==='function') navGo(_t); else switchTab(_t, getTabBtn(_t)); }catch(e){ try{ switchTab('dash', document.querySelector('.tab-btn')); }catch(_){} }
       return;
     }
     if(_params.get('view')==='catalog'){
