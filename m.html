@@ -77,8 +77,15 @@ a{color:inherit;text-decoration:none}
 .page{padding:14px;display:none;animation:fadeIn .2s}
 /* 📱 공유 PC 임베드 프레임 — 주요 탭을 항상 최신 PC 화면으로 표시 (상단바 아래 ~ 하단탭 위) */
 /* ⚠ iframe은 치환요소라 top+bottom만으론 안 늘어난다(기본 150px) → 높이를 명시적으로 계산 */
-#pcFrame{position:fixed;top:calc(54px + var(--safe-top));left:0;right:0;width:100%;height:calc(100vh - 54px - 64px - var(--safe-top) - var(--safe-bot));border:0;display:none;background:#fff;z-index:60}
-@supports (height:100dvh){ #pcFrame{ height:calc(100dvh - 54px - 64px - var(--safe-top) - var(--safe-bot)); } }
+/* 📱 PC 화면 임베드(더보기 전용) — 폰 폭에 억지로 욱여넣지 않고
+   PC 기준폭(1024px)으로 그린 뒤 좌우로 밀어서 보게 한다. 글자가 안 뭉갠다. */
+#pcFrameWrap{position:fixed;top:calc(54px + var(--safe-top));left:0;right:0;height:calc(100vh - 54px - 64px - var(--safe-top) - var(--safe-bot));display:none;background:#fff;z-index:60;overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch}
+@supports (height:100dvh){ #pcFrameWrap{ height:calc(100dvh - 54px - 64px - var(--safe-top) - var(--safe-bot)); } }
+#pcFrameWrap.fit{overflow-x:hidden}
+#pcFrame{width:1024px;height:100%;border:0;display:block;background:#fff}
+#pcFrameWrap.fit #pcFrame{width:100%}
+.pc-hint{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(72px + var(--safe-bot));z-index:70;display:none;align-items:center;gap:8px;background:rgba(42,38,32,.88);color:#fff;font-size:11.5px;font-weight:600;padding:7px 12px;border-radius:16px;backdrop-filter:blur(8px);box-shadow:0 4px 16px rgba(0,0,0,.2)}
+.pc-hint button{color:#fff;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:10px;background:rgba(255,255,255,.18)}
 .more-launch{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:4px 2px}
 .more-launch button{display:flex;align-items:center;gap:8px;padding:16px 14px;font-size:14px;font-weight:600;border:1px solid var(--bdr);border-radius:12px;background:var(--s1);color:var(--t1);cursor:pointer;font-family:inherit;text-align:left}
 .more-launch button:active{background:var(--s2)}
@@ -524,7 +531,8 @@ a{color:inherit;text-decoration:none}
 </div>
 
 <!-- 📱 공유 PC 임베드: 주요 탭(캘린더·발주·샘플·SCM)과 더보기 항목을 항상 최신 PC 화면으로 표시 -->
-<iframe id="pcFrame" title="EK 통합관리" loading="lazy"></iframe>
+<div id="pcFrameWrap"><iframe id="pcFrame" title="EK 통합관리" loading="lazy"></iframe></div>
+<div class="pc-hint" id="pcHint"><span>← 좌우로 밀어서 보기</span><button onclick="togglePcFit()" id="pcFitBtn">폭 맞춤</button></div>
 
 <nav class="botnav">
   <button class="nav-item active" data-pg="pgDash" onclick="goPage('pgDash')"><span class="ico">📅</span><span>캘린더</span></button>
@@ -570,7 +578,11 @@ function genId(){
 
 const LS = {
   smp:'ek3_smp', ord:'ek3_ord', task:'ek3_task', cli:'ek_v9_cli',
-  as:'ek3_as', io:'ek3_io', inv:'ek3_inv', prod:'ek3_prod',
+  as:'ek3_as', io:'ek3_io',
+  // ⚠ 제품DB·거래명세서는 PC(index.html)와 '같은 키'를 공유한다.
+  //    예전엔 ek3_prod / ek3_inv 로 따로 또 저장 → 같은 도메인 localStorage에
+    //  두 벌이 쌓여 용량 초과(하얀 화면)의 원인이 됐다.
+  inv:'ek3_invoices', prod:'ek3_products',
   notion:'ek_notion_cfg', sh:'ek3_stock_hist'
 };
 
@@ -630,6 +642,15 @@ function loadAll(){
   ioItems       = safeLoad(LS.io, []);
   invoiceHistory= safeLoad(LS.inv, []);
   productDB     = safeLoad(LS.prod, []);
+  // 🔁 예전 모바일 전용 키(ek3_inv / ek3_prod)에만 데이터가 남아 있으면 한 번만 승계
+  if(!invoiceHistory.length){
+    const legacyInv = safeLoad('ek3_inv', []);
+    if(legacyInv.length){ invoiceHistory = legacyInv; try{ localStorage.removeItem('ek3_inv'); }catch(e){} }
+  }
+  if(!productDB.length){
+    const legacyProd = safeLoad('ek3_prod', []);
+    if(legacyProd.length){ productDB = legacyProd; try{ localStorage.removeItem('ek3_prod'); }catch(e){} }
+  }
   stockHistory  = safeLoad(LS.sh, []);
   notionCfg     = safeLoad(LS.notion, null);
   // notionCfg가 있지만 ioDb가 비어 있으면 기본값 보충 (실제 노션 DB ID)
@@ -637,15 +658,42 @@ function loadAll(){
     notionCfg.ioDb = 'a6024595f92f4f039493e907492b8eef';
   }
 }
+// ⚠ 제품DB·거래명세서는 PC(index.html)와 저장소를 공유한다.
+//    PC 레코드에는 모바일이 모르는 항목(브랜드판매가·개발비·생산원가·마진율·
+//    가격이력 / 명세서의 items·payments·totalPaid 등)이 들어 있다.
+//    모바일이 통째로 덮어쓰면 그 항목들이 전부 날아간다.
+//    → 저장된 레코드 위에 '모바일이 아는 필드만' 얹는 병합 저장을 쓴다.
+function _mergeSave(key, list, idOf){
+  let stored = [];
+  try{ const v = localStorage.getItem(key); if(v) stored = JSON.parse(v) || []; }catch(e){ stored = []; }
+  if(!Array.isArray(stored) || !stored.length){ safeSave(key, list); return; }
+  const idx = new Map();
+  stored.forEach((r, i) => { const k = idOf(r); if(k) idx.set(k, i); });
+  (list || []).forEach(cur => {
+    const k = idOf(cur);
+    if(k != null && idx.has(k)){
+      // 기존 레코드 보존 + 모바일이 채운 값만 갱신 (undefined 는 건너뜀)
+      const base = stored[idx.get(k)];
+      // id 는 PC 쪽 참조에 쓰이므로 유지한다 (모바일은 동기화 때마다 새로 만든다)
+      Object.keys(cur).forEach(f => {
+        if(f === 'id') return;
+        if(cur[f] !== undefined) base[f] = cur[f];
+      });
+    } else {
+      stored.push(cur);
+    }
+  });
+  safeSave(key, stored);
+}
 function saveAll(){
   safeSave(LS.smp, samples);
   safeSave(LS.ord, orders);
   safeSave(LS.task, tasks);
   safeSave(LS.as, asItems);
   safeSave(LS.io, ioItems);
-  safeSave(LS.inv, invoiceHistory);
-  safeSave(LS.prod, productDB);
   safeSave(LS.sh, stockHistory);
+  _mergeSave(LS.inv,  invoiceHistory, r => r && (r._notionId || r._localKey || r.ordNo));
+  _mergeSave(LS.prod, productDB,      r => r && (r._notionId || r.code));
 }
 
 // ════════════════════════════════════════════════
@@ -1158,7 +1206,13 @@ const KR_HOLIDAYS={
 // ────────────────────────────────────────
 // ── 📱 공유 PC 임베드(항상 최신 PC 화면) ──
 // 주요 탭을 PC index.html 단일 탭으로 임베드하고, 탭 전환은 postMessage(EK_SET_TAB)로 즉시 처리.
-const _PC_TAB = { pgDash:'dash', pgOrd:'order', pgSmp:'sample', pgIO:'io' };
+// 📱 주요 4탭은 '모바일 전용 화면'으로 표시한다.
+//    (PC 화면을 그대로 임베드하면 폰 폭에서 표·버튼이 겹쳐 읽을 수 없다)
+//    PC 임베드로 되돌리려면 아래를 true 로만 바꾸면 된다.
+const USE_PC_EMBED_FOR_MAIN_TABS = false;
+const _PC_TAB = USE_PC_EMBED_FOR_MAIN_TABS
+  ? { pgDash:'dash', pgOrd:'order', pgSmp:'sample', pgIO:'io' }
+  : {};
 let _pcLoaded=false, _pcWantTab='dash';
 function _pcTabUrl(tab){
   var base; try{ base=location.href.split('#')[0].split('?')[0].replace(/[^/]*$/,''); }catch(e){ base=''; }
@@ -1166,8 +1220,10 @@ function _pcTabUrl(tab){
 }
 function _showPcTab(tab){
   _pcWantTab = tab||'dash';
-  var fr=document.getElementById('pcFrame'); if(!fr) return;
-  fr.style.display='block';
+  var fr=document.getElementById('pcFrame');
+  var wrap=document.getElementById('pcFrameWrap'); if(!fr||!wrap) return;
+  wrap.style.display='block';
+  var hint=document.getElementById('pcHint'); if(hint) hint.style.display='flex';
   if(!_pcLoaded){
     _pcLoaded=true;
     fr.onload=function(){ try{ fr.contentWindow.postMessage({type:'EK_SET_TAB', tab:_pcWantTab}, '*'); }catch(e){} };
@@ -1176,7 +1232,25 @@ function _showPcTab(tab){
     try{ fr.contentWindow.postMessage({type:'EK_SET_TAB', tab:_pcWantTab}, '*'); }catch(e){}
   }
 }
-function _hidePcTab(){ var fr=document.getElementById('pcFrame'); if(fr) fr.style.display='none'; }
+function _hidePcTab(){
+  var wrap=document.getElementById('pcFrameWrap'); if(wrap) wrap.style.display='none';
+  var hint=document.getElementById('pcHint'); if(hint) hint.style.display='none';
+}
+// 폭 맞춤 ↔ 원본 폭(1024px, 좌우 스크롤) 토글
+function togglePcFit(){
+  var wrap=document.getElementById('pcFrameWrap'); if(!wrap) return;
+  var fit=wrap.classList.toggle('fit');
+  var b=document.getElementById('pcFitBtn'); if(b) b.textContent = fit ? '원본 폭' : '폭 맞춤';
+  try{ localStorage.setItem('ek3m_pcFit', fit?'1':'0'); }catch(e){}
+}
+try{
+  if(localStorage.getItem('ek3m_pcFit')==='1'){
+    document.addEventListener('DOMContentLoaded',function(){
+      var w=document.getElementById('pcFrameWrap'); if(w) w.classList.add('fit');
+      var b=document.getElementById('pcFitBtn'); if(b) b.textContent='원본 폭';
+    });
+  }
+}catch(e){}
 // 더보기에서 특정 PC 탭 열기 (제품DB/세일즈/경영지원/업무일지/거래명세서/AS/브랜드커머스)
 function goPCTab(tab){
   curPage='pgMore';
@@ -1781,6 +1855,13 @@ document.addEventListener('click', (e)=>{
 // 마지막 동기화 시각 추적 (자동 동기화 간격 제어 + UI 표시용)
 let _lastSyncAt = 0;
 let _syncInProgress = false;
+// 제품DB를 이번 세션에서 받아야 하는지 (제품 화면·재고 카운트 진입 시 켜짐)
+let _needProducts = false;
+function requireProducts(){
+  if(_needProducts) return;
+  _needProducts = true;
+  try{ if(!productDB.length && typeof manualSync==='function') manualSync(true); }catch(e){}
+}
 
 async function manualSync(silent){
   // silent=true: 백그라운드 자동 동기화 (토스트/버튼 변화 최소화)
@@ -1814,7 +1895,9 @@ async function manualSync(silent){
       notionCfg.ordDb     ? nQueryAll(notionCfg.ordDb)     : Promise.resolve([]),
       notionCfg.asDb      ? nQueryAll(notionCfg.asDb)      : Promise.resolve([]),
       notionCfg.ioDb      ? nQueryAll(notionCfg.ioDb)      : Promise.resolve([]),
-      notionCfg.productDb ? nQueryAll(notionCfg.productDb) : Promise.resolve([]),
+      // 📦 제품DB는 수천 건이라 매 동기화마다 받으면 폰 메모리·저장공간을 크게 먹는다.
+      //    비어 있거나, 제품 화면을 실제로 쓴 세션에서만 받는다.
+      (notionCfg.productDb && (_needProducts || !productDB.length)) ? nQueryAll(notionCfg.productDb) : Promise.resolve(null),
       notionCfg.invDb     ? nQueryAll(notionCfg.invDb)     : Promise.resolve([]),
       notionCfg.taskDb    ? nQueryAll(notionCfg.taskDb)    : Promise.resolve([]),
       notionCfg.clientDb  ? nQueryAll(notionCfg.clientDb)  : Promise.resolve([])
@@ -1823,7 +1906,7 @@ async function manualSync(silent){
     orders        = ordRows.map(mapNotionOrder).map((o,i)=>({id:Date.now()+1000+i,...o}));
     asItems       = asRows.map(mapNotionAS).map((a,i)=>({id:Date.now()+2000+i,...a}));
     ioItems       = ioRows.map(mapNotionIO).map((x,i)=>({id:Date.now()+3000+i,...x}));
-    productDB     = pdRows.map(mapNotionProduct).map((p,i)=>({id:Date.now()+4000+i,...p}));
+    if(pdRows) productDB = pdRows.map(mapNotionProduct).map((p,i)=>({id:Date.now()+4000+i,...p}));
     invoiceHistory= invRows.map(mapNotionInvoice).map((v,i)=>({id:Date.now()+5000+i,...v}));
     tasks         = taskRows.map(mapNotionTask).map((t,i)=>({id:Date.now()+6000+i,...t}));
     clients       = cliRows.map(mapNotionClient).map((c,i)=>({id:Date.now()+7000+i,...c}));
@@ -3447,6 +3530,7 @@ function setProdLowOnly(on){
 }
 
 function renderProdList(){
+  try{ requireProducts(); }catch(e){}
   // 타입 바
   const types = ['all', ...new Set(productDB.map(p=>p.type).filter(Boolean))];
   const typeBar = document.getElementById('prodTypeBar');
@@ -3506,6 +3590,7 @@ function setProdType(t){ _prodType=t; renderProdList(); }
 let _stockCountBuf = {};
 
 function openStockCountMode(){
+  try{ requireProducts(); }catch(e){}
   if(!productDB.length){
     showToast('⚠ 제품 DB가 비어있습니다', 'warn');
     return;
@@ -6498,7 +6583,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-05-16-08';
+const APP_VERSION = '2026-08-20-09';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
@@ -6548,38 +6633,43 @@ window.onload = async ()=>{
   if(isReloading) return;  // 새로고침 진행 중이면 init 중단
 
   // ══════════════════════════════════════════════════════════════
-  // 🪶 슬림 셸 모드
-  //  모든 탭을 최신 PC(index.html) 임베드로 보여주므로, 모바일 셸은
-  //  자체 데이터를 저장/동기화하지 않는다. 이유:
-  //   - m.html과 index.html은 같은 도메인 → localStorage(모바일 ~5MB)를 공유한다.
-  //   - 예전엔 모바일이 제품DB(수천 건) 등 데이터를 통째로 로컬에 또 저장 →
-  //     두 벌이 쌓여 용량 초과 → "저장공간 가득/R2 확인" + 하얀 화면(로딩 멈춤).
-  //  → 여기서 중복 데이터를 비우고 저장/동기화를 꺼서 용량과 부하를 없앤다.
+  // 📱 네이티브 모바일 모드
+  //  주요 4탭(캘린더·발주·샘플·SCM)은 모바일 전용 화면으로 그린다.
+  //  ⚠ 저장공간(모바일 localStorage ~5MB) 문제는 '중복 저장'을 없애서 해결한다:
+  //    - m.html 과 index.html 은 같은 도메인 → localStorage 를 공유한다.
+  //    - 발주/샘플/입출고/업무/AS 는 원래부터 PC와 같은 키(ek3_ord …)를 쓴다.
+  //    - 제품DB·거래명세서만 예전에 ek3_prod / ek3_inv 로 따로 또 저장해
+  //      두 벌이 쌓였다 → 이제 PC와 같은 ek3_products / ek3_invoices 를 공유한다.
+  //  (예전 슬림모드는 부팅 때마다 ek3_ord·ek3_smp 등 PC 데이터까지 지워서
+  //   PC가 매번 서버에서 다시 받아야 했다 — 그 삭제 루틴은 제거했다.)
   // ══════════════════════════════════════════════════════════════
+  // 사용하지 않는 옛 모바일 전용 잔여 키만 정리 (PC 데이터는 건드리지 않는다)
   try{
-    ['ek3_prod','ek3_smp','ek3_ord','ek3_io','ek3_inv','ek3_stock_hist','ek3_as','ek3_task','ek3_notifs','ek_v9_cli']
+    ['ek3_prod_photos','ek3m_cache']
       .forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
   }catch(e){}
-  // 남은 네이티브 코드가 다시 로컬에 쓰지 않도록 저장 함수를 무력화
-  try{ saveAll = function(){}; }catch(e){}
-  try{ safeSave = function(){}; }catch(e){}
-  try{ if(typeof realtimePublish==='function') realtimePublish = function(){}; }catch(e){}
+
+  // 데이터 로드
+  try{ loadAll(); }catch(e){ console.warn('loadAll 실패', e); }
 
   // 버전 표시
   const verEl = document.getElementById('appVer');
   if(verEl) verEl.textContent = 'v' + APP_VERSION.slice(-2);
   try{ _loadNotifs(); _renderNotifBadge(); }catch(e){}
 
-  // 마지막 페이지 복원 (없으면 캘린더) — 전부 임베드로 라우팅됨
+  // 마지막 페이지 복원 (없으면 캘린더)
   let lastPage = 'pgDash';
   try{
     const stored = localStorage.getItem('ek3m_lastPage');
     const valid = ['pgDash','pgOrd','pgSmp','pgIO','pgMore'];
     if(stored && valid.includes(stored)) lastPage = stored;
   }catch(e){}
-  try{ goPage(lastPage); }catch(e){ try{ _showPcTab('dash'); }catch(_){} }
-  // ⚠ 슬림 모드에서는 모바일 자체 autoSync/Realtime을 시작하지 않는다
-  //    (데이터 동기화는 임베드된 PC 화면이 스스로 처리).
+  try{ goPage(lastPage); }catch(e){ console.warn('goPage 실패', e); }
+
+  // 동기화 재가동 (Realtime + 폴링)
+  try{ if(typeof setupAutoSync==='function') setupAutoSync(); }catch(e){}
+  try{ if(notionCfg && notionCfg.realtimeUrl && typeof realtimeConnect==='function') realtimeConnect(); }catch(e){}
+  try{ if(typeof autoSync==='function') autoSync(); }catch(e){}
 };
 </script>
 
