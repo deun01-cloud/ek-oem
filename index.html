@@ -27806,9 +27806,36 @@ function openFactoryPicker(scope){
   if(typeof openM==='function') openM('mFactoryPick'); else ov.classList.add('open');
 }
 
+// 고객사 이니셜 2글자 + 색상 — 인쇄/외부창용 (CSS 클래스 없이 인라인 색상 반환)
+function _clientInit2(name){
+  const raw=String(name||'').trim();
+  if(!raw) return null;
+  let init='', color='';
+  const cl=(typeof findClientByVendor==='function')?findClientByVendor(raw):null;
+  if(cl){
+    init=(cl.initials||'').trim().toUpperCase();
+    if(!init && cl.name){
+      const nm=cl.name.replace(/^\(.*?\)/,'').trim();
+      const w=nm.split(/\s+/);
+      init=(w.length>=2?(w[0][0]+(w[1][0]||'')):nm.slice(0,2)).toUpperCase();
+    }
+    if(typeof clInitColor==='function'){ try{ color=clInitColor(cl); }catch(e){} }
+  }
+  if(!init){
+    // 고객사 DB 미등록 → 영문/숫자 2글자, 없으면 한글 2글자
+    const nm=raw.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
+    const ascii=nm.replace(/[^A-Za-z0-9]/g,'');
+    init = ascii.length>=2 ? ascii.slice(0,2).toUpperCase()
+         : (ascii.length===1 ? ascii.toUpperCase() : nm.slice(0,2).toUpperCase());
+  }
+  if(!init) return null;
+  if(!color) color=(typeof strToColor==='function')?strToColor(init):'#8B6914';
+  return {init:init, color:color, full:raw};
+}
+
 function exportFactoryDelivery(scope, onlyFactory){
   scope = scope||'all';
-  const rows = [];  // {factory, kind, code, name, thumb, qty, status, note, ordered, extraItems}
+  const rows = [];  // {factory, kind, client, code, name, thumb, qty, status, note, ordered, extraItems}
 
   // ── 진행중 샘플 수집 (확정/완료/취소 제외) ──
   if(scope==='all' || scope==='sample'){
@@ -27818,6 +27845,7 @@ function exportFactoryDelivery(scope, onlyFactory){
       rows.push({
         factory: (s.factory||'').trim() || '(공장 미지정)',
         kind: '샘플',
+        client: (s.manager||'').trim(),      // 샘플의 '업체' 필드 = 고객사
         code: s.itemCode||s.itemNo||'',
         name: s.name||'',
         thumb: _sampleThumb(s),
@@ -27840,7 +27868,7 @@ function exportFactoryDelivery(scope, onlyFactory){
       // 🛡 [FIX] 발주도 샘플처럼 각 품목을 개별 행 + 품목별 썸네일로 표시.
       //   발주번호는 각 품목 행의 품번/발주번호 칸에 함께 넣는다(공장이 어느 발주인지 바로 식별).
       if(!oRows.length){
-        rows.push({ factory:_fac, kind:'발주', code:o.no||'', name:'(품목없음)', vendor:o.vendor||'',
+        rows.push({ factory:_fac, kind:'발주', client:(o.vendor||'').trim(), code:o.no||'', name:'(품목없음)', vendor:o.vendor||'',
           thumb:_orderThumb(o), qty:'', status:st, note:(o.factoryNotice||'').trim(), factShip:o.factShip||'', extraItems:[] });
       } else {
         oRows.forEach((r, ri)=>{
@@ -27854,6 +27882,7 @@ function exportFactoryDelivery(scope, onlyFactory){
           rows.push({
             factory: _fac,
             kind: '발주',
+            client: (o.vendor||'').trim(),                   // 고객사 — 모든 품목 행에 이니셜 표시
             code: o.no||'',                                  // 발주번호 — 각 품목 행에 표시
             name: itemName,
             vendor: ri===0 ? (o.vendor||'') : '',            // 벤더 태그는 발주 첫 행에만
@@ -27889,6 +27918,7 @@ function exportFactoryDelivery(scope, onlyFactory){
     rows.push({
       factory: rp,
       kind: 'AS',
+      client: (a.client||'').trim(),
       code: a.date||'',   // AS는 발주번호 대신 접수일 표시
       name: a.item||'',
       thumb: thumb,
@@ -27946,9 +27976,12 @@ function exportFactoryDelivery(scope, onlyFactory){
     // 공장별 진행현황 요약 (상태별 건수)
     const stCount = {};
     items.forEach(r=>{ stCount[r.status]=(stCount[r.status]||0)+1; });
-    const summaryChips = Object.keys(stCount).map(st=>
+    let summaryChips = Object.keys(stCount).map(st=>
       `<span class="chip" style="background:${stColor(st)}"> ${_escHtml(st)} ${stCount[st]}</span>`
     ).join('');
+    // 공장출고일 미기입 건수 — 노란 강조 행과 같은 색으로 안내
+    const missCount = items.filter(r=>!String(r.factShip||'').trim()).length;
+    if(missCount) summaryChips += `<span class="chip chip-miss">⚠ 공장출고일 미입력 ${missCount}</span>`;
 
     const rowsHtml = items.map((r,i)=>{
       const thumb = r.thumb
@@ -27959,15 +27992,21 @@ function exportFactoryDelivery(scope, onlyFactory){
       const extra = (r.extraItems && r.extraItems.length)
         ? `<div class="extra">${r.extraItems.map(e=>`+ ${_escHtml(e.name)}${e.qty?(' <b>×'+_escHtml(e.qty)+'</b>'):''}`).join('<br>')}</div>`
         : '';
-      return `<tr>
+      const ci = _clientInit2(r.client || r.vendor);
+      const ciCell = ci
+        ? `<span class="cinit" style="background:${ci.color}" title="${_escAttr(ci.full)}">${_escHtml(ci.init)}</span>`
+        : `<span class="cinit cinit-none">—</span>`;
+      const missFs = !String(r.factShip||'').trim();   // 공장출고일 미기입 → 노란색 강조
+      return `<tr class="${missFs?'miss-fs':''}">
         <td class="c num">${i+1}</td>
+        <td class="c">${ciCell}</td>
         <td class="c"><div class="thumb ${r.thumb?'':'noimg'}">${thumb}</div></td>
         <td class="c"><span class="kind kind-${r.kind==='샘플'?'s':(r.kind==='AS'?'as':'o')}">${r.kind}</span></td>
         <td class="code">${_escHtml(r.code)}</td>
         <td class="nmcell">${vendorTag}<span class="nm">${_escHtml(r.name)}</span>${extra}</td>
         <td class="c qty">${_escHtml(r.qty)}</td>
         <td class="c"><span class="st" style="background:${stColor(r.status)}">${_escHtml(r.status)}</span></td>
-        <td class="c fship">${r.factShip? _escHtml(r.factShip) : '<span class="dash">—</span>'}</td>
+        <td class="c fship">${r.factShip? _escHtml(r.factShip) : '<span class="miss">미입력<br><span class="cn">未填写</span></span>'}</td>
         <td class="note">${_escHtml(r.note)}</td>
       </tr>`;
     }).join('');
@@ -27985,8 +28024,9 @@ function exportFactoryDelivery(scope, onlyFactory){
       <table>
         <thead><tr>
           <th style="width:30px">#</th>
+          <th style="width:54px">고객사<br><span>客户</span></th>
           <th style="width:66px">사진</th>
-          <th style="width:46px">구분</th>
+          <th style="width:54px">구분</th>
           <th style="width:100px">품번/<br>발주번호</th>
           <th style="min-width:260px">품목명 / 品名</th>
           <th style="width:64px">수량<br><span>数量</span></th>
@@ -28003,7 +28043,7 @@ function exportFactoryDelivery(scope, onlyFactory){
   const html = `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
     <title>공장별 진행현황 ${todayStr}</title>
     <style>
-      *{box-sizing:border-box}
+      *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       body{font-family:'Malgun Gothic','맑은 고딕',-apple-system,sans-serif;margin:0;padding:18px;color:#1a1a1a;font-size:14px;line-height:1.4}
       section{margin-bottom:10px}
       .fhead{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #b8923a;padding-bottom:10px;margin-bottom:10px}
@@ -28031,7 +28071,14 @@ function exportFactoryDelivery(scope, onlyFactory){
       .thumb{width:64px;height:64px;margin:0 auto;border:1px solid #d0c8b4;border-radius:6px;overflow:hidden;background:#f5f2ea;display:flex;align-items:center;justify-content:center}
       .thumb img{width:100%;height:100%;object-fit:cover;display:block}
       .thumb.noimg::after{content:'📷';font-size:22px;opacity:.35}
-      .kind{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:700}
+      tr.miss-fs td{background:#fff3c4}
+      tr.miss-fs > td:first-child{box-shadow:inset 4px 0 0 #e0a800}
+      td.fship .miss{color:#9a6b00;font-weight:800;font-size:12px;line-height:1.25;display:inline-block}
+      td.fship .miss .cn{font-weight:400;font-size:10px;color:#b08a3a}
+      .chip-miss{background:#e0a800;color:#3d2c00}
+      .cinit{display:inline-block;min-width:32px;padding:3px 7px;border-radius:6px;color:#fff;font-size:13px;font-weight:800;letter-spacing:.6px;text-align:center;line-height:1.25;white-space:nowrap}
+      .cinit-none{background:#e8e3d6;color:#a9a294;font-weight:600}
+      .kind{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:700;white-space:nowrap}
       .kind-s{background:#dbeafe;color:#1e40af}
       .kind-o{background:#ffedd5;color:#9a3412}
       .kind-as{background:#fde4e4;color:#a11a1a}
