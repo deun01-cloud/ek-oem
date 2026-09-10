@@ -14016,14 +14016,29 @@ async function pullFromNotion(opts){
           consKept.push(x);
         });
       }
+      // 🛡 [FIX] 노션 푸시가 실패해 아직 노션에 없는 로컬 항목(_pushFailed) 보존.
+      //    노션-우선(strict) 모드는 "모든 신규는 노션 push 성공 후 로컬 반영"을 전제하지만,
+      //    notionCall()은 실패해도 throw 없이 null을 반환해 '조용한 실패'가 생긴다.
+      //    이 항목들을 그냥 버리면 사용자가 작성한 견적/문서가 통째로 사라지므로,
+      //    재푸시(_repairOrphans)가 성공할 때까지 로컬에 유지한다.
+      const pendingKept = [];
       if(strict){
-        const dropped = local.filter(x => !x._notionId && !recentlySynced.includes(x) && !consKept.includes(x)).length;
+        local.forEach(x=>{
+          if(x._notionId) return;
+          if(!x._pushFailed) return;
+          if(recentlySynced.includes(x) || consKept.includes(x)) return;
+          pendingKept.push(x);
+        });
+        if(pendingKept.length){
+          console.warn(`[notion-first] 🛡 노션 미등록(푸시 실패) 로컬 항목 ${pendingKept.length}건 보존 (${label}) — 재푸시 대기`);
+        }
+        const dropped = local.filter(x => !x._notionId && !recentlySynced.includes(x) && !consKept.includes(x) && !pendingKept.includes(x)).length;
         if(dropped > 0){
           console.log(`[notion-first] 노션 미동기 로컬 항목 ${dropped}건 제외 (${label})`);
         }
       }
 
-      return [...merged, ...recentlySynced, ...localOnly, ...consKept];
+      return [...merged, ...recentlySynced, ...localOnly, ...consKept, ...pendingKept];
     }
 
     // 안전장치: remote가 비어있는데 로컬에 _notionId가 있는 항목이 있으면
@@ -14038,10 +14053,15 @@ async function pullFromNotion(opts){
         //    입출고를 예외에 포함해야 노션의 전체 항목이 항상 병합되어(합집합) 서버 스냅샷
         //    누락분까지 모든 기기가 같은 세트로 수렴한다.
         const _isAppendOnlyServerType = (label === '재고이력' || label === '입출고');
-        const localCount = localArr.length;
+        // 🛠 [FIX] 비교 기준을 "로컬 전체"가 아니라 "노션에 존재해야 하는 로컬 항목(_notionId 보유)"으로 변경.
+        //    노션 푸시가 실패해 로컬에만 남은 항목(_notionId 없음)까지 분모에 넣으면
+        //    노션은 멀쩡한데도 매번 급감으로 오판 → pull 영구 스킵 → 로컬 전용 항목이 절대 줄지 않는
+        //    '데드락'이 된다(견적 노션33/로컬53 사례). 노션 미등록분은 급감이 아니라 '푸시 실패'이므로
+        //    아래 _repairOrphans()가 재푸시로 해결한다.
+        const localCount = localArr.filter(x=>x && x._notionId).length;
         const remoteCount = remoteRows.length;
         if(!_isAppendOnlyServerType && localCount >= 50 && remoteCount < localCount * 0.8){
-          const msg = `⚠ ${label}: 노션 ${remoteCount}건 / 로컬 ${localCount}건 — 데이터 급감 감지! 안전을 위해 동기화 스킵 (페이지네이션 한계나 권한 문제 의심)`;
+          const msg = `⚠ ${label}: 노션 ${remoteCount}건 / 로컬(노션동기화분) ${localCount}건 — 데이터 급감 감지! 안전을 위해 동기화 스킵`;
           console.error('[pull]', msg);
           try{ if(typeof showToast==='function') showToast(msg,'var(--red)',10000); }catch(e){}
           return false;
@@ -14184,6 +14204,10 @@ async function pullFromNotion(opts){
       }
       return localArr;
     }
+
+    // 🩺 머지 '이전'에 실행 — 노션에 없는 항목(푸시 실패분)에 _pushFailed 표식을 붙여
+    //    노션-우선 머지에서 삭제되지 않게 보호하고, 동시에 재푸시 큐에 등록해 스스로 수렴시킨다.
+    try{ if(typeof _repairOrphans==='function') _repairOrphans({silent:true}); }catch(_e){}
 
     // 각 테이블 매핑
     samples       = mergeRows(smpRows,  samples,        mapNotionSample,    ['imgs','sourceDoc','cadFiles','refs','aiParsed','dueHistory'], '샘플',     notionCfg.smpDb);
@@ -14405,7 +14429,7 @@ async function syncIOToNotion(io){
       // 이미 이 항목을 만드는 중 → 그 결과를 기다렸다가, _notionId 붙으면 update로 전환
       try{ await inflight; }catch(_){}
       if(io._notionId){
-        try{ await nUpdate(io._notionId, props); io._syncedAt=new Date().toISOString();
+        try{ await _nUpdateChecked(io._notionId, props, io, 'io', '입출고'); io._syncedAt=new Date().toISOString();
           if(typeof realtimePublish==='function') try{ realtimePublish('io', io); }catch(_){} }catch(e){ console.warn('IO update(after inflight) 실패:', e); }
         return true;
       }
@@ -14429,7 +14453,7 @@ async function syncIOToNotion(io){
   }
   try {
     if(io._notionId){
-      await nUpdate(io._notionId, props);
+      await _nUpdateChecked(io._notionId, props, io, 'io', '입출고');
       io._syncedAt = new Date().toISOString();
       if(typeof realtimePublish === 'function') try{ realtimePublish('io', io); }catch(_){}
       return true;
@@ -14442,9 +14466,11 @@ async function syncIOToNotion(io){
       try{ res = await createP; }
       finally{ if(window._ioCreateInFlight) window._ioCreateInFlight.delete(lockKey); }
       if(res?.id){ io._notionId = res.id; io._syncedAt = new Date().toISOString();
+        _markPushOk(io);
         if(typeof realtimePublish === 'function') try{ realtimePublish('io', io); }catch(_){}
         return true;
       }
+      _markPushFailed(io,'io',false,'입출고');
     }
   } catch(e){ console.warn('IO 노션 동기화 실패:', e); }
   return false;
@@ -14505,7 +14531,8 @@ async function syncStockHistToNotion(h){
   if(h.when){ var _w=String(h.when).trim(); if(_w && !isNaN(new Date(_w).getTime())) props["변동일시"] = {date:{start:_w}}; }
   try{
     const res = await nCreate(notionCfg.stockHistDb, props);
-    if(res?.id){ h._notionId = res.id; return true; }
+    if(res?.id){ h._notionId = res.id; _markPushOk(h); return true; }
+    _markPushFailed(h,'',false,'재고이력');
   }catch(e){ console.warn('재고이력 노션 동기화 실패:', e); }
   return false;
 }
@@ -18645,6 +18672,8 @@ function startAutoSync(){
   if(typeof _startSyncRetryLoop==='function') _startSyncRetryLoop();
   // 노션 archive 실패 재시도 루프도 시작 (좀비 부활 방지)
   if(typeof _startArchiveRetryLoop==='function') _startArchiveRetryLoop();
+  // 🩺 노션 미등록(푸시 실패) 항목 자동 복구 — 시작 시 1회
+  setTimeout(()=>{ try{ _repairOrphans({silent:true}); }catch(e){ console.warn('[repair]', e); } }, 5000);
 }
 
 // 🌐 Realtime 연결 상태 변화 시 폴링 주기 재조정 호출용
@@ -19027,6 +19056,16 @@ function _startSyncRetryLoop(){
       item.attempts++;
       Promise.resolve(fn(item.obj, item.isUpdate))
         .then(()=>{
+          // 🛠 [FIX] 프라미스가 resolve됐다고 성공이 아니다(조용한 실패 대응).
+          //    _notionId가 붙었고 실패 표식이 없어야 진짜 성공.
+          if(item.obj && !item.obj._notionId){
+            console.warn('[syncRetry] 응답은 왔으나 _notionId 없음 — 큐 유지:', key);
+            return;
+          }
+          if(item.obj && item.obj._pushFailed){
+            console.warn('[syncRetry] 푸시 실패 표식 남아있음 — 큐 유지:', key);
+            return;
+          }
           _syncRetryQueue.delete(key); // 성공 → 큐에서 제거
           console.log('[syncRetry] ✓ 재시도 성공:', key);
         })
@@ -19036,6 +19075,41 @@ function _startSyncRetryLoop(){
     });
   }, 30000);
 }
+
+// ══════════════════════════════════════════════════════════════
+// 🩹 노션 push 실패 공통 처리 (전체 타입)
+//  배경: notionCall()은 실패해도 throw 없이 null을 반환한다. 반환값을 확인하지 않으면
+//    "노션에 저장 안 됐는데 성공"으로 처리되어 ① 재시도 큐가 안 돌고 ② 노션-우선 머지에서
+//    해당 항목이 삭제되며 ③ isSafePull의 급감 감지가 매번 발동해 pull이 영구 스킵된다.
+//  처리: 실패를 한 곳에서 표식(_pushFailed) + 재시도 큐 등록으로 통일한다.
+// ══════════════════════════════════════════════════════════════
+function _markPushFailed(obj, type, isUpdate, label){
+  if(!obj) return;
+  try{
+    // _notionId가 아직 없는 항목만 보호 표식 — 머지에서 삭제되지 않게 함
+    if(!obj._notionId) obj._pushFailed = true;
+  }catch(_){}
+  console.warn(`[push실패] ${label||type||'항목'} 노션 ${isUpdate?'수정':'생성'} 실패 → 재시도 큐 등록`,
+               obj.id, obj.no||obj.code||obj.name||obj.vendor||'');
+  try{ if(type && typeof _enqueueSyncRetry==='function' && _syncFnMap[type]) _enqueueSyncRetry(type, obj, !!isUpdate); }catch(_){}
+  try{ if(typeof slSave==='function') slSave(); }catch(_){}
+}
+function _markPushOk(obj){
+  if(obj && obj._pushFailed){ try{ delete obj._pushFailed; }catch(_){} }
+}
+// nUpdate 결과 검증판 — 실패 시 표식·큐 등록 후 예외를 던진다(생성 실패와 동일한 계약)
+async function _nUpdateChecked(pageId, props, obj, type, label){
+  const r = await nUpdate(pageId, props);
+  if(!r || !r.id){
+    _markPushFailed(obj, type, true, label);
+    const d = (typeof _notionLastError!=='undefined' && _notionLastError && _notionLastError.message)
+      ? (' — '+String(_notionLastError.message).slice(0,200)) : '';
+    throw new Error('Notion 수정 실패: 응답 없음 ('+(label||type||'')+')'+d);
+  }
+  _markPushOk(obj);
+  return r;
+}
+
 // 디버그용 — 콘솔에서 재시도 큐 확인
 window.syncRetryQueue = ()=>{
   const arr=[];
@@ -19043,6 +19117,55 @@ window.syncRetryQueue = ()=>{
   console.table(arr);
   return arr;
 };
+
+// ── 🩺 노션 미등록(고아) 항목 자동 복구 ──────────────────────────────
+// 배경: notionCall()이 실패해도 throw 없이 null을 반환하던 탓에, 노션 생성이 실패한
+//   항목이 _notionId 없이 로컬에만 남아 계속 쌓였다(견적 19건). 이 상태가 되면
+//   'isSafePull'의 급감 감지가 매 동기화마다 발동해 해당 타입 pull이 영구 스킵된다.
+// 처리: 시작 시 1회 + 동기화 직후에 _notionId 없는 항목을 찾아 _pushFailed로 표식하고
+//   재시도 큐에 넣어 노션에 재등록한다. 성공하면 _notionId가 붙어 자연히 사라진다.
+function _repairOrphans(opts){
+  opts = opts || {};
+  if(!notionCfg.workerUrl) return 0;
+  // [타입키, 배열, 노션DB, 라벨] — 노션-우선(풀 머지) 타입 전체
+  const _reg = ()=>[
+    ['sample',   typeof samples!=='undefined'?samples:null,        notionCfg.smpDb,     '샘플의뢰'],
+    ['order',    typeof orders!=='undefined'?orders:null,          notionCfg.ordDb,     '발주서'],
+    ['proc',     typeof procItems!=='undefined'?procItems:null,    notionCfg.procDb,    '공정'],
+    ['proposal', typeof proposals!=='undefined'?proposals:null,    notionCfg.propDb,    '영업제안'],
+    ['client',   typeof clients!=='undefined'?clients:null,        notionCfg.clientDb,  '고객사'],
+    ['factory',  typeof factories!=='undefined'?factories:null,    notionCfg.factoryDb, '공장'],
+    ['task',     typeof tasks!=='undefined'?tasks:null,            notionCfg.taskDb,    '업무일지'],
+    ['as',       typeof asItems!=='undefined'?asItems:null,        notionCfg.asDb,      'AS'],
+    ['inquiry',  typeof inquiries!=='undefined'?inquiries:null,    notionCfg.inqDb,     '고객사문의'],
+    ['quote',    typeof quotes!=='undefined'?quotes:null,          notionCfg.quoteDb,   '견적서'],
+  ];
+  const MAX_PER_TYPE = 100;   // 한 번에 너무 많이 밀어넣지 않도록 상한
+  const found = [];
+  let total = 0;
+  _reg().forEach(([type, arr, dbId, label])=>{
+    if(!dbId || !Array.isArray(arr) || !arr.length) return;
+    const orphans = arr.filter(x=>x && !x._notionId).slice(0, MAX_PER_TYPE);
+    if(!orphans.length) return;
+    orphans.forEach(x=>{
+      x._pushFailed = true;                        // 머지에서 삭제되지 않도록 보호
+      try{ _enqueueSyncRetry(type, x, false); }catch(_){}
+    });
+    total += orphans.length;
+    found.push(`${label} ${orphans.length}건`);
+  });
+  if(!total) return 0;
+  try{ slSave(); }catch(_){}
+  console.warn('[repair] 🩺 노션 미등록 항목 재푸시 큐 등록 —', found.join(', '));
+  if(!opts.silent && typeof showToast==='function'){
+    showToast(`🩺 노션에 없는 항목(${found.join(', ')})을 자동 재등록합니다 (최대 30초)`,'var(--org)',6000);
+  }
+  return total;
+}
+// 하위호환 + 콘솔 실행용
+function _repairOrphanQuotes(opts){ return _repairOrphans(opts); }
+window.repairOrphans = ()=>_repairOrphans({silent:false});
+window.repairQuotes  = ()=>_repairOrphans({silent:false});
 
 // 페이지 닫힘 시 — 대기 중 sync 모두 즉시 실행 (데이터 유실 방지)
 function flushPendingSyncs(){
@@ -19135,10 +19258,11 @@ async function syncSampleToNotion(s, update){
   p["작업지시서JSON"] = {"rich_text": chunkRichText(filesForNotion(s.sourceDoc))};
   p["예시이미지JSON"] = {"rich_text": chunkRichText(filesForNotion(s.imgs))};
   p["CAD파일JSON"]   = {"rich_text": chunkRichText(filesForNotion(s.cadFiles))};
-  if(s._notionId){ await nUpdate(s._notionId,p); }
+  if(s._notionId){ await _nUpdateChecked(s._notionId,p,s,'sample','샘플의뢰'); }
   else{
     const r=await nCreate(notionCfg.smpDb,p);
     if(!r || !r.id){
+      _markPushFailed(s,'sample',false,'샘플의뢰');
       const reason = (_notionLastError && _notionLastError.message) ? (' — '+String(_notionLastError.message).slice(0,200)) : '';
       throw new Error('Notion 생성 실패: 응답에 ID 없음 (샘플의뢰)'+reason);
     }
@@ -19229,10 +19353,11 @@ async function syncOrderToNotion(o, update){
   p["선금율"]   = {"number": (o.prepayPct != null ? +o.prepayPct : 0) || 0};
   // ⚠ 중복 방지: _notionId가 이미 있으면 반드시 update (update 플래그 무시)
   if(o._notionId){
-    await nUpdate(o._notionId,p);
+    await _nUpdateChecked(o._notionId,p,o,'order','발주서');
   } else {
     const r=await nCreate(notionCfg.ordDb,p);
     if(!r || !r.id){
+      _markPushFailed(o,'order',false,'발주서');
       const detail = (_notionLastError && _notionLastError.message) ? (' — '+String(_notionLastError.message).slice(0,300)) : '';
       throw new Error('Notion 생성 실패: 응답에 ID 없음 (발주서)'+detail);
     }
@@ -19269,9 +19394,10 @@ async function syncProcToNotion(proc, update){
   if(proc.due) p["출고예정일"]={"date":{"start":proc.due}};
   const stageName=STAGES_N[proc.stageIdx||0];
   if(stageName) p["단계"]={"select":{"name":stageName}};
-  if(proc._notionId){ await nUpdate(proc._notionId,p); }
+  if(proc._notionId){ await _nUpdateChecked(proc._notionId,p,proc,'proc','공정'); }
   else{
     const r=await nCreate(notionCfg.procDb,p);
+    if(!r || !r.id) _markPushFailed(proc,'proc',false,'공정');
     if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (공정)');
     saveNotionId(procItems,proc.id,r.id,SK.p);
     proc._notionId = r.id;
@@ -19300,9 +19426,10 @@ async function syncProposalToNotion(prop, update){
   if(prop.reaction) p["반응"]={"select":{"name":prop.reaction}};
   if(prop.date)     p["제안일"]={"date":{"start":prop.date}};
   if(prop.nextDate) p["다음제안예정"]={"date":{"start":prop.nextDate}};
-  if(prop._notionId){ await nUpdate(prop._notionId,p); }
+  if(prop._notionId){ await _nUpdateChecked(prop._notionId,p,prop,'proposal','영업제안'); }
   else{
     const r=await nCreate(notionCfg.propDb,p);
+    if(!r || !r.id) _markPushFailed(prop,'proposal',false,'영업제안');
     if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (영업제안)');
     saveNotionId(proposals,prop.id,r.id,SL_K.prop);
     prop._notionId = r.id;
@@ -19349,14 +19476,18 @@ async function syncNewDesignToNotion(nd){
 
   try{
     if(nd._notionId){
-      await nUpdate(nd._notionId, p);
+      await _nUpdateChecked(nd._notionId, p, nd, '', '신규디자인');
       showToast('☁ Notion 동기화됨','var(--grn)',1500);
     } else {
       const r = await nCreate(notionCfg.ndDb, p);
       if(r?.id){
         nd._notionId = r.id;
+        _markPushOk(nd);
         slSave();
         showToast('☁ Notion 저장됨','var(--grn)',1500);
+      } else {
+        _markPushFailed(nd,'',false,'신규디자인');
+        showToast('⚠ 신규디자인 Notion 저장 실패 — 다시 저장해 주세요','var(--red)',5000);
       }
     }
   }catch(e){
@@ -19413,9 +19544,10 @@ async function syncClientToNotion(cl, update){
   if(cl.cat){ p["카테고리"]={"multi_select": String(cl.cat).split(',').map(s=>s.trim()).filter(Boolean).map(n=>({name:n})) }; }
   if(cl.grade) p["등급"]={"select":{"name":cl.grade}};
   if(cl._notionId){
-    await nUpdate(cl._notionId,p);
+    await _nUpdateChecked(cl._notionId,p,cl,'client','고객사');
   } else {
     const r=await nCreate(notionCfg.clientDb,p);
+    if(!r || !r.id) _markPushFailed(cl,'client',false,'고객사');
     if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (고객사)');
     saveNotionId(clients,cl.id,r.id,SL_K.cli);
     cl._notionId = r.id;
@@ -19456,9 +19588,10 @@ async function syncFactoryToNotion(fa, update){
     "상태":{"select":{"name":fa.status==='inactive'?'미활성':'활성'}},
   };
   if(fa._notionId){
-    await nUpdate(fa._notionId,p);
+    await _nUpdateChecked(fa._notionId,p,fa,'factory','공장');
   } else {
     const r=await nCreate(notionCfg.factoryDb,p);
+    if(!r || !r.id) _markPushFailed(fa,'factory',false,'공장');
     if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (공장)');
     saveNotionId(factories,fa.id,r.id,SL_K.fac);
     fa._notionId = r.id;
@@ -19491,9 +19624,10 @@ async function syncTaskToNotion(task, update){
   if(task.cat)  p["카테고리"]={"select":{"name":task.cat}};
   if(typeof task.ord==='number') p["순서"]={"number":task.ord};
   if(task._notionId){
-    await nUpdate(task._notionId,p);
+    await _nUpdateChecked(task._notionId,p,task,'task','업무일지');
   } else {
     const r=await nCreate(notionCfg.taskDb,p);
+    if(!r || !r.id) _markPushFailed(task,'task',false,'업무일지');
     if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (업무일지)');
     saveNotionId(tasks,task.id,r.id,SK.t);
     task._notionId = r.id;
@@ -19529,9 +19663,10 @@ async function syncASToNotion(a, update){
   if(a.status)  p["진행상태"]={"select":{"name":a.status}};
   if(a.billing) p["청구상태"]={"select":{"name":a.billing}};
   if(a.defectType) p["수리종류"]={"select":{"name":a.defectType}};
-  if(a._notionId){ await nUpdate(a._notionId,p); }
+  if(a._notionId){ await _nUpdateChecked(a._notionId,p,a,'as','AS'); }
   else{
     const r=await nCreate(notionCfg.asDb,p);
+    if(!r || !r.id) _markPushFailed(a,'as',false,'AS');
     if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (AS)');
     saveNotionId(asItems,a.id,r.id,SK.a);
     a._notionId = r.id;
@@ -19580,9 +19715,10 @@ async function syncInqToNotion(q, update){
   if(q.receivedAt) p["접수일"]={"date":{"start":q.receivedAt}};
   if(q.category)   p["카테고리"]={"select":{"name":q.category}};
   if(q.status)     p["상태"]={"select":{"name":q.status}};
-  if(q._notionId){ await nUpdate(q._notionId,p); }
+  if(q._notionId){ await _nUpdateChecked(q._notionId,p,q,'inquiry','고객사문의'); }
   else{
     const r=await nCreate(notionCfg.inqDb,p);
+    if(!r || !r.id) _markPushFailed(q,'inquiry',false,'고객사문의');
     if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (고객사 문의)');
     q._notionId=r.id;
     try{ slSave(); }catch(e){}
@@ -19743,10 +19879,11 @@ async function syncProductToNotion(pd, update){
   if(pd.createdDate)  p["최초등록일"]={"date":{"start":pd.createdDate}};
   if(pd.lastModified) p["최종수정일"]={"date":{"start":pd.lastModified}};
   if(pd._notionId){
-    await nUpdate(pd._notionId,p);
+    await _nUpdateChecked(pd._notionId,p,pd,'product','제품DB');
   } else {
     const r=await nCreate(notionCfg.productDb,p);
     if(!r || !r.id){
+      _markPushFailed(pd,'product',false,'제품DB');
       throw new Error('Notion 생성 실패: 응답에 ID 없음');
     }
     saveNotionId(productDB,pd.id,r.id,SK.pd);
@@ -19923,7 +20060,7 @@ async function syncInvoiceToNotion(inv, update){
   if(inv.shipDate) p["출고일자"]={"date":{"start":inv.shipDate}};
   if(inv.status)   p["상태"]={"select":{"name":inv.status}};
   if(inv._notionId){
-    await nUpdate(inv._notionId,p);
+    await _nUpdateChecked(inv._notionId,p,inv,'invoice','거래명세서');
     inv._syncedAt = new Date().toISOString();
     return;
   }
@@ -19950,11 +20087,16 @@ async function syncInvoiceToNotion(inv, update){
       if(existing){
         inv._notionId=existing.id;
         save();
-        await nUpdate(existing.id,p);
+        await _nUpdateChecked(existing.id,p,inv,'invoice','거래명세서');
         inv._syncedAt = new Date().toISOString();
         return;
       }
-    }catch(e){ console.warn('합본 중복 검사 실패, 신규 생성으로 진행:',e); }
+    }catch(e){
+      // 🛠 수정 실패(=노션 반영 실패)는 중복검사 실패가 아니다. 여기서 삼키면
+      //    아래 nCreate로 흘러가 '같은 명세서가 노션에 2개' 생기므로 그대로 전파한다.
+      if(/Notion 수정 실패/.test((e && e.message)||'')) throw e;
+      console.warn('합본 중복 검사 실패, 신규 생성으로 진행:',e);
+    }
   } else if(inv.ordNo || inv._fromSample){
     try{
       const rows=await nQueryAll(notionCfg.invDb);
@@ -19988,13 +20130,19 @@ async function syncInvoiceToNotion(inv, update){
       if(existing){
         inv._notionId=existing.id;
         save();
-        await nUpdate(existing.id,p);
+        await _nUpdateChecked(existing.id,p,inv,'invoice','거래명세서');
         inv._syncedAt = new Date().toISOString();
         return;
       }
-    }catch(e){ console.warn('중복 검사 실패, 신규 생성으로 진행:',e); }
+    }catch(e){
+      // 🛠 수정 실패(=노션 반영 실패)는 중복검사 실패가 아니다. 여기서 삼키면
+      //    아래 nCreate로 흘러가 '같은 명세서가 노션에 2개' 생기므로 그대로 전파한다.
+      if(/Notion 수정 실패/.test((e && e.message)||'')) throw e;
+      console.warn('중복 검사 실패, 신규 생성으로 진행:',e);
+    }
   }
   const r=await nCreate(notionCfg.invDb,p);
+  if(!r || !r.id) _markPushFailed(inv,'invoice',false,'거래명세서');
   if(!r || !r.id) throw new Error('Notion 생성 실패: 응답에 ID 없음 (거래명세서)');
   const _hadNoNotionId = !inv._notionId;
   const _oldLocalKey = (inv.id !== undefined && inv.id !== null) ? String(inv.id) : null;
@@ -20080,7 +20228,7 @@ async function syncQuoteToNotion(qt, update){
   if(qt.status)     p["상태"]={"select":{"name":qt.status}};
   if(qt.type)       p["유형"]={"select":{"name":qt.type}};
   if(qt._notionId){
-    await nUpdate(qt._notionId,p);
+    await _nUpdateChecked(qt._notionId,p,qt,'quote','견적서');
     qt._syncedAt = new Date().toISOString();
     if(typeof realtimePublish === 'function') try{ realtimePublish('quote', qt); }catch(_){}
     return;
@@ -20093,16 +20241,23 @@ async function syncQuoteToNotion(qt, update){
       if(existing){
         qt._notionId=existing.id;
         slSave();
-        await nUpdate(existing.id,p);
+        await _nUpdateChecked(existing.id,p,qt,'quote','견적서');
         qt._syncedAt = new Date().toISOString();
         if(typeof realtimePublish === 'function') try{ realtimePublish('quote', qt); }catch(_){}
         return;
       }
-    }catch(e){ console.warn('견적 중복 검사 실패:',e); }
+    }catch(e){
+      // 중복 검사 자체의 실패는 무시하고 생성으로 진행하되, 위 nUpdate 실패는 그대로 전파
+      if(/Notion 수정 실패/.test((e && e.message)||'')) throw e;
+      console.warn('견적 중복 검사 실패:',e);
+    }
   }
   const r=await nCreate(notionCfg.quoteDb,p);
-  if(r?.id){ qt._notionId=r.id; qt._syncedAt = new Date().toISOString(); slSave();
+  if(r?.id){ qt._notionId=r.id; qt._syncedAt = new Date().toISOString(); _markPushOk(qt); slSave();
     if(typeof realtimePublish === 'function') try{ realtimePublish('quote', qt); }catch(_){}
+  } else {
+    _markPushFailed(qt,'quote',false,'견적서');
+    throw new Error('Notion 생성 실패: 응답 없음 (견적서)');
   }
 }
 
@@ -33537,7 +33692,7 @@ async function syncChecklistItemToNotion(item, mode, isUpdate){
     const periodKey = mode==='month' ? (item.monthKey || getCurrentMonthKey()) : (item.weekKey || getCurrentWeekKey());
     props["주차"] = {"rich_text":[{"text":{"content":periodKey}}]};
     if(isUpdate && item._notionId){
-      await nUpdate(item._notionId, props);
+      await _nUpdateChecked(item._notionId, props, item, '', '체크리스트');
     } else {
       let r;
       try{
@@ -33551,7 +33706,10 @@ async function syncChecklistItemToNotion(item, mode, isUpdate){
       }
       if(r && r.id){
         item._notionId = r.id;
+        _markPushOk(item);
         saveChecklists();
+      } else {
+        _markPushFailed(item,'',false,'체크리스트');
       }
     }
   }catch(e){ console.warn('체크리스트 노션 동기화 실패:', e); }
