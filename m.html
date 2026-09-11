@@ -791,9 +791,9 @@ function _rtOnOpen(){
   _rtSend({
     op: 'subscribe',
     clientId: _rtClientId,
-    // 모바일은 invoice/order/sample/product/client/task/as/io만 다룸 (proc/proposal/quote/inquiry 없음)
-    // 그래도 다 구독해놓고 받기만 함 (혹시 데이터 들어오면 무시되거나 적용됨)
-    types: ['invoice','order','sample','product','client','customer','task','quote','proposal','as','proc','io','inquiry','checklist'],
+    // 📱 모바일이 실제로 쓰는 타입만 구독 — 서버 읽기량(무료 한도)을 줄인다
+    types: ['invoice','order','sample','product','client','task','as','io'],
+    since: _rtBuildSince(),   // 📉 타입별 증분 기준점 (전체를 매번 받지 않는다)
   });
   if(_rtOutboundQueue.length){
     console.log(RT_LOG_PREFIX, `대기 중인 ${_rtOutboundQueue.length}건 전송`);
@@ -900,14 +900,46 @@ function realtimeDelete(type, idOrItem){
 }
 
 // ── 수신 핸들러 ──
+// 📉 증분 동기화 워터마크 — 접속할 때마다 전체를 받지 않도록 타입별 마지막 ts를 기억
+const RT_WM_KEY_M = 'ek_rt_watermarks_v1';
+let _rtWatermarksM = {};
+try{ _rtWatermarksM = JSON.parse(localStorage.getItem(RT_WM_KEY_M)||'{}') || {}; }catch(e){ _rtWatermarksM = {}; }
+function _rtSetWatermark(type, ts){
+  if(!type || !ts) return;
+  if(!(ts > (_rtWatermarksM[type]||0))) return;
+  _rtWatermarksM[type] = ts;
+  try{ localStorage.setItem(RT_WM_KEY_M, JSON.stringify(_rtWatermarksM)); }catch(e){}
+}
+function _rtBuildSince(){
+  const since = {};
+  Object.keys(_rtWatermarksM).forEach(function(type){
+    const arr = (typeof _rtGetLocalArray==='function') ? _rtGetLocalArray(type) : null;
+    if(Array.isArray(arr) && arr.length) since[type] = _rtWatermarksM[type];   // 로컬이 비었으면 전체를 다시 받는다
+  });
+  return since;
+}
+
 function _rtHandleSnapshot(msg){
-  if(!msg.items || !msg.items.length){
-    _rtSnapshotReceived.add(msg.type);
+  // 서버가 실패를 알려오면 조용히 넘기지 않는다 (한도 초과 등)
+  if(msg.ok === false){
+    console.error(RT_LOG_PREFIX, '❌ 서버 스냅샷 실패:', msg.type, msg.error||'');
+    try{ showToast('⚠ 서버 동기화 불가 — 노션에서 받아옵니다','warn'); }catch(e){}
     return;
   }
-  console.log(RT_LOG_PREFIX, `스냅샷 수신: ${msg.type} ${msg.items.length}건`);
   _rtSnapshotReceived.add(msg.type);
-  msg.items.forEach(item => _applyRemoteItem(msg.type, item, msg.ts || Date.now()));
+  if(msg.maxTs) _rtSetWatermark(msg.type, msg.maxTs);
+  // 서버에서 삭제된 항목 반영 (증분 응답)
+  let touched=false;
+  if(Array.isArray(msg.deleted) && msg.deleted.length){
+    msg.deleted.forEach(function(id){ try{ _applyRemoteDelete(msg.type, id); touched=true; }catch(e){} });
+  }
+  const items = msg.items || [];
+  if(!items.length){
+    if(touched){ saveAll(); if(typeof renderCurrentPage==='function') try{ renderCurrentPage(); }catch(_){} }
+    return;
+  }
+  console.log(RT_LOG_PREFIX, `스냅샷 수신: ${msg.type} ${items.length}건 ${msg.full===false?'(증분)':'(전체)'}`);
+  items.forEach(item => _applyRemoteItem(msg.type, item, msg.ts || Date.now()));
   saveAll();
   // 현재 화면 다시 렌더
   if(typeof renderCurrentPage === 'function') try{ renderCurrentPage(); }catch(_){}
@@ -1406,14 +1438,42 @@ async function nQueryAll(dbId){
   return all;
 }
 
+// 🧹 Notion select 옵션 이름에는 쉼표를 쓸 수 없다(400 validation_error).
+//    "실버, 에나멜 코팅" 같은 값 때문에 저장이 통째로 실패하던 문제 — 전송 직전에 정리한다.
+function _mSanitizeSelectName(v){
+  var t = String(v==null?'':v).replace(/\s*,\s*/g, ' · ').replace(/\s+/g, ' ').trim();
+  if(/^[·\s]*$/.test(t)) return '';   // 구분자만 남으면 빈 값 취급
+  if(t.length > 100) t = t.slice(0,100).trim();
+  return t;
+}
+function _mSanitizeProps(props){
+  if(!props || typeof props !== 'object') return props;
+  Object.keys(props).forEach(function(k){
+    var p = props[k]; if(!p || typeof p !== 'object') return;
+    if(p.select && p.select.name != null){
+      var f = _mSanitizeSelectName(p.select.name);
+      if(!f){ delete props[k]; return; }
+      if(f !== String(p.select.name)) console.warn('[notion] select 옵션 정리:', k, p.select.name, '→', f);
+      p.select.name = f;
+    }
+    if(Array.isArray(p.multi_select)){
+      p.multi_select = p.multi_select.map(function(o){ return (o&&o.name!=null)?{name:_mSanitizeSelectName(o.name)}:null; })
+                                     .filter(function(o){ return o && o.name; });
+    }
+  });
+  return props;
+}
+
 // 🛠 [FIX] 저장 실패를 예외로 올린다. 예전엔 실패해도 값이 그냥 반환돼
 //    호출부의 catch(= "로컬에만 저장됨" 안내)가 한 번도 동작하지 않았다.
 async function nCreate(dbId, properties){
+  try{ _mSanitizeProps(properties); }catch(e){}
   const r = await notionProxy('/pages', {method:'POST', body:JSON.stringify({parent:{database_id:dbId}, properties})});
   if(!r || !r.id) throw new Error('Notion 저장 실패 '+_mNotionErrText());
   return r;
 }
 async function nUpdate(pageId, properties){
+  try{ _mSanitizeProps(properties); }catch(e){}
   const r = await notionProxy(`/pages/${pageId}`, {method:'PATCH', body:JSON.stringify({properties})});
   if(!r || !r.id) throw new Error('Notion 수정 실패 '+_mNotionErrText());
   return r;
