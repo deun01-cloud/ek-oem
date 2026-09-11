@@ -2041,8 +2041,11 @@ async function manualSync(silent){
       if(!dbId) return localArr;                       // 해당 DB 미설정 → 유지
       if(_mQueryComplete[dbId] === false){ _skipped.push(label+'(수신 불완전)'); return localArr; }
       if(!rows.length && localArr.length){ _skipped.push(label+'(0건 수신)'); return localArr; }
-      if(localArr.length >= 20 && rows.length < localArr.length * 0.8){
-        _skipped.push(`${label}(노션 ${rows.length} < 로컬 ${localArr.length})`);
+      // 🧮 '행 수'가 아니라 '고유 노션 페이지 수'로 비교한다.
+      //    같은 _notionId가 중복으로 쌓여 있으면 행 수만 부풀어 가짜 급감이 된다.
+      const _uniqLocal = new Set(localArr.filter(x=>x && x._notionId).map(x=>String(x._notionId))).size || localArr.length;
+      if(_uniqLocal >= 20 && rows.length < _uniqLocal * 0.8){
+        _skipped.push(`${label}(노션 ${rows.length} < 로컬 ${_uniqLocal})`);
         return localArr;
       }
       return rows.map(mapFn).map((x,i)=>({id:Date.now()+idBase+i, ...x}));
@@ -2057,7 +2060,8 @@ async function manualSync(silent){
     clients       = _safeApply(notionCfg.clientDb, cliRows, clients,       mapNotionClient,  7000, '고객사');
     if(_skipped.length){
       console.warn('[sync] 🛡 로컬 보호로 미적용:', _skipped.join(', '));
-      if(!silent) showToast('⚠ 일부 항목은 불러오지 못해 기존 데이터를 유지했습니다 — '+_skipped.join(', '), 'warn');
+      // 🔕 데이터가 사라진 게 아니라 '기존 것을 그대로 둔' 상황이므로 담담하게 알린다.
+      if(!silent) showToast('일부 항목은 기존 데이터를 유지했습니다 ('+_skipped.length+'개 항목)', 'warn');
     }
     saveAll();
     _lastSyncAt = Date.now();

@@ -11542,6 +11542,70 @@ function _dedupIoItems(){
   }
   return removed;
 }
+// ════════════════════════════════════════════════════════════════
+// 🧹 _notionId 중복 행 정리
+//   같은 노션 페이지 id를 가진 로컬 행은 정의상 '같은 기록'이다.
+//   푸시 실패 → 재시도 → 스냅샷 수신이 엇갈리면 같은 건이 수십 개로 불어나고,
+//   그러면 isSafePull의 '데이터 급감' 감지가 매번 발동해 해당 타입 pull이 영구 스킵된다.
+//   (실측 2026-09-11: 견적 35건이 313행으로 불어나 "노션 35 / 로컬 312"로 보였다)
+//   정리는 무손실이다 — 최신(_ts 큰) 행을 기준으로 삼고, 비어 있는 값만 옛 행에서 채운다.
+// ════════════════════════════════════════════════════════════════
+const DEDUP_TYPES = ['quote','order','sample','product','client','factory','task','proposal','as','proc','inquiry'];
+function _dedupOneType(type){
+  const arr = (typeof _rtGetLocalArray==='function') ? _rtGetLocalArray(type) : null;
+  if(!Array.isArray(arr) || arr.length < 2) return 0;
+  const groups = new Map();
+  arr.forEach((x,i)=>{
+    if(!x || !x._notionId) return;
+    const k = String(x._notionId);
+    if(!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(i);
+  });
+  const drop = new Set();
+  let removed = 0;
+  groups.forEach(idxs=>{
+    if(idxs.length < 2) return;
+    const sorted = idxs.slice().sort((a,b)=> (+arr[b]._ts||0) - (+arr[a]._ts||0));
+    const keep = sorted[0];
+    const base = Object.assign({}, arr[keep]);
+    sorted.slice(1).forEach(j=>{
+      const o = arr[j]; if(!o) return;
+      Object.keys(o).forEach(k=>{
+        const cur = base[k], old = o[k];
+        if(old === undefined || old === null || old === '') return;
+        // 배열은 '더 긴 쪽'을 남긴다 (출고단가 이력 등 append-only 로그 보호)
+        if(Array.isArray(cur) && Array.isArray(old)){ if(old.length > cur.length) base[k] = old; return; }
+        const isEmpty = (cur === undefined || cur === null || cur === '' || (Array.isArray(cur) && !cur.length));
+        if(isEmpty) base[k] = old;
+      });
+      drop.add(j); removed++;
+    });
+    arr[keep] = base;
+  });
+  if(!removed) return 0;
+  const kept = arr.filter((_,i)=>!drop.has(i));
+  arr.length = 0; kept.forEach(x=>arr.push(x));
+  return removed;
+}
+function _dedupAllTypes(silent){
+  let total = 0; const detail = {};
+  DEDUP_TYPES.forEach(t=>{
+    let n = 0;
+    try{ n = _dedupOneType(t); }catch(e){ console.warn('[dedup]', t, e.message); }
+    if(n){ detail[t] = n; total += n; }
+  });
+  if(total){
+    console.log('[dedup] 중복 행 정리:', total, '건', detail);
+    try{ if(typeof save==='function') save(); }catch(e){}
+    try{ if(typeof slSave==='function') slSave(); }catch(e){}   // 견적·고객사·제안 등은 별도 저장소
+    if(!silent && typeof showToast==='function'){
+      try{ showToast('🧹 중복으로 쌓여 있던 '+total+'건을 정리했습니다','var(--grn)',4000); }catch(e){}
+    }
+  }
+  return total;
+}
+window.dedupAll = function(){ return _dedupAllTypes(false); };
+
 window.dedupIo = function(){ var n=_dedupIoItems(); if(typeof save==='function') save(); if(typeof renderTab==='function') try{renderTab();}catch(e){} console.log('중복 제거:', n, '건'); return n; };
 function _rtHandleSnapshot(msg){
   // ── 0) 서버가 실패를 알려온 경우 — 조용히 넘기지 않는다 ──
@@ -11768,6 +11832,11 @@ function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
     };
     const _nk = _natKeyOf(item);
     if(_nk){ idx2 = arr.findIndex(x => _natKeyOf(x) === _nk); }
+  }
+  // 🧾 견적: _notionId/id가 엇갈려도 견적번호(no)로 매칭해 같은 견적이 복제되는 것을 막는다.
+  //    (견적번호는 QT-YYMMDD-NNN 형식으로 건마다 고유하다)
+  if(idx2 < 0 && type === 'quote' && item.no){
+    idx2 = arr.findIndex(x => x && x.no && String(x.no) === String(item.no));
   }
   // 🛡 io(입출고): 같은 배송건(송장+수령인+옵션)이면 자연키로 매칭해 중복 추가를 애초에 차단.
   //    (단, 깊은정리 모드 'ek_io_dedup_off'=1 이면 원본 중복을 그대로 불러오도록 이 합치기도 끔)
@@ -13172,7 +13241,12 @@ function _openNotionCircuit(reason){
   const ico=document.getElementById('notionSyncIcon');
   if(lbl){ lbl.textContent='Notion ❌ 연결 실패'; lbl.style.color='var(--red)'; lbl.title='Notion Worker 연결 실패 — 설정에서 Worker URL을 확인하세요. 60초 후 자동 재시도.'; }
   if(ico) ico.textContent='⚠';
-  showToast('⚠ Notion Worker 연결 실패 — 60초 후 자동 재시도','var(--red)',5000);
+  // 🔕 연결이 계속 안 되면 60초마다 같은 경고가 반복돼 사용자를 불안하게 만든다.
+  //    상단 상태 표시(Notion ❌)가 이미 상시로 알려주므로, 토스트는 세션당 1번만 띄운다.
+  if(!window.__circuitToastShown){
+    window.__circuitToastShown = true;
+    showToast('⚠ Notion Worker 연결 실패 — 자동 재시도 중입니다 (상단 상태 표시 확인)','var(--org)',5000);
+  }
   // 60초 후 자동 리셋 → 다음 호출 때 재시도 가능
   setTimeout(()=>{
     if(_notionCircuitOpen){
@@ -14321,6 +14395,8 @@ async function pullFromNotion(opts){
 
     // 안전장치: remote가 비어있는데 로컬에 _notionId가 있는 항목이 있으면
     // 네트워크/권한 오류로 조회 실패한 것으로 간주하여 pull 스킵 (데이터 보호)
+    // 급감 감지가 몇 번 발동했는지 타입별로 기억 — 알림을 반복해서 띄우지 않기 위한 것
+    const _pullGuardHits = {};
     function isSafePull(remoteRows, localArr, label){
       if(remoteRows.length>0){
         // 🛡 데이터 급감 감지: remote가 local의 80% 미만이면 의심 상황
@@ -14336,14 +14412,24 @@ async function pullFromNotion(opts){
         //    노션은 멀쩡한데도 매번 급감으로 오판 → pull 영구 스킵 → 로컬 전용 항목이 절대 줄지 않는
         //    '데드락'이 된다(견적 노션33/로컬53 사례). 노션 미등록분은 급감이 아니라 '푸시 실패'이므로
         //    아래 _repairOrphans()가 재푸시로 해결한다.
-        const localCount = localArr.filter(x=>x && x._notionId).length;
+        // 🧮 [FIX] '행 수'가 아니라 '고유 노션 페이지 수'로 센다.
+        //    같은 _notionId가 중복으로 쌓여 있으면 행 수만 부풀어 가짜 급감이 된다.
+        const localCount = new Set(localArr.filter(x=>x && x._notionId).map(x=>String(x._notionId))).size;
         const remoteCount = remoteRows.length;
         if(!_isAppendOnlyServerType && localCount >= 50 && remoteCount < localCount * 0.8){
-          const msg = `⚠ ${label}: 노션 ${remoteCount}건 / 로컬(노션동기화분) ${localCount}건 — 데이터 급감 감지! 안전을 위해 동기화 스킵`;
-          console.error('[pull]', msg);
-          try{ if(typeof showToast==='function') showToast(msg,'var(--red)',10000); }catch(e){}
+          const g = (_pullGuardHits[label] = _pullGuardHits[label] || {n:0, notified:false});
+          g.n++;
+          console.error(`[pull] ${label}: 노션 ${remoteCount}건 / 로컬 고유 ${localCount}건 — 보호를 위해 pull 스킵 (${g.n}회째)`);
+          // 🔕 사용자 알림은 '정말 조치가 필요한 경우'로만 제한한다.
+          //    한두 번 걸러지는 것은 안전장치가 정상 작동하는 것일 뿐 사용자가 할 일이 없다.
+          //    → 격차가 절반 이하로 크고, 3회 이상 반복될 때만, 세션당 1번 알린다.
+          if(!g.notified && g.n >= 3 && remoteCount < localCount * 0.5){
+            g.notified = true;
+            try{ if(typeof showToast==='function') showToast(`⚠ ${label} 동기화가 계속 보류 중입니다 (노션 ${remoteCount} / 로컬 ${localCount}) — 확인이 필요합니다`,'var(--org)',6000); }catch(e){}
+          }
           return false;
         }
+        if(_pullGuardHits[label]) _pullGuardHits[label] = {n:0, notified:false};  // 정상화되면 카운터 리셋
         return true; // 정상 pull
       }
       const hasSyncedLocal=localArr.some(x=>x._notionId);
@@ -14353,6 +14439,8 @@ async function pullFromNotion(opts){
       }
       return true; // 로컬도 비어있으면 그냥 통과 (아무 변화 없음)
     }
+    // 진단용 훅 — 콘솔에서 pullGuardStatus() 로 어떤 타입이 몇 번 보류됐는지 확인 가능
+    try{ window._isSafePull = isSafePull; window.pullGuardStatus = function(){ return JSON.parse(JSON.stringify(_pullGuardHits)); }; }catch(e){}
 
     // ── 증분 모드용 upsert 머지 ──
     // remote는 "변경된 row만"이므로, 받지 못한 로컬은 그대로 두고 받은 것만 추가/갱신
@@ -14507,6 +14595,7 @@ async function pullFromNotion(opts){
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
     ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files','exchNewCode','exchNewName','exchNewOption','exchReshipInvoice','exchReshipDate','exchReshipped'], '입출고',   notionCfg.ioDb);
     try{ if(typeof _dedupIoItems==='function') _dedupIoItems(); }catch(_e){}   // 🧹 노션 풀 후 중복 제거 안전장치
+    try{ if(typeof _dedupAllTypes==='function') _dedupAllTypes(true); }catch(_e){} // 🧹 풀 후 _notionId 중복 정리
     // 🛡 [FIX] 동기화 직후 학습식 자동매칭 적용 — 이전에 매칭해둔 (품목+옵션)과 같은 새 주문을
     //    UI 조작 없이 자동으로 매칭한다. 매칭 링크가 노션에 보존되므로 매 동기화마다 유효.
     try{ if(typeof _autoApplyIoMatchLearning==='function') _autoApplyIoMatchLearning(); }catch(e){}
@@ -20662,6 +20751,8 @@ function slLoad(){try{
   factories=d(SL_K.fac);
   inquiries=d(SL_K.inq);newDesigns=d(SL_K.nd);
   quotes=d(SL_K.qt);
+  // 🧹 로드 직후 _notionId 중복 행 정리 — 견적이 복제돼 '데이터 급감' 오경보가 뜨던 문제의 근본 처리
+  try{ if(typeof _dedupAllTypes==='function') _dedupAllTypes(true); }catch(e){}
 }catch(e){}}
 // ── Sales arrow helpers (declared after TODAY/dday are available as functions are hoisted) ──
 const elapsed=d=>d?Math.floor((TODAY-new Date(d))/86400000):0;
@@ -21356,6 +21447,7 @@ function load(){
   if((v=loadKey(SK.io,'입출고'))!==undefined) ioItems=v;           // 이관 전 임시(옛 데이터)
   _loadIoShFromIdb();   // 💾 입출고·재고이력은 IndexedDB가 기준 — 없으면 위 값으로 1회 이관
   try{ if(typeof _dedupIoItems==='function'){ var _dn=_dedupIoItems(); if(_dn) console.log('[boot] io 중복', _dn, '건 정리'); } }catch(_e){}  // 🧹 로드 시 중복 제거 안전장치
+  try{ if(typeof _dedupAllTypes==='function') _dedupAllTypes(true); }catch(_e){}   // 🧹 _notionId 중복 행 정리 (급감 오경보의 근본 원인)
   // 🧹 로드 직후 저장공간 정리 — R2 URL이 있는데 base64도 함께 들고 있으면 base64 제거(중복).
   //    R2 업로드 실패로 base64만 쌓여 localStorage가 꽉 차 저장이 막히는 문제를 완화한다.
   try{ _cleanupBase64Duplicates(); }catch(e){ console.warn('[cleanup] base64 정리 실패:', e); }
