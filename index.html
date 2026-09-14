@@ -3469,8 +3469,9 @@ function toggleSmpClientFilter(mgr){
     smpAdvFilter.manager='';
   } else {
     smpAdvFilter.manager=mgr;
-    // 진행중 건만 보이도록 상태 필터 초기화 (전체에서 확정/취소 제외는 D-Day 필터로 못 하니까 상태 필터는 전체 유지)
-    smpFilter='전체';
+    // 🛡 [FIX] 예전엔 여기서 smpFilter='전체'로 되돌려서, '제작중' 탭에서 고객사를 눌러도
+    //    전체 목록으로 튀었다. 칩 카운트 자체가 현재 탭 기준 집계(26600줄 근처)이므로
+    //    탭은 그대로 두고 고객사 필터만 걸어야 "그 고객사의 제작중 건"이 보인다.
   }
   renderSample();
 }
@@ -13125,6 +13126,35 @@ function _sanitizeNotionProps(props){
   return props;
 }
 
+// ══════════════════════════════════════════════════════════
+// ⏳ 노션 공개 API 속도 제한(평균 3 req/s) 대응
+//   동기화가 페이지(100건)를 연속으로 당겨오다 429를 맞으면 노션은
+//   retry_after(초)를 준다. 예전 코드는 0.5~1.5초 백오프뿐이라
+//   retry_after 35초를 못 견디고 4회 만에 포기 → 1,900건쯤에서 끊기고,
+//   그걸 "20,000건 초과"로 잘못 안내했다. 아래 두 장치로 막는다.
+//   1) _notionPace(): 호출을 직렬화해 최소 간격을 둬서 애초에 429를 피한다.
+//   2) notionCall의 429 분기: retry_after만큼 실제로 기다렸다 재시도.
+// ══════════════════════════════════════════════════════════
+let _notionRateLimitedUntil = 0;      // 이 시각까지는 모든 노션 호출 대기
+let _notionLastCallAt = 0;
+let _notionPaceChain = Promise.resolve();
+const _NOTION_MIN_GAP = 380;          // ms — 약 2.6 req/s
+function _notionPace(){
+  const p = _notionPaceChain.then(async function(){
+    const now0 = Date.now();
+    if(_notionRateLimitedUntil > now0){
+      await new Promise(function(r){ setTimeout(r, _notionRateLimitedUntil - now0); });
+    }
+    const gap = Date.now() - _notionLastCallAt;
+    if(gap < _NOTION_MIN_GAP){
+      await new Promise(function(r){ setTimeout(r, _NOTION_MIN_GAP - gap); });
+    }
+    _notionLastCallAt = Date.now();
+  });
+  _notionPaceChain = p.catch(function(){});
+  return p;
+}
+
 async function notionCall(method, path, body, opts){
   if(!notionCfg.workerUrl) return null;
   opts=opts||{};
@@ -13140,10 +13170,34 @@ async function notionCall(method, path, body, opts){
     if(notionCfg.token) headers['Authorization']='Bearer '+notionCfg.token;
     // 새 Worker: /notion/* 라우팅 (구 Worker와 호환: path가 /pages면 /notion/pages)
     const route=notionCfg.workerUrl+(path.startsWith('/notion')?path:'/notion'+path);
+    await _notionPace();
     const res=await fetch(route,{method,headers,body:body?JSON.stringify(body):undefined});
     if(!res.ok){
       let bodyText='';
       try{ bodyText=(await res.text()||'').slice(0,2000); }catch(e){}
+
+      // ⏳ 429 = 속도 제한. 연결이 끊긴 게 아니므로 회로차단기를 열지 말고
+      //    노션이 알려준 retry_after 만큼 실제로 기다렸다가 재시도한다.
+      if(res.status === 429){
+        const _ra = opts._raCount || 0;
+        let wait = 0;
+        try{ wait = +(((JSON.parse(bodyText)||{}).additional_data||{}).retry_after) || 0; }catch(_e){}
+        if(!wait){ try{ wait = +res.headers.get('Retry-After') || 0; }catch(_e){} }
+        wait = Math.min(Math.max(wait || 5, 1), 60);
+        _notionRateLimitedUntil = Date.now() + wait*1000;   // 다른 호출들도 같이 쉬게
+        if(_ra < 3){
+          console.warn('[Notion] 429 속도 제한 — '+wait+'초 대기 후 재시도 ('+(_ra+1)+'/3)');
+          if(typeof showToast==='function' && !window.__rl429Toast){
+            window.__rl429Toast = true;
+            showToast('⏳ 노션 요청 제한(429) — '+wait+'초 후 자동 재시도합니다','var(--org)',5000);
+            setTimeout(function(){ window.__rl429Toast=false; }, 30000);
+          }
+          await new Promise(function(r){ setTimeout(r, wait*1000 + 300); });
+          return notionCall(method, path, body, Object.assign({}, opts, {_raCount:_ra+1, bypassCircuit:true}));
+        }
+        _logNotionErr('Notion 429 속도 제한 (재시도 3회 소진)');
+        return null;   // 회로차단기는 열지 않는다
+      }
 
       // 🩹 자동 복구: 노션이 모르는 컬럼이라고 400 거부 시, 그 컬럼만 빼고 1회 재시도
       // 메시지 예: "개발비 is not a property that exists." 또는 "X-Y is not a property that exists"
@@ -13416,7 +13470,7 @@ async function nQueryAll(dbId, sinceISO, opts){
       data=await notionCall('POST', '/databases/'+dbId.replace(/-/g,'')+'/query', body, opts);
       if(data && data.results) break;
       data=null;
-      await new Promise(function(r){ setTimeout(r, 500*(attempt+1)); });   // 0.5s→1s→1.5s 백오프
+      await new Promise(function(r){ setTimeout(r, 1200*(attempt+1)); });   // 1.2s→2.4s→3.6s 백오프
     }
     if(!data||!data.results){
       // 4회 재시도에도 실패 → 이번 조회는 불완전. 부분 결과가 전체를 덮어쓰지 않도록 표시.
@@ -13429,10 +13483,15 @@ async function nQueryAll(dbId, sinceISO, opts){
     safetyCounter++;
   } while(cursor && safetyCounter<200); // 최대 20,000건
   if(cursor) _nQueryLastComplete=false;   // 한계 도달도 불완전
-  // 한계 도달 경고: 더 받을 게 있는데도 멈춘 경우
-  if(cursor){
+  // 🛡 [FIX] 예전엔 cursor가 남아 있기만 하면 무조건 "20,000건 초과"라고 알렸다.
+  //    실제로는 429/응답 실패로 1,900건쯤에서 끊긴 경우가 대부분이라 원인을 오해하게 만들었다.
+  //    → 진짜로 200페이지를 다 돈 경우에만 한계 경고, 아니면 중단 사유를 그대로 알린다.
+  if(cursor && safetyCounter>=200){
     console.error(`[nQueryAll] ⚠ DB(${dbId.slice(0,8)}...) 페이지네이션 한계(20,000건) 도달! 더 많은 데이터 존재함`);
     try{ if(typeof showToast==='function') showToast('⚠ 노션 데이터가 20,000건을 초과합니다. 일부만 동기화되었습니다.','var(--red)',8000); }catch(e){}
+  } else if(cursor){
+    console.error(`[nQueryAll] ⚠ DB(${dbId.slice(0,8)}...) 응답 실패로 ${results.length}건에서 중단 — 20,000건 한계가 아님(속도 제한/네트워크)`);
+    try{ if(typeof showToast==='function') showToast(`⚠ 노션 응답이 끊겨 ${results.length}건까지만 동기화됐습니다 — 잠시 후 다시 동기화하세요`,'var(--org)',6000); }catch(e){}
   }
   return results;
 }
@@ -26880,16 +26939,27 @@ function filteredSamples(){
     });
   }
 
-  // 정렬
-  const getCreated=s=>s.createdAt?new Date(s.createdAt):s.id?new Date(s.id):new Date(0);
+  // ── 정렬 ──────────────────────────────────────────────────
+  // 🛡 [FIX] 목록 순서가 동기화 때마다 바뀌던 원인 2가지를 함께 막는다.
+  //   (1) new Date('0000')/빈값 → Invalid Date(NaN). NaN 비교는 비교함수를 깨뜨려
+  //       정렬 결과가 입력 순서에 따라 제멋대로 달라진다. → _t()로 유한값 보정.
+  //   (2) 같은 날짜가 매우 흔한데(동일 의뢰일 최대 16건) 동률이면 0을 돌려주므로
+  //       원본 samples 배열 순서를 그대로 따라간다. 노션 동기화가 부분 실패하면
+  //       그 배열 순서·건수가 매번 달라져 화면 순서가 흔들렸다.
+  //       → 등록순(createdAt) → id 순의 확정 보조기준을 둬서 항상 같은 순서가 되게 한다.
+  const MAXT=8.64e15;
+  const _t=(v,fb)=>{ const n=new Date(v||'').getTime(); return isNaN(n)?fb:n; };
+  const getCreated=s=>_t(s.createdAt, _t(s.id, 0));
+  const _id=s=>String(s.id==null?'':s.id);
+  const tie=(a,b)=> (getCreated(b)-getCreated(a)) || _id(a).localeCompare(_id(b));
   const sorters={
-    req_asc: (a,b)=>new Date(a.reqDate||'9999')-new Date(b.reqDate||'9999'),
-    req_desc:(a,b)=>new Date(b.reqDate||'0000')-new Date(a.reqDate||'0000'),
-    due_asc: (a,b)=>new Date(a.due||'9999')-new Date(b.due||'9999'),
-    due_desc:(a,b)=>new Date(b.due||'0000')-new Date(a.due||'0000'),
-    created_asc: (a,b)=>getCreated(a)-getCreated(b),
-    created_desc:(a,b)=>getCreated(b)-getCreated(a),
-    name_asc:(a,b)=>(a.name||'').localeCompare(b.name||'','ko'),
+    req_asc: (a,b)=>(_t(a.reqDate, MAXT)-_t(b.reqDate, MAXT))||tie(a,b),
+    req_desc:(a,b)=>(_t(b.reqDate,-MAXT)-_t(a.reqDate,-MAXT))||tie(a,b),
+    due_asc: (a,b)=>(_t(a.due, MAXT)-_t(b.due, MAXT))||tie(a,b),
+    due_desc:(a,b)=>(_t(b.due,-MAXT)-_t(a.due,-MAXT))||tie(a,b),
+    created_asc: (a,b)=>(getCreated(a)-getCreated(b))||_id(a).localeCompare(_id(b)),
+    created_desc:(a,b)=>(getCreated(b)-getCreated(a))||_id(a).localeCompare(_id(b)),
+    name_asc:(a,b)=>((a.name||'').localeCompare(b.name||'','ko'))||tie(a,b),
   };
   return [...list].sort(sorters[af.sort]||sorters.req_desc);
 }
@@ -29235,15 +29305,21 @@ function renderOrder(){
   if(af.dateFrom) list=list.filter(o=>o.date && o.date>=af.dateFrom);
   if(af.dateTo) list=list.filter(o=>o.date && o.date<=af.dateTo);
 
-  // 정렬
-  const getCreated=o=>o.createdAt?new Date(o.createdAt):o.id?new Date(o.id):new Date(0);
+  // ── 정렬 ──────────────────────────────────────────────────
+  // 🛡 [FIX] 샘플 목록과 같은 문제(무효 날짜 NaN + 동률 시 원본 배열 순서 의존)를 막는다.
+  //    발주도 동일 발주일 그룹이 24개나 돼서 동기화 때마다 순서가 흔들렸다.
+  const MAXT_O=8.64e15;
+  const _to=(v,fb)=>{ const n=new Date(v||'').getTime(); return isNaN(n)?fb:n; };
+  const getCreated=o=>_to(o.createdAt, _to(o.id, 0));
+  const _ido=o=>String(o.id==null?'':o.id);
+  const tieO=(a,b)=> (getCreated(b)-getCreated(a)) || _ido(a).localeCompare(_ido(b));
   const sorters={
-    ship_asc: (a,b)=>new Date(a.ship||'9999')-new Date(b.ship||'9999'),
-    ship_desc:(a,b)=>new Date(b.ship||'0000')-new Date(a.ship||'0000'),
-    date_desc:(a,b)=>new Date(b.date||'0000')-new Date(a.date||'0000'),
-    date_asc: (a,b)=>new Date(a.date||'9999')-new Date(b.date||'9999'),
-    created_desc:(a,b)=>getCreated(b)-getCreated(a),
-    vendor_asc:(a,b)=>(a.vendor||'').localeCompare(b.vendor||'','ko'),
+    ship_asc: (a,b)=>(_to(a.ship, MAXT_O)-_to(b.ship, MAXT_O))||tieO(a,b),
+    ship_desc:(a,b)=>(_to(b.ship,-MAXT_O)-_to(a.ship,-MAXT_O))||tieO(a,b),
+    date_desc:(a,b)=>(_to(b.date,-MAXT_O)-_to(a.date,-MAXT_O))||tieO(a,b),
+    date_asc: (a,b)=>(_to(a.date, MAXT_O)-_to(b.date, MAXT_O))||tieO(a,b),
+    created_desc:(a,b)=>(getCreated(b)-getCreated(a))||_ido(a).localeCompare(_ido(b)),
+    vendor_asc:(a,b)=>((a.vendor||'').localeCompare(b.vendor||'','ko'))||tieO(a,b),
   };
   list=list.sort(sorters[af.sort]||sorters.date_desc);
   // 5-A: 헤더 체크박스가 직접 참조할 수 있도록 list 노출
