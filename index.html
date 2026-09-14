@@ -2247,7 +2247,7 @@ window.addEventListener('message', function(ev){
 
     <!-- 분류별 미리보기 -->
     <div id="smpImgPrevWrap" style="margin-top:12px;display:none">
-      <div style="font-size:10.5px;color:var(--gold-lt);font-weight:700;margin-bottom:5px">🖼 이미지 <span style="font-weight:400;color:var(--t3)">(최대 12장 · 클릭하면 확대)</span></div>
+      <div style="font-size:10.5px;color:var(--gold-lt);font-weight:700;margin-bottom:5px">🖼 이미지 <span style="font-weight:400;color:var(--t3)">(최대 12장 · 클릭하면 확대 · <b style="color:var(--gold-lt)">드래그로 순서 변경, 1번이 대표 썸네일</b>)</span></div>
       <div id="smpImgPrev" style="display:flex;gap:8px;flex-wrap:wrap"></div>
     </div>
     <div id="smpSrcPrevWrap" style="margin-top:12px;display:none">
@@ -23422,16 +23422,86 @@ function renderSmpPrev(){
   }
 }
 
+// ══════════════════════════════════════════════════════════
+// 🖱 썸네일 드래그 정렬 — 맨 앞(1번) 사진이 대표 썸네일이 된다
+//    _sampleThumb()가 imgs[0]부터 훑기 때문에 순서 = 대표 이미지.
+// ══════════════════════════════════════════════════════════
+let _thumbDrag = null;
+function _bufByName(buf){
+  let arr = window[buf];
+  if(arr) return arr;
+  if(buf === 'smpImgBuf')      return (typeof smpImgBuf!=='undefined') ? smpImgBuf : null;
+  else if(buf === 'smpSrcBuf') return (typeof smpSrcBuf!=='undefined') ? smpSrcBuf : null;
+  else if(buf === 'smpCadBuf') return (typeof smpCadBuf!=='undefined') ? smpCadBuf : null;
+  else if(buf === 'smpRefBuf') return (typeof smpRefBuf!=='undefined') ? smpRefBuf : null;
+  return null;
+}
+function _thumbDragStart(e, buf, i){
+  _thumbDrag = {buf:buf, i:i};
+  try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain','thumb:'+buf+':'+i); }catch(_e){}
+  const el = e.currentTarget;
+  setTimeout(function(){ if(el) el.style.opacity='.35'; }, 0);
+}
+function _thumbDragOver(e, buf, i){
+  if(!_thumbDrag || _thumbDrag.buf!==buf) return;
+  e.preventDefault(); e.stopPropagation();
+  try{ e.dataTransfer.dropEffect='move'; }catch(_e){}
+  const el=e.currentTarget, r=el.getBoundingClientRect();
+  const after = (e.clientX - r.left) > r.width/2;
+  el.style.boxShadow = after ? 'inset -4px 0 0 #b8923a' : 'inset 4px 0 0 #b8923a';
+}
+function _thumbDragLeave(e){ e.currentTarget.style.boxShadow=''; }
+function _thumbDrop(e, buf, i){
+  if(!_thumbDrag || _thumbDrag.buf!==buf) return;
+  e.preventDefault(); e.stopPropagation();
+  const el=e.currentTarget, r=el.getBoundingClientRect();
+  const after = (e.clientX - r.left) > r.width/2;
+  el.style.boxShadow='';
+  const from = _thumbDrag.i;
+  _thumbDrag = null;
+  reorderBuf(buf, from, i + (after?1:0));
+}
+function _thumbDragEnd(e){
+  if(e && e.currentTarget) e.currentTarget.style.opacity='';
+  document.querySelectorAll('.file-thumb').forEach(function(el){ el.style.boxShadow=''; el.style.opacity=''; });
+  _thumbDrag = null;
+}
+function reorderBuf(buf, from, to){
+  const arr = _bufByName(buf);
+  if(!arr || from<0 || from>=arr.length) return;
+  if(to > from) to--;
+  to = Math.max(0, Math.min(to, arr.length-1));
+  if(to === from) return;
+  const it = arr.splice(from,1)[0];
+  arr.splice(to,0,it);
+  if(typeof renderSmpPrev==='function') renderSmpPrev();
+  if(buf==='smpImgBuf' && to===0 && typeof showToast==='function')
+    showToast('✓ 1번으로 이동 — 이 사진이 대표 썸네일이 됩니다','var(--grn)',2000);
+}
+
 function thumbHtml(im,i,buf,size=80){
   const safeUrl=im.url||'';
   const safeName=(im.name||'').replace(/'/g,'\\\'');
   const moveBtn = (buf==='smpImgBuf')
     ? `<button onmousedown="event.stopPropagation()" onclick="event.stopPropagation();event.preventDefault();moveSmpFile('smpImgBuf',${i},'smpSrcBuf')" style="position:absolute;top:2px;left:2px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:9px;padding:1px 6px;font-size:9px;cursor:pointer;z-index:10;font-family:inherit" title="작업지시서로 이동">→📋</button>`
     : '';
-  return `<div class="file-thumb" style="width:${size}px;height:${size}px;position:relative;cursor:zoom-in" onclick="event.stopPropagation();openPrev('${buf}',${i})">
-    <img src="${safeUrl}" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none">
+  const isMain = (buf==='smpImgBuf' && i===0);
+  const orderBadge = (buf==='smpImgBuf')
+    ? `<div style="position:absolute;bottom:2px;left:2px;z-index:11;pointer-events:none;border-radius:7px;padding:1px 5px;font-size:8.5px;font-weight:800;line-height:1.4;${isMain?'background:#b8923a;color:#fff':'background:rgba(0,0,0,.6);color:#fff'}">${isMain?'⭐ 대표':(i+1)}</div>`
+    : '';
+  const mainRing = isMain ? 'outline:2px solid #b8923a;outline-offset:-2px;' : '';
+  return `<div class="file-thumb" draggable="true"
+    ondragstart="_thumbDragStart(event,'${buf}',${i})"
+    ondragover="_thumbDragOver(event,'${buf}',${i})"
+    ondragleave="_thumbDragLeave(event)"
+    ondrop="_thumbDrop(event,'${buf}',${i})"
+    ondragend="_thumbDragEnd(event)"
+    title="드래그해서 순서 변경 · 클릭하면 확대"
+    style="width:${size}px;height:${size}px;position:relative;cursor:grab;${mainRing}" onclick="event.stopPropagation();openPrev('${buf}',${i})">
+    <img src="${safeUrl}" draggable="false" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none">
     ${moveBtn}
-    <button class="ft-del" style="z-index:10" onmousedown="event.stopPropagation()" onclick="event.stopPropagation();event.preventDefault();removeBuf('${buf}',${i})">✕</button>
+    ${orderBadge}
+    <button class="ft-del" draggable="false" style="z-index:10" onmousedown="event.stopPropagation()" onclick="event.stopPropagation();event.preventDefault();removeBuf('${buf}',${i})">✕</button>
     <div class="ft-lbl" style="pointer-events:none">${im.name||''}</div>
   </div>`;
 }
@@ -28709,6 +28779,23 @@ function _clientInit2(name){
   return {init:init, color:color, full:raw};
 }
 
+// 📦 수량 셀 — 총수량 아래에 입고/미입고를 나눠서 표기 (공장별 진행현황 PDF)
+//   ordQty: 발주/샘플 수량(숫자), rcvQty: 입고 누계(발주 rcvHistory 합계)
+function _qtySplitCell(r){
+  const raw = String(r.qty==null?'':r.qty).trim();
+  const tot = +r.ordQty||0;
+  const rcv = Math.max(0, +r.rcvQty||0);
+  if(!tot) return raw ? _escHtml(raw) : '';
+  const inQ  = Math.min(rcv, tot);
+  const outQ = Math.max(tot - rcv, 0);
+  const over = rcv > tot ? (rcv - tot) : 0;   // 초과입고
+  let sub = '';
+  if(inQ>0)  sub += `<span class="qin">입고 ${inQ}<span class="cn"> 入库</span></span>`;
+  if(outQ>0) sub += `<span class="qout">미입고 ${outQ}<span class="cn"> 未入库</span></span>`;
+  if(over>0) sub += `<span class="qover">초과 +${over}<span class="cn"> 超收</span></span>`;
+  return `<div class="qtot">${_escHtml(raw||String(tot))}</div>${sub?`<div class="qsplit">${sub}</div>`:''}`;
+}
+
 function exportFactoryDelivery(scope, onlyFactory){
   scope = scope||'all';
   const rows = [];  // {factory, kind, client, code, name, thumb, qty, status, note, ordered, extraItems}
@@ -28726,6 +28813,8 @@ function exportFactoryDelivery(scope, onlyFactory){
         name: s.name||'',
         thumb: _sampleThumb(s),
         qty: s.qty||'',
+        ordQty: (typeof parseOrdQty==='function'?parseOrdQty(s.qty):(+s.qty||0)),
+        rcvQty: 0,
         status: st,
         note: (s.caution||'').trim(),
         factShip: s.factShip||'',
@@ -28745,7 +28834,7 @@ function exportFactoryDelivery(scope, onlyFactory){
       //   발주번호는 각 품목 행의 품번/발주번호 칸에 함께 넣는다(공장이 어느 발주인지 바로 식별).
       if(!oRows.length){
         rows.push({ factory:_fac, kind:'발주', client:(o.vendor||'').trim(), code:o.no||'', name:'(품목없음)', vendor:o.vendor||'',
-          thumb:_orderThumb(o), qty:'', status:st, note:(o.factoryNotice||'').trim(), factShip:o.factShip||'', extraItems:[] });
+          thumb:_orderThumb(o), qty:'', ordQty:0, rcvQty:0, status:st, note:(o.factoryNotice||'').trim(), factShip:o.factShip||'', extraItems:[] });
       } else {
         oRows.forEach((r, ri)=>{
           const itemName = (r.name||r.itemName||r.code||'(품목)');
@@ -28764,6 +28853,8 @@ function exportFactoryDelivery(scope, onlyFactory){
             vendor: ri===0 ? (o.vendor||'') : '',            // 벤더 태그는 발주 첫 행에만
             thumb: th,
             qty: (r.qty||''),
+            ordQty: (typeof parseOrdQty==='function'?parseOrdQty(r.qty):(+r.qty||0)),
+            rcvQty: (Array.isArray(r.rcvHistory)?r.rcvHistory:[]).reduce(function(a,h){ return a+(+((h&&h.qty)||0)); },0),
             status: st,
             note: ri===0 ? (o.factoryNotice||'').trim() : '', // 비고는 발주 첫 행에만
             factShip: o.factShip||'',
@@ -28799,6 +28890,8 @@ function exportFactoryDelivery(scope, onlyFactory){
       name: a.item||'',
       thumb: thumb,
       qty: (a.qty||1)+'',
+      ordQty: (+a.qty||1),
+      rcvQty: 0,
       status: 'AS '+(a.status||'접수'),
       note: noteParts.join(' / '),
       factShip: a.due||'',   // AS는 완료예정일을 출고일 칸에
@@ -28880,7 +28973,7 @@ function exportFactoryDelivery(scope, onlyFactory){
         <td class="c"><span class="kind kind-${r.kind==='샘플'?'s':(r.kind==='AS'?'as':'o')}">${r.kind}</span></td>
         <td class="code">${_escHtml(r.code)}</td>
         <td class="nmcell">${vendorTag}<span class="nm">${_escHtml(r.name)}</span>${extra}</td>
-        <td class="c qty">${_escHtml(r.qty)}</td>
+        <td class="c qty">${_qtySplitCell(r)}</td>
         <td class="c"><span class="st" style="background:${stColor(r.status)}">${_escHtml(r.status)}</span></td>
         <td class="c fship">${r.factShip? _escHtml(r.factShip) : '<span class="miss">미입력<br><span class="cn">未填写</span></span>'}</td>
         <td class="note">${_escHtml(r.note)}</td>
@@ -28905,7 +28998,7 @@ function exportFactoryDelivery(scope, onlyFactory){
           <th style="width:54px">구분</th>
           <th style="width:100px">품번/<br>발주번호</th>
           <th style="min-width:260px">품목명 / 品名</th>
-          <th style="width:64px">수량<br><span>数量</span></th>
+          <th style="width:88px">수량<br><span>数量 (입고/미입고)</span></th>
           <th style="width:70px">진행현황<br><span>进度</span></th>
           <th style="width:82px">공장출고일<br><span>出货日</span></th>
           <th style="width:180px">비고 / 备注</th>
@@ -28944,6 +29037,13 @@ function exportFactoryDelivery(scope, onlyFactory){
       .extra{font-size:12px;color:#666;margin-top:4px;line-height:1.5}
       .extra b{color:#333}
       td.qty{font-size:17px;font-weight:800;color:#111}
+      td.qty .qtot{font-size:17px;font-weight:800;color:#111;line-height:1.2}
+      td.qty .qsplit{margin-top:4px;display:flex;flex-direction:column;gap:2px;align-items:center}
+      td.qty .qin,td.qty .qout,td.qty .qover{display:inline-block;padding:1px 7px;border-radius:8px;font-size:11px;font-weight:800;white-space:nowrap;line-height:1.4}
+      td.qty .qin{background:#d9f0de;color:#166534;border:1px solid #a8d8b4}
+      td.qty .qout{background:#ffe2e2;color:#a11a1a;border:1px solid #f0b4b4}
+      td.qty .qover{background:#e8e0ff;color:#4c1d95;border:1px solid #c4b5fd}
+      td.qty .cn{font-weight:400;font-size:9px;opacity:.75}
       .thumb{width:64px;height:64px;margin:0 auto;border:1px solid #d0c8b4;border-radius:6px;overflow:hidden;background:#f5f2ea;display:flex;align-items:center;justify-content:center}
       .thumb img{width:100%;height:100%;object-fit:cover;display:block}
       .thumb.noimg::after{content:'📷';font-size:22px;opacity:.35}
@@ -48214,7 +48314,7 @@ function saveFixed(){
     // [신규] 고정비가 바뀌면 현재 기간 스냅샷도 갱신 (손익 일관성)
     var period = document.getElementById('g-period').value;
     if(period && getRecordsDB()[period]){
-      try{ savePeriod(); }catch(e){ console.warn('고정비 변경 후 스냅샷 갱신 실패:', e.message); }
+      try{ savePeriod({auto:true}); }catch(e){ console.warn('고정비 변경 후 스냅샷 갱신 실패:', e.message); }
     }
   }, 800);
 }
@@ -49573,7 +49673,7 @@ function autoSyncNotion(){
     var hasSales = S.sales&&S.sales.length;
     var hasSample = S.sample&&S.sample.length;
     if(!hasSales&&!hasSample) return;
-    savePeriod();
+    savePeriod({auto:true});
   }, 800);
 }
 
@@ -49716,12 +49816,38 @@ async function onPeriodChange(){
   else { toast('📭 '+period+' 저장된 데이터 없음 — 파일을 업로드하세요','ok'); }
 }
 
-async function savePeriod(){
+async function savePeriod(opts){
+  opts = opts || {};
   var period=document.getElementById('g-period').value;
   if(!period){toast('기간을 선택해주세요','err');return;}
   if(!S.sales&&!S.sample&&!(S.salesAS&&S.salesAS.length)&&!(S.salesCommerce&&S.salesCommerce.length)){toast('데이터를 먼저 입력해주세요','err');return;}
 
   var rev=totalSales(), cogs=totalCogs(), fx=totalFixed();
+  // ══════════════════════════════════════════════════════════
+  // 🛡 손익 스냅샷 보호
+  //   고정비를 바꾸거나 자동 동기화가 돌 때 savePeriod()가 다시 호출되는데,
+  //   그 시점에 매출 엑셀이 아직 안 올라와 있으면 '매출 거의 0 + 원가만' 상태가
+  //   기존 스냅샷을 덮어써 버린다. (실제로 8월이 매출 711만/원가 7,500만,
+  //   영업이익률 -1170%로 저장돼 합계까지 적자로 보였다)
+  //   → 저장된 매출보다 크게 줄어드는 덮어쓰기는 자동이면 건너뛰고, 수동이면 확인받는다.
+  // ══════════════════════════════════════════════════════════
+  try{
+    var _prev = (typeof getRecordsDB==='function') ? (getRecordsDB()[period]||null) : null;
+    var _prevRev = _prev ? (+_prev.rev||0) : 0;
+    if(_prevRev > 0 && rev < _prevRev * 0.5 && !opts.force){
+      var _warn = period+' 저장된 매출 '+won(_prevRev)+' → 지금 '+won(rev)+'. 매출 자료가 아직 올라오지 않은 것 같습니다.';
+      if(opts.auto){
+        console.warn('[savePeriod] 스냅샷 보호 — 자동 덮어쓰기 취소:', _warn);
+        if(typeof toast==='function') toast('ℹ 매출 자료가 없어 '+period+' 손익 스냅샷은 그대로 두었습니다','ok');
+        return;
+      }
+      if(typeof showConfirm==='function'){
+        showConfirm(_warn+' 그래도 이 값으로 덮어쓸까요?', function(){ savePeriod({force:true}); },
+                    '손익 스냅샷 덮어쓰기', '⚠', '덮어쓰기', 'var(--ac)');
+        return;
+      }
+    }
+  }catch(_e){ console.warn('[savePeriod] 스냅샷 보호 검사 실패(계속 진행):', _e.message); }
   var revD=totalSalesDelivery(), revS=totalSampleRev(), revDev=totalDevRev();
   var revAS=totalASRev(), revCm=totalCommerceRev();
   // AS/커머스 매출 상세를 노션 SALES_DB에도 저장 (집계 스냅샷과 별개로 행 단위 보존)
@@ -50227,6 +50353,9 @@ function renderMonthlyPnlTable(host){
       m.has=true; anyRec=true;
       m.rev=+r.rev||0; m.cogs=+r.cogs||0; m.fixed=+r.fixed||0; m.op=m.rev-m.cogs-m.fixed;
       m.margin = m.rev>0 ? Math.round(m.op/m.rev*1000)/10 : null;   // 영업이익률(%)
+      m.savedAt = (r.savedAt||'').slice(0,10);
+      // ⚠ 매출 자료가 빠진 채 저장된 스냅샷 표시 — 원가의 절반도 안 되는 매출은 정상 실적이 아니다
+      m.suspect = (m.cogs > 0 && m.rev < m.cogs * 0.5);
       tR+=m.rev; tC+=m.cogs; tF+=m.fixed; tO+=m.op;
     });
     // 영업이익률 상태 점 — 이모지(🟢🟡) 대신 CSS 색상 점(폰트 미지원 □ 방지). 적자=빨강·0~10%=주황·10~20%=노랑·20%+=초록
@@ -50238,7 +50367,10 @@ function renderMonthlyPnlTable(host){
       if(!m.has) return '<tr><td style="padding:7px 6px"><b>'+m.label+'</b></td><td colspan="5" style="padding:7px 6px;text-align:center;color:var(--hi)">— (미저장)</td></tr>';
       var mgTxt = (m.rev>0) ? (m.margin+'%') : '—';
       return '<tr>'
-        +'<td style="padding:7px 6px"><b>'+m.label+'</b></td>'
+        +'<td style="padding:7px 6px"><b>'+m.label+'</b>'
+          + (m.suspect?'<span title="매출 자료가 빠진 채 저장된 것으로 보입니다 — 경영지원에서 해당 월을 불러와 다시 저장하세요" style="color:#dc2626;margin-left:4px">⚠</span>':'')
+          + (m.savedAt?'<div style="font-size:9.5px;color:var(--mu);font-weight:400">'+m.savedAt+' 저장</div>':'')
+        +'</td>'
         +'<td style="padding:7px 6px;text-align:right">'+won(m.rev)+'</td>'
         +'<td style="padding:7px 6px;text-align:right">'+won(m.cogs)+'</td>'
         +'<td style="padding:7px 6px;text-align:right">'+won(m.fixed)+'</td>'
@@ -50265,6 +50397,9 @@ function renderMonthlyPnlTable(host){
       + '<th style="padding:8px 6px;text-align:left">월</th><th style="padding:8px 6px;text-align:right">매출</th><th style="padding:8px 6px;text-align:right">매입원가</th><th style="padding:8px 6px;text-align:right">고정비</th><th style="padding:8px 6px;text-align:right">영업이익</th><th style="padding:8px 6px;text-align:right">영업이익률</th>'
       + '</tr></thead><tbody>'+rows+foot+'</tbody></table>'
       + (anyRec?'':'<div style="font-size:11.5px;color:var(--hi);padding:10px 4px">아직 저장된 월별 손익이 없습니다 — 데이터 입력 후 상단 <b>💾 지금 저장</b>을 누르면 그 달 손익이 이 표에 쌓입니다.</div>')
+      + (months.some(function(m){return m.suspect;})
+          ? '<div style="font-size:11px;color:#dc2626;padding:8px 4px 0">⚠ 표시된 달은 <b>매출 자료가 빠진 채 저장된 스냅샷</b>입니다. 경영지원에서 그 달을 불러와 매출 파일을 올린 뒤 <b>💾 지금 저장</b>을 다시 누르면 바로잡힙니다.</div>'
+          : '')
       + '<div style="font-size:10.5px;color:var(--mu);padding:8px 4px 0">※ 영업이익 = 매출 − 매입원가 − 고정비 · 영업이익률 = 영업이익 ÷ 매출 · 각 월은 저장 스냅샷 기준 (미저장 월은 “—”)</div>'
       + '</div>';
     host.appendChild(card);
