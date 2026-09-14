@@ -14142,16 +14142,23 @@ async function pullFromNotion(opts){
     //    자동 폴링(silent)일 때만 제품DB는 "마지막 동기화 이후 바뀐 것만" 받는다.
     //    삭제 정리는 사용자가 직접 새로고침(silent=false)하거나 force일 때 전체 풀로 보장.
     const _productIncremental = silent && !opts.force;
+    // 📦 [FIX] 증분 대상을 '계속 쌓이기만 하는 대용량 DB'로 확대.
+    //    제품DB(6,000+)·재고변동이력·입출고는 매 자동 폴링마다 전체를 받으면
+    //    요청이 수백 건이 되어 노션 429(평균 3 req/s 제한)를 부른다.
+    //    자동 폴링(silent)일 때만 증분이고, 수동 동기화·force는 전과 같이 전체 풀이라
+    //    노션에서 삭제된 항목 정리는 그대로 보장된다.
+    const _bigIncDbs = [notionCfg.productDb, notionCfg.stockHistDb, notionCfg.ioDb].filter(Boolean);
+    // 증분은 로컬에 이미 데이터가 있을 때만. 비어 있으면(새 기기·캐시 삭제 등) 전체 풀이어야
+    // '워터마크 이후 몇 건'만 받아 나머지가 통째로 사라져 보이는 사고를 막는다.
+    const _localHas = (dbId)=>{
+      if(dbId === notionCfg.productDb)   return Array.isArray(productDB)     && productDB.length>0;
+      if(dbId === notionCfg.stockHistDb) return Array.isArray(stockHistory)  && stockHistory.length>0;
+      if(dbId === notionCfg.ioDb)        return Array.isArray(ioItems)       && ioItems.length>0;
+      return false;
+    };
+    const _isBigInc = (dbId)=> !!dbId && _productIncremental && _bigIncDbs.indexOf(dbId)>=0 && _localHas(dbId);
     const sinceFor = (dbId)=>{
-      // 제품DB만 증분 (자동 폴링 시) — 나머지는 기존 정책(useIncremental) 따름
-      if(dbId && dbId === notionCfg.productDb && _productIncremental){
-        // 🛡 [FIX] 로컬 제품DB가 비어있으면(IndexedDB 소실·새 기기·캐시 삭제 등)
-        //    증분이 아니라 전체(full)로 받아야 한다. 워터마크(_dbSyncTimes)는 localStorage,
-        //    제품 데이터는 IndexedDB로 저장소가 달라, IDB만 비워지고 워터마크가 남으면
-        //    증분 pull이 '워터마크 이후 변경분 몇 건'만 받아 6,000건이 통째로 사라져 보인다.
-        if(!Array.isArray(productDB) || productDB.length === 0) return null;
-        return getDbSyncTime(dbId);
-      }
+      if(_isBigInc(dbId)) return getDbSyncTime(dbId);
       return (useIncremental && dbId) ? getDbSyncTime(dbId) : null;
     };
     // 사용자 액션은 회로차단기 우회 — 한 번의 일시적 실패로 영구 차단되지 않게
@@ -14170,7 +14177,11 @@ async function pullFromNotion(opts){
       notionCfg.taskDb  ? nQueryAll(notionCfg.taskDb,   sinceFor(notionCfg.taskDb),  callOpts) : Promise.resolve([]),
       notionCfg.asDb    ? nQueryAll(notionCfg.asDb,     sinceFor(notionCfg.asDb),    callOpts) : Promise.resolve([]),
       notionCfg.productDb ? nQueryAll(notionCfg.productDb, sinceFor(notionCfg.productDb),callOpts) : Promise.resolve([]),
-      notionCfg.invDb   ? nQueryAll(notionCfg.invDb,    sinceFor(notionCfg.invDb),   callOpts) : Promise.resolve([]),
+      // 🛡 [FIX] 거래명세서는 아래 병합부에서 "서버가 기준점"이라 받아도 버린다(14650줄 근처).
+      //    그런데도 매 동기화마다 DB 전체를 내려받고 있어서, 노션 요청 수만 수백 건씩
+      //    늘어나 429(속도 제한)를 유발했다. 쓰지 않을 데이터는 받지 않는다.
+      //    (거래명세서 화면이 따로 노션을 조회하는 경로는 그대로 살아 있다)
+      Promise.resolve([]),
       notionCfg.inqDb   ? nQueryAll(notionCfg.inqDb,    sinceFor(notionCfg.inqDb),   callOpts) : Promise.resolve([]),
       notionCfg.quoteDb ? nQueryAll(notionCfg.quoteDb,  sinceFor(notionCfg.quoteDb), callOpts) : Promise.resolve([]),
       notionCfg.ioDb    ? nQueryAll(notionCfg.ioDb,     sinceFor(notionCfg.ioDb),    callOpts) : Promise.resolve([]),
@@ -14600,7 +14611,9 @@ async function pullFromNotion(opts){
       }
       // 증분 모드: remote가 비어있으면 변경 없음 → 그대로 두고 sync time만 그대로 유지
       // 📦 제품DB도 자동 폴링 시 증분 처리 (전역 useIncremental과 별개로 판정)
-      var _thisIsIncremental = useIncremental || (dbId && dbId === notionCfg.productDb && _productIncremental);
+      // 🛡 sinceFor()와 반드시 같은 기준이어야 한다. 어긋나면 증분으로 받은 일부 행이
+      //    전체 풀로 오인돼 나머지 데이터를 덮어써 지운다.
+      var _thisIsIncremental = useIncremental || _isBigInc(dbId);
       if(_thisIsIncremental){
         if(!remoteRows.length){
           // 변경 없음 — DB sync time은 그대로 유지 (현재 시각으로 갱신해도 무방하나, 안전을 위해 유지)
