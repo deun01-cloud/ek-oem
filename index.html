@@ -14365,7 +14365,9 @@ async function pullFromNotion(opts){
               out[f] = u.length > 50 ? u.slice(-50) : u;
             } else if(recentlyPushed){
               // 방금 이 기기가 push한 직후 — 로컬이 최신이므로 로컬 유지
-              out[f] = prevArr.length >= remoteArr.length ? prevArr : remoteArr;
+              // 🛡 [FIX] 예전엔 '더 긴 쪽'을 골랐다. 그래서 체크리스트 항목을 지우고 저장하면
+              //    노션의 옛 배열(더 김)이 채택돼 지운 항목이 되살아났다.
+              out[f] = prevArr;
             } else if(remoteArr.length === 0 && prevArr.length > 0){
               // 노션이 비었는데 로컬엔 있음 — 유실 방지로 로컬 유지
               out[f] = prevArr;
@@ -23005,11 +23007,14 @@ function _captureModalSnapshot(ov){
   });
   ov._initialSnapshot = snap;
   ov._snapshotTakenAt = Date.now();
+  ov._extraDirty = false;
 }
 
 // 현재 입력값과 스냅샷 비교 → 변경된 필드 있는지
 function _isModalDirty(ov){
-  if(!ov || !ov._initialSnapshot) return false;
+  if(!ov) return false;
+  if(ov._extraDirty) return true;   // 사진 순서 변경 등 입력폼 밖의 변경
+  if(!ov._initialSnapshot) return false;
   const snap = ov._initialSnapshot;
   const ids = Object.keys(snap);
   for(const id of ids){
@@ -23048,6 +23053,7 @@ function _safeCloseM(id){
     //    스냅샷을 지우면 재진입 시 _isModalDirty가 false라 그냥 조용히 닫힌다.
     delete ov._initialSnapshot;
     delete ov._snapshotTakenAt;
+    ov._extraDirty = false;
     // save 함수 호출 — 함수 자체가 모달을 닫음 (저장 성공 시)
     // 저장 실패해도 (validation 등) 모달은 열린 상태로 유지됨
     try { saveFn(); } catch(e){ console.error('save 실패:', e); showToast('⚠ 저장 실패: '+e.message,'var(--red)',3500); }
@@ -23092,7 +23098,7 @@ function closeM(id){
 // 저장 함수가 저장 직후 호출 — dirty 확인 팝업 없이 바로 닫음 (저장 버튼 중복 저장 방지)
 function closeMAfterSave(id){
   const ov = document.getElementById(id);
-  if(ov){ delete ov._initialSnapshot; delete ov._snapshotTakenAt; }
+  if(ov){ delete ov._initialSnapshot; delete ov._snapshotTakenAt; ov._extraDirty=false; }
   _rawCloseM(id);
 }
 function openM(id){
@@ -23518,34 +23524,37 @@ function _thumbDragOver(e, buf, i){
   if(!_thumbDrag || _thumbDrag.buf!==buf) return;
   e.preventDefault(); e.stopPropagation();
   try{ e.dataTransfer.dropEffect='move'; }catch(_e){}
-  const el=e.currentTarget, r=el.getBoundingClientRect();
-  const after = (e.clientX - r.left) > r.width/2;
-  el.style.boxShadow = after ? 'inset -4px 0 0 #b8923a' : 'inset 4px 0 0 #b8923a';
+  // 🎯 [FIX] 좌/우 절반 판정을 없앴다. "이 칸으로 옮긴다"는 슬롯 의미로 통일 —
+  //    예전엔 왼쪽 절반에 놓으면 '이 앞에 삽입'이라 한 칸 모자라게 이동하거나
+  //    바로 옆 칸끼리는 아예 제자리(변화 없음)가 돼서 두 번 드래그해야 했다.
+  e.currentTarget.style.boxShadow = 'inset 0 0 0 3px #b8923a';
 }
 function _thumbDragLeave(e){ e.currentTarget.style.boxShadow=''; }
 function _thumbDrop(e, buf, i){
   if(!_thumbDrag || _thumbDrag.buf!==buf) return;
   e.preventDefault(); e.stopPropagation();
-  const el=e.currentTarget, r=el.getBoundingClientRect();
-  const after = (e.clientX - r.left) > r.width/2;
-  el.style.boxShadow='';
+  e.currentTarget.style.boxShadow='';
   const from = _thumbDrag.i;
   _thumbDrag = null;
-  reorderBuf(buf, from, i + (after?1:0));
+  reorderBuf(buf, from, i, true);   // true = 슬롯 이동 (놓은 칸 번호가 곧 목적지)
 }
 function _thumbDragEnd(e){
   if(e && e.currentTarget) e.currentTarget.style.opacity='';
   document.querySelectorAll('.file-thumb').forEach(function(el){ el.style.boxShadow=''; el.style.opacity=''; });
   _thumbDrag = null;
 }
-function reorderBuf(buf, from, to){
+//  slotMode=true  → to = "놓은 칸 번호". 그 자리로 그대로 옮긴다 (드래그 1회 = 이동 1회).
+//  slotMode=false → to = "삽입 위치"(옛 방식). 외부 호출 호환용으로만 남겨둠.
+function reorderBuf(buf, from, to, slotMode){
   const arr = _bufByName(buf);
   if(!arr || from<0 || from>=arr.length) return;
-  if(to > from) to--;
+  if(!slotMode && to > from) to--;
   to = Math.max(0, Math.min(to, arr.length-1));
   if(to === from) return;
   const it = arr.splice(from,1)[0];
   arr.splice(to,0,it);
+  // 사진 순서는 입력폼이 아니라서 모달 dirty 검사에 안 잡힌다 → 별도 표식
+  try{ const _ov=document.getElementById('mSmp'); if(_ov) _ov._extraDirty=true; }catch(_){}
   if(typeof renderSmpPrev==='function') renderSmpPrev();
   if(buf==='smpImgBuf' && to===0 && typeof showToast==='function')
     showToast('✓ 1번으로 이동 — 이 사진이 대표 썸네일이 됩니다','var(--grn)',2000);
@@ -28871,11 +28880,9 @@ function _qtySplitCell(r){
   if(!tot) return raw ? _escHtml(raw) : '';
   const inQ  = Math.min(rcv, tot);
   const outQ = Math.max(tot - rcv, 0);
-  const over = rcv > tot ? (rcv - tot) : 0;   // 초과입고
   let sub = '';
   if(inQ>0)  sub += `<span class="qin">입고 ${inQ}<span class="cn"> 入库</span></span>`;
   if(outQ>0) sub += `<span class="qout">미입고 ${outQ}<span class="cn"> 未入库</span></span>`;
-  if(over>0) sub += `<span class="qover">초과 +${over}<span class="cn"> 超收</span></span>`;
   return `<div class="qtot">${_escHtml(raw||String(tot))}</div>${sub?`<div class="qsplit">${sub}</div>`:''}`;
 }
 
@@ -28898,6 +28905,7 @@ function exportFactoryDelivery(scope, onlyFactory){
         qty: s.qty||'',
         ordQty: (typeof parseOrdQty==='function'?parseOrdQty(s.qty):(+s.qty||0)),
         rcvQty: 0,
+        plating: String(s.plating||'').trim(),
         status: st,
         note: (s.caution||'').trim(),
         factShip: s.factShip||'',
@@ -28917,7 +28925,7 @@ function exportFactoryDelivery(scope, onlyFactory){
       //   발주번호는 각 품목 행의 품번/발주번호 칸에 함께 넣는다(공장이 어느 발주인지 바로 식별).
       if(!oRows.length){
         rows.push({ factory:_fac, kind:'발주', client:(o.vendor||'').trim(), code:o.no||'', name:'(품목없음)', vendor:o.vendor||'',
-          thumb:_orderThumb(o), qty:'', ordQty:0, rcvQty:0, status:st, note:(o.factoryNotice||'').trim(), factShip:o.factShip||'', extraItems:[] });
+          thumb:_orderThumb(o), qty:'', ordQty:0, rcvQty:0, plating:'', status:st, note:(o.factoryNotice||'').trim(), factShip:o.factShip||'', extraItems:[] });
       } else {
         oRows.forEach((r, ri)=>{
           const itemName = (r.name||r.itemName||r.code||'(품목)');
@@ -28927,12 +28935,22 @@ function exportFactoryDelivery(scope, onlyFactory){
           if(!th && r.img && /^https?:\/\//.test(String(r.img))) th=r.img;
           if(!th && typeof _thumbByCode==='function') th=_thumbByCode(r.code||itemName);
           if(!th) th=_orderThumb(o);
+          // 🎨 도금컬러: 발주행 값 우선 → 없으면 품목코드로 제품DB 매칭
+          let _plat = String(r.plating||'').trim();
+          if(!_plat){
+            const _pc = String(r.code||'').trim();
+            if(_pc && typeof products!=='undefined' && Array.isArray(products)){
+              const _pm = products.find(p=>String(p.code||'').trim()===_pc);
+              if(_pm) _plat = String(_pm.plating||'').trim();
+            }
+          }
           rows.push({
             factory: _fac,
             kind: '발주',
             client: (o.vendor||'').trim(),                   // 고객사 — 모든 품목 행에 이니셜 표시
             code: o.no||'',                                  // 발주번호 — 각 품목 행에 표시
             name: itemName,
+            plating: _plat,
             vendor: ri===0 ? (o.vendor||'') : '',            // 벤더 태그는 발주 첫 행에만
             thumb: th,
             qty: (r.qty||''),
@@ -28971,6 +28989,7 @@ function exportFactoryDelivery(scope, onlyFactory){
       client: (a.client||'').trim(),
       code: a.date||'',   // AS는 발주번호 대신 접수일 표시
       name: a.item||'',
+      plating: '',
       thumb: thumb,
       qty: (a.qty||1)+'',
       ordQty: (+a.qty||1),
@@ -29041,6 +29060,7 @@ function exportFactoryDelivery(scope, onlyFactory){
         : '';
       // 품목명 셀: 발주는 [벤더] 표기 + 추가품목 목록
       const vendorTag = r.vendor ? `<span class="vtag">${_escHtml(r.vendor)}</span> ` : '';
+      const platTag = r.plating ? ` <span class="plat">${_escHtml(r.plating)}</span>` : '';
       const extra = (r.extraItems && r.extraItems.length)
         ? `<div class="extra">${r.extraItems.map(e=>`+ ${_escHtml(e.name)}${e.qty?(' <b>×'+_escHtml(e.qty)+'</b>'):''}`).join('<br>')}</div>`
         : '';
@@ -29055,7 +29075,7 @@ function exportFactoryDelivery(scope, onlyFactory){
         <td class="c"><div class="thumb ${r.thumb?'':'noimg'}">${thumb}</div></td>
         <td class="c"><span class="kind kind-${r.kind==='샘플'?'s':(r.kind==='AS'?'as':'o')}">${r.kind}</span></td>
         <td class="code">${_escHtml(r.code)}</td>
-        <td class="nmcell">${vendorTag}<span class="nm">${_escHtml(r.name)}</span>${extra}</td>
+        <td class="nmcell">${vendorTag}<span class="nm">${_escHtml(r.name)}</span>${platTag}${extra}</td>
         <td class="c qty">${_qtySplitCell(r)}</td>
         <td class="c"><span class="st" style="background:${stColor(r.status)}">${_escHtml(r.status)}</span></td>
         <td class="c fship">${r.factShip? _escHtml(r.factShip) : '<span class="miss">미입력<br><span class="cn">未填写</span></span>'}</td>
@@ -29117,6 +29137,7 @@ function exportFactoryDelivery(scope, onlyFactory){
       td.fship{font-size:13px;font-weight:700;color:#1a5a1a;white-space:nowrap}
       .dash{color:#bbb;font-weight:400}
       .vtag{display:inline-block;background:#eef2ff;color:#3550a8;font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:6px;vertical-align:middle}
+      .plat{display:inline-block;background:#f6efdc;color:#7a5c12;border:1px solid #e0d0a4;font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:6px;vertical-align:middle;white-space:nowrap}
       .extra{font-size:12px;color:#666;margin-top:4px;line-height:1.5}
       .extra b{color:#333}
       td.qty{font-size:17px;font-weight:800;color:#111}
@@ -30545,11 +30566,11 @@ function renderSmpNotes(){
     <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--bdr);${n.checked?'opacity:.55':''}" draggable="true"
          ondragstart="smpNoteDragStart(${i})" ondragover="event.preventDefault()" ondrop="smpNoteDrop(${i})">
       <span style="cursor:grab;font-size:12px;color:var(--t3);user-select:none" title="드래그하여 순서 변경">⋮⋮</span>
-      <input type="checkbox" ${n.checked?'checked':''} onchange="smpNotesBuf[${i}].checked=this.checked;renderSmpNotes()" style="width:14px;height:14px;flex-shrink:0;cursor:pointer">
+      <input type="checkbox" ${n.checked?'checked':''} onchange="smpNotesBuf[${i}].checked=this.checked;_markModalDirty('mSmp');renderSmpNotes()" style="width:14px;height:14px;flex-shrink:0;cursor:pointer">
       <input class="fi" value="${(n.text||'').replace(/"/g,'&quot;')}"
-             oninput="smpNotesBuf[${i}].text=this.value"
+             oninput="smpNotesBuf[${i}].text=this.value;_markModalDirty('mSmp')"
              style="flex:1;border:none;background:transparent;padding:2px 4px;font-size:12px;${n.checked?'text-decoration:line-through;color:var(--t3)':''}">
-      <button type="button" onclick="smpNotesBuf.splice(${i},1);renderSmpNotes()" title="삭제"
+      <button type="button" onclick="smpNotesBuf.splice(${i},1);_markModalDirty('mSmp');renderSmpNotes()" title="삭제"
               style="border:none;background:none;cursor:pointer;color:var(--t3);font-size:14px;padding:0 4px;line-height:1">×</button>
     </div>
   `).join('');
@@ -30562,6 +30583,7 @@ function addSmpNote(){
   if(!val) return;
   smpNotesBuf.push({text: val, checked: false});
   inp.value = '';
+  _markModalDirty('mSmp');
   renderSmpNotes();
   setTimeout(()=>{
     const el = document.getElementById('s_notesList');
@@ -30578,6 +30600,7 @@ function smpNoteDrop(toIdx){
   const item = smpNotesBuf.splice(_smpNoteDragIdx, 1)[0];
   smpNotesBuf.splice(toIdx, 0, item);
   _smpNoteDragIdx = null;
+  _markModalDirty('mSmp');
   renderSmpNotes();
 }
 
@@ -31734,6 +31757,8 @@ function saveSmp(){
   // 🔒 노션-우선: 신규 등록 시 노션 연결 필수
   if(!id && !requireNotion('smpDb', '샘플의뢰')){ _releaseSmpLock(); return; }
   const now=new Date().toISOString();
+  // 🛡 [FIX] 체크리스트 입력창에 남은 미확정 텍스트도 항목으로 편입 (Enter 안 눌러도 저장)
+  try{ const _ni=document.getElementById('s_notesInput'); if(_ni && _ni.value.trim()) addSmpNote(); }catch(_){}
   const isAi=document.getElementById('s_aiParsed')?.value==='1';
   const obj={
     name, type:gv('s_type'), manager:gv('s_manager'),
@@ -32044,6 +32069,11 @@ function _createSampleDraftInvoice(s){
 // CRUD: ORDER
 // ════════════════════════════════
 
+// 📌 입력폼(input/select) 밖에서 일어난 변경(체크리스트 추가·삭제·체크·순서)을
+//    모달 dirty 검사에 알려준다. 이게 없으면 ✕로 닫을 때 경고 없이 사라진다.
+function _markModalDirty(modalId){
+  try{ const ov=document.getElementById(modalId); if(ov) ov._extraDirty=true; }catch(_){}
+}
 // ── 발주 메모 체크리스트 버퍼 및 헬퍼 ──
 let ordMemoBuf = []; // [{text, checked}]
 
@@ -32053,8 +32083,15 @@ function loadOrdMemos(o){
     return o.memoList.map(n=>({text:String(n.text||''), checked:!!n.checked}));
   }
   // 기존 memo 텍스트를 자동 항목화 (마이그레이션)
+  //  🛡 [FIX] 줄바꿈만 기준으로 나눈다. 예전엔 ·/• 로도 쪼개서 메모에 가운뎃점을 쓰면
+  //     한 항목이 여러 조각으로 찢어졌다. 또 memo 평문에 붙는 '[✓] / [ ]' 접두어는
+  //     체크 상태로 되살리고 텍스트에서는 제거한다.
   if(o && o.memo){
-    return String(o.memo).split(/\n|·|•/).map(t=>t.trim()).filter(Boolean).map(t=>({text:t, checked:false}));
+    return String(o.memo).split(/\n/).map(t=>t.trim()).filter(Boolean).map(t=>{
+      const m = t.match(/^\[([✓xX ])\]\s*(.*)$/);
+      if(m) return {text:m[2].trim(), checked:(m[1]!==' ')};
+      return {text:t.replace(/^[·•]\s*/,''), checked:false};
+    }).filter(n=>n.text);
   }
   return [];
 }
@@ -32070,11 +32107,11 @@ function renderOrdMemos(){
     <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--bdr);${n.checked?'opacity:.55':''}" draggable="true"
          ondragstart="ordMemoDragStart(${i})" ondragover="event.preventDefault()" ondrop="ordMemoDrop(${i})">
       <span style="cursor:grab;font-size:12px;color:var(--t3);user-select:none" title="드래그하여 순서 변경">⋮⋮</span>
-      <input type="checkbox" ${n.checked?'checked':''} onchange="ordMemoBuf[${i}].checked=this.checked;renderOrdMemos()" style="width:14px;height:14px;flex-shrink:0;cursor:pointer">
+      <input type="checkbox" ${n.checked?'checked':''} onchange="ordMemoBuf[${i}].checked=this.checked;_markModalDirty('mOrd');renderOrdMemos()" style="width:14px;height:14px;flex-shrink:0;cursor:pointer">
       <input class="fi" value="${(n.text||'').replace(/"/g,'&quot;')}"
-             oninput="ordMemoBuf[${i}].text=this.value"
+             oninput="ordMemoBuf[${i}].text=this.value;_markModalDirty('mOrd')"
              style="flex:1;border:none;background:transparent;padding:2px 4px;font-size:12px;${n.checked?'text-decoration:line-through;color:var(--t3)':''}">
-      <button type="button" onclick="ordMemoBuf.splice(${i},1);renderOrdMemos()" title="삭제"
+      <button type="button" onclick="ordMemoBuf.splice(${i},1);_markModalDirty('mOrd');renderOrdMemos()" title="삭제"
               style="border:none;background:none;cursor:pointer;color:var(--t3);font-size:14px;padding:0 4px;line-height:1">×</button>
     </div>
   `).join('');
@@ -32087,6 +32124,7 @@ function addOrdMemo(){
   if(!val) return;
   ordMemoBuf.push({text: val, checked: false});
   inp.value = '';
+  _markModalDirty('mOrd');
   renderOrdMemos();
   setTimeout(()=>{
     const el = document.getElementById('o_memoList');
@@ -32102,6 +32140,7 @@ function ordMemoDrop(toIdx){
   const item = ordMemoBuf.splice(_ordMemoDragIdx, 1)[0];
   ordMemoBuf.splice(toIdx, 0, item);
   _ordMemoDragIdx = null;
+  _markModalDirty('mOrd');
   renderOrdMemos();
 }
 
@@ -33428,6 +33467,14 @@ async function saveOrd(forceOverwrite){
     }
   }
   const now=new Date().toISOString();
+  // 🛡 [FIX] 입력창에 쓰고 Enter(또는 +추가)를 안 누른 텍스트도 항목으로 편입.
+  //    예전엔 그대로 버려져서 "메모가 저장 안 됨"으로 보였다.
+  try{ const _mi=document.getElementById('o_memoInput'); if(_mi && _mi.value.trim()) addOrdMemo(); }catch(_){}
+  // 🛡 [FIX] 메모 체크리스트는 파일 업로드(await) '이전'에 확정한다.
+  //    업로드가 도는 동안 모달을 닫거나 다른 발주를 열면 ordMemoBuf가 바뀌어
+  //    엉뚱한 메모가 저장되거나 사라졌다.
+  const memoList = ordMemoBuf.map(n=>({text:String(n.text||'').trim(), checked:!!n.checked})).filter(n=>n.text);
+  const memoText = memoList.map(n=>(n.checked?'[✓] ':'[ ] ')+n.text).join('\n');
   // UI 전용 플래그(_expanded) 제거 후 저장
   let cleanRows=ordRowsBuf.map(r=>{const {_expanded,...rest}=r;return rest;});
 
@@ -33459,10 +33506,6 @@ async function saveOrd(forceOverwrite){
     ordFileBuf=filesToSave; // 버퍼도 업데이트 (모달 다시 열었을 때 R2 URL 유지)
   }
 
-  // 메모 체크리스트 저장용 객체 구성
-  const memoList = ordMemoBuf.map(n=>({text:String(n.text||'').trim(), checked:!!n.checked})).filter(n=>n.text);
-  // 호환성 유지: memo plaintext는 체크리스트 텍스트의 줄바꿈 결합
-  const memoText = memoList.map(n=>(n.checked?'[✓] ':'[ ] ')+n.text).join('\n');
   // 발주번호가 비어있거나 옛 ORD-타임스탬프 형식이면 새 형식({이니셜}{MMDD})으로 자동생성
   let ordNoVal = gv('o_no').trim();
   const isLegacyOrdNo = /^ORD-\d{10,}$/.test(ordNoVal);
