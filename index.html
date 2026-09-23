@@ -26659,6 +26659,7 @@ function renderSample(){
           ${window._smpChecked.size?`<button class="btn bgo bs" onclick="window._smpChecked.clear();renderSample()" style="font-size:11px">해제</button>`:''}
         </div>
       </div>
+      <button class="btn bs" onclick="openFactoryPicker('sample')" title="공장을 선택해 해당 공장의 진행중 샘플만 납기확인 PDF로 생성 (사진 포함)" style="font-size:11px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">🏭 공장별 샘플 납기확인서</button>
       <button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 직접 등록</button>
     </div>
     <div class="frow">
@@ -28807,7 +28808,7 @@ function openFactoryPicker(scope){
     ov = document.createElement('div');
     ov.className='ov'; ov.id='mFactoryPick';
     ov.innerHTML = `<div class="modal" style="max-width:460px">
-      <div class="mt">🏭 공장별 진행현황 — 공장 선택</div>
+      <div class="mt" id="factoryPickTitle">🏭 공장별 진행현황 — 공장 선택</div>
       <div style="font-size:12px;color:var(--t3);margin-bottom:12px">종류·고객사로 거른 뒤 출력할 공장을 선택하세요. 해당 공장의 진행중 건만 PDF로 나옵니다.</div>
       <div id="factoryPickFilter"></div>
       <div id="factoryPickBody"></div>
@@ -28818,6 +28819,8 @@ function openFactoryPicker(scope){
     const b=document.getElementById('factoryPickBody');
     const d=document.createElement('div'); d.id='factoryPickFilter'; b.parentNode.insertBefore(d,b);
   }
+  const _fpt=document.getElementById('factoryPickTitle');
+  if(_fpt) _fpt.textContent='🏭 공장별 '+(scope==='sample'?'샘플 ':(scope==='order'?'발주 ':''))+'납기확인서 — 공장 선택';
   _fpRender();
   if(typeof openM==='function') openM('mFactoryPick'); else ov.classList.add('open');
 }
@@ -28831,7 +28834,9 @@ function _fpClientKey(raw){
 }
 function _fpToggleKind(k){
   const f=window._fpFilter; f.kinds[k]=!f.kinds[k];
-  if(!f.kinds.s && !f.kinds.o && !f.kinds.as) f.kinds[k]=true; // 최소 1개는 켜둔다
+  // 최소 1개는 켜둔다 — 현재 범위(샘플/발주 탭)에 실제로 있는 종류 기준
+  const av=new Set((window._fpItems||[]).map(it=>it.k));
+  if(!['s','o','as'].some(x=>av.has(x)&&f.kinds[x])) f.kinds[k]=true;
   _fpRender();
 }
 function _fpSetClient(v){ window._fpFilter.client=v||''; _fpRender(); }
@@ -28860,7 +28865,7 @@ function _fpRender(){
   const hasAS=items.some(it=>it.k==='as');
   document.getElementById('factoryPickFilter').innerHTML =
     `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px">
-      ${chip('s','샘플')}${chip('o','발주')}${hasAS?chip('as','AS'):''}
+      ${scope!=='order'?chip('s','샘플'):''}${scope!=='sample'?chip('o','발주'):''}${hasAS?chip('as','AS'):''}
     </div>
     <select onchange="_fpSetClient(this.value)" style="width:100%;padding:8px 10px;margin-bottom:12px;border:1px solid var(--bdr);border-radius:8px;background:var(--s1);color:var(--t1);font-size:13px;font-family:inherit">${opts}</select>`;
 
@@ -28935,6 +28940,13 @@ function _qtySplitCell(r){
   return `<div class="qtot">${_escHtml(raw||String(tot))}</div>${sub?`<div class="qsplit">${sub}</div>`:''}`;
 }
 
+// 🧪 공장별 진행현황 — 품목코드로 제품DB의 소재/도금 조회 (행에 값이 없을 때 폴백)
+function _fdProdOpt(code){
+  const c=String(code||'').trim();
+  if(!c || typeof products==='undefined' || !Array.isArray(products)) return null;
+  return products.find(p=>String(p.code||'').trim()===c) || null;
+}
+
 function exportFactoryDelivery(scope, onlyFactory, filter){
   scope = scope||'all';
   const rows = [];  // {factory, kind, client, code, name, thumb, qty, status, note, ordered, extraItems}
@@ -28954,7 +28966,8 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
         qty: s.qty||'',
         ordQty: (typeof parseOrdQty==='function'?parseOrdQty(s.qty):(+s.qty||0)),
         rcvQty: 0,
-        plating: String(s.plating||'').trim(),
+        mat: String(s.mat||'').trim() || String((_fdProdOpt(s.itemCode||s.itemNo)||{}).mat||'').trim(),
+        plating: String(s.plating||'').trim() || String((_fdProdOpt(s.itemCode||s.itemNo)||{}).plating||'').trim(),
         status: st,
         note: (s.caution||'').trim(),
         factShip: s.factShip||'',
@@ -28974,7 +28987,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
       //   발주번호는 각 품목 행의 품번/발주번호 칸에 함께 넣는다(공장이 어느 발주인지 바로 식별).
       if(!oRows.length){
         rows.push({ factory:_fac, kind:'발주', client:(o.vendor||'').trim(), code:o.no||'', name:'(품목없음)', vendor:o.vendor||'',
-          thumb:_orderThumb(o), qty:'', ordQty:0, rcvQty:0, plating:'', status:st, note:(o.factoryNotice||'').trim(), factShip:o.factShip||'', extraItems:[] });
+          thumb:_orderThumb(o), qty:'', ordQty:0, rcvQty:0, mat:'', plating:'', status:st, note:(o.factoryNotice||'').trim(), factShip:o.factShip||'', extraItems:[] });
       } else {
         oRows.forEach((r, ri)=>{
           const itemName = (r.name||r.itemName||r.code||'(품목)');
@@ -28986,11 +28999,12 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
           if(!th) th=_orderThumb(o);
           // 🎨 도금컬러: 발주행 값 우선 → 없으면 품목코드로 제품DB 매칭
           let _plat = String(r.plating||'').trim();
-          if(!_plat){
-            const _pc = String(r.code||'').trim();
-            if(_pc && typeof products!=='undefined' && Array.isArray(products)){
-              const _pm = products.find(p=>String(p.code||'').trim()===_pc);
-              if(_pm) _plat = String(_pm.plating||'').trim();
+          let _mat  = String(r.mat||'').trim();
+          if(!_plat || !_mat){
+            const _pm = _fdProdOpt(r.code);
+            if(_pm){
+              if(!_plat) _plat = String(_pm.plating||'').trim();
+              if(!_mat)  _mat  = String(_pm.mat||'').trim();
             }
           }
           rows.push({
@@ -28999,6 +29013,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
             client: (o.vendor||'').trim(),                   // 고객사 — 모든 품목 행에 이니셜 표시
             code: o.no||'',                                  // 발주번호 — 각 품목 행에 표시
             name: itemName,
+            mat: _mat,
             plating: _plat,
             vendor: ri===0 ? (o.vendor||'') : '',            // 벤더 태그는 발주 첫 행에만
             thumb: th,
@@ -29038,7 +29053,8 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
       client: (a.client||'').trim(),
       code: a.date||'',   // AS는 발주번호 대신 접수일 표시
       name: a.item||'',
-      plating: '',
+      mat: String((_fdProdOpt(a.item)||{}).mat||'').trim(),
+      plating: String((_fdProdOpt(a.item)||{}).plating||'').trim(),
       thumb: thumb,
       qty: (a.qty||1)+'',
       ordQty: (+a.qty||1),
@@ -29101,6 +29117,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
     return map[st] || (String(st).indexOf('AS')===0 ? '#a11a1a' : '#6b7280');
   };
 
+  const scopeLabel = scope==='sample'?'샘플':(scope==='order'?'발주':'샘플+발주');
   // ── 공장별 섹션 HTML ──
   const sections = factoryNames.map((fname, gi)=>{
     const items = groups[fname];
@@ -29125,7 +29142,6 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
         : '';
       // 품목명 셀: 발주는 [벤더] 표기 + 추가품목 목록
       const vendorTag = r.vendor ? `<span class="vtag">${_escHtml(r.vendor)}</span> ` : '';
-      const platTag = r.plating ? ` <span class="plat">${_escHtml(r.plating)}</span>` : '';
       const extra = (r.extraItems && r.extraItems.length)
         ? `<div class="extra">${r.extraItems.map(e=>`+ ${_escHtml(e.name)}${e.qty?(' <b>×'+_escHtml(e.qty)+'</b>'):''}`).join('<br>')}</div>`
         : '';
@@ -29140,7 +29156,9 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
         <td class="c"><div class="thumb ${r.thumb?'':'noimg'}">${thumb}</div></td>
         <td class="c"><span class="kind kind-${r.kind==='샘플'?'s':(r.kind==='AS'?'as':'o')}">${r.kind}</span></td>
         <td class="code">${_escHtml(r.code)}</td>
-        <td class="nmcell">${vendorTag}<span class="nm">${_escHtml(r.name)}</span>${platTag}${extra}</td>
+        <td class="nmcell">${vendorTag}<span class="nm">${_escHtml(r.name)}</span>${extra}</td>
+        <td class="c mat">${r.mat? _escHtml(r.mat) : '<span class="dash">—</span>'}</td>
+        <td class="c mat">${r.plating? `<span class="plat">${_escHtml(r.plating)}</span>` : '<span class="dash">—</span>'}</td>
         <td class="c qty">${_qtySplitCell(r)}</td>
         <td class="c"><span class="st" style="background:${stColor(r.status)}">${_escHtml(r.status)}</span></td>
         <td class="c fship">${r.factShip? _escHtml(r.factShip) : '<span class="miss">미입력<br><span class="cn">未填写</span></span>'}</td>
@@ -29152,7 +29170,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
       <div class="fhead">
         <div>
           <div class="ftitle">🏭 ${_escHtml(fname)}</div>
-          <div class="fsub">진행현황 · 발행일 ${todayStr}${_escHtml(_fltLabel)} · EK (이케이아이엔티)</div>
+          <div class="fsub">${scope==='all'?'':scopeLabel+' '}진행현황 · 발행일 ${todayStr}${_escHtml(_fltLabel)} · EK (이케이아이엔티)</div>
         </div>
         <div class="fnote">진행 상황·납기 변동을 <b>비고</b> 칸에 적어 회신해 주세요.<br>请在<b>备注</b>栏填写进度或交期变动后回复。</div>
       </div>
@@ -29165,7 +29183,9 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
           <th style="width:66px">사진</th>
           <th style="width:54px">구분</th>
           <th style="width:100px">품번/<br>발주번호</th>
-          <th style="min-width:260px">품목명 / 品名</th>
+          <th style="min-width:220px">품목명 / 品名</th>
+          <th style="width:90px">소재<br><span>材质</span></th>
+          <th style="width:80px">도금<br><span>电镀</span></th>
           <th style="width:88px">수량<br><span>数量 (입고/미입고)</span></th>
           <th style="width:70px">진행현황<br><span>进度</span></th>
           <th style="width:82px">공장출고일<br><span>出货日</span></th>
@@ -29176,9 +29196,8 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
     </section>`;
   }).join('');
 
-  const scopeLabel = scope==='sample'?'샘플':(scope==='order'?'발주':'샘플+발주');
   const html = `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
-    <title>공장별 진행현황 ${todayStr}</title>
+    <title>공장별 ${scope==='all'?'':scopeLabel+' '}진행현황 ${todayStr}</title>
     <style>
       *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       body{font-family:'Malgun Gothic','맑은 고딕',-apple-system,sans-serif;margin:0;padding:18px;color:#1a1a1a;font-size:14px;line-height:1.4}
@@ -29203,6 +29222,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
       .dash{color:#bbb;font-weight:400}
       .vtag{display:inline-block;background:#eef2ff;color:#3550a8;font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:6px;vertical-align:middle}
       .plat{display:inline-block;background:#f6efdc;color:#7a5c12;border:1px solid #e0d0a4;font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:6px;vertical-align:middle;white-space:nowrap}
+      td.mat{font-size:12.5px;font-weight:600;color:#333;word-break:keep-all}
       .extra{font-size:12px;color:#666;margin-top:4px;line-height:1.5}
       .extra b{color:#333}
       td.qty{font-size:17px;font-weight:800;color:#111}
@@ -29494,7 +29514,7 @@ function renderOrder(){
         if(legacyCount === 0) return '';
         return `<button class="btn bs" onclick="migrateOrderNumbers()" title="옛 ORD-... 형식 발주번호를 새 형식(예: VT0414)으로 일괄 변환" style="font-size:11px;background:var(--org-bg);color:var(--org);border:1px solid rgba(168,90,16,.35);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">🔄 발주번호 정리 (${legacyCount}건)</button>`;
       })()}
-      <button class="btn bs" onclick="openFactoryPicker('all')" title="공장을 선택해 해당 공장의 진행중 샘플+발주만 납기확인 PDF로 생성 (사진 포함)" style="font-size:11px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">🏭 공장별 납기확인서</button>
+      <button class="btn bs" onclick="openFactoryPicker('order')" title="공장을 선택해 해당 공장의 진행중 발주만 납기확인 PDF로 생성 (사진 포함)" style="font-size:11px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">🏭 공장별 발주 납기확인서</button>
       <button class="btn bp bs" onclick="ordRowsBuf=[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];openOrdModal(null)">+ 발주서 등록</button>
     </div>
     <div class="frow">
