@@ -28970,6 +28970,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
         plating: String(s.plating||'').trim() || String((_fdProdOpt(s.itemCode||s.itemNo)||{}).plating||'').trim(),
         status: st,
         note: (s.caution||'').trim(),
+        reqDate: s.reqDate||'',
         factShip: s.factShip||'',
         extraItems: [],
       });
@@ -28987,7 +28988,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
       //   발주번호는 각 품목 행의 품번/발주번호 칸에 함께 넣는다(공장이 어느 발주인지 바로 식별).
       if(!oRows.length){
         rows.push({ factory:_fac, kind:'발주', client:(o.vendor||'').trim(), code:o.no||'', name:'(품목없음)', vendor:o.vendor||'',
-          thumb:_orderThumb(o), qty:'', ordQty:0, rcvQty:0, mat:'', plating:'', status:st, note:(o.factoryNotice||'').trim(), factShip:o.factShip||'', extraItems:[] });
+          thumb:_orderThumb(o), qty:'', ordQty:0, rcvQty:0, mat:'', plating:'', status:st, note:(o.factoryNotice||'').trim(), reqDate:o.date||'', factShip:o.factShip||'', extraItems:[] });
       } else {
         oRows.forEach((r, ri)=>{
           const itemName = (r.name||r.itemName||r.code||'(품목)');
@@ -29022,6 +29023,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
             rcvQty: (Array.isArray(r.rcvHistory)?r.rcvHistory:[]).reduce(function(a,h){ return a+(+((h&&h.qty)||0)); },0),
             status: st,
             note: ri===0 ? (o.factoryNotice||'').trim() : '', // 비고는 발주 첫 행에만
+            reqDate: o.date||'',                             // 공장의뢰일 = 발주일
             factShip: o.factShip||'',
             extraItems: [],
           });
@@ -29061,6 +29063,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
       rcvQty: 0,
       status: 'AS '+(a.status||'접수'),
       note: noteParts.join(' / '),
+      reqDate: a.date||'',   // AS는 접수일을 의뢰일 칸에
       factShip: a.due||'',   // AS는 완료예정일을 출고일 칸에
       extraItems: [],
     });
@@ -29161,6 +29164,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
         <td class="c mat">${r.plating? `<span class="plat">${_escHtml(r.plating)}</span>` : '<span class="dash">—</span>'}</td>
         <td class="c qty">${_qtySplitCell(r)}</td>
         <td class="c"><span class="st" style="background:${stColor(r.status)}">${_escHtml(r.status)}</span></td>
+        <td class="c freq">${r.reqDate? _escHtml(r.reqDate) : '<span class="dash">—</span>'}</td>
         <td class="c fship">${r.factShip? _escHtml(r.factShip) : '<span class="miss">미입력<br><span class="cn">未填写</span></span>'}</td>
         <td class="note">${_escHtml(r.note)}</td>
       </tr>`;
@@ -29188,6 +29192,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
           <th style="width:80px">도금<br><span>电镀</span></th>
           <th style="width:88px">수량<br><span>数量 (입고/미입고)</span></th>
           <th style="width:70px">진행현황<br><span>进度</span></th>
+          <th style="width:82px">공장의뢰일<br><span>下单日</span></th>
           <th style="width:82px">공장출고일<br><span>出货日</span></th>
           <th style="width:180px">비고 / 备注</th>
         </tr></thead>
@@ -29218,6 +29223,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
       td.code{font-family:'Courier New',monospace;font-size:12.5px;color:#444;font-weight:600}
       .nmcell{line-height:1.45;min-width:240px;word-break:keep-all;white-space:normal}
       .nm{font-weight:700;color:#111;font-size:15px}
+      td.freq{font-size:13px;font-weight:600;color:#333;white-space:nowrap}
       td.fship{font-size:13px;font-weight:700;color:#1a5a1a;white-space:nowrap}
       .dash{color:#bbb;font-weight:400}
       .vtag{display:inline-block;background:#eef2ff;color:#3550a8;font-size:11.5px;font-weight:700;padding:1px 7px;border-radius:6px;vertical-align:middle}
