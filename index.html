@@ -28768,78 +28768,129 @@ function _orderItemsSummary(o){
 //   진행중(확정/완료/취소 제외) 건을 공장별로 집계해 선택지를 보여준다.
 function openFactoryPicker(scope){
   scope = scope||'all';
-  const count = {};  // factory -> {sample, order}
+  // 🔎 진행중 건을 {공장, 종류, 고객사} 단위로 한 번 수집 → 필터에 따라 집계만 다시 한다.
+  const items = [];
   if(scope==='all' || scope==='sample'){
     (typeof samples!=='undefined'?samples:[]).forEach(s=>{
       const st=s.status||'의뢰';
       if(st==='확정'||st==='완료'||st==='취소') return;
-      const f=(s.factory||'').trim()||'(공장 미지정)';
-      (count[f]=count[f]||{s:0,o:0,as:0}).s++;
+      items.push({f:(s.factory||'').trim()||'(공장 미지정)', k:'s', c:_fpClientKey(s.manager)});
     });
   }
   if(scope==='all' || scope==='order'){
     (typeof orders!=='undefined'?orders:[]).forEach(o=>{
       const st=(typeof normalizeOrderStatus==='function')?normalizeOrderStatus(o.status):(o.status||'의뢰');
       if(st==='확정'||st==='취소보류') return;
-      const f=(o.factory||'').trim()||'(공장 미지정)';
-      (count[f]=count[f]||{s:0,o:0,as:0}).o++;
+      items.push({f:(o.factory||'').trim()||'(공장 미지정)', k:'o', c:_fpClientKey(o.vendor)});
     });
   }
   // 🔧 중국 공장 AS — 수리주체가 공장명(한국/빈값 아님)이고 진행중(완료/반송 제외)
-  {
-    (asItems||[]).forEach(a=>{
-      const rp=(a.repairer||'').trim();
-      if(!rp || rp==='한국') return;               // 국내 처리·미지정 제외
-      if(a.status==='완료'||a.status==='반송') return; // 완료된 AS 제외
-      (count[rp]=count[rp]||{s:0,o:0,as:0}).as++;
-    });
-  }
-  const names = Object.keys(count).sort((a,b)=>{
-    if(a==='(공장 미지정)') return 1;
-    if(b==='(공장 미지정)') return -1;
-    return a.localeCompare(b);
+  (typeof asItems!=='undefined'?asItems:[]).forEach(a=>{
+    const rp=(a.repairer||'').trim();
+    if(!rp || rp==='한국') return;
+    if(a.status==='완료'||a.status==='반송') return;
+    items.push({f:rp, k:'as', c:_fpClientKey(a.client)});
   });
-  if(!names.length){
+  if(!items.length){
     if(typeof showToast==='function') showToast('진행중인 샘플/발주/AS가 없습니다','var(--t2)',2500);
     return;
   }
-  const totalS = names.reduce((a,f)=>a+count[f].s,0);
-  const totalO = names.reduce((a,f)=>a+count[f].o,0);
-  const totalAS = names.reduce((a,f)=>a+(count[f].as||0),0);
+  window._fpScope = scope;
+  window._fpItems = items;
+  // 필터는 모달을 다시 열어도 유지. 사라진 고객사가 선택돼 있으면 해제.
+  const prev = window._fpFilter || {};
+  window._fpFilter = { kinds: Object.assign({s:true,o:true,as:true}, prev.kinds||{}), client: prev.client||'' };
+  if(window._fpFilter.client && !items.some(it=>it.c===window._fpFilter.client)) window._fpFilter.client='';
 
-  const esc = (typeof _escAttr==='function')?_escAttr:(x=>String(x||''));
-  const rowBtn = (label, sub, arg, isAll)=>{
-    return `<button onclick="closeM('mFactoryPick');exportFactoryDelivery('${scope}', ${arg})"
-      style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;padding:12px 14px;margin-bottom:8px;border:1px solid ${isAll?'var(--gold-line)':'var(--bdr)'};border-radius:8px;background:${isAll?'var(--gold-bg)':'var(--s1)'};cursor:pointer;font-family:inherit">
-      <span style="font-size:14px;font-weight:${isAll?'800':'700'};color:var(--t1)">${label}</span>
-      <span style="font-size:11.5px;color:var(--t3)">${sub}</span>
-    </button>`;
-  };
-
-  const allSub = `샘플 ${totalS} · 발주 ${totalO}${totalAS?(' · AS '+totalAS):''}건`;
-  let body = rowBtn('📦 전체 공장', allSub, "'__ALL__'", true);
-  body += names.map(f=>{
-    const c=count[f];
-    const parts=[]; if(c.s)parts.push('샘플 '+c.s); if(c.o)parts.push('발주 '+c.o); if(c.as)parts.push('AS '+c.as);
-    const warn = f==='(공장 미지정)' ? ' ⚠' : '';
-    return rowBtn('🏭 '+esc(f)+warn, parts.join(' · ')+'건', "'"+esc(f).replace(/'/g,"\\'")+"'", false);
-  }).join('');
-
-  // 모달이 없으면 동적 생성
   let ov = document.getElementById('mFactoryPick');
   if(!ov){
     ov = document.createElement('div');
     ov.className='ov'; ov.id='mFactoryPick';
     ov.innerHTML = `<div class="modal" style="max-width:460px">
       <div class="mt">🏭 공장별 진행현황 — 공장 선택</div>
-      <div style="font-size:12px;color:var(--t3);margin-bottom:12px">출력할 공장을 선택하세요. 해당 공장의 진행중 샘플·발주만 PDF로 나옵니다.</div>
+      <div style="font-size:12px;color:var(--t3);margin-bottom:12px">종류·고객사로 거른 뒤 출력할 공장을 선택하세요. 해당 공장의 진행중 건만 PDF로 나옵니다.</div>
+      <div id="factoryPickFilter"></div>
       <div id="factoryPickBody"></div>
       <div class="ma"><button class="btn bgo" onclick="closeM('mFactoryPick')">닫기</button></div>
     </div>`;
     document.body.appendChild(ov);
+  } else if(!document.getElementById('factoryPickFilter')){
+    const b=document.getElementById('factoryPickBody');
+    const d=document.createElement('div'); d.id='factoryPickFilter'; b.parentNode.insertBefore(d,b);
   }
-  document.getElementById('factoryPickBody').innerHTML = body;
+  _fpRender();
   if(typeof openM==='function') openM('mFactoryPick'); else ov.classList.add('open');
+}
+
+// 고객사 이름 정규화 — 고객사 DB에 매칭되면 DB 이름으로 묶는다(표기 흔들림 흡수)
+function _fpClientKey(raw){
+  const r=String(raw||'').trim();
+  if(!r) return '(고객사 미지정)';
+  const cl=(typeof findClientByVendor==='function')?findClientByVendor(r):null;
+  return (cl && cl.name) ? String(cl.name).trim() : r;
+}
+function _fpToggleKind(k){
+  const f=window._fpFilter; f.kinds[k]=!f.kinds[k];
+  if(!f.kinds.s && !f.kinds.o && !f.kinds.as) f.kinds[k]=true; // 최소 1개는 켜둔다
+  _fpRender();
+}
+function _fpSetClient(v){ window._fpFilter.client=v||''; _fpRender(); }
+function _fpRender(){
+  const items=window._fpItems||[], flt=window._fpFilter, scope=window._fpScope||'all';
+  const esc=(typeof _escAttr==='function')?_escAttr:(x=>String(x||''));
+  const escH=(typeof _escHtml==='function')?_escHtml:(x=>String(x||''));
+  const kindOk=it=>flt.kinds[it.k];
+  const clientOk=it=>!flt.client || it.c===flt.client;
+
+  // ── 필터 UI ──
+  const kc={s:0,o:0,as:0}; items.filter(clientOk).forEach(it=>kc[it.k]++);
+  const chip=(k,label)=>{
+    const on=flt.kinds[k];
+    return `<button onclick="_fpToggleKind('${k}')" style="padding:5px 12px;border-radius:14px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;border:1px solid ${on?'var(--gold-line)':'var(--bdr)'};background:${on?'var(--gold-bg)':'var(--s1)'};color:${on?'var(--gold-lt)':'var(--t3)'}">${on?'✓ ':''}${label} ${kc[k]}</button>`;
+  };
+  const cc={}; items.filter(kindOk).forEach(it=>{ cc[it.c]=(cc[it.c]||0)+1; });
+  const cnames=Object.keys(cc).sort((a,b)=>{
+    if(a==='(고객사 미지정)') return 1; if(b==='(고객사 미지정)') return -1;
+    return a.localeCompare(b,'ko');
+  });
+  if(flt.client && !cc[flt.client]) cnames.unshift(flt.client); // 선택값은 0건이어도 유지
+  const total=items.filter(kindOk).length;
+  const opts=`<option value="">전체 고객사 (${total})</option>`+cnames.map(c=>
+    `<option value="${esc(c)}"${c===flt.client?' selected':''}>${escH(c)} (${cc[c]||0})</option>`).join('');
+  const hasAS=items.some(it=>it.k==='as');
+  document.getElementById('factoryPickFilter').innerHTML =
+    `<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px">
+      ${chip('s','샘플')}${chip('o','발주')}${hasAS?chip('as','AS'):''}
+    </div>
+    <select onchange="_fpSetClient(this.value)" style="width:100%;padding:8px 10px;margin-bottom:12px;border:1px solid var(--bdr);border-radius:8px;background:var(--s1);color:var(--t1);font-size:13px;font-family:inherit">${opts}</select>`;
+
+  // ── 공장 목록 ──
+  const count={};
+  items.filter(it=>kindOk(it)&&clientOk(it)).forEach(it=>{
+    (count[it.f]=count[it.f]||{s:0,o:0,as:0})[it.k]++;
+  });
+  const names=Object.keys(count).sort((a,b)=>{
+    if(a==='(공장 미지정)') return 1; if(b==='(공장 미지정)') return -1;
+    return a.localeCompare(b);
+  });
+  const sub=c=>{ const p=[]; if(c.s)p.push('샘플 '+c.s); if(c.o)p.push('발주 '+c.o); if(c.as)p.push('AS '+c.as); return p.join(' · ')+'건'; };
+  const rowBtn=(label, subTxt, arg, isAll)=>`<button onclick="closeM('mFactoryPick');exportFactoryDelivery('${scope}', ${arg}, window._fpFilter)"
+      style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;padding:12px 14px;margin-bottom:8px;border:1px solid ${isAll?'var(--gold-line)':'var(--bdr)'};border-radius:8px;background:${isAll?'var(--gold-bg)':'var(--s1)'};cursor:pointer;font-family:inherit">
+      <span style="font-size:14px;font-weight:${isAll?'800':'700'};color:var(--t1)">${label}</span>
+      <span style="font-size:11.5px;color:var(--t3)">${subTxt}</span>
+    </button>`;
+  let body;
+  if(!names.length){
+    body=`<div style="padding:24px 0;text-align:center;font-size:13px;color:var(--t3)">조건에 맞는 진행중 건이 없습니다</div>`;
+  } else {
+    const tot={s:0,o:0,as:0}; names.forEach(f=>{ tot.s+=count[f].s; tot.o+=count[f].o; tot.as+=count[f].as; });
+    body=rowBtn('📦 전체 공장', sub(tot), "'__ALL__'", true);
+    body+=names.map(f=>{
+      const warn=f==='(공장 미지정)'?' ⚠':'';
+      return rowBtn('🏭 '+escH(f)+warn, sub(count[f]), "'"+esc(f).replace(/'/g,"\\'")+"'", false);
+    }).join('');
+  }
+  document.getElementById('factoryPickBody').innerHTML=body;
 }
 
 // 고객사 이니셜 2글자 + 색상 — 인쇄/외부창용 (CSS 클래스 없이 인라인 색상 반환)
@@ -28884,7 +28935,7 @@ function _qtySplitCell(r){
   return `<div class="qtot">${_escHtml(raw||String(tot))}</div>${sub?`<div class="qsplit">${sub}</div>`:''}`;
 }
 
-function exportFactoryDelivery(scope, onlyFactory){
+function exportFactoryDelivery(scope, onlyFactory, filter){
   scope = scope||'all';
   const rows = [];  // {factory, kind, client, code, name, thumb, qty, status, note, ordered, extraItems}
 
@@ -28999,6 +29050,22 @@ function exportFactoryDelivery(scope, onlyFactory){
     });
   });
 
+  // 🔎 공장 선택 모달의 종류/고객사 필터 적용
+  let _fltLabel = '';
+  if(filter){
+    const kmap={'샘플':'s','발주':'o','AS':'as'};
+    const ks=filter.kinds||{s:true,o:true,as:true};
+    const cl=filter.client||'';
+    for(let i=rows.length-1;i>=0;i--){
+      const r=rows[i];
+      if(!ks[kmap[r.kind]] || (cl && _fpClientKey(r.client)!==cl)) rows.splice(i,1);
+    }
+    const kl=[]; if(ks.s)kl.push('샘플'); if(ks.o)kl.push('발주'); if(ks.as)kl.push('AS');
+    const allKinds = ks.s && ks.o && ks.as;
+    if(!allKinds) _fltLabel += ' · '+kl.join('·');
+    if(cl) _fltLabel += ' · 고객사: '+cl;
+  }
+
   if(!rows.length){
     if(typeof showToast==='function') showToast('진행중인 샘플/발주/AS가 없습니다','var(--t2)',2500);
     return;
@@ -29085,7 +29152,7 @@ function exportFactoryDelivery(scope, onlyFactory){
       <div class="fhead">
         <div>
           <div class="ftitle">🏭 ${_escHtml(fname)}</div>
-          <div class="fsub">진행현황 · 발행일 ${todayStr} · EK (이케이아이엔티)</div>
+          <div class="fsub">진행현황 · 발행일 ${todayStr}${_escHtml(_fltLabel)} · EK (이케이아이엔티)</div>
         </div>
         <div class="fnote">진행 상황·납기 변동을 <b>비고</b> 칸에 적어 회신해 주세요.<br>请在<b>备注</b>栏填写进度或交期变动后回复。</div>
       </div>
@@ -29185,7 +29252,7 @@ function exportFactoryDelivery(scope, onlyFactory){
   w.document.write(html);
   w.document.close();
   const shownCount = factoryNames.reduce((a,f)=>a+(groups[f]?groups[f].length:0),0);
-  if(typeof showToast==='function') showToast(`✓ 공장별 진행현황 생성 — ${factoryNames.length}개 공장 · 총 ${shownCount}건 (샘플·발주·AS 포함)`,'var(--grn)',3500);
+  if(typeof showToast==='function') showToast(`✓ 공장별 진행현황 생성 — ${factoryNames.length}개 공장 · 총 ${shownCount}건${_fltLabel||' (샘플·발주·AS 포함)'}`,'var(--grn)',3500);
 }
 function _orderItemsSummaryPlain(o){
   const rows = Array.isArray(o.rows)?o.rows:[];
