@@ -28433,7 +28433,7 @@ async function quickRegSample(){
   var newSmp={
     id:Date.now(),createdAt:now,aiParsed:true,
     name:s.name,type:s.type||'',manager:s.manager||'',
-    reqDate:s.reqDate||todayStr,due:s.due||'',qty:s.qty||'',
+    reqDate:s.reqDate||todayStr,due:s.due||_addDays(s.reqDate||todayStr,SAMPLE_DUE_LEAD_DAYS),qty:s.qty||'',
     sz1:s.sz1||'',sz2:s.sz2||'',sz3:'',sz4:'',
     mat:s.mat||'',plating:s.plating||'',wt:'',
     engr:s.engr||'',clrchi:'',card:'',
@@ -28513,7 +28513,7 @@ async function quickRegOrder(){
   var newOrd={
     id:ordId,createdAt:now,aiParsed:true,
     vendor:o.vendor,date:o.date||todayStr,
-    ship:o.shipDate||'',manager:o.manager||'',
+    ship:o.shipDate||_addDays(o.date||todayStr,ORDER_SHIP_LEAD_DAYS),manager:o.manager||'',
     no:genOrderNo(o.vendor, o.date||todayStr),memo:'',rows:rows,
     files:origFiles
   };
@@ -30798,6 +30798,7 @@ function openSmpModal(idOrNull){
   if(saveBtn)saveBtn.textContent=s?'저장':'✓ 샘플 등록';
   sv('s_id',s?s.id:'');sv('s_name',s?s.name:'');setSelect('s_type',s?s.type:'');
   sv('s_manager',s?s.manager:'');sv('s_reqDate',s?s.reqDate:todayStr);sv('s_due',s?s.due:'');
+  _fillAutoDate('s_reqDate');
   sv('s_factory',s?s.factory||'':'');
   if(typeof _fillFactoryList==='function') _fillFactoryList();
   sv('s_factShip',s?s.factShip||'':'');
@@ -31555,7 +31556,7 @@ function addParsedToSmStack(){
     window._smStackedCommon = {
       vendor: s.manager || '',  // AI가 인식한 담당자/고객사
       reqDate: s.reqDate || toLocalDateStr(new Date()),
-      due: s.due || '',
+      due: s.due || _addDays(s.reqDate || toLocalDateStr(new Date()), SAMPLE_DUE_LEAD_DAYS),
       factShip: '',
       status: '의뢰',
       commonMemo: ''
@@ -31714,7 +31715,7 @@ async function saveSmpMulti(){
   if(window._savingSmpMulti){ return; }
   const vendor = gv('sm_vendor').trim();
   if(!vendor){ showToast('⚠ 고객사를 입력해 주세요','var(--red)'); return; }
-  const due = gv('sm_due');
+  const due = (gv('sm_due')||_addDays(gv('sm_reqDate'),SAMPLE_DUE_LEAD_DAYS));
   if(!due){ showToast('⚠ 납기일을 입력해 주세요','var(--red)'); return; }
   // 행 검증 — 샘플명 필수
   const validRows = _smRowsBuf.filter(r => (r.name||'').trim());
@@ -31926,7 +31927,7 @@ function saveSmp(){
   const obj={
     name, type:gv('s_type'), manager:gv('s_manager'),
     factory:gv('s_factory'),
-    reqDate:gv('s_reqDate'), due:gv('s_due'),
+    reqDate:gv('s_reqDate'), due:gv('s_due')||_addDays(gv('s_reqDate'),SAMPLE_DUE_LEAD_DAYS),
     factShip:gv('s_factShip'),
     qty:gv('s_qty'), itemNo:gv('s_itemNo'),
     sz1:gv('s_sz1'), sz2:gv('s_sz2'), sz3:gv('s_sz3'), sz4:gv('s_sz4'),
@@ -32109,7 +32110,7 @@ function deleteProc(){
 }function confirmSmp(){
   const id=gv('s_id');const s=samples.find(x=>x.id==id);if(!s)return;
   s.status='확정';
-  const ord={id:Date.now(),vendor:s.manager||'',date:todayStr,ship:s.due||'',no:genOrderNo(s.manager||'', todayStr),manager:'',memo:`샘플 확정 자동전환: ${s.name}`,rows:[{name:s.name,qty:s.qty||'',plating:s.plating||'',mat:s.mat||'',size:s.sz1||'',note:''}]};
+  const ord={id:Date.now(),vendor:s.manager||'',date:todayStr,ship:s.due||_addDays(todayStr,ORDER_SHIP_LEAD_DAYS),no:genOrderNo(s.manager||'', todayStr),manager:'',memo:`샘플 확정 자동전환: ${s.name}`,rows:[{name:s.name,qty:s.qty||'',plating:s.plating||'',mat:s.mat||'',size:s.sz1||'',note:''}]};
   orders.push(ord);
   let _newProc=null;
   if(s.due){ _newProc={id:Date.now()+1,name:s.name,vendor:(s.manager||'').substring(0,8),qty:s.qty||'',due:s.due,stageIdx:0,note:`확정: ${s.name}`,shipped:false}; procItems.push(_newProc); }
@@ -32307,12 +32308,52 @@ function ordMemoDrop(toIdx){
   renderOrdMemos();
 }
 
+// 📅 [FEAT 2026-09-28] 날짜 자동 계산 — 발주 요청출고일 = 발주일 + 23일, 샘플 납기일 = 의뢰일 + 16일
+//   · 대상 칸이 비어 있으면 기준일 + N일로 채운다(모달 열 때·AI 등록·자동 전환·저장 시).
+//   · 모달에서 기준일을 바꾸면, 대상 칸이 자동값(또는 빈 값)일 때만 따라 바뀐다.
+//   · 사용자가 대상 칸을 직접 고치면 그 값을 그대로 둔다.
+const ORDER_SHIP_LEAD_DAYS = 23;
+const SAMPLE_DUE_LEAD_DAYS = 16;
+function _addDays(dateStr, n){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr||'').trim());
+  if(!m) return '';
+  const d = new Date(+m[1], +m[2]-1, +m[3] + n);
+  const p = x => String(x).padStart(2,'0');
+  return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());
+}
+const _AUTO_DATE_PAIRS = [
+  {src:'o_date',     dst:'o_ship', days:ORDER_SHIP_LEAD_DAYS},
+  {src:'s_reqDate',  dst:'s_due',  days:SAMPLE_DUE_LEAD_DAYS},
+  {src:'sm_reqDate', dst:'sm_due', days:SAMPLE_DUE_LEAD_DAYS},
+  {src:'sr_reqDate', dst:'sr_due', days:SAMPLE_DUE_LEAD_DAYS}
+];
+// 모달을 채운 직후 호출 — 비어 있으면 자동값을 넣고, 현재 값이 자동값인지 표시
+function _fillAutoDate(srcId){
+  const p = _AUTO_DATE_PAIRS.find(x=>x.src===srcId); if(!p) return;
+  const sEl = document.getElementById(p.src), dEl = document.getElementById(p.dst);
+  if(!sEl || !dEl) return;
+  const auto = _addDays(sEl.value, p.days);
+  if(!dEl.value && auto) dEl.value = auto;
+  dEl.dataset.auto = (dEl.value && dEl.value === auto) ? '1' : '0';
+}
+document.addEventListener('change', e=>{
+  const t = e.target; if(!t || !t.id) return;
+  const p = _AUTO_DATE_PAIRS.find(x=>x.src===t.id); if(!p) return;
+  const dEl = document.getElementById(p.dst); if(!dEl) return;
+  if(dEl.dataset.auto === '1' || !dEl.value){ dEl.value = _addDays(t.value, p.days); dEl.dataset.auto = '1'; }
+});
+document.addEventListener('input', e=>{
+  const t = e.target; if(!t || !t.id) return;
+  if(_AUTO_DATE_PAIRS.some(x=>x.dst===t.id)) t.dataset.auto = '0';   // 직접 수정 → 자동 갱신 중단
+});
+
 function openOrdModal(idOrNull){
   const o=idOrNull?orders.find(x=>x.id==idOrNull):null;
   ordFileBuf=o?(o.files||[]):[]; // load existing files
   renderOrdFilePrev();
   document.getElementById('mOrd_t').childNodes[0].textContent=o?'발주서 수정 ':'발주서 등록 ';
   sv('o_id',o?o.id:'');sv('o_vendor',o?o.vendor:'');sv('o_date',o?o.date:todayStr);sv('o_ship',o?o.ship:'');
+  _fillAutoDate('o_date');
   sv('o_factShip',o?o.factShip||'':'');
   sv('o_manager',o?o.manager:'');sv('o_no',o?o.no||'':'');sv('o_memo',o?o.memo:'');
   sv('o_factory',o?o.factory||'':'');
@@ -33675,7 +33716,7 @@ async function saveOrd(forceOverwrite){
   if(!ordNoVal || isLegacyOrdNo){
     ordNoVal = genOrderNo(vendor, gv('o_date')||todayStr);
   }
-  const obj={vendor,factory:gv('o_factory'),date:gv('o_date'),ship:gv('o_ship'),factShip:gv('o_factShip'),manager:gv('o_manager'),no:ordNoVal,memo:memoText,memoList,rows:cleanRows,files:filesToSave};
+  const obj={vendor,factory:gv('o_factory'),date:gv('o_date'),ship:gv('o_ship')||_addDays(gv('o_date'),ORDER_SHIP_LEAD_DAYS),factShip:gv('o_factShip'),manager:gv('o_manager'),no:ordNoVal,memo:memoText,memoList,rows:cleanRows,files:filesToSave};
   // 📌 선금 % (견적 기반 발주에만 채워짐. 0/빈값이면 저장 안 함)
   const prepayPctVal = gv('o_prepayPct');
   if(prepayPctVal !== '' && prepayPctVal != null){
