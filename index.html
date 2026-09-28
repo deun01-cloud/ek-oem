@@ -35467,24 +35467,22 @@ function vMonthly(c){
     },0);
     return isFinite(sum) ? sum : 0;
   }
-  // 🔸 [FIX 2026-09-28] 잔여 발주 금액 기준
-  //   · 자사 브랜드(비비케이트)는 거래명세서를 발행하지 않으므로 '받을 돈'인 잔여 금액·명세서 미발행에서 제외
-  //     (예전엔 명세서가 영원히 없어 1.1억이 계속 잔여로 잡혔다)
-  //   · 잔여 = 발주 품목금액 − 이미 청구된(취소 아닌) 명세서 공급가액
-  //     (예전엔 부분 청구된 진행중 발주의 '청구된 금액'을 잔여로 셌다 — 예: VT0618-2 2,533만)
+  // 🔸 [FIX 2026-09-28] 잔여 발주 금액 = 아직 출고되지 않은 제품의 금액
+  //   · 진행중 발주(확정·취소·취소보류 제외)의 품목별 (발주수량 − 출고수량 shipLog 합) × 단가
+  //   · 자사 브랜드(비비케이트)는 제외
+  //   (예전엔 '미출고 발주 전체 + 출고됐지만 명세서 미발행' 기준이라, 부분출고분·청구 전 출고분까지 섞여 부풀려졌다)
   const _SELF_BRANDS = ['비비케이트'];
   const _isSelfBrand = o => _SELF_BRANDS.includes((o.vendor||'').trim());
   function ordRemainAmt(o){
     if(_isSelfBrand(o)) return 0;
-    const total = (o.rows||[]).reduce((s,r)=>{
+    const st = o.status || '의뢰';
+    if(st === '취소' || st === '취소보류' || isOrderShipped(st)) return 0;
+    const rem = (o.rows||[]).reduce((s,r)=>{
       const u = Number(r.unitPrice)||0;
-      const q = Number(r.qty); const qty = isFinite(q)&&q>0 ? q : 1;
-      return s + u*qty;
+      const q = Number(r.qty); const qty = isFinite(q) && q > 0 ? q : 0;
+      const shipped = (Array.isArray(r.shipLog) ? r.shipLog : []).reduce((t,x)=>t + (Number(x && x.qty)||0), 0);
+      return s + Math.max(0, qty - shipped) * u;
     },0);
-    const billed = invoiceHistory.filter(v=>
-      v.status !== '취소' && ((v.ordId && v.ordId===o.id) || (o.no && v.ordNo && v.ordNo===o.no))
-    ).reduce((s,v)=>{ const n = Number(v.supplyAmt); return s + (isFinite(n) ? n : 0); },0);
-    const rem = total - billed;
     return isFinite(rem) && rem > 0 ? rem : 0;
   }
   const mOrdAmt=months.map(m=>{
@@ -35542,8 +35540,7 @@ function vMonthly(c){
     return !isOrderShipped(o.status);
   });
   const activeOrderCnt = ordersNotShipped.length + ordersShippedNoInvoice.length;
-  const activeOrderAmt = ordersNotShipped.reduce((s,o)=>s+ordRemainAmt(o),0)
-                       + ordersShippedNoInvoice.reduce((s,o)=>s+ordRemainAmt(o),0);
+  const activeOrderAmt = ordersNotShipped.reduce((s,o)=>s+ordRemainAmt(o),0);  // 미출고분만
 
   // (2) 이번달 누적 매출 = 이번달 발행된 거래명세서의 공급가액 합계 (취소 명세서 제외)
   //     명세서 발행일(issuedAt) 기준 — 출고완료일이 아니라 발행일이 매출 인식 시점
@@ -35622,11 +35619,11 @@ function vMonthly(c){
       clientOrdMap[key].pendCnt++;
     }
     // 🔸 잔여 발주 = 아직 처리 안 끝난 발주(취소 제외, 미출고 또는 출고완료지만 명세서 미발행)
-    if(st!=='취소' && !_isSelfBrand(o)){   // 자사 브랜드는 잔여(받을 돈)에서 제외
-      const shipped = isOrderShipped(st);
-      const invoiced = hasInvoiceFor(o);
-      if(!shipped || !invoiced){   // 미출고이거나, 출고됐어도 명세서 미발행이면 아직 잔여
-        clientOrdMap[key].remainAmt+=ordRemainAmt(o);
+    // 🔸 잔여 발주 = 진행중 발주의 미출고 제품 금액 (자사 브랜드 제외)
+    {
+      const _rem = ordRemainAmt(o);
+      if(_rem > 0){
+        clientOrdMap[key].remainAmt += _rem;
         clientOrdMap[key].remainCnt++;
       }
     }
@@ -35700,7 +35697,7 @@ function vMonthly(c){
         <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--org)"></div>
         <div style="font-size:10px;color:var(--org);font-weight:700;margin-bottom:6px">잔여 발주 금액</div>
         <div style="font-size:24px;font-weight:700;color:var(--t1)" title="${activeOrderAmt.toLocaleString()}원">${fmtMoney(activeOrderAmt)}<span style="font-size:12px;font-weight:400;color:var(--t3);margin-left:2px">${activeOrderAmt>0?'원':''}</span></div>
-        <div style="font-size:10.5px;color:var(--t3);margin-top:4px">미출고 + 명세서 미발행</div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:4px">미출고 수량 × 단가 · 자사 브랜드 제외</div>
       </div>
     </div>
   </div>
@@ -35844,10 +35841,10 @@ function vMonthly(c){
       </div>
     </div>
 
-    <!-- 우: 고객사별 잔여 발주 (미출고·미발행) -->
+    <!-- 우: 고객사별 잔여 발주 (미출고 제품 금액) -->
     <div class="card">
       <div class="ch">
-        <div><div class="ch-t">📦 고객사별 잔여 발주</div><div class="ch-s">미출고 + 출고완료·명세서 미발행</div></div>
+        <div><div class="ch-t">📦 고객사별 잔여 발주</div><div class="ch-s">진행중 발주의 미출고 제품 금액 · 자사 브랜드 제외</div></div>
         <div style="text-align:right;font-size:10.5px;color:var(--t3)">
           잔여 합계 <b style="color:var(--org)">${totalRemainAmt.toLocaleString()}원</b><br>
           <span style="color:var(--t2)">${totalRemainCnt}건</span>
