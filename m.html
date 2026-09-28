@@ -6861,6 +6861,100 @@ window.onload = async ()=>{
   try{ if(notionCfg && notionCfg.realtimeUrl && typeof realtimeConnect==='function') realtimeConnect(); }catch(e){}
   try{ if(typeof autoSync==='function') autoSync(); }catch(e){}
 };
+
+// ════════════════════════════════════════════════
+// 🔁 [FIX 2026-09-28] 모바일 저장분 → 실시간 서버 전송
+//  배경: realtimePublish/realtimeDelete가 정의만 되고 어디서도 호출되지 않아
+//    모바일 저장(업무일지·샘플·AS·입출고·발주상태·제품/재고 등)이 노션에만 들어가고
+//    PC의 기준점인 실시간 서버에는 반영되지 않았다 → PC에서 안 보임.
+//  처리: 사용자 저장 동작을 감싸 동작 전후 로컬 배열을 비교해
+//    바뀐/새 항목은 upsert, 사라진 항목은 delete로 서버에 보낸다.
+//    동작 도중 원격(서버)에서 들어온 변경은 되돌려 보내지 않는다.
+// ════════════════════════════════════════════════
+(function(){
+  var TYPES = [
+    ['task',      function(){ return typeof tasks!=='undefined' ? tasks : null; }],
+    ['sample',    function(){ return typeof samples!=='undefined' ? samples : null; }],
+    ['order',     function(){ return typeof orders!=='undefined' ? orders : null; }],
+    ['as',        function(){ return typeof asItems!=='undefined' ? asItems : null; }],
+    ['io',        function(){ return typeof ioItems!=='undefined' ? ioItems : null; }],
+    ['product',   function(){ return typeof productDB!=='undefined' ? productDB : null; }],
+    ['stockhist', function(){ return typeof stockHistory!=='undefined' ? stockHistory : null; }]
+  ];
+  var MAX_DELETE_PER_ACTION = 20;   // 안전장치: 한 동작에서 이보다 많이 사라지면 삭제 전송 보류
+  var depth = 0;
+  var remoteTouched = new Set();    // 동작 도중 원격에서 반영된 키 (재전송 제외)
+
+  function keyOf(x){ try{ return _rtItemKey(x); }catch(_){ return null; } }
+  function snap(){
+    var m = {};
+    TYPES.forEach(function(t){
+      var arr = t[1](); var mm = new Map();
+      if(Array.isArray(arr)) arr.forEach(function(x){ if(!x) return; var k = keyOf(x); if(k) mm.set(k, JSON.stringify(x)); });
+      m[t[0]] = mm;
+    });
+    return m;
+  }
+  function diffAndPublish(before){
+    if(typeof realtimePublish !== 'function') return;
+    var after = snap(); var up = 0, del = 0;
+    TYPES.forEach(function(t){
+      var type = t[0], b = before[type], a = after[type], arr = t[1]() || [];
+      a.forEach(function(fp, k){
+        if(b.get(k) === fp || remoteTouched.has(type+':'+k)) return;
+        var item = arr.find(function(x){ return x && keyOf(x) === k; });
+        if(item){ realtimePublish(type, item); up++; }
+      });
+      var gone = [];
+      b.forEach(function(fp, k){ if(!a.has(k) && !remoteTouched.has(type+':'+k)) gone.push(k); });
+      if(gone.length > MAX_DELETE_PER_ACTION){
+        console.warn(RT_LOG_PREFIX, '⚠ 삭제 '+gone.length+'건 감지 — 안전장치로 서버 삭제 전송 보류:', type);
+      } else {
+        gone.forEach(function(k){ realtimeDelete(type, k); del++; });
+      }
+    });
+    remoteTouched.clear();
+    if(up || del) console.log(RT_LOG_PREFIX, '📤 서버 전송 — upsert '+up+' / delete '+del);
+  }
+
+  // 원격 반영 추적 (동작 진행 중일 때만)
+  ['_applyRemoteItem', '_applyRemoteDelete'].forEach(function(n){
+    var orig = window[n]; if(typeof orig !== 'function') return;
+    window[n] = function(type, itemOrId){
+      if(depth > 0){
+        var k = (itemOrId && typeof itemOrId === 'object') ? keyOf(itemOrId) : (itemOrId != null ? String(itemOrId) : null);
+        if(k) remoteTouched.add(type+':'+k);
+      }
+      return orig.apply(this, arguments);
+    };
+  });
+
+  var NAMES = ['saveTask','toggleTask','deleteTask','doCarryOver',
+    'saveSmp','changeSmpStatus','deleteSmp','autoSyncSmpToProductDB',
+    'saveAs','changeAsStatus','deleteAs',
+    'saveIo','deleteIo','_applyIoToStock',
+    'saveOrdEdit','changeOrdStatus','_addRcv','_removeRcvHist','_updateRcvHist',
+    'mSaveReturn','mConfirmReturnComplete','mUndoReturnComplete',
+    'saveProdEdit','adjustProdStock','_applyStockCount'];
+  var wrapped = 0;
+  NAMES.forEach(function(n){
+    var orig = window[n]; if(typeof orig !== 'function') return;
+    window[n] = function(){
+      if(depth > 0) return orig.apply(this, arguments);   // 중첩 호출은 바깥 동작이 한 번에 처리
+      var before;
+      try{ before = snap(); }catch(e){ return orig.apply(this, arguments); }
+      depth++;
+      var done = function(){ depth--; try{ diffAndPublish(before); }catch(e){ console.warn(RT_LOG_PREFIX, '서버 전송 실패:', n, e && e.message); } };
+      var r;
+      try{ r = orig.apply(this, arguments); }
+      catch(e){ done(); throw e; }
+      if(r && typeof r.then === 'function') return r.then(function(v){ done(); return v; }, function(e){ done(); throw e; });
+      done(); return r;
+    };
+    wrapped++;
+  });
+  console.log(RT_LOG_PREFIX, '🔁 저장→서버 전송 연결:', wrapped+'/'+NAMES.length+'개 동작');
+})();
 </script>
 
 </body>

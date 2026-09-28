@@ -14166,13 +14166,19 @@ async function pullFromNotion(opts){
     }
 
     // 10개 DB를 병렬 쿼리 (증분 모드면 since 이후만 받음) + 견적 DB + 입출고
+    // ⚡ [FIX 2026-09-28] 서버 기준(SSOT) 타입은 실시간 스냅샷을 받은 상태면 노션을 다시 조회·머지하지 않는다.
+    //    다음 서버 스냅샷이 로컬을 통째로 교체하므로 노션 조회는 낭비였고(전체 풀 28건 중 19건),
+    //    노션에만 있는 항목이 잠깐 보였다 사라지는 이중 소스 깜빡임의 원인이었다.
+    const _rtSkip = function(type){ try{ return typeof RT_SSOT_TYPES!=='undefined' && RT_SSOT_TYPES.has(type) && typeof _isRealtimeActive==='function' && _isRealtimeActive() && typeof _rtSnapshotReceived!=='undefined' && _rtSnapshotReceived.has(type); }catch(_){ return false; } };
+    const _skSmp=_rtSkip('sample'), _skOrd=_rtSkip('order'), _skTask=_rtSkip('task'), _skIo=_rtSkip('io');
+    if(!silent && (_skSmp||_skOrd||_skTask||_skIo)) console.log('[pull] 실시간 서버 기준 타입 노션 조회 생략:', {sample:_skSmp, order:_skOrd, task:_skTask, io:_skIo});
     const [smpRows,ordRows,procRows,propRows,cliRows,taskRows,asRows,pdRows,invRows,inqRows,qtRows,ioRows,stkhRows,facRows]=await Promise.all([
-      notionCfg.smpDb   ? nQueryAll(notionCfg.smpDb,    sinceFor(notionCfg.smpDb),   callOpts) : Promise.resolve([]),
-      notionCfg.ordDb   ? nQueryAll(notionCfg.ordDb,    sinceFor(notionCfg.ordDb),   callOpts) : Promise.resolve([]),
+      (notionCfg.smpDb && !_skSmp)   ? nQueryAll(notionCfg.smpDb,    sinceFor(notionCfg.smpDb),   callOpts) : Promise.resolve([]),
+      (notionCfg.ordDb && !_skOrd)   ? nQueryAll(notionCfg.ordDb,    sinceFor(notionCfg.ordDb),   callOpts) : Promise.resolve([]),
       notionCfg.procDb  ? nQueryAll(notionCfg.procDb,   sinceFor(notionCfg.procDb),  callOpts) : Promise.resolve([]),
       notionCfg.propDb  ? nQueryAll(notionCfg.propDb,   sinceFor(notionCfg.propDb),  callOpts) : Promise.resolve([]),
       notionCfg.clientDb? nQueryAll(notionCfg.clientDb, sinceFor(notionCfg.clientDb),callOpts) : Promise.resolve([]),
-      notionCfg.taskDb  ? nQueryAll(notionCfg.taskDb,   sinceFor(notionCfg.taskDb),  callOpts) : Promise.resolve([]),
+      (notionCfg.taskDb && !_skTask)  ? nQueryAll(notionCfg.taskDb,   sinceFor(notionCfg.taskDb),  callOpts) : Promise.resolve([]),
       notionCfg.asDb    ? nQueryAll(notionCfg.asDb,     sinceFor(notionCfg.asDb),    callOpts) : Promise.resolve([]),
       notionCfg.productDb ? nQueryAll(notionCfg.productDb, sinceFor(notionCfg.productDb),callOpts) : Promise.resolve([]),
       // 🛡 [FIX] 거래명세서는 아래 병합부에서 "서버가 기준점"이라 받아도 버린다(14650줄 근처).
@@ -14182,7 +14188,7 @@ async function pullFromNotion(opts){
       Promise.resolve([]),
       notionCfg.inqDb   ? nQueryAll(notionCfg.inqDb,    sinceFor(notionCfg.inqDb),   callOpts) : Promise.resolve([]),
       notionCfg.quoteDb ? nQueryAll(notionCfg.quoteDb,  sinceFor(notionCfg.quoteDb), callOpts) : Promise.resolve([]),
-      notionCfg.ioDb    ? nQueryAll(notionCfg.ioDb,     sinceFor(notionCfg.ioDb),    callOpts) : Promise.resolve([]),
+      (notionCfg.ioDb && !_skIo)    ? nQueryAll(notionCfg.ioDb,     sinceFor(notionCfg.ioDb),    callOpts) : Promise.resolve([]),
       notionCfg.stockHistDb ? nQueryAll(notionCfg.stockHistDb, sinceFor(notionCfg.stockHistDb), callOpts) : Promise.resolve([]),
       notionCfg.factoryDb ? nQueryAll(notionCfg.factoryDb, sinceFor(notionCfg.factoryDb), callOpts) : Promise.resolve([]),
     ]);
@@ -14648,13 +14654,13 @@ async function pullFromNotion(opts){
     try{ if(typeof _repairOrphans==='function') _repairOrphans({silent:true}); }catch(_e){}
 
     // 각 테이블 매핑
-    samples       = mergeRows(smpRows,  samples,        mapNotionSample,    ['imgs','sourceDoc','cadFiles','refs','aiParsed','dueHistory'], '샘플',     notionCfg.smpDb);
-    orders        = mergeRows(ordRows,  orders,         mapNotionOrder,     ['files','rows','aiParsed','memoList','shipHistory','prepaidAmount','prepayPct'], '발주',     notionCfg.ordDb);
+    samples       = _skSmp ? samples : mergeRows(smpRows,  samples,        mapNotionSample,    ['imgs','sourceDoc','cadFiles','refs','aiParsed','dueHistory'], '샘플',     notionCfg.smpDb);
+    orders        = _skOrd ? orders : mergeRows(ordRows,  orders,         mapNotionOrder,     ['files','rows','aiParsed','memoList','shipHistory','prepaidAmount','prepayPct'], '발주',     notionCfg.ordDb);
     procItems     = mergeRows(procRows, procItems,      mapNotionProc,      ['orderId'], '공정',     notionCfg.procDb);
     proposals     = mergeRows(propRows, proposals,      mapNotionProposal,  ['images','productId'], '영업제안', notionCfg.propDb);
     clients       = mergeRows(cliRows,  clients,        mapNotionClient,    ['files'], '고객사',   notionCfg.clientDb);
     factories     = mergeRows(facRows,  factories,      mapNotionFactory,   ['files'], '공장',     notionCfg.factoryDb);
-    tasks         = mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
+    tasks         = _skTask ? tasks : mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
     asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        ['repairs','files'], 'AS',       notionCfg.asDb);
     productDB     = mergeRows(pdRows,   productDB,      mapNotionProduct,   ['imgs','importSource','createdAt','priceHistory','priceHistDeleted'], '제품DB',   notionCfg.productDb);
     // 🏛️ 골격: 거래명세서는 '서버(ek-realtime)가 유일 기준점'.
@@ -14665,7 +14671,7 @@ async function pullFromNotion(opts){
     if(invRows && invRows.length){ console.log('[invoice] ℹ Notion 풀', invRows.length, '건 수신했으나 적용 안 함 (서버가 기준점)'); }
     inquiries     = mergeRows(inqRows,  inquiries,      mapNotionInquiry,   ['imgs','files'], '고객사문의', notionCfg.inqDb);
     quotes        = mergeRows(qtRows,   quotes,         mapNotionQuote,     ['imgs','files','rows','sampleIds'], '견적', notionCfg.quoteDb);
-    ioItems       = mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files','exchNewCode','exchNewName','exchNewOption','exchReshipInvoice','exchReshipDate','exchReshipped'], '입출고',   notionCfg.ioDb);
+    ioItems       = _skIo ? ioItems : mergeRows(ioRows,   ioItems,        mapNotionIO,        ['files','exchNewCode','exchNewName','exchNewOption','exchReshipInvoice','exchReshipDate','exchReshipped'], '입출고',   notionCfg.ioDb);
     try{ if(typeof _dedupIoItems==='function') _dedupIoItems(); }catch(_e){}   // 🧹 노션 풀 후 중복 제거 안전장치
     try{ if(typeof _dedupAllTypes==='function') _dedupAllTypes(true); }catch(_e){} // 🧹 풀 후 _notionId 중복 정리
     // 🛡 [FIX] 동기화 직후 학습식 자동매칭 적용 — 이전에 매칭해둔 (품목+옵션)과 같은 새 주문을
@@ -19563,6 +19569,7 @@ function _startSyncRetryLoop(){
       }
       item.at = Date.now();
       item.attempts++;
+      const _hadNid = !!(item.obj && item.obj._notionId);
       Promise.resolve(fn(item.obj, item.isUpdate))
         .then(()=>{
           // 🛠 [FIX] 프라미스가 resolve됐다고 성공이 아니다(조용한 실패 대응).
@@ -19577,6 +19584,7 @@ function _startSyncRetryLoop(){
           }
           _syncRetryQueue.delete(key); // 성공 → 큐에서 제거
           _persistOutbox();
+          _rtAnnounceNewNotionId(item.type, item.obj, _hadNid);
           console.log('[syncRetry] ✓ 재시도 성공:', key);
         })
         .catch(e=>{
@@ -19644,8 +19652,9 @@ window.outboxFlush = async ()=>{
   for(const [key, item] of entries){
     const fn = _syncFnMap[item.type]; if(!fn) continue;
     try{
+      const _hadNid = !!(item.obj && item.obj._notionId);
       await fn(item.obj, item.isUpdate);
-      if(item.obj && item.obj._notionId && !item.obj._pushFailed){ _syncRetryQueue.delete(key); ok++; }
+      if(item.obj && item.obj._notionId && !item.obj._pushFailed){ _syncRetryQueue.delete(key); ok++; _rtAnnounceNewNotionId(item.type, item.obj, _hadNid); }
       else fail++;
     }catch(e){ fail++; console.warn('[outboxFlush]', key, e.message); }
   }
@@ -19653,6 +19662,22 @@ window.outboxFlush = async ()=>{
   if(typeof showToast==='function') showToast(`아웃박스 처리 — 성공 ${ok} · 실패 ${fail}`, fail?'var(--red)':'var(--grn)', 5000);
   return {ok, fail, 남음:_syncRetryQueue.size};
 };
+
+// 🔗 [FIX 2026-09-28] 재시도로 노션 ID가 새로 붙은 항목을 실시간 서버에도 반영한다.
+//   예전엔 노션에만 새 페이지가 생기고 서버에는 _notionId 없는 옛 레코드가 그대로 남아,
+//   다음 전체 스냅샷 때 다시 '고아'가 되고 _repairOrphans가 또 노션 페이지를 만들었다
+//   (업무 2건이 앱을 열 때마다 재생성 → 노션 업무일지 DB에 564건 중복).
+//   옛 키(로컬 id)는 서버에서 지우고 _notionId 키로 다시 올려 모든 기기가 같은 키를 보게 한다.
+function _rtAnnounceNewNotionId(type, obj, hadNid){
+  if(hadNid || !obj || !obj._notionId) return;
+  if(typeof realtimePublish !== 'function') return;
+  try{
+    if(typeof _rtAllTypes === 'function' && !_rtAllTypes().some(function(t){ return t.type === type; })) return;
+    var oldKey = (obj.id !== undefined && obj.id !== null) ? String(obj.id) : null;
+    if(oldKey && oldKey !== obj._notionId && typeof realtimeDelete === 'function') realtimeDelete(type, oldKey);
+    realtimePublish(type, obj);
+  }catch(e){ console.warn('[rt] 새 노션ID 서버 반영 실패:', type, e && e.message); }
+}
 
 // ── 🩺 노션 미등록(고아) 항목 자동 복구 ──────────────────────────────
 // 배경: notionCall()이 실패해도 throw 없이 null을 반환하던 탓에, 노션 생성이 실패한
@@ -26035,7 +26060,9 @@ function switchTab(tab,el){
   else if(tab==='mgt') acts.innerHTML='';
   renderTab();updateBadges();
   // 탭 전환 시 silent 동기화 (마지막 동기화 후 30초 이상 지났을 때만)
-  if(notionCfg.workerUrl && Date.now()-_lastSyncAt > 30000){
+  // ⚡ [FIX 2026-09-28] 실시간 연결 중이면 서버가 변경을 밀어주므로 탭 전환 풀은 5분 간격으로 완화
+  const _tabPullGap = (typeof _isRealtimeActive==='function' && _isRealtimeActive()) ? 300000 : 30000;
+  if(notionCfg.workerUrl && Date.now()-_lastSyncAt > _tabPullGap){
     pullFromNotion({silent:true});
   }
 }
@@ -26079,7 +26106,9 @@ function renderTab(){
     // (B) Notion 보강
     try{
       var _now = Date.now();
+      // ⚡ [FIX 2026-09-28] 거래명세서는 서버 기준(SSOT) — 실시간 연결 중엔 렌더마다 노션 전체 풀을 돌리지 않는다
       if(notionCfg.workerUrl && notionCfg.invDb && typeof pullFromNotion==='function'
+         && !(typeof _isRealtimeActive==='function' && _isRealtimeActive())
          && (!window._invPullAt || _now - window._invPullAt > 6000)){
         window._invPullAt = _now;
         pullFromNotion({silent:true}).then(function(ok){
