@@ -7001,6 +7001,7 @@ function saveProduct(){
     showToast('⚠ 제품 등록은 Notion 연결이 필요합니다 — 우측 상단 Notion 설정에서 Worker URL과 제품DB ID를 먼저 설정하세요', 'var(--red)', 5000);
     return;
   }
+  let _absorbDups = []; // 수정 저장 시 흡수(삭제)할 같은 코드의 중복 레코드
   // 품목코드 중복 검증 (코드가 비어있지 않을 때만)
   // 같은 코드 가진 다른 제품(자기 자신 제외)이 있으면 거부.
   // 단, 수정 모드에서 충돌 상대가 '사실상 같은 제품'(동일 품목명+도금+사이즈)이면
@@ -7030,9 +7031,9 @@ function saveProduct(){
       showToast(`⚠ 품목코드 "${trimmedCode}"는 이미 등록되어 있습니다 — "${dup.name||'(이름없음)'}"${platingInfo}. 도금/사이즈가 다르면 코드에 접미사를 붙이세요 (예: ${trimmedCode}-GD)`, 'var(--red)', 6000);
       return;
     }
-    // 동일 제품의 중복 레코드가 있으면 콘솔에만 안내 (저장은 진행)
-    if(duplicates.length > 0 && realCollisions.length === 0){
-      console.warn('[제품] 동일 품목코드의 중복 레코드 감지 — 저장은 진행합니다. 코드:', trimmedCode, '중복', duplicates.length, '건');
+    // 수정 모드에서 같은 코드의 다른 레코드가 남아 있으면 → 이번 수정본으로 덮어쓴다(중복 레코드 흡수 후 삭제)
+    if(id && duplicates.length > 0 && realCollisions.length === 0){
+      _absorbDups = duplicates.slice();
     }
   }
   const newStock=+gv('pd_stock')||0;
@@ -7102,6 +7103,26 @@ function saveProduct(){
         }
         return; // 모달 닫지 않고 종료 — 사용자가 다시 시도할 수 있게
       }
+    }
+    // 🔁 같은 코드의 중복 레코드 → 수정본으로 덮어쓰기
+    //   수정본 값이 기준. 수정본에 없는 이미지·단가이력만 흡수한 뒤 중복 레코드는 로컬·실시간·노션에서 삭제.
+    if(id && savedProduct && _absorbDups.length){
+      _absorbDups.forEach(function(d){
+        if((!Array.isArray(savedProduct.imgs) || !savedProduct.imgs.length) && Array.isArray(d.imgs) && d.imgs.length) savedProduct.imgs = d.imgs.slice();
+        if(Array.isArray(d.priceHistory) && d.priceHistory.length){
+          if(!Array.isArray(savedProduct.priceHistory)) savedProduct.priceHistory = [];
+          var _have = {}; savedProduct.priceHistory.forEach(function(h){ _have[String(h.id)] = 1; });
+          d.priceHistory.forEach(function(h){ if(!_have[String(h.id)]) savedProduct.priceHistory.push(h); });
+          savedProduct.priceHistory.sort(function(a,b){ return String(a.ts||'').localeCompare(String(b.ts||'')); });
+          if(savedProduct.priceHistory.length > 50) savedProduct.priceHistory = savedProduct.priceHistory.slice(-50);
+        }
+        if(!savedProduct.createdDate && d.createdDate) savedProduct.createdDate = d.createdDate;
+        try{ deleteProductFromNotion(d); }catch(e){ console.warn('[제품] 중복 레코드 삭제 실패', d.id, e); }
+      });
+      const _dupIds = {}; _absorbDups.forEach(function(d){ _dupIds[String(d.id)] = 1; });
+      productDB = productDB.filter(function(x){ return !_dupIds[String(x.id)]; });
+      savedProduct._ts = Date.now();
+      if(typeof showToast==='function') showToast('🔁 같은 품목코드 "'+(savedProduct.code||'')+'"의 기존 레코드 '+_absorbDups.length+'건을 이 내용으로 덮어썼습니다','var(--grn)',3500);
     }
     // 수정 모드에서 재고 차이 발생 시 이력 기록
     if(id && stockDelta!==0 && savedProduct){
