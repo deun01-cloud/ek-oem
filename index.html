@@ -6666,6 +6666,7 @@ function openProductModal(idOrNull){
   // 📌 이미지 정규화 — p.imgs 항목이 문자열(URL)이든 {url} 객체든 모두 {url,name}로 통일
   //    (정규화 누락 시 문자열 항목의 img.url이 undefined가 되어 모달에서 사진이 깨지던 버그)
   pdImgBuf = p ? (p.imgs||[]).map(f => typeof f==='string' ? {url:f, name:''} : {url:(f&&f.url)||'', name:(f&&f.name)||''}) : [];
+  window._pdEditing = p || null; // 수정 중인 원본 객체 — 저장 시 id가 어긋나도 자기 자신을 정확히 찾기 위함
   sv('pd_id',p?p.id:'');sv('pd_code',p?p.code:'');sv('pd_name',p?p.name:'');
   // 유형: 기존 제품에 유형이 있으면 그대로, 비어있으면 품번 3번째 글자로 자동 추론
   let pdTypeVal = p ? (p.type||'') : 'EARRING';
@@ -6994,7 +6995,19 @@ function deletePriceHist(entryId){
 function saveProduct(){
   if(!_validateRequired([{id:'pd_name',label:'품목명'}])) return;
   const code=gv('pd_code'), name=gv('pd_name');
-  const id=gv('pd_id');
+  // 🎯 수정 대상 레코드를 확실히 찾는다.
+  //   목록 객체의 id가 productDB와 어긋나거나(동기화로 배열 교체·id 형변환) id가 비어 있으면
+  //   예전엔 '신규 등록'이나 '다른 제품'으로 오인돼 자기 자신과 코드 충돌이 나고 저장이 막혔다.
+  //   → id → _notionId → 객체 동일성 순으로 찾고, 찾으면 그 레코드의 id를 기준으로 삼는다.
+  const _pdEd = window._pdEditing || null;
+  const _formId = gv('pd_id');
+  let _selfIdx = -1;
+  if(_formId) _selfIdx = productDB.findIndex(function(x){ return String(x.id)===String(_formId); });
+  if(_selfIdx<0 && _pdEd && _pdEd._notionId) _selfIdx = productDB.findIndex(function(x){ return x._notionId && x._notionId===_pdEd._notionId; });
+  if(_selfIdx<0 && _pdEd) _selfIdx = productDB.indexOf(_pdEd);
+  if(_selfIdx>=0 && (productDB[_selfIdx].id==null || productDB[_selfIdx].id==='')) productDB[_selfIdx].id = Date.now();
+  const id = _selfIdx>=0 ? String(productDB[_selfIdx].id) : _formId;
+  const _selfNid = _selfIdx>=0 ? (productDB[_selfIdx]._notionId||'') : ((_pdEd&&_pdEd._notionId)||'');
   // 🔒 노션-우선 모드: 신규 등록 시 노션 연결 필수
   // (수정은 기존 항목이 이미 노션에 있다고 가정하고 통과)
   if(!id && (!notionCfg.workerUrl || !notionCfg.productDb)){
@@ -7012,13 +7025,14 @@ function saveProduct(){
     const _curName = _norm(name), _curPlating = _norm(gv('pd_plating')), _curSize = _norm(gv('pd_size'));
     const duplicates = productDB.filter(p =>
       String(p.id) !== String(id) && // 자기 자신 제외
+      !(_selfNid && p._notionId === _selfNid) && // 같은 노션 페이지 = 자기 자신
       (p.code||'').trim() === trimmedCode
     );
     // 수정 모드에서 품목코드를 바꾸지 않았다면 이미 존재하던 겹침이다 —
     //   이번 수정이 만든 충돌이 아니므로 품목명·소재·단가 등 세부 수정을 막지 않는다.
     //   (코드를 '다른 제품이 쓰는 코드'로 바꿀 때만 차단)
-    const _orig = id ? productDB.find(function(p){ return String(p.id)===String(id); }) : null;
-    const _codeUnchanged = !!(_orig && String(_orig.code||'').trim() === trimmedCode);
+    const _orig = (id ? productDB.find(function(p){ return String(p.id)===String(id); }) : null) || _pdEd;
+    const _codeUnchanged = !!(id && _orig && String(_orig.code||'').trim() === trimmedCode);
     // 수정 모드: 충돌 상대 중 '서로 다른 제품'만 진짜 충돌로 본다
     const realCollisions = _codeUnchanged ? [] : duplicates.filter(function(p){
       if(!id) return true; // 신규 등록은 코드만 겹쳐도 충돌로 간주(기존 동작 유지)
@@ -7117,7 +7131,10 @@ function saveProduct(){
           if(savedProduct.priceHistory.length > 50) savedProduct.priceHistory = savedProduct.priceHistory.slice(-50);
         }
         if(!savedProduct.createdDate && d.createdDate) savedProduct.createdDate = d.createdDate;
-        try{ deleteProductFromNotion(d); }catch(e){ console.warn('[제품] 중복 레코드 삭제 실패', d.id, e); }
+        // 같은 노션 페이지를 가리키는 사본이면 노션·서버 삭제는 하지 않는다(자기 자신이 지워지므로) — 로컬 사본만 제거
+        if(!(d._notionId && savedProduct._notionId && d._notionId===savedProduct._notionId)){
+          try{ deleteProductFromNotion(d); }catch(e){ console.warn('[제품] 중복 레코드 삭제 실패', d.id, e); }
+        }
       });
       const _dupIds = {}; _absorbDups.forEach(function(d){ _dupIds[String(d.id)] = 1; });
       productDB = productDB.filter(function(x){ return !_dupIds[String(x.id)]; });
