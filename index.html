@@ -35467,6 +35467,26 @@ function vMonthly(c){
     },0);
     return isFinite(sum) ? sum : 0;
   }
+  // 🔸 [FIX 2026-09-28] 잔여 발주 금액 기준
+  //   · 자사 브랜드(비비케이트)는 거래명세서를 발행하지 않으므로 '받을 돈'인 잔여 금액·명세서 미발행에서 제외
+  //     (예전엔 명세서가 영원히 없어 1.1억이 계속 잔여로 잡혔다)
+  //   · 잔여 = 발주 품목금액 − 이미 청구된(취소 아닌) 명세서 공급가액
+  //     (예전엔 부분 청구된 진행중 발주의 '청구된 금액'을 잔여로 셌다 — 예: VT0618-2 2,533만)
+  const _SELF_BRANDS = ['비비케이트'];
+  const _isSelfBrand = o => _SELF_BRANDS.includes((o.vendor||'').trim());
+  function ordRemainAmt(o){
+    if(_isSelfBrand(o)) return 0;
+    const total = (o.rows||[]).reduce((s,r)=>{
+      const u = Number(r.unitPrice)||0;
+      const q = Number(r.qty); const qty = isFinite(q)&&q>0 ? q : 1;
+      return s + u*qty;
+    },0);
+    const billed = invoiceHistory.filter(v=>
+      v.status !== '취소' && ((v.ordId && v.ordId===o.id) || (o.no && v.ordNo && v.ordNo===o.no))
+    ).reduce((s,v)=>{ const n = Number(v.supplyAmt); return s + (isFinite(n) ? n : 0); },0);
+    const rem = total - billed;
+    return isFinite(rem) && rem > 0 ? rem : 0;
+  }
   const mOrdAmt=months.map(m=>{
     const monthOrds=orders.filter(o=>o.date&&o.date.startsWith(m));
     const doneOrds=monthOrds.filter(o=>isOrderShipped(o.status));
@@ -35509,6 +35529,7 @@ function vMonthly(c){
   //     - 출고완료(확정) 중 명세서 미발행 = 청구 전, 소속시켜야 할 건
   const ordersShippedNoInvoice = orders.filter(o => {
     if(!isOrderShipped(o.status)) return false; // 확정/출고완료 상태만
+    if(_isSelfBrand(o)) return false; // 자사 브랜드는 명세서 발행 대상 아님
     if(o.status === '취소') return false;
     return !invoiceHistory.some(v=>
       (v.ordId && v.ordId===o.id) ||
@@ -35521,8 +35542,8 @@ function vMonthly(c){
     return !isOrderShipped(o.status);
   });
   const activeOrderCnt = ordersNotShipped.length + ordersShippedNoInvoice.length;
-  const activeOrderAmt = ordersNotShipped.reduce((s,o)=>s+ordAmt(o),0)
-                       + ordersShippedNoInvoice.reduce((s,o)=>s+ordAmt(o),0);
+  const activeOrderAmt = ordersNotShipped.reduce((s,o)=>s+ordRemainAmt(o),0)
+                       + ordersShippedNoInvoice.reduce((s,o)=>s+ordRemainAmt(o),0);
 
   // (2) 이번달 누적 매출 = 이번달 발행된 거래명세서의 공급가액 합계 (취소 명세서 제외)
   //     명세서 발행일(issuedAt) 기준 — 출고완료일이 아니라 발행일이 매출 인식 시점
@@ -35601,11 +35622,11 @@ function vMonthly(c){
       clientOrdMap[key].pendCnt++;
     }
     // 🔸 잔여 발주 = 아직 처리 안 끝난 발주(취소 제외, 미출고 또는 출고완료지만 명세서 미발행)
-    if(st!=='취소'){
+    if(st!=='취소' && !_isSelfBrand(o)){   // 자사 브랜드는 잔여(받을 돈)에서 제외
       const shipped = isOrderShipped(st);
       const invoiced = hasInvoiceFor(o);
       if(!shipped || !invoiced){   // 미출고이거나, 출고됐어도 명세서 미발행이면 아직 잔여
-        clientOrdMap[key].remainAmt+=a;
+        clientOrdMap[key].remainAmt+=ordRemainAmt(o);
         clientOrdMap[key].remainCnt++;
       }
     }
