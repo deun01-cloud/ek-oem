@@ -7013,8 +7013,13 @@ function saveProduct(){
       String(p.id) !== String(id) && // 자기 자신 제외
       (p.code||'').trim() === trimmedCode
     );
+    // 수정 모드에서 품목코드를 바꾸지 않았다면 이미 존재하던 겹침이다 —
+    //   이번 수정이 만든 충돌이 아니므로 품목명·소재·단가 등 세부 수정을 막지 않는다.
+    //   (코드를 '다른 제품이 쓰는 코드'로 바꿀 때만 차단)
+    const _orig = id ? productDB.find(function(p){ return String(p.id)===String(id); }) : null;
+    const _codeUnchanged = !!(_orig && String(_orig.code||'').trim() === trimmedCode);
     // 수정 모드: 충돌 상대 중 '서로 다른 제품'만 진짜 충돌로 본다
-    const realCollisions = duplicates.filter(function(p){
+    const realCollisions = _codeUnchanged ? [] : duplicates.filter(function(p){
       if(!id) return true; // 신규 등록은 코드만 겹쳐도 충돌로 간주(기존 동작 유지)
       var sameProduct = _norm(p.name)===_curName && _norm(p.plating)===_curPlating && _norm(p.size)===_curSize;
       return !sameProduct; // 같은 제품(중복 레코드)이면 충돌 아님
