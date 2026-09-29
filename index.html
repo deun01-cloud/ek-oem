@@ -42563,6 +42563,7 @@ async function saveStandaloneInvoice(){
       supplyAmt, tax, total, status: finalStatus, memo,
       payments, totalPaid, paymentRatio: ratio,
       _stockApplied: willStockApply,
+      _ts: Date.now(), // ⏱ LWW: 수정본이 최신이 되도록 — 없으면 실시간 스냅샷의 옛 버전이 덮어씀
     });
 
     // 📦 발주 기반 거래명세서이고 입금 100% 도달 → 자동 출고완료 트리거
@@ -42574,6 +42575,9 @@ async function saveStandaloneInvoice(){
     // 4-A: 단계 자동 갱신 (status/입금률 변경 반영)
     if(typeof refreshInvStage === 'function') refreshInvStage(target);
 
+    // 🛡 [FIX] 수정본을 실시간 서버에 발행 — 누락 시 재접속 때 서버의 옛 품목(추가한 개발비 행 없음)으로 되돌아감
+    if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
+    if(typeof realtimePublish === 'function') realtimePublish('invoice', target);
     save();
     if(notionCfg.workerUrl && notionCfg.invDb){
       syncInvoiceToNotion(target, true).catch(e=>console.warn('거래명세서 노션 sync 실패:',e));
