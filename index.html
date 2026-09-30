@@ -5413,6 +5413,28 @@ let pdSortKey=null, pdSortDir='asc'; // 정렬 상태: key=null이면 기본순�
 let PD_PAGE_SIZE = +(localStorage.getItem('ek3_pdPageSize')||20) || 20;  // 페이지당 표시 개수 (드롭다운으로 변경, 영구저장)
 function pdSetPageSize(v){ PD_PAGE_SIZE = +v||20; try{localStorage.setItem('ek3_pdPageSize',PD_PAGE_SIZE);}catch(e){} pdPage=1; renderProducts(); }
 let pdFilterName='전체';  // 품목명 그룹 필터 ('전체' 또는 정규화된 이름 그룹)
+// 🏷 고객사 필터: 품목코드 '앞 2자리'(고객사 이니셜)로만 매칭 — 코드 중간에 같은 글자가 있어도 섞이지 않음
+let pdFilterClient='전체';
+function _pdCodePrefix(p){ const c=String((p&&p.code)||'').trim().toUpperCase(); return /^[A-Z]{2}/.test(c) ? c.slice(0,2) : ''; }
+function _pdClientMatch(p){ return pdFilterClient==='전체' || _pdCodePrefix(p)===pdFilterClient; }
+// 드롭다운 항목: 제품DB에 실제로 있는 코드 앞자리 기준 + 고객사 DB 이니셜로 이름 표시
+function _pdClientOptions(base){
+  const cnt={};
+  (base||productDB).forEach(p=>{ const k=_pdCodePrefix(p); if(k) cnt[k]=(cnt[k]||0)+1; });
+  const names={};
+  (typeof clients!=='undefined' && Array.isArray(clients) ? clients : []).forEach(cl=>{
+    const ini=String((cl&&cl.initials)||'').trim().toUpperCase();
+    const nm=String((cl&&cl.name)||'').trim();
+    if(/^[A-Z]{2}$/.test(ini) && nm){ (names[ini]=names[ini]||[]); if(!names[ini].includes(nm)) names[ini].push(nm); }
+  });
+  const known=[], unknown=[];
+  Object.keys(cnt).forEach(k=>{ (names[k]?known:unknown).push({k, n:cnt[k], label: names[k] ? (names[k].join(' / ')+' ('+k+')') : (k+' · 미등록 이니셜')}); });
+  known.sort((a,b)=>a.label.localeCompare(b.label,'ko'));
+  unknown.sort((a,b)=>b.n-a.n||a.k.localeCompare(b.k));
+  // 선택돼 있는데 현재 모집단에 0건이어도 드롭다운에서 사라지지 않게 유지
+  if(pdFilterClient!=='전체' && !cnt[pdFilterClient]) known.unshift({k:pdFilterClient, n:0, label:(names[pdFilterClient]?names[pdFilterClient].join(' / ')+' ('+pdFilterClient+')':pdFilterClient)});
+  return known.concat(unknown);
+}
 // 품목명에서 색상/사이즈/번호 등 변형 접미사를 떼어내 "기본 이름"만 추출 → 비슷한 이름끼리 묶기
 function pdNameKey(name){
   let s=String(name||'').trim();
@@ -5612,6 +5634,7 @@ function renderProducts(){
   let list=productDB;
   if(pdFilterType!=='전체') list=list.filter(p=>p.type===pdFilterType);
   if(pdFilterMat!=='전체') list=list.filter(p=>p.mat===pdFilterMat);
+  if(pdFilterClient!=='전체') list=list.filter(_pdClientMatch);
   // 최종수정일 필터 적용
   if(pdDateFilter !== 'all'){
     const range = _getPdDateRange();
@@ -5737,11 +5760,24 @@ function renderProducts(){
       ${mats.map(m=>`<button onclick="pdFilterMat='${m}';pdPage=1;renderProducts()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdFilterMat===m?'var(--blu)':'var(--bdr)'};background:${pdFilterMat===m?'var(--blu-bg)':'var(--s1)'};color:${pdFilterMat===m?'var(--blu)':'var(--t2)'};cursor:pointer;font-family:inherit">${m}</button>`).join('')}
     </div>
     ${(()=>{
-      // 품목명 그룹: 현재 유형/소재 필터가 적용된 모집단 기준으로 그룹별 개수 집계
+      // 🏷 고객사(품목코드 앞 2자리) 선택
       const _e=s=>String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
       let base=productDB;
       if(pdFilterType!=='전체') base=base.filter(p=>p.type===pdFilterType);
       if(pdFilterMat!=='전체') base=base.filter(p=>p.mat===pdFilterMat);
+      const on=pdFilterClient!=='전체';
+      const opts=['<option value="전체">🏷 고객사 전체</option>']
+        .concat(_pdClientOptions(base).map(o=>`<option value="${_e(o.k)}" ${pdFilterClient===o.k?'selected':''}>${_e(o.label)} · ${o.n}</option>`)).join('');
+      return `<select onchange="pdFilterClient=this.value;pdPage=1;renderProducts()" title="품목코드 앞 2자리(고객사 이니셜)로 모아보기" style="padding:4px 8px;border:1px solid ${on?'var(--gold)':'var(--bdr)'};border-radius:14px;font-size:11px;font-family:inherit;background:${on?'var(--gold-bg)':'var(--s1)'};color:${on?'var(--gold-lt)':'var(--t2)'};max-width:220px;cursor:pointer">${opts}</select>
+      ${on?`<button onclick="pdFilterClient='전체';pdPage=1;renderProducts()" title="고객사 필터 해제" style="padding:4px 9px;border-radius:14px;font-size:11px;border:1px solid var(--bdr);background:var(--s1);color:var(--t3);cursor:pointer;font-family:inherit">✕</button>`:''}`;
+    })()}
+    ${(()=>{
+      // 품목명 그룹: 현재 유형/소재/고객사 필터가 적용된 모집단 기준으로 그룹별 개수 집계
+      const _e=s=>String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+      let base=productDB;
+      if(pdFilterType!=='전체') base=base.filter(p=>p.type===pdFilterType);
+      if(pdFilterMat!=='전체') base=base.filter(p=>p.mat===pdFilterMat);
+      if(pdFilterClient!=='전체') base=base.filter(_pdClientMatch);
       const grp={};
       base.forEach(p=>{ const k=pdNameKey(p.name); grp[k]=(grp[k]||0)+1; });
       const entries=Object.entries(grp).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'ko'));
@@ -5936,6 +5972,7 @@ function _pdGetFilteredList(){
   let list=productDB;
   if(typeof pdFilterType!=='undefined' && pdFilterType!=='전체') list=list.filter(p=>p.type===pdFilterType);
   if(typeof pdFilterMat!=='undefined' && pdFilterMat!=='전체') list=list.filter(p=>p.mat===pdFilterMat);
+  if(typeof pdFilterClient!=='undefined' && pdFilterClient!=='전체') list=list.filter(_pdClientMatch);
   if(typeof pdDateFilter!=='undefined' && pdDateFilter!=='all' && typeof _getPdDateRange==='function'){
     const range=_getPdDateRange();
     if(range){
