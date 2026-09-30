@@ -11156,11 +11156,16 @@ function _rtItemKey(item){
   return item._notionId || (item.id !== undefined && item.id !== null ? String(item.id) : null);
 }
 
-function realtimePublish(type, item){
+function realtimePublish(type, item, opts){
   if(!notionCfg.realtimeUrl) return;
   if(!item) return;
   const key = _rtItemKey(item);
   if(!key) return;
+  // ⏱ [근본수정 2026-09-30] LWW 타임스탬프를 발행 시점에 자동 부여.
+  //    예전엔 저장 경로마다 _ts = Date.now()를 직접 써야 했고, 한 곳이라도 빠지면
+  //    서버(SSOT)가 옛 버전을 유지 → 재접속 때 수정분이 조용히 사라졌다(거래명세서 품번 없는 행 등).
+  //    예외: 노션 저장 완료 후의 '보강 재발행'은 {keepTs:true} — 그 사이 다른 기기 수정분을 덮지 않도록 원래 시각 유지.
+  if(!(opts && opts.keepTs)){ try{ item._ts = Date.now(); }catch(_){} }
   // 서버에 저장될 형태: id 필드를 _notionId(또는 로컬 id)로 통일
   const payload = { ...item, id: key };
   const ts = Date.now();
@@ -14921,7 +14926,7 @@ async function syncIOToNotion(io){
       try{ await inflight; }catch(_){}
       if(io._notionId){
         try{ await _nUpdateChecked(io._notionId, props, io, 'io', '입출고'); io._syncedAt=new Date().toISOString();
-          if(typeof realtimePublish==='function') try{ realtimePublish('io', io); }catch(_){} }catch(e){ console.warn('IO update(after inflight) 실패:', e); }
+          if(typeof realtimePublish==='function') try{ realtimePublish('io', io, {keepTs:true}); }catch(_){} }catch(e){ console.warn('IO update(after inflight) 실패:', e); }
         return true;
       }
       // 그래도 _notionId가 없으면(첫 create 실패) 아래 정상 흐름으로 진행
@@ -14946,7 +14951,7 @@ async function syncIOToNotion(io){
     if(io._notionId){
       await _nUpdateChecked(io._notionId, props, io, 'io', '입출고');
       io._syncedAt = new Date().toISOString();
-      if(typeof realtimePublish === 'function') try{ realtimePublish('io', io); }catch(_){}
+      if(typeof realtimePublish === 'function') try{ realtimePublish('io', io, {keepTs:true}); }catch(_){}
       return true;
     } else {
       // create를 in-flight로 등록 → 동시에 들어온 중복 create가 이 프라미스를 기다림
@@ -14958,7 +14963,7 @@ async function syncIOToNotion(io){
       finally{ if(window._ioCreateInFlight) window._ioCreateInFlight.delete(lockKey); }
       if(res?.id){ io._notionId = res.id; io._syncedAt = new Date().toISOString();
         _markPushOk(io);
-        if(typeof realtimePublish === 'function') try{ realtimePublish('io', io); }catch(_){}
+        if(typeof realtimePublish === 'function') try{ realtimePublish('io', io, {keepTs:true}); }catch(_){}
         return true;
       }
       _markPushFailed(io,'io',false,'입출고');
@@ -19511,7 +19516,7 @@ function debouncedSync(type, obj, isUpdate){
         // 🌐 노션 push 성공 → _notionId가 채워졌으면 서버에도 한 번 더 반영
         //   (서버는 이미 즉시 반영됨. 여기선 _notionId 보강분만 갱신)
         if(typeof realtimePublish === 'function'){
-          try{ realtimePublish(type, merged.obj); }catch(e){ console.warn('[rt] publish 실패:', e); }
+          try{ realtimePublish(type, merged.obj, {keepTs:true}); }catch(e){ console.warn('[rt] publish 실패:', e); }
         }
       })
       .catch(e=>{
@@ -19721,7 +19726,7 @@ function _rtAnnounceNewNotionId(type, obj, hadNid){
     if(typeof _rtAllTypes === 'function' && !_rtAllTypes().some(function(t){ return t.type === type; })) return;
     var oldKey = (obj.id !== undefined && obj.id !== null) ? String(obj.id) : null;
     if(oldKey && oldKey !== obj._notionId && typeof realtimeDelete === 'function') realtimeDelete(type, oldKey);
-    realtimePublish(type, obj);
+    realtimePublish(type, obj, {keepTs:true});
   }catch(e){ console.warn('[rt] 새 노션ID 서버 반영 실패:', type, e && e.message); }
 }
 
@@ -20763,7 +20768,7 @@ async function syncInvoiceToNotion(inv, update){
   //    → 옛 키 삭제(에코 무시되므로 내 화면엔 영향 없음) 후 _notionId 키로 재발행.
   if(_hadNoNotionId && _oldLocalKey && _oldLocalKey !== String(r.id) && typeof realtimeDelete === 'function'){
     try{ realtimeDelete('invoice', _oldLocalKey); }catch(_){}
-    try{ if(typeof realtimePublish === 'function') realtimePublish('invoice', inv); }catch(_){}
+    try{ if(typeof realtimePublish === 'function') realtimePublish('invoice', inv, {keepTs:true}); }catch(_){}
   }
 }
 
@@ -20837,7 +20842,7 @@ async function syncQuoteToNotion(qt, update){
   if(qt._notionId){
     await _nUpdateChecked(qt._notionId,p,qt,'quote','견적서');
     qt._syncedAt = new Date().toISOString();
-    if(typeof realtimePublish === 'function') try{ realtimePublish('quote', qt); }catch(_){}
+    if(typeof realtimePublish === 'function') try{ realtimePublish('quote', qt, {keepTs:true}); }catch(_){}
     return;
   }
   // 중복 방지: 같은 견적번호 이미 있으면 update
@@ -20850,7 +20855,7 @@ async function syncQuoteToNotion(qt, update){
         slSave();
         await _nUpdateChecked(existing.id,p,qt,'quote','견적서');
         qt._syncedAt = new Date().toISOString();
-        if(typeof realtimePublish === 'function') try{ realtimePublish('quote', qt); }catch(_){}
+        if(typeof realtimePublish === 'function') try{ realtimePublish('quote', qt, {keepTs:true}); }catch(_){}
         return;
       }
     }catch(e){
@@ -20861,7 +20866,7 @@ async function syncQuoteToNotion(qt, update){
   }
   const r=await nCreate(notionCfg.quoteDb,p);
   if(r?.id){ qt._notionId=r.id; qt._syncedAt = new Date().toISOString(); _markPushOk(qt); slSave();
-    if(typeof realtimePublish === 'function') try{ realtimePublish('quote', qt); }catch(_){}
+    if(typeof realtimePublish === 'function') try{ realtimePublish('quote', qt, {keepTs:true}); }catch(_){}
   } else {
     _markPushFailed(qt,'quote',false,'견적서');
     throw new Error('Notion 생성 실패: 응답 없음 (견적서)');
