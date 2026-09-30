@@ -5046,6 +5046,19 @@ async function _doConfirmASInvoice(ctx, selected, supplyAmt, tax, total){
 // ════════════════════════════════
 let pdImgBuf=[], _importRows=[];
 let pdSearch='', pdFilterType='전체', pdFilterMat='전체', pdPage=1, pdLowOnly=false;
+// 🔎 검색 대상: 'all'(전체 필드) | 'code'(품목코드만) | 'name'(품목명만) — 기기별로 기억
+let pdSearchField = (function(){ try{ var v=localStorage.getItem('ek_pd_search_field'); return (v==='code'||v==='name')?v:'all'; }catch(_){ return 'all'; } })();
+function _pdMatchSearch(p, q){
+  if(pdSearchField==='code') return String(p.code||'').toLowerCase().includes(q);
+  if(pdSearchField==='name') return String(p.name||'').toLowerCase().includes(q);
+  return [p.code||'',p.name||'',p.memo||'',p.mat||'',p.plating||'',p.size||'',p.type||''].join(' ').toLowerCase().includes(q);
+}
+function setPdSearchField(f){
+  pdSearchField = (f==='code'||f==='name') ? f : 'all';
+  try{ localStorage.setItem('ek_pd_search_field', pdSearchField); }catch(_){}
+  pdPage=1; renderProducts();
+  setTimeout(function(){ var el=document.getElementById('srch_pdSearch'); if(el){ el.focus(); var n=el.value.length; try{ el.setSelectionRange(n,n); }catch(_){} } },0);
+}
 // 🗂 제품 DB 서브탭: 'products'(전체 제품) | 'drops'(드랍 샘플 재판매)
 let pdSubTab = 'products';
 let dropSearch='', dropFilterType='전체', dropResaleFilter='all';  // all|resale|hold
@@ -5614,14 +5627,8 @@ function renderProducts(){
   }
   if(pdSearch){
     const q = pdSearch.toLowerCase().trim();
-    list = list.filter(p => {
-      // 한글·영어 모두 검색 가능: 코드, 품명, 메모, 소재, 도금, 사이즈, 유형까지
-      const hay = [
-        p.code||'', p.name||'', p.memo||'',
-        p.mat||'', p.plating||'', p.size||'', p.type||''
-      ].join(' ').toLowerCase();
-      return hay.includes(q);
-    });
+    // 검색 대상(전체/품목코드/품목명)은 pdSearchField로 선택 — 판정은 _pdMatchSearch 한 곳에서
+    list = list.filter(p => _pdMatchSearch(p, q));
   }
   if(pdLowOnly){
     list=list.filter(p=>{
@@ -5715,7 +5722,10 @@ function renderProducts(){
 
   const filters=`
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:10px 14px;background:var(--s2);border-radius:var(--r);border:1px solid var(--bdr)">
-    <input class="search-box search-box-tracked" id="srch_pdSearch" placeholder="품목코드 · 품명 · 소재 · 도금 · 사이즈 검색 (한/영)" value="${pdSearch}"
+    <div style="display:inline-flex;border:1px solid var(--bdr);border-radius:6px;overflow:hidden;flex-shrink:0" title="검색 대상 선택">
+      ${[['all','전체'],['code','품목코드'],['name','품목명']].map(([k,l])=>`<button onclick="setPdSearchField('${k}')" style="padding:5px 10px;font-size:11px;border:none;${k!=='all'?'border-left:1px solid var(--bdr);':''}background:${pdSearchField===k?'var(--gold)':'var(--s1)'};color:${pdSearchField===k?'#fff':'var(--t2)'};font-weight:${pdSearchField===k?'600':'400'};cursor:pointer;font-family:inherit">${l}</button>`).join('')}
+    </div>
+    <input class="search-box search-box-tracked" id="srch_pdSearch" placeholder="${pdSearchField==='code'?'품목코드 검색 (예: PORS)':pdSearchField==='name'?'품목명 검색 (한/영)':'품목코드 · 품명 · 소재 · 도금 · 사이즈 검색 (한/영)'}" value="${pdSearch}"
       oncompositionstart="this._composing=true"
       oncompositionend="this._composing=false;_debouncedPdSearch(this.value)"
       oninput="if(!this._composing)_debouncedPdSearch(this.value)"
@@ -5940,10 +5950,7 @@ function _pdGetFilteredList(){
   }
   if(typeof pdSearch!=='undefined' && pdSearch){
     const q=pdSearch.toLowerCase().trim();
-    list=list.filter(p=>{
-      const hay=[p.code||'',p.name||'',p.memo||'',p.mat||'',p.plating||'',p.size||'',p.type||''].join(' ').toLowerCase();
-      return hay.includes(q);
-    });
+    list=list.filter(p=>_pdMatchSearch(p, q));
   }
   if(typeof pdLowOnly!=='undefined' && pdLowOnly){
     list=list.filter(p=>{ const stock=+p.stock||0,safety=+p.safetyStock||0; return safety>0&&stock<=safety; });
