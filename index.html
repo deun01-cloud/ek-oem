@@ -9415,6 +9415,10 @@ function _saveInvItemChanges(invId){
     .map(it => `${it.name} ×${it.qty||1}`)
     .join(', ');
   delete v._itemsDirty;
+  // ⏱ [FIX] LWW: 수정본이 최신이 되도록 — 없으면 실시간 서버(SSOT)의 옛 품목으로 재접속 시 되돌아감
+  //    (수정 모달 경로와 동일하게 맞춤. 상세화면 '+ 행 추가'로 넣은 품번 없는 행이 사라지던 원인)
+  v._ts = Date.now();
+  if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
   // 로컬 저장
   if(typeof save === 'function') save();
   // 실시간 동기화
@@ -42352,6 +42356,7 @@ async function saveStandaloneInvoice(){
       paymentRatio: ratio,
       _isStandalone: !isFromOrder && !_isFromSampleComplete, // 발주/샘플 기반이면 false
       _stockApplied: false,
+      _ts: Date.now(), // ⏱ LWW: 신규 발행분도 명시적 타임스탬프 (서버 스냅샷에 밀리지 않도록)
     };
     // 샘플 완료에서 진입한 경우 — 샘플 명세서로 마킹
     if(_isFromSampleComplete){
