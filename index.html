@@ -5963,10 +5963,14 @@ function pdClearSelection(){
 }
 // ── 선택 항목 내보내기 (엑셀/PDF, 사진 포함) ──
 // 출력 대상: 체크된 항목이 있으면 그것만, 없으면 현재 필터·정렬된 전체 목록.
+// [FIX 2026-10-01] id는 숫자가 아닐 수 있다(노션에서 받은 제품 등). 예전엔 +id로 숫자 변환해 비교했는데,
+//   숫자가 아닌 id는 모두 NaN이 되고 includes(NaN)은 NaN끼리 일치 → 2개만 체크해도 수천 건이 '선택'으로 잡혔다.
+//   반드시 문자열로 비교한다.
+function _pdCheckedIdSet(){ return new Set(Array.from(document.querySelectorAll('.pd-chk:checked')).map(cb=>String(cb.value))); }
 function _pdGetSelectedProducts(){
-  const ids=Array.from(document.querySelectorAll('.pd-chk:checked')).map(cb=>+cb.value);
-  if(!ids.length) return [];
-  return productDB.filter(p=>ids.includes(+p.id));
+  const ids=_pdCheckedIdSet();
+  if(!ids.size) return [];
+  return productDB.filter(p=>ids.has(String(p.id)));
 }
 // 현재 화면 필터/정렬과 동일한 목록을 재계산 (페이지네이션 무시, 전체)
 function _pdGetFilteredList(){
@@ -6286,13 +6290,19 @@ function _pdExportPdf(sel){
   }catch(e){ console.error('[pdf export]',e); if(typeof showToast==='function') showToast('PDF 생성 실패: '+(e.message||e),'var(--red)'); }
 }
 function pdDeleteSelected(){
-  const ids=Array.from(document.querySelectorAll('.pd-chk:checked')).map(cb=>+cb.value);
-  if(!ids.length) return;
-  showConfirm(`선택한 ${ids.length}개 품목을 삭제합니다.`,()=>{
-    productDB.filter(p=>ids.includes(+p.id)).forEach(p=>deleteProductFromNotion(p));
-    productDB=productDB.filter(p=>!ids.includes(+p.id));
+  const ids=_pdCheckedIdSet();
+  if(!ids.size) return;
+  const targets=productDB.filter(p=>ids.has(String(p.id)));
+  // 안전장치: 실제 삭제 대상 수가 체크 수와 다르면 중단 (id 중복·불일치로 엉뚱한 대량 삭제 방지)
+  if(targets.length!==ids.size){
+    showToast(`⚠ 삭제 중단: 체크 ${ids.size}개인데 대상이 ${targets.length}개로 잡힙니다. 새로고침 후 다시 시도하세요`,'var(--red)',6000);
+    return;
+  }
+  showConfirm(`선택한 ${targets.length}개 품목을 삭제합니다.`,()=>{
+    targets.forEach(p=>deleteProductFromNotion(p));
+    productDB=productDB.filter(p=>!ids.has(String(p.id)));
     save();renderTab();
-    showToast(`✓ ${ids.length}개 삭제됨`,'var(--grn)');
+    showToast(`✓ ${targets.length}개 삭제됨`,'var(--grn)');
   },'선택 삭제','🗑');
 }
 function pdRequireNotionWarning(){
