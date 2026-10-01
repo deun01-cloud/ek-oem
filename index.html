@@ -6246,30 +6246,38 @@ function _pdExportPdf(sel){
       const img=_pdFirstImg(p);
       const cell=img?`<img src="${esc(img)}" style="width:54px;height:54px;object-fit:cover;border-radius:5px;border:1px solid #ddd">`:`<div style="width:54px;height:54px;border-radius:5px;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:18px">📷</div>`;
       return `<tr>
-        <td style="text-align:center">${cell}</td>
-        <td style="font-family:monospace;font-size:11px;color:#666">${esc(p.code)||'—'}</td>
-        <td style="font-weight:600">${esc(p.name)}</td>
-        <td>${esc(p.type)||'—'}</td>
+        <td class="c">${cell}</td>
+        <td class="nw mono">${esc(p.code)||'—'}</td>
+        <td class="nm">${esc(p.name)}</td>
+        <td class="nw c">${esc(p.type)||'—'}</td>
         <td>${esc(p.mat)||'—'}</td>
-        <td>${esc(p.plating)||'—'}</td>
-        <td style="text-align:right">${p.price?(+p.price).toLocaleString()+'원':'—'}</td>
-        <td style="white-space:nowrap;color:#666">${p.lastModified?esc(String(p.lastModified).slice(0,10)):'—'}</td>
+        <td class="nw c">${esc(p.plating)||'—'}</td>
+        <td class="nw r">${p.price?(+p.price).toLocaleString()+'원':'—'}</td>
+        <td class="nw c dt">${p.lastModified?esc(String(p.lastModified).slice(0,10)):'—'}</td>
       </tr>`;
     }).join('');
     const html=`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>제품목록</title>
     <style>
       *{box-sizing:border-box} body{font-family:'Malgun Gothic','Apple SD Gothic Neo',sans-serif;margin:24px;color:#222}
       h1{font-size:18px;margin:0 0 4px} .sub{color:#888;font-size:12px;margin-bottom:16px}
-      table{width:100%;border-collapse:collapse;font-size:12px}
-      th{background:#f4f2ec;border-bottom:2px solid #ddd;padding:8px 6px;text-align:left;font-weight:600}
-      td{border-bottom:1px solid #eee;padding:6px;vertical-align:middle}
-      img{display:block}
+      /* 고정 레이아웃: 열 너비를 colgroup으로 고정해 행마다 정렬이 흔들리지 않게 */
+      table{width:100%;border-collapse:collapse;font-size:11px;table-layout:fixed}
+      th{background:#f4f2ec;border-bottom:2px solid #ddd;padding:7px 5px;text-align:left;font-weight:600;white-space:nowrap}
+      td{border-bottom:1px solid #eee;padding:5px;vertical-align:middle;height:66px;overflow:hidden}
+      th.c,td.c{text-align:center} th.r,td.r{text-align:right}
+      td.nw{white-space:nowrap;text-overflow:ellipsis}
+      td.mono{font-family:Consolas,monospace;font-size:10px;color:#666}
+      td.nm{font-weight:600;word-break:keep-all;overflow-wrap:anywhere;line-height:1.35}
+      td.dt{color:#666;font-variant-numeric:tabular-nums}
+      td.r{font-variant-numeric:tabular-nums}
+      img{display:block;margin:0 auto}
       @media print{ @page{margin:14mm} thead{display:table-header-group} tr{break-inside:avoid} }
     </style></head><body>
       <h1>제품 목록</h1>
       <div class="sub">총 ${sel.length}건 · ${new Date().toLocaleString('ko-KR')}</div>
       <table>
-        <thead><tr><th style="width:64px">사진</th><th>품목코드</th><th>품목명</th><th>유형</th><th>소재</th><th>도금</th><th style="text-align:right">출고단가</th><th style="white-space:nowrap">최종수정일</th></tr></thead>
+        <colgroup><col style="width:64px"><col style="width:92px"><col><col style="width:76px"><col style="width:84px"><col style="width:52px"><col style="width:72px"><col style="width:76px"></colgroup>
+        <thead><tr><th class="c">사진</th><th>품목코드</th><th>품목명</th><th class="c">유형</th><th>소재</th><th class="c">도금</th><th class="r">출고단가</th><th class="c">최종수정일</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
       <script>
