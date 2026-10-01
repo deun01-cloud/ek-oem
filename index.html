@@ -5416,6 +5416,12 @@ function pdSetPageSize(v){ PD_PAGE_SIZE = +v||20; try{localStorage.setItem('ek3_
 let pdFilterName='전체';  // 품목명 그룹 필터 ('전체' 또는 정규화된 이름 그룹)
 // 🏷 고객사 필터: 품목코드 '앞 2자리'(고객사 이니셜)로만 매칭 — 코드 중간에 같은 글자가 있어도 섞이지 않음
 let pdFilterClient='전체';
+// ☑ [FIX 2026-10-01] 선택 상태를 DOM 체크박스가 아닌 별도 Set에 보관.
+//   예전엔 체크 상태가 체크박스에만 있어서, 실시간 동기화 등으로 목록이 다시 그려지면(renderProducts) 선택이 몇 초 뒤 풀렸다.
+//   렌더 시 이 Set을 기준으로 체크 상태를 복원한다. id는 항상 문자열로 비교.
+var pdSelected=new Set();
+function _pdSelValidIds(){ const have=new Set(productDB.map(p=>String(p.id))); return new Set([...pdSelected].filter(id=>have.has(id))); }
+function pdToggleOne(cb){ const id=String(cb.value); if(cb.checked) pdSelected.add(id); else pdSelected.delete(id); pdUpdateBulkBar(); }
 function _pdCodePrefix(p){ const c=String((p&&p.code)||'').trim().toUpperCase(); return /^[A-Z]{2}/.test(c) ? c.slice(0,2) : ''; }
 function _pdClientMatch(p){ return pdFilterClient==='전체' || _pdCodePrefix(p)===pdFilterClient; }
 // 드롭다운 항목: 제품DB에 실제로 있는 코드 앞자리 기준 + 고객사 DB 이니셜로 이름 표시
@@ -5772,21 +5778,12 @@ function renderProducts(){
       return `<select onchange="pdFilterClient=this.value;pdPage=1;renderProducts()" title="품목코드 앞 2자리(고객사 이니셜)로 모아보기" style="padding:4px 8px;border:1px solid ${on?'var(--gold)':'var(--bdr)'};border-radius:14px;font-size:11px;font-family:inherit;background:${on?'var(--gold-bg)':'var(--s1)'};color:${on?'var(--gold-lt)':'var(--t2)'};max-width:220px;cursor:pointer">${opts}</select>
       ${on?`<button onclick="pdFilterClient='전체';pdPage=1;renderProducts()" title="고객사 필터 해제" style="padding:4px 9px;border-radius:14px;font-size:11px;border:1px solid var(--bdr);background:var(--s1);color:var(--t3);cursor:pointer;font-family:inherit">✕</button>`:''}`;
     })()}
-    ${(()=>{
-      // 품목명 그룹: 현재 유형/소재/고객사 필터가 적용된 모집단 기준으로 그룹별 개수 집계
+    ${pdFilterName!=='전체'?(()=>{
+      // 🔗 품목명 그룹 필터가 켜져 있을 때만 표시 (해제용). 그룹 선택은 목록의 품목명 옆 🔗 버튼으로.
       const _e=s=>String(s==null?'':s).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
-      let base=productDB;
-      if(pdFilterType!=='전체') base=base.filter(p=>p.type===pdFilterType);
-      if(pdFilterMat!=='전체') base=base.filter(p=>p.mat===pdFilterMat);
-      if(pdFilterClient!=='전체') base=base.filter(_pdClientMatch);
-      const grp={};
-      base.forEach(p=>{ const k=pdNameKey(p.name); grp[k]=(grp[k]||0)+1; });
-      const entries=Object.entries(grp).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],'ko'));
-      const opts=['<option value="전체">📂 품목명 전체</option>']
-        .concat(entries.map(([k,n])=>`<option value="${_e(k)}" ${pdFilterName===k?'selected':''}>${_e(k)} (${n})</option>`)).join('');
-      return `<select onchange="pdFilterName=this.value;pdPage=1;renderProducts()" title="비슷한 품목명끼리 묶어서 보기" style="padding:4px 8px;border:1px solid ${pdFilterName!=='전체'?'var(--gold)':'var(--bdr)'};border-radius:14px;font-size:11px;font-family:inherit;background:${pdFilterName!=='전체'?'var(--gold-bg)':'var(--s1)'};color:${pdFilterName!=='전체'?'var(--gold-lt)':'var(--t2)'};max-width:200px;cursor:pointer">${opts}</select>
-      ${pdFilterName!=='전체'?`<button onclick="pdFilterName='전체';pdPage=1;renderProducts()" title="품목명 필터 해제" style="padding:4px 9px;border-radius:14px;font-size:11px;border:1px solid var(--bdr);background:var(--s1);color:var(--t3);cursor:pointer;font-family:inherit">✕</button>`:''}`;
-    })()}
+      return `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-radius:14px;font-size:11px;border:1px solid var(--gold);background:var(--gold-bg);color:var(--gold-lt)">🔗 ${_e(pdFilterName)} 묶어보기
+        <button onclick="pdFilterName='전체';pdPage=1;renderProducts()" title="묶어보기 해제" style="border:none;background:none;color:var(--t3);cursor:pointer;font-size:11px;padding:0 4px;font-family:inherit">✕</button></span>`;
+    })():''}
     <button onclick="pdShowLowStock()" style="padding:4px 10px;border-radius:14px;font-size:11px;border:1px solid ${pdLowOnly?'var(--red)':'var(--bdr)'};background:${pdLowOnly?'rgba(192,48,48,.1)':'var(--s1)'};color:${pdLowOnly?'var(--red)':'var(--t2)'};cursor:pointer;font-family:inherit;margin-left:auto;font-weight:600">${pdLowOnly?'✓ ':''}⚠ 재고부족만</button>
   </div>`;
 
@@ -5863,11 +5860,11 @@ function renderProducts(){
           return `
         <tr style="border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
           <td style="padding:7px 10px" onclick="event.stopPropagation()">
-            <input type="checkbox" class="pd-chk" value="${p.id}" onchange="pdUpdateBulkBar()">
+            <input type="checkbox" class="pd-chk" value="${p.id}" ${pdSelected.has(String(p.id))?'checked':''} onchange="pdToggleOne(this)">
           </td>
           <td style="padding:5px 6px" onclick="event.stopPropagation()">${thumbCell}</td>
           <td style="padding:7px 10px;font-family:monospace;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModalByIdx(${_i})">${p.code||'—'}</td>
-          <td style="padding:7px 10px;font-weight:600;color:var(--t1)" onclick="openProductModalByIdx(${_i})">${p.name}</td>
+          <td style="padding:7px 10px;font-weight:600;color:var(--t1)" onclick="openProductModalByIdx(${_i})">${p.name}<button data-k="${String(pdNameKey(p.name)).replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]))}" onclick="event.stopPropagation();pdGroupByName(this.dataset.k)" title="이름이 비슷한 제품(차수·소재·색상 변형) 묶어보기" style="margin-left:6px;border:none;background:none;cursor:pointer;font-size:11px;padding:0 2px;opacity:${pdFilterName!=='전체'&&pdNameKey(p.name)===pdFilterName?'1':'.35'}">🔗</button></td>
           <td style="padding:7px 10px;text-align:center" onclick="openProductModalByIdx(${_i})">
             <span style="font-size:10px;padding:2px 7px;border-radius:10px;background:var(--s2);border:1px solid var(--bdr);white-space:nowrap">${p.type||'기타'}</span>
           </td>
@@ -5914,8 +5911,8 @@ function renderProducts(){
 
   // 일괄 삭제 바
   const bulkBar=`
-  <div id="pdBulkBar" style="display:none;position:sticky;bottom:0;background:var(--s1);border-top:2px solid var(--red);padding:10px 14px;align-items:center;gap:10px;z-index:10">
-    <span id="pdBulkCount" style="font-size:12px;font-weight:600;color:var(--red)">0개 선택됨</span>
+  <div id="pdBulkBar" style="display:${_pdSelValidIds().size?'flex':'none'};position:sticky;bottom:0;background:var(--s1);border-top:2px solid var(--red);padding:10px 14px;align-items:center;gap:10px;z-index:10">
+    <span id="pdBulkCount" style="font-size:12px;font-weight:600;color:var(--red)">${_pdSelValidIds().size}개 선택됨</span>
     <button onclick="pdExportSelected('xlsx')" style="padding:5px 16px;background:var(--grn);color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">📊 엑셀(사진 포함)</button>
     <button onclick="pdExportSelected('pdf')" style="padding:5px 16px;background:var(--gold);color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">📄 PDF(사진 포함)</button>
     <button onclick="pdDeleteSelected()" style="padding:5px 16px;background:var(--red);color:#fff;border:none;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">🗑 선택 삭제</button>
@@ -5945,17 +5942,18 @@ function pdDeleteOne(id){
   },'제품 삭제','🗑');
 }
 function pdToggleAll(checked){
-  document.querySelectorAll('.pd-chk').forEach(cb=>cb.checked=checked);
+  document.querySelectorAll('.pd-chk').forEach(cb=>{ cb.checked=checked; const id=String(cb.value); if(checked) pdSelected.add(id); else pdSelected.delete(id); });
   pdUpdateBulkBar();
 }
 function pdUpdateBulkBar(){
-  const checked=document.querySelectorAll('.pd-chk:checked');
+  const n=_pdSelValidIds().size;
   const bar=document.getElementById('pdBulkBar');
   const cnt=document.getElementById('pdBulkCount');
-  if(bar) bar.style.display=checked.length?'flex':'none';
-  if(cnt) cnt.textContent=`${checked.length}개 선택됨`;
+  if(bar) bar.style.display=n?'flex':'none';
+  if(cnt) cnt.textContent=`${n}개 선택됨`;
 }
 function pdClearSelection(){
+  pdSelected.clear();
   document.querySelectorAll('.pd-chk').forEach(cb=>cb.checked=false);
   const allChk=document.getElementById('pdCheckAll');
   if(allChk) allChk.checked=false;
@@ -5966,7 +5964,7 @@ function pdClearSelection(){
 // [FIX 2026-10-01] id는 숫자가 아닐 수 있다(노션에서 받은 제품 등). 예전엔 +id로 숫자 변환해 비교했는데,
 //   숫자가 아닌 id는 모두 NaN이 되고 includes(NaN)은 NaN끼리 일치 → 2개만 체크해도 수천 건이 '선택'으로 잡혔다.
 //   반드시 문자열로 비교한다.
-function _pdCheckedIdSet(){ return new Set(Array.from(document.querySelectorAll('.pd-chk:checked')).map(cb=>String(cb.value))); }
+function _pdCheckedIdSet(){ return _pdSelValidIds(); } // 화면에 안 보이는(다른 페이지·필터) 선택도 포함
 function _pdGetSelectedProducts(){
   const ids=_pdCheckedIdSet();
   if(!ids.size) return [];
@@ -6310,6 +6308,7 @@ function pdDeleteSelected(){
   showConfirm(`선택한 ${targets.length}개 품목을 삭제합니다.`,()=>{
     targets.forEach(p=>deleteProductFromNotion(p));
     productDB=productDB.filter(p=>!ids.has(String(p.id)));
+    pdSelected.clear();
     save();renderTab();
     showToast(`✓ ${targets.length}개 삭제됨`,'var(--grn)');
   },'선택 삭제','🗑');
