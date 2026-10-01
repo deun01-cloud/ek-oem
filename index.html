@@ -4900,7 +4900,7 @@ body{font-family:'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',sans-seri
   if(!w){ showToast('⚠ 팝업이 차단되었습니다 — 브라우저 팝업 설정 확인','var(--red)'); return; }
   w.document.open();
   w.document.write(printHtml);
-  w.document.close();
+  w.document.close(); _ekStampDoc(w.document);
 }
 
 // 청구 확정 — 선택된 AS의 billing을 '청구 완료'로 변경 + invoiceHistory에 거래명세서 자동 생성
@@ -5420,6 +5420,26 @@ let pdFilterClient='전체';
 //   예전엔 체크 상태가 체크박스에만 있어서, 실시간 동기화 등으로 목록이 다시 그려지면(renderProducts) 선택이 몇 초 뒤 풀렸다.
 //   렌더 시 이 Set을 기준으로 체크 상태를 복원한다. id는 항상 문자열로 비교.
 var pdSelected=new Set();
+// 🏷 [2026-10-01] 회사 로고(EK·INT)를 모든 인쇄 문서의 각 페이지 '오른쪽 아래 여백'에 표시.
+//   @page 여백 상자(@bottom-right)에 찍으므로 본문과 겹치지 않고, 여러 페이지면 페이지마다 반복된다.
+//   새 인쇄 문서를 만들 때도 반드시 _ekStampDoc(문서) 또는 _ekStampLogo(html)을 거칠 것.
+var EK_LOGO_PNG='data:image/png;base64,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';
+var EK_LOGO_PAGE_CSS='@media print{@page{@bottom-right{content:url('+EK_LOGO_PNG+');vertical-align:middle}}}';
+function _ekStampDoc(doc){
+  try{
+    if(!doc || doc.getElementById('ek-logo-style')) return;
+    var st=doc.createElement('style'); st.id='ek-logo-style'; st.textContent=EK_LOGO_PAGE_CSS;
+    (doc.head||doc.documentElement).appendChild(st);
+  }catch(_){}
+}
+function _ekStampLogo(html){
+  html=String(html==null?'':html);
+  if(html.indexOf('ek-logo-style')>=0) return html;
+  var tag='<style id="ek-logo-style">'+EK_LOGO_PAGE_CSS+'</style>';
+  return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, tag+'</head>') : tag+html;
+}
+// 본 페이지에서 바로 인쇄하는 문서(#printArea 사용: 거래명세서·AS청구서 등)
+try{ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',function(){_ekStampDoc(document);}); else _ekStampDoc(document); }catch(_){}
 function _pdSelValidIds(){ const have=new Set(productDB.map(p=>String(p.id))); return new Set([...pdSelected].filter(id=>have.has(id))); }
 function pdToggleOne(cb){ const id=String(cb.value); if(cb.checked) pdSelected.add(id); else pdSelected.delete(id); pdUpdateBulkBar(); }
 function _pdCodePrefix(p){ const c=String((p&&p.code)||'').trim().toUpperCase(); return /^[A-Z]{2}/.test(c) ? c.slice(0,2) : ''; }
@@ -6292,7 +6312,7 @@ function _pdExportPdf(sel){
     </body></html>`;
     const w=window.open('','_blank');
     if(!w){ if(typeof showToast==='function') showToast('팝업이 차단되었습니다 — 팝업 허용 후 다시 시도','var(--red)',4000); return; }
-    w.document.write(html); w.document.close();
+    w.document.write(html); w.document.close(); _ekStampDoc(w.document);
     if(typeof showToast==='function') showToast(`PDF 인쇄창 열림 (${sel.length}건) — '대상'을 PDF로 저장`,'var(--gold)',4000);
   }catch(e){ console.error('[pdf export]',e); if(typeof showToast==='function') showToast('PDF 생성 실패: '+(e.message||e),'var(--red)'); }
 }
@@ -6660,7 +6680,7 @@ function _catalogPDF(){
   </body></html>`;
   const w=window.open('','_blank');
   if(!w){ if(typeof showToast==='function') showToast('팝업이 차단됐어요 — 팝업 허용 후 다시 시도','var(--red)'); return; }
-  w.document.write(html); w.document.close();
+  w.document.write(html); w.document.close(); _ekStampDoc(w.document);
 }
 
 // ── 카탈로그 공유 링크 (현재 필터를 URL로) ──
@@ -25814,7 +25834,7 @@ function printSmpReq(){
 </head><body>${html}
 <script>window.onload=function(){setTimeout(function(){window.print();},250);};<\/script>
 </body></html>`);
-  win.document.close();
+  win.document.close(); _ekStampDoc(win.document);
 }
 
 // PNG로 저장 (html2canvas 동적 로드)
@@ -29419,7 +29439,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
     return;
   }
   w.document.write(html);
-  w.document.close();
+  w.document.close(); _ekStampDoc(w.document);
   const shownCount = factoryNames.reduce((a,f)=>a+(groups[f]?groups[f].length:0),0);
   if(typeof showToast==='function') showToast(`✓ 공장별 진행현황 생성 — ${factoryNames.length}개 공장 · 총 ${shownCount}건${_fltLabel||' (샘플·발주·AS 포함)'}`,'var(--grn)',3500);
 }
@@ -33157,7 +33177,7 @@ function printOrdFactPrev(){
     +'</head><body>'+html
     +'<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script>'
     +'</body></html>');
-  w.document.close();
+  w.document.close(); _ekStampDoc(w.document);
 }
 
 // ════════════════════════════════════════════════════════
@@ -33458,7 +33478,7 @@ function printSmpFactPrev(){
     +'</head><body>'+html
     +'<script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script>'
     +'</body></html>');
-  w.document.close();
+  w.document.close(); _ekStampDoc(w.document);
 }
 
 // ════════════════════════════════
@@ -49602,7 +49622,7 @@ function showPrintPreview(html, cust, period){
   var iframe = document.createElement('iframe');
   iframe.id = 'print-preview-iframe';
   iframe.style.cssText = 'width:860px;max-width:95vw;min-height:80vh;background:#fff;border:none;border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,0.18)';
-  iframe.srcdoc = html;
+  iframe.srcdoc = _ekStampLogo(html);
   modal.appendChild(bar); modal.appendChild(iframe);
   document.body.appendChild(modal);
   modal.addEventListener('click', function(e){ if(e.target===modal) modal.remove(); });
@@ -49614,7 +49634,7 @@ function invoicePrint(){
 }
 
 function doDownloadHtml(){
-  var blob = new Blob([window._printHtml||''], {type:'text/html;charset=utf-8'});
+  var blob = new Blob([_ekStampLogo(window._printHtml||'')], {type:'text/html;charset=utf-8'});
   var url  = URL.createObjectURL(blob);
   var a    = document.createElement('a');
   a.href   = url;
