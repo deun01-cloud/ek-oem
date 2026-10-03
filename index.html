@@ -2937,7 +2937,7 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>유형</label>
       <select class="fs" id="pd_type" onchange="_onPdTypeChange()">
         <option>EARRING</option><option>RING</option><option>NECKLACE</option>
-        <option>BRACELET</option><option>BROOCH</option><option value="__custom__">✏️ 직접입력</option>
+        <option>BRACELET</option><option>ANKLET</option><option>BROOCH</option><option value="__custom__">✏️ 직접입력</option>
       </select>
       <input class="fi" id="pd_typeCustom" placeholder="유형 직접 입력 (예: ANKLET)" style="display:none;margin-top:5px">
     </div>
@@ -2976,7 +2976,7 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>도금 컬러 / 스펙</label><input class="fi" id="pd_platingSpec" placeholder="로듐"></div>
   </div>
   <div class="fr3" style="grid-template-columns:repeat(4,1fr);align-items:end">
-    <div class="fg"><label>중량 (g)</label><input class="fi" type="number" id="pd_weight" placeholder="0" step="0.1" oninput="updatePdCostAnalysis()"></div>
+    <div class="fg"><label>중량 (g) <span style="font-size:9.5px;color:var(--gold-lt);font-weight:400">★ JPRO 견적 핵심</span></label><input class="fi" type="number" id="pd_weight" placeholder="실측 중량" step="0.1" oninput="updatePdCostAnalysis()"></div>
     <div class="fg"><label>입고단가 (¥) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(원가 계산용)</span></label><input class="fi" type="number" id="pd_cnyPrice" placeholder="0" min="0" step="0.01" oninput="updatePdCostAnalysis()"></div>
     <div class="fg"><label>원자재 시세</label><input class="fi" type="number" id="pd_matRate" placeholder="0" min="0" step="1" oninput="updatePdCostAnalysis()"></div>
     <div class="fg"><label>마진 (%)</label><input class="fi" type="number" id="pd_marginPct" placeholder="30" min="0" max="99" step="1" title="OEM 품번: 권장 출고단가 = 생산원가 ÷ (1 − 마진/100)&#10;자사 브랜드(VV·VC·RH) 품번: 생산원가 × 1.1 로 계산되어 이 값은 쓰이지 않습니다" oninput="updatePdCostAnalysis()"></div>
@@ -3010,6 +3010,23 @@ window.addEventListener('message', function(ev){
   <div class="fr2">
     <div class="fg"><label>최초 등록일</label><input class="fi" type="date" id="pd_createdDate" placeholder="이카운트 등록일"></div>
     <div class="fg"><label>최종 수정일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(마지막 생산/개발일)</span></label><input class="fi" type="date" id="pd_lastModified"></div>
+  </div>
+  <!-- ★ JPRO 연동 정보 — J-PRO(B2C 플랫폼) AI 견적 학습에 쓰는 필드. 사진·중량·공임이 핵심 -->
+  <div style="margin-top:10px;padding:10px 12px;border:1px dashed var(--gold-line);border-radius:6px;background:rgba(232,200,90,.04)">
+    <div style="font-size:11px;font-weight:700;color:var(--gold-lt);margin-bottom:6px">💎 JPRO 연동 정보 <span style="font-weight:400;color:var(--t3);font-size:9.5px">— AI 견적 학습용. 사진 1장 · 중량 · 공임 · 난이도는 꼭 채워 주세요</span></div>
+    <div class="fr4">
+      <div class="fg"><label>난이도</label>
+        <select class="fs" id="pd_difficulty"><option value="">-</option><option>하</option><option>중</option><option>상</option></select></div>
+      <div class="fg"><label>공임 (원/개) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(소재비 제외)</span></label><input class="fi" type="number" id="pd_laborCost" placeholder="0" min="0"></div>
+      <div class="fg"><label>스톤 개수</label><input class="fi" type="number" id="pd_stoneCount" placeholder="0" min="0"></div>
+      <div class="fg"><label>스톤 종류</label><input class="fi" id="pd_stoneType" placeholder="큐빅 2mm, 진주 6mm"></div>
+    </div>
+    <div class="fr3">
+      <div class="fg"><label>최장 길이 (mm) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(체인 제외)</span></label><input class="fi" type="number" id="pd_maxLenMm" placeholder="0" min="0" step="0.1"></div>
+      <div class="fg"><label>최소 두께 (mm)</label><input class="fi" type="number" id="pd_thickMm" placeholder="0" min="0" step="0.1"></div>
+      <div class="fg"><label>CAD 파일 링크</label><input class="fi" id="pd_cadUrl" placeholder="https://… (STL/STEP/3DM)"></div>
+    </div>
+    <div class="fg"><label>제작 노트 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(제작 불가 사유 · 클레임 · 주의점)</span></label><textarea class="fta" id="pd_prodNote" rows="2" placeholder="예) 두께 0.6mm 이하라 주조 불가 → 0.8mm로 변경 / 도금 벗겨짐 클레임 1회"></textarea></div>
   </div>
   <div class="fg"><label>메모</label><textarea class="fta" id="pd_memo" rows="2" placeholder="추가 사양, 주의사항..."></textarea></div>
   <!-- 이미지 첨부 -->
@@ -6796,7 +6813,7 @@ function _setPdType(val){
   const sel=document.getElementById('pd_type');
   const inp=document.getElementById('pd_typeCustom');
   if(!sel) return;
-  const STD=['EARRING','RING','NECKLACE','BRACELET','BROOCH'];
+  const STD=['EARRING','RING','NECKLACE','BRACELET','ANKLET','BROOCH'];
   if(val && STD.includes(val)){
     sel.value=val; if(inp){ inp.style.display='none'; inp.value=''; }
   } else if(val){
@@ -6844,6 +6861,11 @@ function openProductModal(idOrNull){
   sv('pd_matRate', p?p.matRate||'':'');
   sv('pd_marginPct', p?(p.marginPct||30):30); // 디폴트 30%
   sv('pd_memo',p?p.memo||'':'');
+  // ★ JPRO 연동 필드
+  sv('pd_difficulty',p?p.difficulty||'':''); sv('pd_laborCost',p?p.laborCost||'':'');
+  sv('pd_stoneCount',p?p.stoneCount||'':''); sv('pd_stoneType',p?p.stoneType||'':'');
+  sv('pd_maxLenMm',p?p.maxLenMm||'':''); sv('pd_thickMm',p?p.thickMm||'':'');
+  sv('pd_cadUrl',p?p.cadUrl||'':''); sv('pd_prodNote',p?p.prodNote||'':'');
   sv('pd_createdDate',p?p.createdDate||'':'');
   sv('pd_lastModified',p?p.lastModified||'':'');
   document.getElementById('mProduct_t').textContent=p?'📦 제품 수정':'📦 제품 등록';
@@ -7216,6 +7238,11 @@ function saveProduct(){
     devCost:+gv('pd_devCost')||0,
     stock:newStock,safetyStock:newSafety,metal:gv('pd_metal'),platingSpec:gv('pd_platingSpec'),
     weight:+gv('pd_weight')||0,memo:gv('pd_memo'),
+    // ★ JPRO 연동 필드 (AI 견적 학습용)
+    difficulty:gv('pd_difficulty'), laborCost:+gv('pd_laborCost')||0,
+    stoneCount:+gv('pd_stoneCount')||0, stoneType:gv('pd_stoneType'),
+    maxLenMm:+gv('pd_maxLenMm')||0, thickMm:+gv('pd_thickMm')||0,
+    cadUrl:gv('pd_cadUrl').trim(), prodNote:gv('pd_prodNote'),
     // 원가 분석 필드 (시세, 마진, 생산원가 자동 계산)
     matRate: +gv('pd_matRate')||0,
     marginPct: +gv('pd_marginPct')||0,
@@ -14216,6 +14243,15 @@ function mapNotionProduct(row){
     stock:      np.number(p['재고수량']),
     safetyStock:np.number(p['안전재고']),
     weight:     np.number(p['중량']),
+    // ★ JPRO 연동 필드
+    difficulty: np.select(p['난이도']),
+    laborCost:  np.number(p['공임']),
+    stoneCount: np.number(p['스톤수']),
+    stoneType:  np.text(p['스톤종류']),
+    maxLenMm:   np.number(p['최장길이mm']),
+    thickMm:    np.number(p['두께mm']),
+    cadUrl:     (p['CAD파일'] && p['CAD파일'].url) || '',
+    prodNote:   np.text(p['제작노트']),
     imgs,
     priceHistory,
     priceHistDeleted,
@@ -14511,6 +14547,8 @@ async function pullFromNotion(opts){
         'vendor','manager','no','phone','address','email','recipient','brand','contact','ordNo',
         // 제품DB 텍스트/선택 필드 (★ 품명/품번/유형/소재/도금 등 — 빠지면 노션 풀 시 옛 값으로 덮어쓰기됨)
         'name','code','type','mat','plating','size','metal','platingSpec','priceManual',
+        // ★ JPRO 연동 필드
+        'difficulty','laborCost','stoneCount','stoneType','maxLenMm','thickMm','cadUrl','prodNote',
         // 숫자 필드 (제품DB / 거래 / 재고)
         'price','costPrice','devCost','cnyPrice','stock','safetyStock','weight','matRate','marginPct','prodCost','unitPrice','qty','total','supplyAmt','tax','unitCost','totalPaid','paymentRatio','cnCostTotal','ordQty','rcvQty','stageIdx',
         // 출입고/반품
@@ -20664,7 +20702,16 @@ async function syncProductToNotion(pd, update){
     "안전재고":{"number":+pd.safetyStock||0},
     "중량":{"number":+pd.weight||0},
     "가격이력JSON":{"rich_text":chunkRichText(_priceHistJson)},
+    // ★ JPRO 연동 필드
+    "공임":{"number":+pd.laborCost||0},
+    "스톤수":{"number":+pd.stoneCount||0},
+    "스톤종류":{"rich_text":[{"text":{"content":String(pd.stoneType||'').slice(0,2000)}}]},
+    "최장길이mm":{"number":+pd.maxLenMm||0},
+    "두께mm":{"number":+pd.thickMm||0},
+    "CAD파일":{"url":(pd.cadUrl&&/^https?:\/\//.test(pd.cadUrl))?pd.cadUrl:null},
+    "제작노트":{"rich_text":chunkRichText(pd.prodNote||'')},
   };
+  if(pd.difficulty) p["난이도"]={"select":{"name":pd.difficulty}}; else p["난이도"]={"select":null};
   // 🛡 base64-only 이미지면 이미지JSON을 payload에서 제외 → 노션의 기존 사진 보존
   if(_skipImgField){
     delete p["이미지JSON"];
@@ -26265,7 +26312,7 @@ function switchTab(tab,el){
     const tipMsg = pdConnected ? '' : ' title="Notion 미연결 — 설정 후 사용 가능"';
     const onclickRegister = pdConnected ? 'openProductModal(null)' : 'pdRequireNotionWarning()';
     const onclickImport   = pdConnected ? 'openProductImport()'    : 'pdRequireNotionWarning()';
-    acts.innerHTML=`<button class="btn bp bs" onclick="${onclickRegister}" style="${disabledStyle}"${tipMsg}>+ 제품 등록</button><button class="btn bgo bs" onclick="${onclickImport}" style="${disabledStyle}"${tipMsg}>📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button><button class="btn bgo bs" onclick="recalcOwnBrandShipPrices()" title="VV·VC·RH 품번의 출고단가를 '생산원가 × 1.1'로 재계산 (수동 입력·생산원가 0 항목은 제외)">🏷 자사 출고단가 재계산</button><button class="btn bgo bs" onclick="pdOpenExportMenu(this)" title="선택 항목(없으면 현재 필터 전체)을 사진 포함 엑셀/PDF로 출력">🖨 출력하기</button><button class="btn bgo bs" onclick="checkStorageAndOfferCleanup()" title="저장공간 사용량 확인·정리 — 사진이 R2로 안 올라가 용량이 찰 때 여기서 base64 사진을 R2로 옮겨 확보">🧹 저장공간</button>`;
+    acts.innerHTML=`<button class="btn bp bs" onclick="${onclickRegister}" style="${disabledStyle}"${tipMsg}>+ 제품 등록</button><button class="btn bgo bs" onclick="${onclickImport}" style="${disabledStyle}"${tipMsg}>📥 이카운트 엑셀 업로드</button><button class="btn bgo bs" onclick="openImportHist()">📂 업로드 이력</button><button class="btn bgo bs" onclick="syncAllProductsToNotion()" title="동기화되지 않은 제품을 Notion에 일괄 업로드">☁ Notion 일괄 동기화</button><button class="btn bgo bs" onclick="pdBackfillTypesFromCode()" title="유형이 비어 있거나 '기타'인 제품을 품목코드 3~4번째 글자로 자동 분류 (JPRO 학습 데이터 정리)">🏷 유형 자동 채우기</button><button class="btn bgo bs" onclick="recalcOwnBrandShipPrices()" title="VV·VC·RH 품번의 출고단가를 '생산원가 × 1.1'로 재계산 (수동 입력·생산원가 0 항목은 제외)">🏷 자사 출고단가 재계산</button><button class="btn bgo bs" onclick="pdOpenExportMenu(this)" title="선택 항목(없으면 현재 필터 전체)을 사진 포함 엑셀/PDF로 출력">🖨 출력하기</button><button class="btn bgo bs" onclick="checkStorageAndOfferCleanup()" title="저장공간 사용량 확인·정리 — 사진이 R2로 안 올라가 용량이 찰 때 여기서 base64 사진을 R2로 옮겨 확보">🧹 저장공간</button>`;
   }
   else if(tab==='sample'){
     acts.innerHTML='<button class="btn bp bs" onclick="openSmpMultiModal()">+ 샘플 의뢰서 작성</button><button class="btn bgo bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)" title="한 품목만 등록 (옛 방식)">+ 단일 품목</button>';
@@ -27887,9 +27934,45 @@ function autoGenProductCode(){
 function _codeCatToType(code){
   if(!code || code.length < 3) return '';
   // 고객사 이니셜이 2글자라고 가정 → 3번째 글자가 카테고리
-  const catChar = String(code).charAt(2).toUpperCase();
-  const map = { 'E':'EARRING', 'R':'RING', 'N':'NECKLACE', 'B':'BRACELET', 'P':'BROOCH' };
+  const c2 = String(code).substr(2,2).toUpperCase();
+  // 3~4번째 글자(2자리 카테고리) 우선 — 제품DB 실데이터 기준
+  const map2 = { NN:'NECKLACE',NP:'NECKLACE',NB:'NECKLACE',NC:'NECKLACE',ND:'NECKLACE',
+                 RL:'RING',RS:'RING',RR:'RING',RB:'RING',RG:'RING',R2:'RING',R0:'RING',
+                 ES:'EARRING',EW:'EARRING',ED:'EARRING',EE:'EARRING',EP:'EARRING',EC:'EARRING',ET:'EARRING',
+                 BR:'BRACELET',BB:'BRACELET', AN:'ANKLET' };
+  if(map2[c2]) return map2[c2];
+  // 그 외 — EB(클러치), BT(단추), TC(택), PB/PN(펫·택), OP(부속) 등은 유형 추론 안 함
+  if(/^[A-Z][0-9]$/.test(c2) || /^EB|BT|T.|P.|O./.test(c2)) return '';
+  const catChar = c2.charAt(0);
+  const map = { 'E':'EARRING', 'R':'RING', 'N':'NECKLACE', 'B':'BRACELET', 'A':'ANKLET' };
   return map[catChar] || '';
+}
+// ★ 유형이 비어 있거나 '기타'인 제품을 품목코드로 일괄 채움 (JPRO 학습 데이터 정리용)
+async function pdBackfillTypesFromCode(){
+  if(!Array.isArray(productDB) || !productDB.length){ showToast('제품DB가 비어 있습니다','var(--org)'); return; }
+  const targets = [];
+  productDB.forEach(function(p){
+    const cur = String(p.type||'').trim();
+    if(cur && cur !== '기타') return;
+    const t = _codeCatToType(p.code||'');
+    if(t) targets.push({p:p, to:t});
+  });
+  if(!targets.length){ showToast('유형을 채울 대상이 없습니다','var(--org)',4000); return; }
+  const cnt = {}; targets.forEach(function(t){ cnt[t.to]=(cnt[t.to]||0)+1; });
+  const msg = `유형이 비어 있거나 '기타'인 제품 ${targets.length}건을 품목코드(3~4번째 글자)로 채웁니다.\n`
+            + Object.keys(cnt).map(function(k){ return `${k}: ${cnt[k]}건`; }).join(' · ')
+            + `\n\n예) ${targets.slice(0,5).map(function(t){ return `${t.p.code} → ${t.to}`; }).join(', ')}`;
+  showConfirm(msg, async function(){
+    let okCnt=0, failCnt=0;
+    for(const t of targets){
+      t.p.type = t.to;
+      try{ await syncProductToNotion(t.p, !!t.p._notionId); okCnt++; }
+      catch(e){ failCnt++; console.warn('[유형 채우기] 노션 반영 실패:', t.p.code, e && e.message); }
+    }
+    save(); renderTab();
+    if(failCnt) showToast(`⚠ ${okCnt}건 반영 · ${failCnt}건 노션 반영 실패 (재시도 큐에 등록됨)`,'var(--red)',6000);
+    else showToast(`✓ 유형 ${okCnt}건 채움 완료`,'var(--grn)',4000);
+  }, '유형 일괄 채우기', '🏷', '채우기', 'grn');
 }
 // 제품DB 모달: 품번 입력/변경 시 유형 드롭다운 자동 선택
 function autoSelectTypeFromCode(code){
