@@ -11246,7 +11246,7 @@ function _rtOnOpen(){
   _rtSend({
     op: 'subscribe',
     clientId: _rtClientId,
-    types: ['invoice','order','sample','product','client','customer','factory','task','quote','proposal','as','proc','io','stockhist','inquiry','checklist','notice'],
+    types: ['invoice','order','sample','product','client','customer','factory','task','quote','proposal','as','proc','io','stockhist','inquiry','checklist','notice','company'],
     since: _rtBuildSince(),   // 📉 타입별 증분 기준점 — 서버 읽기량을 수백분의 1로 줄인다
   });
   // 큐에 있던 outbound 메시지 flush
@@ -12008,6 +12008,17 @@ function _rtGetLocalArray(type){
 
 function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
   if(!item) return;
+  // 🏢 회사정보(계좌 등) — 기기마다 따로 입력하지 않도록 실시간 서버에 1건(id='company')으로 공유. _ts 큰 쪽이 이긴다(LWW).
+  if(type === 'company'){
+    try{
+      if(String(item.id) !== 'company') return;
+      if((+company._ts||0) > (+item._ts||0)) return;
+      ['name','ceo','brn','tel','addr','bank','note'].forEach(function(k){ if(typeof item[k]==='string') company[k]=item[k]; });
+      company._ts = +item._ts||Date.now();
+      saveCo();
+    }catch(e){}
+    return;
+  }
   // 📢 공지사항 — 노션 없이 실시간 서버만 쓰는 타입. id는 항상 문자열로 비교, _ts 큰 쪽이 이긴다(LWW).
   if(type === 'notice'){
     try{
@@ -23215,6 +23226,21 @@ let company={name:'이케이아이엔티',ceo:'',brn:'',tel:'',addr:'',bank:'',n
 function loadCo(){try{const s=localStorage.getItem(CO_KEY);if(s)company={...company,...JSON.parse(s)};}catch(e){}}
 function saveCo(){try{localStorage.setItem(CO_KEY,JSON.stringify(company));}catch(e){}}
 loadCo();
+// 🏢 회사정보를 모든 기기에 공유 — 한 번 저장하면 다른 PC·브라우저에서도 견적서·명세서에 그대로 찍힌다.
+function publishCo(){
+  var it=Object.assign({},company,{id:'company'});
+  try{ if(typeof realtimePublish==='function') realtimePublish('company', it); }catch(e){}   // _ts는 발행 시 자동 부여
+  company._ts = +it._ts||Date.now();
+  saveCo();
+}
+// 이 기기에만 저장돼 있던 기존 회사정보는 접속 후 1회 서버로 올린다(서버 값이 먼저 오면 _ts가 생겨 건너뜀). 빈 값은 올리지 않는다.
+setTimeout(function(){
+  try{
+    if(company._ts) return;
+    if(!(company.ceo||company.brn||company.tel||company.addr||company.bank||company.note)) return;
+    publishCo();
+  }catch(e){}
+}, 15000);
 
 function openCompModal(){
   sv('co_name',company.name);sv('co_ceo',company.ceo);sv('co_brn',company.brn);
@@ -23223,7 +23249,7 @@ function openCompModal(){
 }
 function saveComp(){
   company={name:gv('co_name'),ceo:gv('co_ceo'),brn:gv('co_brn'),tel:gv('co_tel'),addr:gv('co_addr'),bank:gv('co_bank'),note:gv('co_note')};
-  saveCo();closeM('mComp');
+  publishCo();closeM('mComp');
   // refresh invoice header if open
   document.getElementById('inv_issuerName').textContent=company.name||'(미설정)';
   document.getElementById('inv_issuerSub').textContent=[company.brn,company.tel,company.bank].filter(Boolean).join(' · ')||'⚙ 회사설정에서 입력하세요';
@@ -43301,6 +43327,7 @@ function buildQuoteHtml(q){
         : '';
     })()}
     ${q.delivery?`<div style="display:flex;gap:8px;margin-bottom:6px;padding:8px 12px;background:#fafafa;border-left:3px solid #3a6b3a;font-size:11px"><b style="color:#3a6b3a;min-width:80px">납 기 조 건</b><span>${escHtml(q.delivery)}</span></div>`:''}
+    ${co.bank?`<div style="display:flex;gap:8px;margin-bottom:6px;padding:8px 12px;background:#fafafa;border-left:3px solid #3a6b3a;font-size:11px"><b style="color:#3a6b3a;min-width:80px">입 금 계 좌</b><span style="font-weight:700">${escHtml(co.bank)}</span></div>`:''}
     <div style="display:flex;gap:8px;margin-bottom:14px;padding:8px 12px;background:#fafafa;border-left:3px solid #3a6b3a;font-size:11px">
       <b style="color:#3a6b3a;min-width:80px">유 효 기 한</b>
       <span>본 견적은 ${escHtml(q.validUntil||'')}까지 유효합니다</span>
