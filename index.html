@@ -26694,7 +26694,22 @@ var _noticeFilesOrig=[];   // 모달을 열 때 이미 저장돼 있던 key
 var _noticeUploading=0;
 var _noticeSession=0;      // 모달 열림 회차 — 닫힌 뒤 끝난 업로드를 구분
 var NOTICE_FILE_MAX=20*1024*1024;
-function _noticeFileUrl(key){ return (typeof R2_PROXY!=='undefined'?R2_PROXY:'https://ek-proxy.deun01.workers.dev')+'/r2/file/'+encodeURIComponent(key); }
+var NOTICE_R2='https://ek-proxy.deun01.workers.dev';
+function _noticeFileUrl(key){ return NOTICE_R2+'/r2/file/'+encodeURIComponent(key); }
+// ⚠ uploadFileToR2/deleteFileFromR2는 MGT 클로저 안에 있어 여기서 못 쓴다 → 공지 전용으로 직접 호출
+async function _noticeUpload(file){
+  try{
+    const res=await fetch(NOTICE_R2+'/r2/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'file'),'X-File-Type':file.type||'application/octet-stream'},body:file});
+    if(!res.ok){ console.warn('[공지 첨부] 업로드 HTTP '+res.status); return null; }
+    const d=await res.json();
+    if(!d||!d.key||!(d.size>0)){ console.warn('[공지 첨부] 업로드 응답 이상',d); return null; }
+    return d;
+  }catch(e){ console.warn('[공지 첨부] 업로드 예외:',e&&e.message); return null; }
+}
+function _noticeDelFile(key){
+  if(!key) return;
+  fetch(NOTICE_R2+'/r2/file/'+encodeURIComponent(key),{method:'DELETE'}).catch(function(e){ console.warn('[공지 첨부] 삭제 실패:',e&&e.message); });
+}
 function _noticeFmtSize(n){ n=+n||0; return n>=1048576?(n/1048576).toFixed(1)+'MB':n>=1024?Math.round(n/1024)+'KB':n+'B'; }
 function _noticeFilesHtml(n){
   const fs=(n&&Array.isArray(n.files))?n.files:[];
@@ -26716,10 +26731,10 @@ async function noticeAddFiles(fl){
   _noticeUploading+=ok.length; _noticeRenderFiles();
   for(const f of ok){
     let r=null;
-    try{ r=await uploadFileToR2(f); }catch(e){ r=null; }
+    r=await _noticeUpload(f);
     _noticeUploading=Math.max(0,_noticeUploading-1);
     if(!r||!r.key) toast('업로드 실패: '+f.name);
-    else if(session!==_noticeSession){ try{ deleteFileFromR2(r.key); }catch(e){} }   // 올리는 사이 모달이 닫힘 → 고아 파일 방지
+    else if(session!==_noticeSession){ _noticeDelFile(r.key); }   // 올리는 사이 모달이 닫힘 → 고아 파일 방지
     else _noticeFiles.push({name:f.name,size:f.size,type:f.type||'',key:r.key});
     _noticeRenderFiles();
   }
@@ -26731,7 +26746,7 @@ function noticeRemoveFile(i){
 }
 // 저장 없이 닫힌 모달에서 새로 올린 파일만 R2에서 지운다 (기존 첨부는 절대 건드리지 않음)
 function _noticeSweep(){
-  _noticeFiles.forEach(f=>{ if(f&&f.key&&_noticeFilesOrig.indexOf(String(f.key))<0){ try{ deleteFileFromR2(f.key); }catch(e){} } });
+  _noticeFiles.forEach(f=>{ if(f&&f.key&&_noticeFilesOrig.indexOf(String(f.key))<0) _noticeDelFile(f.key); });
   _noticeFiles=[]; _noticeFilesOrig=[]; _noticeSession++;
 }
 function noticeOpenFile(id,i){
@@ -26792,7 +26807,7 @@ function saveNotice(){
   saveNotices();
   // 수정하면서 뺀 첨부만 R2에서 삭제 (저장이 끝난 뒤에만)
   const _kept=files.map(f=>String(f.key));
-  _noticeFilesOrig.filter(k=>_kept.indexOf(k)<0).forEach(k=>{ try{ deleteFileFromR2(k); }catch(e){} });
+  _noticeFilesOrig.filter(k=>_kept.indexOf(k)<0).forEach(k=>_noticeDelFile(k));
   _noticeFiles=[]; _noticeFilesOrig=[]; _noticeSession++;
   closeM('mNotice');
   _noticeOpenId=String(it.id);
@@ -26804,7 +26819,7 @@ function deleteNotice(id){
   showConfirm('이 공지를 삭제합니다.\n"'+String(it.title||'').slice(0,60)+'"',()=>{
     const j=notices.findIndex(x=>x && String(x.id)===String(id)); if(j<0) return;
     try{ if(typeof realtimeDelete==='function') realtimeDelete('notice', String(id)); }catch(e){}
-    (Array.isArray(notices[j].files)?notices[j].files:[]).forEach(f=>{ try{ if(f&&f.key) deleteFileFromR2(f.key); }catch(e){} });
+    (Array.isArray(notices[j].files)?notices[j].files:[]).forEach(f=>{ if(f&&f.key) _noticeDelFile(f.key); });
     notices.splice(j,1);
     saveNotices();
     if(_noticeOpenId===String(id)) _noticeOpenId=null;
