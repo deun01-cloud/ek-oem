@@ -26486,6 +26486,10 @@ function setBdg(id,n){const el=document.getElementById(id);if(el){el.textContent
 //      목표 입력창은 _dashGoalDraft에 보관했다가 재렌더 후 값·포커스를 복원한다.
 var _dashGoalOff = 0;        // 주간 목표: 0=이번 주, -1=지난주 …
 var _dashGoalDraft = '';
+var _dashGoalEditKey = null;   // 더블클릭으로 수정 중인 목표 key (문자열) — 재렌더에도 유지
+var _dashGoalEditDraft = '';   // 수정 중인 글자
+var _dashGoalClickT = null;    // 한 번 클릭(달성 토글) 지연 타이머 — 더블클릭과 구분
+var _dashRendering = false;    // 재렌더로 입력창이 사라질 때 생기는 blur는 저장으로 치지 않는다
 var _noticeOpenId = null;    // 펼쳐 본 공지 id (문자열)
 var _noticeShowAll = false;
 var NOTICE_KEY = 'ek_notices_v1';
@@ -26503,6 +26507,11 @@ function renderDash(){
   const _hadFocus=!!(_gi && document.activeElement===_gi);
   const _selS=_gi?_gi.selectionStart:null;
   if(_gi) _dashGoalDraft=_gi.value;
+  // 수정 중이던 목표 입력창도 같은 방식으로 보존
+  const _ge=document.getElementById('gdGoalEdit');
+  const _geSel=_ge?_ge.selectionStart:null;
+  if(_ge) _dashGoalEditDraft=_ge.value;
+  _dashRendering=true;
 
   const _now=new Date();
   const _ds=toLocalDateStr(_now);
@@ -26543,9 +26552,15 @@ function renderDash(){
   </div>
   `;
 
+  _dashRendering=false;
   if(_hadFocus){
     const n=document.getElementById('gdGoalIn');
     if(n){ n.focus(); try{ if(_selS!=null) n.setSelectionRange(_selS,_selS); }catch(e){} }
+  }
+  if(_dashGoalEditKey!==null){
+    const n=document.getElementById('gdGoalEdit');
+    if(n){ n.focus(); try{ const p=(_geSel!=null)?_geSel:n.value.length; n.setSelectionRange(p,p); }catch(e){} }
+    else { _dashGoalEditKey=null; _dashGoalEditDraft=''; }   // 다른 주로 넘기는 등 대상이 화면에서 사라짐
   }
 }
 
@@ -26615,9 +26630,14 @@ function renderWeekGoalsPanel(){
   const lbl=off===0?'이번 주':off===-1?'지난주':off===1?'다음 주':(off<0?(-off)+'주 전':off+'주 후');
   const rows=list.map(it=>{
     const k=_gdArg(_dashGoalKey(it));
+    if(_dashGoalEditKey!==null && _dashGoalKey(it)===_dashGoalEditKey){
+      return `<div class="gd-row">
+      <input class="gd-in" id="gdGoalEdit" style="height:30px;border-radius:8px;padding:0 10px;font-size:13.5px" aria-label="목표 내용 수정" value="${_gdEsc(_dashGoalEditDraft)}" oninput="_dashGoalEditDraft=this.value" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();dashSaveGoalEdit()}else if(event.key==='Escape'){dashCancelGoalEdit()}" onblur="if(!_dashRendering)dashSaveGoalEdit()">
+    </div>`;
+    }
     return `<div class="gd-row${it.done?' dn':''}">
       <input type="checkbox" ${it.done?'checked':''} onchange="dashToggleGoal('${k}')" aria-label="달성 처리">
-      <span class="tx" onclick="dashToggleGoal('${k}')">${_gdEsc(it.text||'')}</span>
+      <span class="tx" title="클릭: 달성 처리 · 더블클릭: 내용 수정" onclick="dashGoalClick('${k}')" ondblclick="dashEditGoal('${k}')">${_gdEsc(it.text||'')}</span>
       <button class="gd-x" onclick="dashDeleteGoal('${k}')" aria-label="목표 삭제" title="삭제">×</button>
     </div>`;
   }).join('');
@@ -26660,6 +26680,40 @@ function dashToggleGoal(k){
   try{ syncChecklistItemToNotion(it,'week',true); }catch(e){}
   try{ if(typeof realtimePublish==='function') realtimePublish('checklist', it); }catch(e){}
   renderDash();
+}
+// 한 번 클릭 = 달성 토글, 더블클릭 = 내용 수정. 더블클릭의 첫 클릭이 토글로 처리되지 않게 잠깐 기다린다.
+function dashGoalClick(k){
+  clearTimeout(_dashGoalClickT);
+  _dashGoalClickT=setTimeout(()=>{ _dashGoalClickT=null; dashToggleGoal(k); },260);
+}
+function dashEditGoal(k){
+  clearTimeout(_dashGoalClickT); _dashGoalClickT=null;
+  const i=_dashGoalIdx(k); if(i<0) return;
+  _dashGoalEditKey=String(k);
+  _dashGoalEditDraft=String(weekChecklist[i].text||'');
+  renderDash();
+  const n=document.getElementById('gdGoalEdit'); if(n){ n.focus(); try{ n.select(); }catch(e){} }
+}
+function dashCancelGoalEdit(){
+  _dashGoalEditKey=null; _dashGoalEditDraft='';
+  if(currentTab==='dash') renderDash();
+}
+function dashSaveGoalEdit(){
+  if(_dashGoalEditKey===null) return;                 // Enter 저장 뒤 따라오는 blur 등 중복 호출 방지
+  const k=_dashGoalEditKey;
+  const inp=document.getElementById('gdGoalEdit');
+  const text=String(inp?inp.value:_dashGoalEditDraft).trim();
+  _dashGoalEditKey=null; _dashGoalEditDraft='';
+  const i=_dashGoalIdx(k);
+  if(i>=0 && text && text!==String(weekChecklist[i].text||'')){
+    const it=weekChecklist[i];
+    it.text=text;
+    saveChecklists();
+    try{ syncChecklistItemToNotion(it,'week',true); }catch(e){}
+    try{ if(typeof realtimePublish==='function') realtimePublish('checklist', it); }catch(e){}
+  }
+  // 내용을 다 지우고 저장하면 삭제하지 않고 원래 내용 유지 (삭제는 × 버튼)
+  if(currentTab==='dash') renderDash();
 }
 function dashDeleteGoal(k){
   const i=_dashGoalIdx(k); if(i<0) return;
