@@ -5491,7 +5491,7 @@ function _debouncedPdSearch(val){
     requestAnimationFrame(()=>{
       const newEl = document.getElementById('srch_pdSearch');
       if(newEl){
-        newEl.focus();
+        newEl.focus({preventScroll:true});
         try { newEl.setSelectionRange(selStart, selEnd); } catch(_){}
       }
     });
@@ -23983,7 +23983,9 @@ document.addEventListener('compositionend', function(e){
     // focus() 호출 시 트리거되는 focusin 이벤트가 selStart를 갱신하지 않도록 플래그 ON
     window._suppressFocusinUpdate = true;
     try{
-      el.focus();
+      // preventScroll: 포커스 복원이 검색창 위치(페이지 맨 위)로 스크롤을 끌어올리지 않게 한다.
+      // (검색 후 아래 목록을 보던 중 백그라운드 동기화로 재렌더되면 화면이 맨 위로 튀던 원인)
+      el.focus({preventScroll:true});
       // input 타입에서만 setSelectionRange 가능
       if(el.tagName==='INPUT' && (el.type==='text'||el.type==='search'||!el.type)){
         const len = (el.value||'').length;
