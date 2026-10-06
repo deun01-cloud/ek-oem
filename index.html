@@ -27260,6 +27260,7 @@ function renderSample(){
           ${window._smpChecked.size?`<button class="btn bgo bs" onclick="window._smpChecked.clear();renderSample()" style="font-size:11px">해제</button>`:''}
         </div>
       </div>
+      <button class="btn bs" onclick="openClientSchedulePicker()" title="고객사를 선택해 해당 고객사의 진행중 샘플 출고 일정을 PDF로 생성 (고객사 전달용)" style="font-size:11px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">📅 고객사별 샘플 일정표</button>
       <button class="btn bs" onclick="openFactoryPicker('sample')" title="공장을 선택해 해당 공장의 진행중 샘플만 납기확인 PDF로 생성 (사진 포함)" style="font-size:11px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">🏭 공장별 샘플 납기확인서</button>
       <button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 직접 등록</button>
     </div>
@@ -29916,6 +29917,224 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
   w.document.close(); _ekStampDoc(w.document);
   const shownCount = factoryNames.reduce((a,f)=>a+(groups[f]?groups[f].length:0),0);
   if(typeof showToast==='function') showToast(`✓ 공장별 진행현황 생성 — ${factoryNames.length}개 공장 · 총 ${shownCount}건${_fltLabel||' (샘플·발주·AS 포함)'}`,'var(--grn)',3500);
+}
+// ═══════════════════════════════════════════════════════════════
+// 📅 고객사별 샘플 일정표 — 진행중 샘플을 고객사 1곳 기준으로 묶어 PDF(인쇄)로 추출.
+//    고객사에게 그대로 전달하는 문서: 공장명·타 고객사 정보는 넣지 않는다.
+//    출고 예정일 = 샘플 납기일(due). 날짜순으로 묶어 한눈에 보이게 한다.
+// ═══════════════════════════════════════════════════════════════
+function _csActiveSamples(){
+  return (typeof samples!=='undefined'?samples:[]).filter(s=>{
+    const st=s.status||'의뢰';
+    return !(st==='확정'||st==='완료'||st==='취소');
+  });
+}
+function openClientSchedulePicker(){
+  const act=_csActiveSamples();
+  if(!act.length){ if(typeof showToast==='function') showToast('진행중인 샘플이 없습니다','var(--t2)',2500); return; }
+  // 고객사 칩으로 이미 한 곳을 골라 둔 상태면 선택 단계 없이 바로 출력
+  try{
+    const m=(typeof smpAdvFilter!=='undefined' && smpAdvFilter && smpAdvFilter.manager) ? String(smpAdvFilter.manager).trim() : '';
+    if(m){ const k=_fpClientKey(m); if(act.some(s=>_fpClientKey(s.manager)===k)){ exportClientSchedule(k); return; } }
+  }catch(e){}
+  const cnt={};
+  act.forEach(s=>{ const k=_fpClientKey(s.manager); cnt[k]=(cnt[k]||0)+1; });
+  const names=Object.keys(cnt).sort((a,b)=>{
+    if(a==='(고객사 미지정)') return 1; if(b==='(고객사 미지정)') return -1;
+    return (cnt[b]-cnt[a]) || a.localeCompare(b,'ko');
+  });
+  window._csNames=names;
+  let ov=document.getElementById('mClientSched');
+  if(!ov){
+    ov=document.createElement('div');
+    ov.className='ov'; ov.id='mClientSched';
+    ov.innerHTML=`<div class="modal" style="max-width:460px">
+      <div class="mt">📅 고객사별 샘플 일정표 — 고객사 선택</div>
+      <div style="font-size:12px;color:var(--t3);margin-bottom:12px">고객사를 누르면 그 고객사의 진행중 샘플과 출고 예정일만 PDF로 나옵니다. (공장명·타 고객사 정보는 포함되지 않습니다)</div>
+      <div id="clientSchedBody"></div>
+      <div class="ma"><button class="btn bgo" onclick="closeM('mClientSched')">닫기</button></div>
+    </div>`;
+    document.body.appendChild(ov);
+  }
+  document.getElementById('clientSchedBody').innerHTML=names.map((n,i)=>{
+    const ci=_clientInit2(n==='(고객사 미지정)'?'':n);
+    const badge=ci?`<span style="display:inline-block;min-width:30px;padding:2px 6px;border-radius:6px;color:#fff;font-size:12px;font-weight:800;text-align:center;margin-right:8px;background:${ci.color}">${_escHtml(ci.init)}</span>`:'';
+    return `<button onclick="closeM('mClientSched');exportClientSchedule(window._csNames[${i}])"
+      style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;padding:12px 14px;margin-bottom:8px;border:1px solid var(--bdr);border-radius:8px;background:var(--s1);cursor:pointer;font-family:inherit">
+      <span style="font-size:14px;font-weight:700;color:var(--t1)">${badge}${_escHtml(n)}${n==='(고객사 미지정)'?' ⚠':''}</span>
+      <span style="font-size:11.5px;color:var(--t3)">샘플 ${cnt[n]}건</span>
+    </button>`;
+  }).join('');
+  if(typeof openM==='function') openM('mClientSched'); else ov.classList.add('open');
+}
+
+function exportClientSchedule(clientKey){
+  const key=String(clientKey||'');
+  const list=_csActiveSamples().filter(s=>_fpClientKey(s.manager)===key);
+  if(!list.length){ if(typeof showToast==='function') showToast('선택한 고객사의 진행중 샘플이 없습니다','var(--t2)',2500); return; }
+
+  const pad=n=>String(n).padStart(2,'0');
+  const now=new Date();
+  const today0=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const todayStr=now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate());
+  const WD=['일','월','화','수','목','금','토'];
+  // 'YYYY-MM-DD…' → 로컬 날짜 (시간대 밀림 방지: 문자열에서 직접 파싱)
+  const parseD=v=>{
+    const m=/^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(v==null?'':v).trim());
+    if(!m) return null;
+    const d=new Date(+m[1],+m[2]-1,+m[3]);
+    return isNaN(d)?null:d;
+  };
+  const rows=list.map(s=>{
+    const d=parseD(s.due);
+    let thumb='';
+    if(Array.isArray(s.imgs)){
+      const im=s.imgs.find(i=>i && i.url && /^(https?:\/\/|data:image\/)/.test(i.url));
+      if(im) thumb=im.url;
+    }
+    if(!thumb) thumb=_thumbByCode(s.itemCode||s.itemNo);
+    const po=_fdProdOpt(s.itemCode||s.itemNo)||{};
+    return {
+      d:d, dk:d?(d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())):'',
+      dd:d?Math.round((d-today0)/86400000):null,
+      name:s.name||'', code:s.itemCode||s.itemNo||'', type:s.type||'',
+      mat:String(s.mat||'').trim()||String(po.mat||'').trim(),
+      plating:String(s.plating||'').trim()||String(po.plating||'').trim(),
+      size:String(s.size||'').trim(), qty:String(s.qty==null?'':s.qty).trim(),
+      status:s.status||'의뢰', thumb:thumb
+    };
+  });
+  // 출고 예정일 빠른 순 → 날짜 미정은 맨 아래
+  rows.sort((a,b)=>{
+    if(a.dk && b.dk) return a.dk<b.dk?-1:(a.dk>b.dk?1:a.name.localeCompare(b.name,'ko'));
+    if(a.dk) return -1; if(b.dk) return 1;
+    return a.name.localeCompare(b.name,'ko');
+  });
+  const groups=[]; const gmap={};
+  rows.forEach(r=>{ const k=r.dk||'__none__'; if(!gmap[k]){ gmap[k]={k:k,d:r.d,dd:r.dd,items:[]}; groups.push(gmap[k]); } gmap[k].items.push(r); });
+
+  const dLabel=g=>g.d?`${g.d.getMonth()+1}월 ${g.d.getDate()}일 (${WD[g.d.getDay()]})`:'출고일 협의 중';
+  const ddLabel=dd=>dd===null?'':(dd===0?'오늘':(dd>0?'D-'+dd:''));
+  const stMap={'의뢰':['접수','#6b7280'],'제작중':['제작중','#2563eb'],'수정중':['수정중','#d97706']};
+  const stOf=st=>stMap[st]||[st,'#6b7280'];
+
+  // ── 상단 요약: 출고 예정일별 카드 ──
+  const cards=groups.map(g=>{
+    const dl=ddLabel(g.dd);
+    return `<div class="card${g.d?'':' none'}">
+      <div class="cd">${g.d?`${g.d.getMonth()+1}/${g.d.getDate()} <span>(${WD[g.d.getDay()]})</span>`:'협의 중'}</div>
+      <div class="cn">${g.items.length}건${dl?` · <b>${dl}</b>`:''}</div>
+    </div>`;
+  }).join('');
+
+  let no=0;
+  const body=groups.map(g=>{
+    const dl=ddLabel(g.dd);
+    const head=`<tr class="grp"><td colspan="7">${g.d?'📦 ':''}${dLabel(g)}${g.d?' 출고 예정':''} <span class="gc">${g.items.length}건</span>${dl?`<span class="gd">${dl}</span>`:''}</td></tr>`;
+    return head+g.items.map(r=>{
+      no++;
+      const st=stOf(r.status);
+      const img=r.thumb?`<img src="${_escAttr(r.thumb)}" referrerpolicy="no-referrer" onerror="this.style.display='none';this.parentNode.classList.add('noimg')">`:'';
+      const md=[r.mat,r.plating].filter(Boolean).map(_escHtml).join(' / ');
+      return `<tr>
+        <td class="c num">${no}</td>
+        <td class="c"><div class="thumb ${r.thumb?'':'noimg'}">${img}</div></td>
+        <td><div class="nm">${_escHtml(r.name)}</div>${r.code?`<div class="code">${_escHtml(r.code)}</div>`:''}</td>
+        <td class="c sm">${r.type?_escHtml(r.type):'<span class="dash">—</span>'}${r.qty?`<div class="qty">${_escHtml(r.qty)}</div>`:''}</td>
+        <td class="sm">${md||'<span class="dash">—</span>'}${r.size?`<div class="size">${_escHtml(r.size)}</div>`:''}</td>
+        <td class="c"><span class="st" style="background:${st[1]}">${_escHtml(st[0])}</span></td>
+        <td class="c due">${r.d?`${r.d.getMonth()+1}/${r.d.getDate()} <span>(${WD[r.d.getDay()]})</span>`:'<span class="tbd">협의 중</span>'}</td>
+      </tr>`;
+    }).join('');
+  }).join('');
+
+  const title=`${key==='(고객사 미지정)'?'':key+' '}샘플 일정표 ${todayStr}`;
+  const html=`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+    <title>${_escHtml(title)}</title>
+    <style>
+      *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      body{font-family:'Malgun Gothic','맑은 고딕',-apple-system,sans-serif;margin:0 auto;padding:22px;max-width:820px;color:#1a1a1a;font-size:13px;line-height:1.4}
+      .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #b8923a;padding-bottom:10px;margin-bottom:14px}
+      .ttl{font-size:23px;font-weight:800;color:#111}
+      .sub{font-size:12px;color:#666;margin-top:4px}
+      .to{font-size:15px;font-weight:800;color:#5a4a20;text-align:right}
+      .to span{display:block;font-size:11.5px;font-weight:400;color:#777;margin-top:3px}
+      .cards{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+      .card{border:1px solid #e3d5b0;background:#faf6ec;border-radius:10px;padding:8px 14px;min-width:96px;text-align:center}
+      .card .cd{font-size:17px;font-weight:800;color:#111}
+      .card .cd span{font-size:11.5px;font-weight:600;color:#777}
+      .card .cn{font-size:11.5px;color:#555;margin-top:2px}
+      .card .cn b{color:#9a6b00}
+      .card.none{background:#f4f4f4;border-color:#ddd}
+      .card.none .cd{font-size:14px;color:#777}
+      table{width:100%;border-collapse:collapse}
+      th{background:#5a4a20;color:#fff;border:1px solid #4a3c18;padding:7px 5px;font-size:12px;font-weight:700;text-align:center}
+      td{border:1px solid #d9d2c0;padding:7px 8px;vertical-align:middle;overflow-wrap:break-word}
+      td.c{text-align:center}
+      td.num{color:#999;font-size:11px}
+      td.sm{font-size:12px;color:#333}
+      tr.grp td{background:#f3ecd9;font-size:14px;font-weight:800;color:#3d2f0c;padding:8px 10px;border-color:#d8c998}
+      .gc{font-size:11.5px;font-weight:600;color:#7a6a3a;margin-left:6px}
+      .gd{float:right;font-size:12px;font-weight:800;color:#9a6b00}
+      .nm{font-weight:700;font-size:14px;color:#111;word-break:keep-all}
+      .code{font-family:'Courier New',monospace;font-size:11px;color:#777;margin-top:2px}
+      .qty{font-size:11px;color:#666;margin-top:2px}
+      .size{font-size:11px;color:#777;margin-top:3px}
+      .dash{color:#bbb}
+      .st{display:inline-block;color:#fff;padding:3px 10px;border-radius:8px;font-size:12px;font-weight:700;white-space:nowrap}
+      td.due{font-size:15px;font-weight:800;color:#1a5a1a;white-space:nowrap}
+      td.due span{font-size:11px;font-weight:600;color:#6b8a6b}
+      td.due .tbd{font-size:12px;font-weight:700;color:#999}
+      .thumb{width:54px;height:54px;margin:0 auto;border:1px solid #d9d2c0;border-radius:6px;overflow:hidden;background:#f5f2ea;display:flex;align-items:center;justify-content:center}
+      .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+      .thumb.noimg::after{content:'📷';font-size:18px;opacity:.3}
+      .foot{margin-top:12px;font-size:11.5px;color:#777;line-height:1.6}
+      @media print{
+        @page{size:A4 portrait;margin:11mm}
+        body{padding:0;max-width:none}
+        thead{display:table-header-group}
+        tr{break-inside:avoid}
+        tr.grp{break-after:avoid}
+      }
+      .toolbar{position:fixed;bottom:18px;right:18px;z-index:99}
+      .toolbar button{padding:12px 22px;border:none;border-radius:10px;font-size:14px;font-weight:800;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.22);background:#b8923a;color:#fff}
+      @media print{.toolbar{display:none}}
+    </style></head><body>
+    <div class="head">
+      <div>
+        <div class="ttl">샘플 진행 일정표</div>
+        <div class="sub">발행일 ${todayStr} · 진행중 샘플 ${rows.length}건</div>
+      </div>
+      <div class="to">${key==='(고객사 미지정)'?'':_escHtml(key)+' 귀중'}<span>EK International (이케이아이엔티)</span></div>
+    </div>
+    <div class="cards">${cards}</div>
+    <table>
+      <thead><tr>
+        <th style="width:28px">#</th>
+        <th style="width:66px">사진</th>
+        <th>샘플명</th>
+        <th style="width:82px">유형</th>
+        <th style="width:170px">소재 / 도금 · 사이즈</th>
+        <th style="width:70px">진행상태</th>
+        <th style="width:92px">출고 예정일</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    <div class="foot">※ 출고 예정일은 당사 출고 기준이며, 제작 진행 상황에 따라 변동될 수 있습니다. 변동 시 별도로 안내드리겠습니다.</div>
+    <div class="toolbar noprint"><button onclick="window.print()">🖨 PDF 저장 / 인쇄</button></div>
+    </body></html>`;
+
+  const w=window.open('','_blank');
+  if(!w){ if(typeof showToast==='function') showToast('⚠ 팝업이 차단됐습니다 — 팝업 허용 후 다시 시도하세요','var(--red)',4000); return; }
+  w.document.write(html);
+  w.document.close(); _ekStampDoc(w.document);
+  // 전달 전 점검 안내 — 납기일이 지났거나 비어 있는 건은 문서에 그대로 드러난다
+  const late=rows.filter(r=>r.dd!==null && r.dd<0).length, none=rows.filter(r=>!r.d).length;
+  const warn=[]; if(late) warn.push('납기일 지난 건 '+late); if(none) warn.push('납기일 미입력 '+none);
+  if(typeof showToast==='function'){
+    if(warn.length) showToast(`⚠ ${key} 일정표 생성 — ${warn.join(' · ')}건, 전달 전 날짜를 확인하세요`,'var(--red)',6000);
+    else showToast(`✓ ${key} 샘플 일정표 생성 — ${rows.length}건`,'var(--grn)',3500);
+  }
 }
 function _orderItemsSummaryPlain(o){
   const rows = Array.isArray(o.rows)?o.rows:[];
