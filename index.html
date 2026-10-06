@@ -30010,7 +30010,8 @@ function _csActiveOrderItems(){
         name:r.name||r.itemName||code||'(품목)',
         itemCode:code, _code:[String(o.no||'').trim(),code].filter(Boolean).join(' · '),
         mat:r.mat, plating:r.plating, size:r.size, qty:r.qty,
-        _remain:(tot>0 && shipped>0)?(tot-shipped):null, _thumb:th
+        _remain:(tot>0 && shipped>0)?(tot-shipped):null, _thumb:th,
+        _odate:o.date, _due:(tot>0?Math.max(tot-shipped,0):0)   // 발주일 · 앞으로 납품할 수량(출고분 제외)
       });
     });
   });
@@ -30093,6 +30094,7 @@ function exportClientSchedule(clientKey, kind){
       d:d, dk:d?(d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())):'',
       dd:d?Math.round((d-today0)/86400000):null,
       name:s.name||'', code:s._code||s.itemCode||s.itemNo||'', type:s.type||'', remain:(s._remain==null?null:s._remain),
+      od:parseD(s._odate), dueQty:(+s._due||0), icode:String(s.itemCode||'').trim(),
       mat:String(s.mat||'').trim()||String(po.mat||'').trim(),
       plating:String(s.plating||'').trim()||String(po.plating||'').trim(),
       size:String(s.size||'').trim(), qty:String(s.qty==null?'':s.qty).trim(),
@@ -30125,7 +30127,7 @@ function exportClientSchedule(clientKey, kind){
   let no=0;
   const body=groups.map(g=>{
     const dl=ddLabel(g.dd);
-    const head=`<tr class="grp"><td colspan="7">${g.d?'📅 ':''}${dLabel(g)}${g.d?' 고객사 납기':''} <span class="gc">${g.items.length}건</span>${dl?`<span class="gd">${dl}</span>`:''}</td></tr>`;
+    const head=`<tr class="grp"><td colspan="${isOrd?8:7}">${g.d?'📅 ':''}${dLabel(g)}${g.d?' 고객사 납기':''} <span class="gc">${g.items.length}건</span>${dl?`<span class="gd">${dl}</span>`:''}</td></tr>`;
     return head+g.items.map(r=>{
       no++;
       const st=stOf(r.status);
@@ -30135,6 +30137,7 @@ function exportClientSchedule(clientKey, kind){
         <td class="c num">${no}</td>
         <td class="c"><div class="thumb ${r.thumb?'':'noimg'}">${img}</div></td>
         <td><div class="nm">${_escHtml(r.name)}</div>${r.code?`<div class="code">${_escHtml(r.code)}</div>`:''}</td>
+        ${isOrd?`<td class="c sm">${r.od?`${r.od.getMonth()+1}/${r.od.getDate()}`:'<span class="dash">—</span>'}</td>`:''}
         <td class="c sm">${isOrd
           ? `${r.qty?_escHtml(r.qty):'<span class="dash">—</span>'}${r.remain!==null?`<div class="qty">잔여 ${Number(r.remain).toLocaleString()}</div>`:''}`
           : `${r.type?_escHtml(r.type):'<span class="dash">—</span>'}${r.qty?`<div class="qty">${_escHtml(r.qty)}</div>`:''}`}</td>
@@ -30145,6 +30148,32 @@ function exportClientSchedule(clientKey, kind){
     }).join('');
   }).join('');
 
+  // ── 발주 전용: 맨 아래 품목별 납품 합계 (같은 품목이 여러 발주·납기에 나뉘어 있어도 한 줄로) ──
+  let totalNote='';
+  if(isOrd){
+    const tm={}, tl=[];
+    rows.forEach(r=>{
+      const k=r.icode||('nm:'+r.name);
+      if(!tm[k]){ tm[k]={name:r.name,code:r.icode,qty:0,n:0,noQty:0}; tl.push(tm[k]); }
+      tm[k].n++; tm[k].qty+=r.dueQty; if(!r.dueQty) tm[k].noQty++;
+    });
+    const sumQ=tl.reduce((a,t)=>a+t.qty,0);
+    totalNote=`<div class="tot">
+      <div class="tot-t">📝 품목별 납품 합계 <span>${tl.length}개 품목 · 총 ${sumQ.toLocaleString()}개</span></div>
+      <table>
+        <thead><tr><th style="width:28px">#</th><th>품명</th><th style="width:170px">품번</th><th style="width:70px">납품 횟수</th><th style="width:90px">총 납품 수량</th></tr></thead>
+        <tbody>${tl.map((t,i)=>`<tr>
+          <td class="c num">${i+1}</td>
+          <td><b>${_escHtml(t.name)}</b></td>
+          <td class="sm"><span class="code">${t.code?_escHtml(t.code):'—'}</span></td>
+          <td class="c sm">${t.n}회</td>
+          <td class="c tq">${t.qty.toLocaleString()}${t.noQty?'<div class="qty">수량 미기재 '+t.noQty+'건 제외</div>':''}</td>
+        </tr>`).join('')}
+        <tr class="sumrow"><td colspan="4" style="text-align:right">합계</td><td class="c tq">${sumQ.toLocaleString()}</td></tr></tbody>
+      </table>
+      <div class="foot" style="margin-top:6px">※ 앞으로 납품될 수량 기준입니다. 이미 출고된 수량은 제외했습니다.</div>
+    </div>`;
+  }
   const title=`${key==='(고객사 미지정)'?'':key+' '}${kw} 일정표 ${todayStr}`;
   const html=`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
     <title>${_escHtml(title)}</title>
@@ -30186,6 +30215,12 @@ function exportClientSchedule(clientKey, kind){
       .thumb img{width:100%;height:100%;object-fit:cover;display:block}
       .thumb.noimg::after{content:'📷';font-size:18px;opacity:.3}
       .foot{margin-top:12px;font-size:11.5px;color:#777;line-height:1.6}
+      .tot{margin-top:22px;break-inside:avoid}
+      .tot-t{font-size:15px;font-weight:800;color:#111;border-bottom:2px solid #b8923a;padding-bottom:6px;margin-bottom:8px}
+      .tot-t span{font-size:12px;font-weight:600;color:#7a6a3a;margin-left:8px}
+      .tot td{padding:5px 8px}
+      td.tq{font-size:14px;font-weight:800;color:#111}
+      tr.sumrow td{background:#f3ecd9;font-weight:800;border-color:#d8c998}
       @media print{
         @page{size:A4 portrait;margin:11mm}
         body{padding:0;max-width:none}
@@ -30210,14 +30245,16 @@ function exportClientSchedule(clientKey, kind){
         <th style="width:28px">#</th>
         <th style="width:66px">사진</th>
         <th>${isOrd?'품명 · 발주번호':'샘플명'}</th>
-        <th style="width:82px">${isOrd?'수량':'유형'}</th>
-        <th style="width:170px">소재 / 도금 · 사이즈</th>
+        ${isOrd?'<th style="width:56px">발주일</th>':''}
+        <th style="width:${isOrd?64:82}px">${isOrd?'수량':'유형'}</th>
+        <th style="width:${isOrd?150:170}px">소재 / 도금 · 사이즈</th>
         <th style="width:70px">진행상태</th>
         <th style="width:100px">고객사 납기일</th>
       </tr></thead>
       <tbody>${body}</tbody>
     </table>
     <div class="foot">※ 위 날짜는 고객사 납기일 기준이며, 제작 진행 상황에 따라 변동될 수 있습니다. 변동 시 별도로 안내드리겠습니다.</div>
+    ${totalNote}
     <div class="toolbar noprint"><button onclick="window.print()">🖨 PDF 저장 / 인쇄</button></div>
     </body></html>`;
 
