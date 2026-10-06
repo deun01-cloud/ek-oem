@@ -16802,7 +16802,9 @@ function _learnMatchProduct(dict, itemName, option){
 // 🧭 커머스 품목 매칭(공용) — ①품번 정확일치 ②학습 사전(과거 매칭) ③품명 텍스트 순.
 //    쿠팡처럼 채널 상품명은 한글·제품DB는 영문이라 ③이 실패하는 건은 _cuAiMatch(AI)가 이어받고,
 //    등록되면 ②가 기억하므로 같은 상품은 다음부터 AI 없이 바로 매칭된다.
-function _cuMatcher(){
+//    noText=true(쿠팡): ③을 건너뛴다. 한글 상품명은 '실버·반지·15호' 같은 흔한 단어만 겹쳐도
+//    다른 고객사 제품에 60점 이상으로 잘못 붙는 것이 실제 발주서로 확인됨(재고 오차감 위험).
+function _cuMatcher(noText){
   var codeMap=Object.create(null);
   if(typeof productDB!=='undefined' && Array.isArray(productDB)){
     productDB.forEach(function(p){ var c=String((p&&p.code)||'').trim().toUpperCase(); if(c && !codeMap[c]) codeMap[c]=p; });
@@ -16820,6 +16822,7 @@ function _cuMatcher(){
     // ② 학습 사전
     var lm=(typeof _learnMatchProduct==='function')?_learnMatchProduct(dict, itemName, option):null;
     if(lm && lm.product) return {product:lm.product, score:100, via:'학습'};
+    if(noText) return {product:null, score:0, via:''};
     // ③ 품명 텍스트
     var m=_matchProductByText(itemName);
     return {product:m.product, score:m.score, via:m.product?'품명':''};
@@ -16855,16 +16858,17 @@ async function _cuAiMatch(){
   var prompt='주얼리 브랜드의 온라인 주문 상품명을 사내 제품DB의 제품과 연결해 주세요.\n'
     +'주문 상품명은 판매 채널(쿠팡 등)에 등록된 한글 이름이고, 제품DB 이름은 영문입니다. 한글 이름은 대개 영문 이름의 음역·번역입니다 '
     +'(예: 토카 원터치 귀걸이=TOCA ONE TOUCH EARRINGS, 파베 링/반지=PAVE RING, 테니스 목걸이=TENNIS NECKLACE, 팔찌=BRACELET, 실버=SILVER, 로즈골드=ROSE GOLD).\n'
-    +'브랜드명·홍보 문구·소재 설명·사이즈(호수, cm)는 무시하되, 색상/도금(실버·골드·로즈골드 등)이 제품DB에서 별도 제품이면 반드시 색상이 일치하는 제품을 고르세요.\n'
+    +'브랜드명·홍보 문구·소재 설명은 무시하세요. 제품DB는 같은 디자인도 색상/도금(실버·골드·로즈골드·베이지골드 등)과 사이즈(반지 호수, 길이 cm, 크기 mm, S/M/L)별로 제품이 나뉘어 있는 경우가 많습니다. '
+    +'그런 경우 색상과 사이즈가 모두 일치하는 제품만 고르세요(예: "13호"는 "(SIZE=13)" 또는 "13호"). 사이즈 구분이 없는 제품이면 사이즈는 무시합니다. 색상·사이즈가 맞는 제품이 후보에 없으면 비슷한 다른 사이즈를 고르지 말고 null로 두세요.\n'
     +'확실하지 않으면 추측하지 말고 code를 null로 두세요. 후보 목록에 없는 code는 쓰지 마세요.\n\n'
     +'[주문 상품 — 번호<TAB>상품명<TAB>옵션]\n'
     +order.map(function(k,i){ var a=k.split('\u0001'); return i+'\t'+one(a[0])+'\t'+one(a[1]); }).join('\n')
-    +'\n\n[제품DB 후보 — code<TAB>제품명<TAB>종류<TAB>도금/소재]\n'
-    +cands.map(function(p){ return one(p.code)+'\t'+one(p.name)+'\t'+one(p.type)+'\t'+one([p.plating,p.mat].filter(Boolean).join(' ')); }).join('\n')
+    +'\n\n[제품DB 후보 — code<TAB>제품명<TAB>규격<TAB>종류<TAB>도금/소재]\n'
+    +cands.map(function(p){ return one(p.code)+'\t'+one(p.name)+'\t'+one(p.size)+'\t'+one(p.type)+'\t'+one([p.plating,p.mat].filter(Boolean).join(' ')); }).join('\n')
     +'\n\nJSON으로만 응답(다른 텍스트·마크다운 없이): {"matches":[{"i":번호,"code":"제품 code 또는 null","conf":0~1}]}';
   _cuAiBusy=true; _renderCommercePreview();
   try{
-    var data=await callClaudeAPI({model:'claude-sonnet-4-5', max_tokens:4000, messages:[{role:'user', content:prompt}]});
+    var data=await callClaudeAPI({model:'claude-sonnet-4-5', max_tokens:6000, messages:[{role:'user', content:prompt}]});
     if(run!==_cuAiRun) return;                       // 그 사이 다른 파일을 올렸거나 창을 다시 열었음
     if(data && data.error) throw new Error(data.error.message||'API 오류');
     var text=(((data&&data.content)||[]).find(function(b){ return b.type==='text'; })||{}).text||'';
@@ -17739,7 +17743,7 @@ function openCommerceUpload(){
         <div style="font-size:32px;margin-bottom:8px">📂</div>
         <div style="font-size:13px;font-weight:700;color:var(--gold-lt);margin-bottom:4px">엑셀 파일 드래그 또는 클릭해서 선택</div>
         <div style="font-size:11px;color:var(--t3)">파일명에서 날짜 자동 추출 (예: 비비케이트주문_0511 → 5월 11일)</div>
-        <div style="font-size:10.5px;color:var(--t3);margin-top:6px">컬럼: 수령인 / 연락처 / 주소 / 배송메모 / 품목(여러 개는 줄바꿈) · 카카오 주문서면 상품·옵션·수량·주문번호·<b>출고일</b>·<b>송장번호</b> 열도 자동 인식</div>
+        <div style="font-size:10.5px;color:var(--t3);margin-top:6px">컬럼: 수령인 / 연락처 / 주소 / 배송메모 / 품목(여러 개는 줄바꿈) · 카카오 주문서면 상품·옵션·수량·주문번호·<b>출고일</b>·<b>송장번호</b> 열도 자동 인식 · <b>쿠팡 발주서</b>(PO 엑셀)는 그대로 올리면 됩니다</div>
       </div>
       <input type="file" id="cu_fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="_handleCommerceFile(this.files[0])">
       <div id="cu_preview" style="margin-top:14px"></div>
@@ -17842,8 +17846,106 @@ function _addBusinessDays(dateStr, n){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 
+// 🛒 쿠팡 로켓(직매입) 발주서 — Supplier Hub에서 내려받은 "발주서 No.xxxx" 엑셀.
+//    일반 주문서와 달리 수령인이 없고(쿠팡 물류센터로 납품), 품목이 2줄(상품명 / 바코드)씩 적혀 있다.
+// 쿠팡 SKU → 제품DB 품번 추천표 (2026-10-06, 발주서 No.143982252 품목을 제품DB와 대조해 확실한 것만).
+//    추천일 뿐이라 미리보기에 '🤖 AI' 배지로 뜨고, 확인 후 등록하면 학습 사전이 이어받는다.
+//    여기 없는 SKU는 [검색]으로 한 번 매칭해 등록하면 다음 발주부터 자동 매칭된다.
+var _COUPANG_SKU_SEED={
+  '78567127':'VVRB060207S','78733001':'VVRB060201S','78865350':'VVEB061901S','78866683':'VVRB052202G',
+  '78868295':'VVRS012707G','78868484':'VVRB051203S','78868937':'VVRS012717S','78868958':'VVRS012706G',
+  '78869603':'VVRS012708G','78869808':'VVRS012716S','78870381':'VVRS012704S','78870392':'VVRB052204G',
+  '78870993':'VVRB052203G','78872787':'VVEB010202S','78873680':'VVEB011902S','78873725':'VVNS123001S',
+  '78873932':'VVNS010201S','78874059':'VVNS010202G','78952563':'VVBS010202G','78952683':'VVRB051201S',
+  '78953563':'VVBS010201S','79150821':'VVRG090906G','79150823':'VVRG090907G','79150824':'VVRG090908G',
+  '79150825':'VVRG090909G','79150826':'VVRG090910G','79150828':'VVNG060901G','79150835':'VVNG090902G',
+  '79150836':'VVNG060902G','79150838':'VVNG090906G','79150839':'VVNG090908G','79150843':'VVNB052701S',
+  '79150846':'VVBB052701S','79352773':'VVEB010202G','79352775':'VVEB010204G'
+};
+function _findCoupangPOHeader(rawRows){
+  for(var r=0; r<Math.min(60, (rawRows||[]).length); r++){
+    var cells=(rawRows[r]||[]).map(function(c){ return String(c==null?'':c).replace(/\s+/g,''); });
+    if(cells.indexOf('상품코드')>=0 && cells.indexOf('발주수량')>=0 && cells.some(function(c){ return c.indexOf('상품명')===0; })) return r;
+  }
+  return -1;
+}
+function _parseCoupangPO(rawRows, hdrRow){
+  var S=function(v){ return String(v==null?'':v).replace(/[\u00a0\s]+/g,' ').trim(); };
+  var hdr=(rawRows[hdrRow]||[]).map(function(c){ return S(c).replace(/\s/g,''); });
+  var cSku=hdr.indexOf('상품코드'), cName=hdr.findIndex(function(h){ return h.indexOf('상품명')===0; }),
+      cOrdQty=hdr.indexOf('발주수량'), cOkQty=hdr.indexOf('업체납품가능수량');
+  // 발주정보: 라벨 셀 오른쪽(같은 행)의 첫 값 / 물류센터 표는 머리글 바로 아래 행
+  var poNo='', center='', addr='', eta='', phone='';
+  for(var r=0; r<hdrRow; r++){
+    var row=rawRows[r]||[];
+    for(var c=0; c<row.length; c++){
+      var v=S(row[c]).replace(/\s/g,'');
+      if(v==='발주번호' && !poNo){ for(var k=c+1;k<row.length;k++){ if(S(row[k])){ poNo=S(row[k]); break; } } }
+      if(v==='물류센터' && !center){
+        var nx=rawRows[r+1]||[];
+        center=S(nx[c]);
+        row.forEach(function(h,ci){ var hh=S(h).replace(/\s/g,'');
+          if(hh==='주소') addr=S(nx[ci]);
+          else if(hh==='입고예정일시' && ci>c) eta=S(nx[ci]);
+          else if(hh==='택배수령담당자') phone=S(nx[ci]);
+        });
+      }
+    }
+  }
+  if(!poNo){ var t=S((rawRows[0]||[])[0]).match(/No\.?\s*(\d+)/i); if(t) poNo=t[1]; }
+  var em=eta.match(/(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})/);
+  var etaDate=em ? (em[1]+'-'+('0'+em[2]).slice(-2)+'-'+('0'+em[3]).slice(-2)) : '';
+  addr=addr.replace(/\s*\(택배수령담당자[^)]*\)\s*$/,'');
+  var num=function(v){ var n=parseInt(S(v).replace(/[^\d]/g,''),10); return isNaN(n)?null:n; };
+  var _mx=_cuMatcher(true);
+  var _seedHit=function(sku){
+    var code=_COUPANG_SKU_SEED[sku]; if(!code || typeof productDB==='undefined' || !Array.isArray(productDB)) return null;
+    return productDB.find(function(p){ return p && String(p.code||'').trim().toUpperCase()===code; }) || null;
+  };
+  for(var i=hdrRow+1; i<rawRows.length; i++){
+    var rw=rawRows[i]||[];
+    var sku=S(rw[cSku]), name=S(rw[cName]);
+    if(!/^\d{5,}$/.test(sku) || !name) continue;            // 품목 첫 줄만 (둘째 줄=바코드, 마지막=합계)
+    var barcode=S((rawRows[i+1]||[])[cName]);
+    if(S((rawRows[i+1]||[])[cSku])) barcode='';             // 다음 줄이 또 품목이면 바코드 줄 없음
+    var okQ=cOkQty>=0?num(rw[cOkQty]):null, ordQ=cOrdQty>=0?num(rw[cOrdQty]):null;
+    var qty=(okQ!=null)?okQ:(ordQ!=null?ordQ:1);            // 납품가능수량 우선, 없으면 발주수량
+    if(qty<=0) continue;                                    // 납품 불가(0)로 회신한 품목은 출고 없음
+    var option='쿠팡 SKU '+sku+(barcode?' · '+barcode:'');
+    var m=_mx(name, '', '');                                // 품번 → 학습(확인해 등록한 매칭)
+    var st=m.product?'자동매칭':'미매칭';
+    if(!m.product){ var sp=_seedHit(sku); if(sp){ m={product:sp, score:0}; st='AI매칭'; } }   // 추천표 → 확인 필요
+    _commerceUploadRows.push({
+      recipient: '쿠팡 '+(center||'물류센터'), phone: phone, address: addr,
+      deliveryMemo: poNo?('발주서 No.'+poNo):'',
+      itemText: name, option: option, qty: qty,
+      orderDate: '', orderNo: poNo, shipDate: '', invoice: '',
+      reqShipDate: etaDate,                                 // 요청출고일 = 쿠팡 입고예정일
+      matched: m.product, matchedName: m.product?(m.product.name||''):'',
+      matchStatus: st, score: m.score
+    });
+  }
+  setTimeout(function(){
+    try{
+      var bs=document.getElementById('cu_brand');
+      if(bs){
+        if(!Array.from(bs.options).some(function(o){ return o.value==='비비케이트'; })){
+          var op=document.createElement('option'); op.value='비비케이트'; op.textContent='비비케이트'; bs.appendChild(op);
+        }
+        bs.value='비비케이트';
+      }
+      var total=_commerceUploadRows.reduce(function(a,r){ return a+(parseInt(r.qty,10)||0); },0);
+      if(typeof showToast==='function') showToast('🛒 쿠팡 발주서 No.'+poNo+' — '+_commerceUploadRows.length+'품목 '+total+'개'+(etaDate?' · 입고예정 '+etaDate:''),'var(--blu)',5000);
+    }catch(e){}
+    _cuAiMatch();
+  }, 0);
+  _renderCommercePreview();
+}
+
 function _parseCommerceRows(rawRows){
   _commerceUploadRows = [];
+  var _poHdr=_findCoupangPOHeader(rawRows);
+  if(_poHdr>=0){ _parseCoupangPO(rawRows, _poHdr); return; }
   //    헤더 예: 배송번호·주문번호·상품·옵션·수량·주문일시·수령인명·수령인 연락처1·배송주소·배송메시지
   //    헤더가 첫 행이 아닐 수 있으므로 상위 몇 행을 훑어 헤더 행을 찾는다.
   var _hdrRowIdx = -1, hdr = [];
@@ -17880,7 +17982,7 @@ function _parseCommerceRows(rawRows){
     var firstOrderDate='';
     var _normDate=function(s){ s=String(s||'').trim(); if(!s) return ''; s=s.slice(0,10).replace(/[.\/]/g,'-'); var mm=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); return mm ? (mm[1]+'-'+('0'+mm[2]).slice(-2)+'-'+('0'+mm[3]).slice(-2)) : s; };
     var _normInv=function(s){ s=String(s||'').trim().replace(/[-\s]/g,''); return (/^#?N\/?A$/i.test(s)) ? '' : s; };
-    var _mx=_cuMatcher();   // 🧭 품번 → 🎓 기존 매칭 학습 → 품명 텍스트
+    var _mx=_cuMatcher(_isCoupang);   // 🧭 품번 → 🎓 기존 매칭 학습 → 품명 텍스트(쿠팡은 생략)
     for(var i=_hdrRowIdx+1;i<rawRows.length;i++){
       var row = rawRows[i];
       if(!row || !row.length) continue;
@@ -18746,7 +18848,7 @@ async function _registerCommerce(){
   const toRegister = _commerceUploadRows.map((row, i) => {
     const title = `${brand}_${row.recipient||'주문'}_${date.slice(5).replace('-','')}`;
     const _ordDate = row.orderDate || date;                      // 주문일 (카카오 주문서면 주문일시)
-    const _reqShip = _addBusinessDays(_ordDate, 10);             // 요청출고일 = 주문일 + 영업일 10일
+    const _reqShip = row.reqShipDate || _addBusinessDays(_ordDate, 10);   // 요청출고일 = 주문일 + 영업일 10일 (쿠팡 발주서는 입고예정일)
     // 🆕 행별 출고일: 엑셀에 출고일 열이 있으면 그 값, 없으면 상단 '출고 일자' 필드 사용
     const _shipDate = (row.shipDate && String(row.shipDate).trim()) ? String(row.shipDate).trim() : date;
     const _shipped = !!_shipDate;   // 출고일이 있으면 이미 출고된 건으로 등록
@@ -18897,7 +18999,7 @@ async function processCommerceAIFiles(files){
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, {defval:'', header:1});
       const hdr = (rows[0]||[]).map(c=>String(c||'').trim()).join('|');
-      if((/수령인명/.test(hdr) && /상품/.test(hdr)) || (/수취인이름/.test(hdr) && /상품명/.test(hdr))){   // 카카오 · 쿠팡
+      if((/수령인명/.test(hdr) && /상품/.test(hdr)) || (/수취인이름/.test(hdr) && /상품명/.test(hdr)) || _findCoupangPOHeader(rows)>=0){   // 카카오 · 쿠팡 주문서 · 쿠팡 발주서
         resultEl.innerHTML = '';
         openCommerceUpload();
         setTimeout(()=>{ _parseCommerceRows(rows); }, 120);   // 브랜드·옵션·주문일 자동 세팅
