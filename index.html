@@ -2939,7 +2939,7 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>품목코드 * <button type="button" onclick="autoGenProductCode()" style="margin-left:6px;padding:1px 7px;font-size:9.5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;color:var(--gold-lt);cursor:pointer;font-family:inherit;font-weight:600">🔄 자동 생성</button></label><input class="fi" id="pd_code" placeholder="VTBB042401S" style="font-family:monospace" oninput="autoSelectTypeFromCode(this.value)"></div>
     <div class="fg"><label>품목명 *</label><input class="fi" id="pd_name" placeholder="박스 체인 팔찌"></div>
     <div class="fg"><label>유형</label>
-      <select class="fs" id="pd_type" onchange="_onPdTypeChange()">
+      <select class="fs" id="pd_type" onchange="_onPdTypeChange();updatePdJproHint()">
         <option>EARRING</option><option>RING</option><option>NECKLACE</option>
         <option>BRACELET</option><option>ANKLET</option><option>BROOCH</option><option value="__custom__">✏️ 직접입력</option>
       </select>
@@ -2959,7 +2959,7 @@ window.addEventListener('message', function(ev){
         <option>건메탈</option><option>무도금</option><option>기타</option>
       </select>
     </div>
-    <div class="fg"><label>규격 / 사이즈</label><input class="fi" id="pd_size" placeholder="체인두께 2.7mm, 길이 180mm"></div>
+    <div class="fg"><label>규격 / 사이즈</label><input class="fi" id="pd_size" placeholder="체인두께 2.7mm, 길이 180mm" oninput="updatePdJproHint()"></div>
   </div>
   <div class="fr3" style="grid-template-columns:repeat(5,1fr)">
     <div class="fg">
@@ -2981,7 +2981,7 @@ window.addEventListener('message', function(ev){
   </div>
   <div class="fr3" style="grid-template-columns:repeat(4,1fr);align-items:end">
     <div class="fg"><label>중량 (g) <span style="font-size:9.5px;color:var(--gold-lt);font-weight:400">★ JPRO 견적 핵심</span></label><input class="fi" type="number" id="pd_weight" placeholder="실측 중량" step="0.1" oninput="updatePdCostAnalysis()"></div>
-    <div class="fg"><label>입고단가 (¥) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(원가 계산용)</span></label><input class="fi" type="number" id="pd_cnyPrice" placeholder="0" min="0" step="0.01" oninput="updatePdCostAnalysis()"></div>
+    <div class="fg"><label>입고단가 (¥) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(원가 계산용)</span></label><input class="fi" type="number" id="pd_cnyPrice" placeholder="0" min="0" step="0.01" oninput="updatePdCostAnalysis();updatePdJproHint()"></div>
     <div class="fg"><label>원자재 시세</label><input class="fi" type="number" id="pd_matRate" placeholder="0" min="0" step="1" oninput="updatePdCostAnalysis()"></div>
     <div class="fg"><label>마진 (%)</label><input class="fi" type="number" id="pd_marginPct" placeholder="30" min="0" max="99" step="1" title="OEM 품번: 권장 출고단가 = 생산원가 ÷ (1 − 마진/100)&#10;자사 브랜드(VV·VC·RH) 품번: 생산원가 × 1.1 로 계산되어 이 값은 쓰이지 않습니다" oninput="updatePdCostAnalysis()"></div>
   </div>
@@ -3015,24 +3015,17 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>최초 등록일</label><input class="fi" type="date" id="pd_createdDate" placeholder="이카운트 등록일"></div>
     <div class="fg"><label>최종 수정일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(마지막 생산/개발일)</span></label><input class="fi" type="date" id="pd_lastModified"></div>
   </div>
-  <!-- ★ JPRO 연동 정보 — J-PRO(B2C 플랫폼) AI 견적 학습에 쓰는 필드. 사진·중량·공임이 핵심 -->
-  <div style="margin-top:10px;padding:10px 12px;border:1px dashed var(--gold-line);border-radius:6px;background:rgba(232,200,90,.04)">
-    <div style="font-size:11px;font-weight:700;color:var(--gold-lt);margin-bottom:6px">💎 JPRO 연동 정보 <span style="font-weight:400;color:var(--t3);font-size:9.5px">— AI 견적 학습용. 사진 1장 · 중량 · 공임 · 난이도는 꼭 채워 주세요</span></div>
-    <div class="fr4">
-      <div class="fg"><label>난이도</label>
-        <select class="fs" id="pd_difficulty"><option value="">-</option><option>하</option><option>중</option><option>상</option></select></div>
-      <div class="fg"><label>공임 (원/개) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(소재비 제외)</span></label><input class="fi" type="number" id="pd_laborCost" placeholder="0" min="0"></div>
-      <div class="fg"><label>스톤 개수</label><input class="fi" type="number" id="pd_stoneCount" placeholder="0" min="0"></div>
-      <div class="fg"><label>스톤 종류</label><input class="fi" id="pd_stoneType" placeholder="큐빅 2mm, 진주 6mm"></div>
-    </div>
-    <div class="fr3">
-      <div class="fg"><label>최장 길이 (mm) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(체인 제외)</span></label><input class="fi" type="number" id="pd_maxLenMm" placeholder="0" min="0" step="0.1"></div>
-      <div class="fg"><label>최소 두께 (mm)</label><input class="fi" type="number" id="pd_thickMm" placeholder="0" min="0" step="0.1"></div>
-      <div class="fg"><label>CAD 파일 링크</label><input class="fi" id="pd_cadUrl" placeholder="https://… (STL/STEP/3DM)"></div>
-    </div>
-    <div class="fg"><label>제작 노트 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(제작 불가 사유 · 클레임 · 주의점)</span></label><textarea class="fta" id="pd_prodNote" rows="2" placeholder="예) 두께 0.6mm 이하라 주조 불가 → 0.8mm로 변경 / 도금 벗겨짐 클레임 1회"></textarea></div>
+  <!-- ★ JPRO(B2C 플랫폼) AI 견적 학습용 — 기존 칸에 없는 4개만 입력받는다.
+       공임·최장 길이·최소 두께·제작 노트는 입고단가·규격/사이즈·메모에서 자동 추출 (_pdJproDerive) -->
+  <div class="fr4">
+    <div class="fg"><label>난이도</label>
+      <select class="fs" id="pd_difficulty"><option value="">-</option><option>하</option><option>중</option><option>상</option></select></div>
+    <div class="fg"><label>스톤 개수</label><input class="fi" type="number" id="pd_stoneCount" placeholder="0" min="0"></div>
+    <div class="fg"><label>스톤 종류</label><input class="fi" id="pd_stoneType" placeholder="큐빅 2mm, 진주 6mm"></div>
+    <div class="fg"><label>CAD 파일 링크</label><input class="fi" id="pd_cadUrl" placeholder="https://… (STL/STEP/3DM)"></div>
   </div>
-  <div class="fg"><label>메모</label><textarea class="fta" id="pd_memo" rows="2" placeholder="추가 사양, 주의사항..."></textarea></div>
+  <div id="pd_jproHint" style="font-size:10.5px;color:var(--t3);margin:-2px 0 8px;line-height:1.5"></div>
+  <div class="fg"><label>메모 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(추가 사양 · 제작 불가 사유 · 클레임 · 주의점)</span></label><textarea class="fta" id="pd_memo" rows="2" placeholder="예) 두께 0.6mm 이하라 주조 불가 → 0.8mm로 변경 / 도금 벗겨짐 클레임 1회"></textarea></div>
   <!-- 이미지 첨부 -->
   <div class="fg">
     <label>🖼 제품 이미지</label>
@@ -6869,12 +6862,16 @@ function openProductModal(idOrNull){
   // 원가 분석 필드 (시세, 마진)
   sv('pd_matRate', p?p.matRate||'':'');
   sv('pd_marginPct', p?(p.marginPct||30):30); // 디폴트 30%
-  sv('pd_memo',p?p.memo||'':'');
-  // ★ JPRO 연동 필드
-  sv('pd_difficulty',p?p.difficulty||'':''); sv('pd_laborCost',p?p.laborCost||'':'');
+  // 메모 = 제작 노트 (칸 통합). 예전에 제작 노트에만 적어 둔 내용은 메모 뒤에 붙여 보여 준다 — 저장하면 메모로 합쳐진다.
+  sv('pd_memo',(function(){
+    const m=p?String(p.memo||''):'', n=p?String(p.prodNote||'').trim():'';
+    return (n && m.indexOf(n)<0) ? (m.trim()?m.replace(/\s+$/,'')+'\n':'')+n : m;
+  })());
+  // ★ JPRO 연동 필드 — 직접 입력은 4개뿐 (나머지는 저장 시 자동 추출)
+  sv('pd_difficulty',p?p.difficulty||'':'');
   sv('pd_stoneCount',p?p.stoneCount||'':''); sv('pd_stoneType',p?p.stoneType||'':'');
-  sv('pd_maxLenMm',p?p.maxLenMm||'':''); sv('pd_thickMm',p?p.thickMm||'':'');
-  sv('pd_cadUrl',p?p.cadUrl||'':''); sv('pd_prodNote',p?p.prodNote||'':'');
+  sv('pd_cadUrl',p?p.cadUrl||'':'');
+  updatePdJproHint();
   sv('pd_createdDate',p?p.createdDate||'':'');
   sv('pd_lastModified',p?p.lastModified||'':'');
   document.getElementById('mProduct_t').textContent=p?'📦 제품 수정':'📦 제품 등록';
@@ -6904,6 +6901,40 @@ function handlePdImgs(e){
 //   2. 자동으로 생산원가/예상 마진/권장 출고단가 표시
 //   3. 출고단가는 사용자가 직접 입력 (권장가는 입력칸 아래 안내만 — [적용] 버튼으로 명시 적용)
 // ════════════════════════════════════════════════════════════════
+// ★ JPRO 연동값 자동 추출 — 별도 입력칸을 두지 않고 기존 칸에서 뽑는다.
+//   공임(소재비 제외) = 입고단가(¥) × 환율   (생산원가 = 입고단가×환율 + 중량×시세 에서 소재비를 뺀 부분)
+//   최장 길이 / 최소 두께(mm) = 규격/사이즈 문구에서 숫자 추출
+//     · '두께/굵기'가 붙은 숫자 → 두께,  체인 길이(체인…, 목걸이·팔찌·발찌의 '길이')는 최장 길이에서 제외
+//     · 호수·인치·개수처럼 mm가 아닌 숫자는 건너뜀
+//   기존 칸에서 못 뽑으면 예전에 저장된 값(prev)을 그대로 둔다 — 값을 0으로 지우지 않는다.
+function _pdJproDerive(prev){
+  prev=prev||{};
+  const RATE=(typeof window.QUOTE_CN_RATE!=='undefined')?window.QUOTE_CN_RATE:240;
+  const cny=+gv('pd_cnyPrice')||0;
+  const type=String((typeof _getPdType==='function'?_getPdType():gv('pd_type'))||'').toUpperCase();
+  const chainType=/NECKLACE|BRACELET|ANKLET/.test(type);
+  const dims=[], thick=[];
+  String(gv('pd_size')||'').split(/[,\/;·\n]+/).forEach(tok=>{
+    if(/호|인치|inch|"|ea\b|개|pcs|%|k\b/i.test(tok)) return;
+    const mul=(/cm/i.test(tok) && !/mm/i.test(tok))?10:1;
+    const nums=(tok.match(/\d+(?:\.\d+)?/g)||[]).map(n=>Math.round((+n)*mul*10)/10).filter(n=>n>0);
+    if(!nums.length) return;
+    if(/두께|굵기/.test(tok)) thick.push(...nums);
+    else if(/체인/.test(tok) || (chainType && /길이/.test(tok))) return;
+    else dims.push(...nums);
+  });
+  return {
+    laborCost: cny>0 ? Math.round(cny*RATE) : (+prev.laborCost||0),
+    maxLenMm:  dims.length ? Math.max(...dims) : (+prev.maxLenMm||0),
+    thickMm:   thick.length ? Math.min(...thick) : (+prev.thickMm||0)
+  };
+}
+function updatePdJproHint(){
+  const el=document.getElementById('pd_jproHint'); if(!el) return;
+  const d=_pdJproDerive(window._pdEditing||null);
+  const v=(x,f)=>x?f(x):'<span style="color:var(--red)">없음</span>';
+  el.innerHTML='💎 JPRO 자동 연동 — 공임 <b>'+v(d.laborCost,x=>'₩'+x.toLocaleString())+'</b> (입고단가 기준) · 최장 길이 <b>'+v(d.maxLenMm,x=>x+'mm')+'</b> · 최소 두께 <b>'+v(d.thickMm,x=>x+'mm')+'</b> (규격/사이즈 기준) · 제작 노트 = 메모';
+}
 function updatePdCostAnalysis(){
   const cnyPriceEl = document.getElementById('pd_cnyPrice');
   const weightEl = document.getElementById('pd_weight');
@@ -7247,11 +7278,11 @@ function saveProduct(){
     devCost:+gv('pd_devCost')||0,
     stock:newStock,safetyStock:newSafety,metal:gv('pd_metal'),platingSpec:gv('pd_platingSpec'),
     weight:+gv('pd_weight')||0,memo:gv('pd_memo'),
-    // ★ JPRO 연동 필드 (AI 견적 학습용)
-    difficulty:gv('pd_difficulty'), laborCost:+gv('pd_laborCost')||0,
+    // ★ JPRO 연동 필드 (AI 견적 학습용) — 공임·최장 길이·두께는 기존 칸에서 자동 추출, 제작 노트 = 메모
+    difficulty:gv('pd_difficulty'),
     stoneCount:+gv('pd_stoneCount')||0, stoneType:gv('pd_stoneType'),
-    maxLenMm:+gv('pd_maxLenMm')||0, thickMm:+gv('pd_thickMm')||0,
-    cadUrl:gv('pd_cadUrl').trim(), prodNote:gv('pd_prodNote'),
+    cadUrl:gv('pd_cadUrl').trim(), prodNote:gv('pd_memo'),
+    ..._pdJproDerive((_selfIdx>=0?productDB[_selfIdx]:null)||_pdEd),
     // 원가 분석 필드 (시세, 마진, 생산원가 자동 계산)
     matRate: +gv('pd_matRate')||0,
     marginPct: +gv('pd_marginPct')||0,
