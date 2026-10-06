@@ -16799,6 +16799,99 @@ function _learnMatchProduct(dict, itemName, option){
   return {product:p||null, name:(p&&p.name)||hit.name||'', code:hit.code};
 }
 
+// 🧭 커머스 품목 매칭(공용) — ①품번 정확일치 ②학습 사전(과거 매칭) ③품명 텍스트 순.
+//    쿠팡처럼 채널 상품명은 한글·제품DB는 영문이라 ③이 실패하는 건은 _cuAiMatch(AI)가 이어받고,
+//    등록되면 ②가 기억하므로 같은 상품은 다음부터 AI 없이 바로 매칭된다.
+function _cuMatcher(){
+  var codeMap=Object.create(null);
+  if(typeof productDB!=='undefined' && Array.isArray(productDB)){
+    productDB.forEach(function(p){ var c=String((p&&p.code)||'').trim().toUpperCase(); if(c && !codeMap[c]) codeMap[c]=p; });
+  }
+  var dict=(typeof _buildIoLearnDict==='function')?_buildIoLearnDict():null;
+  return function(itemName, option, codeHint){
+    // ① 품번: 엑셀의 업체상품코드 열 값, 또는 상품명 안에 그대로 적힌 품번
+    var h=String(codeHint==null?'':codeHint).trim().toUpperCase();
+    if(h && codeMap[h]) return {product:codeMap[h], score:100, via:'품번'};
+    var toks=String(itemName||'').toUpperCase().split(/[\s\[\]\(\)\/,|]+/);
+    for(var i=0;i<toks.length;i++){
+      var t=toks[i];
+      if(t.length>=4 && /[A-Z]/.test(t) && /\d/.test(t) && codeMap[t]) return {product:codeMap[t], score:100, via:'품번'};
+    }
+    // ② 학습 사전
+    var lm=(typeof _learnMatchProduct==='function')?_learnMatchProduct(dict, itemName, option):null;
+    if(lm && lm.product) return {product:lm.product, score:100, via:'학습'};
+    // ③ 품명 텍스트
+    var m=_matchProductByText(itemName);
+    return {product:m.product, score:m.score, via:m.product?'품명':''};
+  };
+}
+
+// 🤖 미매칭 행 AI 매칭 — 한글 상품명 ↔ 영문 제품DB명(음역·번역)을 한 번의 호출로 묶어서 찾는다.
+//    결과는 미리보기에 'AI' 배지로만 표시 → 사용자가 확인하고 등록해야 확정(재고 차감)된다.
+var _cuAiRun=0, _cuAiBusy=false, _cuAiNote='';
+async function _cuAiMatch(){
+  var run=++_cuAiRun;
+  _cuAiBusy=false; _cuAiNote='';
+  if(typeof _commerceUploadRows==='undefined' || !Array.isArray(_commerceUploadRows)) return;
+  var keyOf=function(r){ return String(r.itemText||'').trim()+'\u0001'+String(r.option||'').trim(); };
+  var targets=_commerceUploadRows.filter(function(r){ return r && !r.matched && String(r.itemText||'').trim(); });
+  if(!targets.length) return;
+  if(typeof productDB==='undefined' || !Array.isArray(productDB) || !productDB.length) return;
+  if(typeof anthropicKey==='undefined' || !anthropicKey || !String(anthropicKey).trim()){
+    _cuAiNote='AI 매칭 꺼짐 — 설정에서 API 키 입력 시 자동 매칭'; _renderCommercePreview(); return;
+  }
+  // 같은 (품목+옵션)은 한 번만 물어본다
+  var groups={}, order=[];
+  targets.forEach(function(r){ var k=keyOf(r); if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(r); });
+  order=order.slice(0,150);
+  // 후보 제품: 선택된 브랜드의 품번 접두사로 좁힌다 (비비케이트=VV·VC, 루엘=RH)
+  var brand=String((document.getElementById('cu_brand')||{}).value||'');
+  var pfx=/루엘|ruhel/i.test(brand) ? ['RH'] : (/비비|vivi|bbkate/i.test(brand) ? ['VV','VC'] : null);
+  var all=productDB.filter(function(p){ return p && p.code && p.name; });
+  var cands=pfx ? all.filter(function(p){ var c=String(p.code).trim().toUpperCase(); return pfx.some(function(x){ return c.indexOf(x)===0; }); }) : [];
+  if(!cands.length) cands=all;
+  if(cands.length>700){ _cuAiNote='AI 매칭 생략 — 후보 제품이 너무 많습니다(브랜드를 선택하세요)'; _renderCommercePreview(); return; }
+  var one=function(s){ return String(s==null?'':s).replace(/\s+/g,' ').trim(); };
+  var prompt='주얼리 브랜드의 온라인 주문 상품명을 사내 제품DB의 제품과 연결해 주세요.\n'
+    +'주문 상품명은 판매 채널(쿠팡 등)에 등록된 한글 이름이고, 제품DB 이름은 영문입니다. 한글 이름은 대개 영문 이름의 음역·번역입니다 '
+    +'(예: 토카 원터치 귀걸이=TOCA ONE TOUCH EARRINGS, 파베 링/반지=PAVE RING, 테니스 목걸이=TENNIS NECKLACE, 팔찌=BRACELET, 실버=SILVER, 로즈골드=ROSE GOLD).\n'
+    +'브랜드명·홍보 문구·소재 설명·사이즈(호수, cm)는 무시하되, 색상/도금(실버·골드·로즈골드 등)이 제품DB에서 별도 제품이면 반드시 색상이 일치하는 제품을 고르세요.\n'
+    +'확실하지 않으면 추측하지 말고 code를 null로 두세요. 후보 목록에 없는 code는 쓰지 마세요.\n\n'
+    +'[주문 상품 — 번호<TAB>상품명<TAB>옵션]\n'
+    +order.map(function(k,i){ var a=k.split('\u0001'); return i+'\t'+one(a[0])+'\t'+one(a[1]); }).join('\n')
+    +'\n\n[제품DB 후보 — code<TAB>제품명<TAB>종류<TAB>도금/소재]\n'
+    +cands.map(function(p){ return one(p.code)+'\t'+one(p.name)+'\t'+one(p.type)+'\t'+one([p.plating,p.mat].filter(Boolean).join(' ')); }).join('\n')
+    +'\n\nJSON으로만 응답(다른 텍스트·마크다운 없이): {"matches":[{"i":번호,"code":"제품 code 또는 null","conf":0~1}]}';
+  _cuAiBusy=true; _renderCommercePreview();
+  try{
+    var data=await callClaudeAPI({model:'claude-sonnet-4-5', max_tokens:4000, messages:[{role:'user', content:prompt}]});
+    if(run!==_cuAiRun) return;                       // 그 사이 다른 파일을 올렸거나 창을 다시 열었음
+    if(data && data.error) throw new Error(data.error.message||'API 오류');
+    var text=(((data&&data.content)||[]).find(function(b){ return b.type==='text'; })||{}).text||'';
+    var s=text.indexOf('{'), e=text.lastIndexOf('}');
+    var parsed=JSON.parse(s>=0&&e>s ? text.slice(s,e+1) : text);
+    var byCode=Object.create(null);
+    cands.forEach(function(p){ var c=String(p.code).trim().toUpperCase(); if(!byCode[c]) byCode[c]=p; });
+    var n=0;
+    (Array.isArray(parsed.matches)?parsed.matches:[]).forEach(function(m){
+      if(!m || m.code==null || !(+m.conf>=0.8)) return;
+      var k=order[parseInt(m.i,10)]; if(k===undefined) return;
+      var p=byCode[String(m.code).trim().toUpperCase()]; if(!p) return;
+      groups[k].forEach(function(r){
+        // 응답을 기다리는 동안 지워졌거나, 직접 매칭했거나, 품명을 고친 행은 건드리지 않는다
+        if(_commerceUploadRows.indexOf(r)<0 || r.matched || keyOf(r)!==k) return;
+        r.matched=p; r.matchedName=p.name||''; r.matchStatus='AI매칭'; r.score=0; n++;
+      });
+    });
+    if(!n) _cuAiNote='AI가 확신할 수 있는 제품을 찾지 못했습니다 — [검색]으로 직접 매칭';
+    console.log('[제품매칭] AI 매칭', n, '건 / 요청', order.length, '종');
+  }catch(err){
+    if(run===_cuAiRun){ _cuAiNote='AI 매칭 실패 — [검색]으로 직접 매칭'; console.warn('[제품매칭] AI 매칭 실패:', err && err.message); }
+  }finally{
+    if(run===_cuAiRun){ _cuAiBusy=false; _renderCommercePreview(); }
+  }
+}
+
 // ── 주문 → 출고 처리 ──
 // 📅 출고일 선택 모달 (단일·일괄 공용) — 클릭 시차 있어도 실제 출고일을 지정 가능
 var _ioShipIds = [];
@@ -17609,6 +17702,7 @@ function openCommerceManual(){
 
 function openCommerceUpload(){
   _commerceUploadRows = [];
+  _cuAiRun++; _cuAiBusy=false; _cuAiNote='';   // 진행 중이던 AI 매칭은 무효화
   const brands = loadCommerceBrands();
   // 오늘 날짜 default
   const today = new Date().toISOString().slice(0,10);
@@ -17762,6 +17856,8 @@ function _parseCommerceRows(rawRows){
     }
   }
   if(_hdrRowIdx >= 0){
+    // 🛒 쿠팡 Wing 주문서(수취인이름·등록상품명·업체상품코드…) — 자사 브랜드 주문
+    var _isCoupang = /수취인이름/.test(hdr.join('|')) && /(등록상품명|노출상품명|묶음배송번호)/.test(hdr.join('|'));
     var _idx = function(names){
       for(var k=0;k<names.length;k++){
         var i = hdr.findIndex(function(h){ return h.replace(/\s/g,'') === names[k].replace(/\s/g,''); });
@@ -17774,8 +17870,9 @@ function _parseCommerceRows(rawRows){
       return -1;
     };
     var cRec=_idx(['수령인명','수령인','받는분','받는사람','수취인','주문자명','주문자']),
-        cPh=_idx(['수령인 연락처1','연락처1','수령인 연락처','수령인연락처','연락처','휴대폰','전화번호','핸드폰']),
-        cAddr=_idx(['배송주소','주소','배송지','받는분주소']), cMemo=_idx(['배송메시지','배송메모','배송요청','요청사항']),
+        cPh=_idx(['수취인전화번호','수취인 전화번호','수령인 연락처1','연락처1','수령인 연락처','수령인연락처','연락처','휴대폰','전화번호','핸드폰']),
+        cAddr=_idx(['배송주소','주소','배송지','받는분주소']), cMemo=_idx(['배송메시지','배송메세지','배송메모','배송요청','요청사항']),
+        cCode=_idx(['업체상품코드','판매자상품코드','판매자 상품코드','상품코드','품번']),   // 🆕 품번 열 — 제품DB 품번과 같으면 그대로 매칭
         cItem=_idx(['상품','품목','제품','주문상품','상품명']), cOpt=_idx(['옵션','옵션명','상품옵션']), cQty=_idx(['수량','주문수량']),
         cOrd=_idx(['주문일시','주문일','결제일시','결제일']), cNo=_idx(['주문번호','주문no','주문 번호']),
         cShip=_idx(['출고일','출고일자','출고 일자','발송일','배송일','출고날짜']),   // 🆕 행별 출고일
@@ -17783,7 +17880,7 @@ function _parseCommerceRows(rawRows){
     var firstOrderDate='';
     var _normDate=function(s){ s=String(s||'').trim(); if(!s) return ''; s=s.slice(0,10).replace(/[.\/]/g,'-'); var mm=s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/); return mm ? (mm[1]+'-'+('0'+mm[2]).slice(-2)+'-'+('0'+mm[3]).slice(-2)) : s; };
     var _normInv=function(s){ s=String(s||'').trim().replace(/[-\s]/g,''); return (/^#?N\/?A$/i.test(s)) ? '' : s; };
-    var _learnDict=(typeof _buildIoLearnDict==='function')?_buildIoLearnDict():null;   // 🎓 기존 매칭 학습
+    var _mx=_cuMatcher();   // 🧭 품번 → 🎓 기존 매칭 학습 → 품명 텍스트
     for(var i=_hdrRowIdx+1;i<rawRows.length;i++){
       var row = rawRows[i];
       if(!row || !row.length) continue;
@@ -17794,9 +17891,14 @@ function _parseCommerceRows(rawRows){
       var od = cOrd>=0 ? String(row[cOrd]||'').trim().slice(0,10).replace(/[./]/g,'-') : '';
       if(od && !firstOrderDate) firstOrderDate = od;
       var qtyN = cQty>=0 ? (parseInt(String(row[cQty]||'1').replace(/[^\d]/g,''),10)||1) : 1;
-      // 🎓 학습 사전 우선(과거 매칭) → 없으면 품목명 텍스트 매칭(옵션 제외 — 옵션 토큰이 많아 매칭 방해)
-      var _lm = (typeof _learnMatchProduct==='function') ? _learnMatchProduct(_learnDict, itemName, option) : null;
-      var m = (_lm && _lm.product) ? {product:_lm.product, score:100} : _matchProductByText(itemName);
+      // 🛒 쿠팡은 색상이 옵션에만 있는 경우가 있다 — 색상이 다르면 다른 제품이므로 품목명 뒤에 붙여 구분
+      //    (학습 키는 품목명+사이즈라, 색상을 품목명에 넣어야 실버/로즈골드가 서로 섞이지 않는다)
+      if(_isCoupang && itemName && option){
+        var _col=(option.match(/로즈\s*골드|화이트\s*골드|옐로우\s*골드|베이지\s*골드|핑크\s*골드|실버|골드|블랙/)||[''])[0].replace(/\s+/g,'');
+        if(_col && itemName.replace(/\s+/g,'').indexOf(_col)<0) itemName += ' ('+_col+')';
+      }
+      // 🧭 품번 정확일치 → 🎓 학습 사전(과거 매칭) → 품목명 텍스트 매칭(옵션 제외 — 옵션 토큰이 많아 매칭 방해)
+      var m = _mx(itemName, option, cCode>=0 ? row[cCode] : '');
       _commerceUploadRows.push({
         recipient: recipient,
         phone: cPh>=0 ? String(row[cPh]||'').trim() : '',
@@ -17813,8 +17915,26 @@ function _parseCommerceRows(rawRows){
         matchedName: m.product ? (m.product.name||'') : '',
         matchStatus: m.product ? '자동매칭' : '미매칭',
         score: m.score,
-        _kakao: true
+        _kakao: !_isCoupang
       });
+    }
+    // 🛒 쿠팡 주문서면 브랜드=비비케이트(출고 일자는 그대로) → 남은 미매칭은 AI 매칭
+    if(_isCoupang){
+      setTimeout(function(){
+        try{
+          var bs = document.getElementById('cu_brand');
+          if(bs){
+            if(!Array.from(bs.options).some(function(o){return o.value==='비비케이트';})){
+              var op=document.createElement('option'); op.value='비비케이트'; op.textContent='비비케이트'; bs.appendChild(op);
+            }
+            bs.value='비비케이트';
+          }
+          if(typeof showToast==='function') showToast('🛒 쿠팡 주문서로 인식 — 브랜드 비비케이트, 한글 상품명은 AI가 제품DB와 매칭합니다','var(--blu)',4500);
+        }catch(e){}
+        _cuAiMatch();
+      }, 0);
+      _renderCommercePreview();
+      return;
     }
     // 카카오 포맷이면 브랜드=카카오, 일자=주문일 자동 세팅
     setTimeout(function(){
@@ -17830,11 +17950,13 @@ function _parseCommerceRows(rawRows){
         if(ds && firstOrderDate) ds.value = firstOrderDate;
         if(typeof showToast==='function') showToast('📦 카카오 주문서로 인식 — 브랜드 카카오, 요청출고일은 주문일+영업일 10일로 설정됩니다','var(--blu)',4500);
       }catch(e){}
+      _cuAiMatch();   // 남은 미매칭은 AI 매칭
     }, 0);
     _renderCommercePreview();
     return;
   }
   // 헤더 행 감지: 첫 행에 "수령인","이름","연락처" 같은 단어 있으면 스킵
+  const _mx2 = _cuMatcher();   // 🧭 품번 → 학습 → 품명
   let startRow = 0;
   if(rawRows[0]){
     const firstCellsStr = rawRows[0].map(c=>String(c||'')).join(' ').toLowerCase();
@@ -17863,7 +17985,7 @@ function _parseCommerceRows(rawRows){
       });
     } else {
       itemLines.forEach(line => {
-        const match = _matchProductByText(line);
+        const match = _mx2(line, '', '');
         _commerceUploadRows.push({
           recipient, phone, address, deliveryMemo,
           itemText: line,
@@ -17876,6 +17998,7 @@ function _parseCommerceRows(rawRows){
     }
   }
   _renderCommercePreview();
+  _cuAiMatch();   // 남은 미매칭은 AI 매칭
 }
 
 // 품목 텍스트로 제품 DB에서 매칭 시도
@@ -17950,6 +18073,7 @@ function _renderCommercePreview(){
   });
 
   const matched = rows.filter(r => r.matchStatus === '자동매칭').length;
+  const aiCnt = rows.filter(r => r.matchStatus === 'AI매칭').length;
   const unmatched = rows.filter(r => r.matchStatus === '미매칭').length;
   const recipients = new Set(rows.map(r => r.recipient)).size;
   const stockShortageCount = rows.filter(r => r._stockOk === false).length;
@@ -17958,6 +18082,9 @@ function _renderCommercePreview(){
   const noEngCnt = rows.filter(r => /사용\s*안\s*함/.test(r.option||'')).length;
   const engCnt = rows.filter(r => /각인/.test(r.option||'') && !/사용\s*안\s*함/.test(r.option||'')).length;
   let statsHtml = `<b style="color:var(--t1)">${rows.length}건</b> · ${recipients}명 · <span style="color:var(--grn);font-weight:600">✓ 매칭 ${matched}</span> · <span style="color:var(--org);font-weight:600">⚠ 미매칭 ${unmatched}</span> · <span style="color:var(--gold-lt);font-weight:600">✍ 각인 ${engCnt}</span> · <span style="color:var(--t3)">미각인 ${noEngCnt}</span>`;
+  if(aiCnt) statsHtml += ` · <span style="color:#6d4bd8;font-weight:700">🤖 AI 매칭 ${aiCnt} — 확인 후 등록</span>`;
+  if(_cuAiBusy) statsHtml += ` · <span style="color:#6d4bd8;font-weight:600">🤖 AI 매칭 중…</span>`;
+  else if(_cuAiNote && unmatched) statsHtml += ` · <span style="color:var(--t3)">${escHtml(_cuAiNote)}</span>`;
   if(stockShortageCount > 0){
     statsHtml += ` · <span style="color:var(--red);font-weight:700">⛔ 재고부족 ${stockShortageCount}건</span>`;
   } else if(totalDemandLines > 0){
@@ -17992,9 +18119,11 @@ function _renderCommercePreview(){
           ${rows.map((r,i)=>{
             const cls = r._stockOk === false ? 'background:rgba(192,48,48,.08)' :
                         r.matchStatus === '자동매칭' ? 'background:rgba(46,139,44,.06)' :
+                        r.matchStatus === 'AI매칭' ? 'background:rgba(109,75,216,.07)' :
                         r.matchStatus === '수동확인' ? 'background:rgba(26,109,181,.06)' :
                         'background:rgba(168,90,16,.06)';
             const badge = r.matchStatus === '자동매칭' ? '<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(46,139,44,.18);color:var(--grn)">✓ 매칭</span>' :
+                         r.matchStatus === 'AI매칭' ? '<span title="AI가 한글 상품명으로 찾은 제품입니다. 맞는지 확인하고, 다르면 [검색]으로 바꾸세요." style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(109,75,216,.15);color:#6d4bd8">🤖 AI</span>' :
                          r.matchStatus === '수동확인' ? '<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(26,109,181,.15);color:var(--blu)">수동</span>' :
                          '<span style="display:inline-block;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;background:rgba(168,90,16,.18);color:var(--org)">⚠ 미매칭</span>';
             // 재고 셀 (현재 → 차감 후)
@@ -18645,7 +18774,7 @@ async function _registerCommerce(){
       deliveryMemo: row.deliveryMemo || '',
       shipStatus: row.invoice ? '발급완료' : '미발급',            // 🆕 송장 있으면 발급완료
       shipStage: _shipped ? 'shipped' : 'order',   // 🆕 출고일 있으면 출고완료, 없으면 주문 단계
-      matchStatus: row.matchStatus || '미매칭',
+      matchStatus: (row.matchStatus === 'AI매칭' ? '자동매칭' : row.matchStatus) || '미매칭',   // AI매칭은 미리보기에서 확인된 건 → 자동매칭으로 저장
       _matchedProductId: row.matched ? row.matched.id : null,
       _matchedProductCode: row.matched ? row.matched.code : null,
       _matchedProductName: row.matched ? (row.matched.name||'') : null,   // [FIX] 매칭품명도 보존
@@ -18768,10 +18897,10 @@ async function processCommerceAIFiles(files){
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, {defval:'', header:1});
       const hdr = (rows[0]||[]).map(c=>String(c||'').trim()).join('|');
-      if(/수령인명/.test(hdr) && /상품/.test(hdr)){
+      if((/수령인명/.test(hdr) && /상품/.test(hdr)) || (/수취인이름/.test(hdr) && /상품명/.test(hdr))){   // 카카오 · 쿠팡
         resultEl.innerHTML = '';
         openCommerceUpload();
-        setTimeout(()=>{ _parseCommerceRows(rows); }, 120);   // 브랜드=카카오·옵션·주문일 자동 세팅
+        setTimeout(()=>{ _parseCommerceRows(rows); }, 120);   // 브랜드·옵션·주문일 자동 세팅
         return;
       }
     }
@@ -18923,7 +19052,8 @@ function showCommerceParseResult(parsed, resultEl){
   // AI가 추출한 데이터 → _commerceUploadRows 형식으로 변환 + 제품 매칭
   // 📌 AI가 한 칸의 여러 품목(줄바꿈 구분)을 1건으로 합쳐서 돌려주는 경우가 있음.
   //    itemText에 줄바꿈이 남아있으면 각 줄을 별도 행으로 분리 (수령인·전화·주소는 복사).
-  _commerceUploadRows = items.flatMap(it => {
+  const _mx = _cuMatcher();   // 🧭 품번 → 학습 → 품명
+  const _aiRows = items.flatMap(it => {
     const baseRecipient = String(it.recipient || '').trim();
     const basePhone = String(it.phone || '').trim();
     const baseAddress = String(it.address || '').trim();
@@ -18933,7 +19063,7 @@ function showCommerceParseResult(parsed, resultEl){
     const lines = rawItem.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     const itemTexts = lines.length ? lines : [''];
     return itemTexts.map(itemText => {
-      const match = itemText ? _matchProductByText(itemText) : {product:null, score:0};
+      const match = itemText ? _mx(itemText, '', '') : {product:null, score:0};
       return {
         recipient: baseRecipient,
         phone: basePhone,
@@ -18950,6 +19080,7 @@ function showCommerceParseResult(parsed, resultEl){
 
   // 미리보기 모달 자동 표시 (브랜드/날짜는 AI가 추출한 값으로 기본 채움)
   openCommerceUpload();
+  _commerceUploadRows = _aiRows;   // 🛡 openCommerceUpload가 행을 비우므로 연 뒤에 넣는다 (추출 결과가 빈 미리보기로 사라지던 문제)
   // 모달 열린 후 브랜드/날짜 채우기 (약간의 딜레이로 DOM 준비 후)
   setTimeout(() => {
     const brands = loadCommerceBrands();
@@ -18976,6 +19107,7 @@ function showCommerceParseResult(parsed, resultEl){
       }
     }
     _renderCommercePreview();
+    _cuAiMatch();   // 남은 미매칭은 AI 매칭
   }, 100);
 }
 
