@@ -27260,7 +27260,7 @@ function renderSample(){
           ${window._smpChecked.size?`<button class="btn bgo bs" onclick="window._smpChecked.clear();renderSample()" style="font-size:11px">해제</button>`:''}
         </div>
       </div>
-      <button class="btn bs" onclick="openClientSchedulePicker()" title="고객사를 선택해 해당 고객사의 진행중 샘플 출고 일정을 PDF로 생성 (고객사 전달용)" style="font-size:11px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">📅 고객사별 샘플 일정표</button>
+      <button class="btn bs" onclick="openClientSchedulePicker()" title="고객사를 선택해 해당 고객사의 진행중 샘플 납기 일정을 PDF로 생성 (고객사 전달용)" style="font-size:11px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">📅 고객사별 샘플 일정표</button>
       <button class="btn bs" onclick="openFactoryPicker('sample')" title="공장을 선택해 해당 공장의 진행중 샘플만 납기확인 PDF로 생성 (사진 포함)" style="font-size:11px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">🏭 공장별 샘플 납기확인서</button>
       <button class="btn bp bs" onclick="smpImgBuf=[];smpSrcBuf=[];smpCadBuf=[];openSmpModal(null)">+ 직접 등록</button>
     </div>
@@ -29921,7 +29921,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
 // ═══════════════════════════════════════════════════════════════
 // 📅 고객사별 샘플 일정표 — 진행중 샘플을 고객사 1곳 기준으로 묶어 PDF(인쇄)로 추출.
 //    고객사에게 그대로 전달하는 문서: 공장명·타 고객사 정보는 넣지 않는다.
-//    출고 예정일 = 샘플 납기일(due). 날짜순으로 묶어 한눈에 보이게 한다.
+//    표시 날짜 = 고객사 납기일(샘플 납기일 due). 문서 표기도 '고객사 납기일'로 통일(출고 예정일 표기 금지). 날짜순으로 묶는다.
 // ═══════════════════════════════════════════════════════════════
 function _csActiveSamples(){
   return (typeof samples!=='undefined'?samples:[]).filter(s=>{
@@ -29950,7 +29950,7 @@ function openClientSchedulePicker(){
     ov.className='ov'; ov.id='mClientSched';
     ov.innerHTML=`<div class="modal" style="max-width:460px">
       <div class="mt">📅 고객사별 샘플 일정표 — 고객사 선택</div>
-      <div style="font-size:12px;color:var(--t3);margin-bottom:12px">고객사를 누르면 그 고객사의 진행중 샘플과 출고 예정일만 PDF로 나옵니다. (공장명·타 고객사 정보는 포함되지 않습니다)</div>
+      <div style="font-size:12px;color:var(--t3);margin-bottom:12px">고객사를 누르면 그 고객사의 진행중 샘플과 고객사 납기일만 PDF로 나옵니다. (공장명·타 고객사 정보는 포함되지 않습니다)</div>
       <div id="clientSchedBody"></div>
       <div class="ma"><button class="btn bgo" onclick="closeM('mClientSched')">닫기</button></div>
     </div>`;
@@ -30004,7 +30004,7 @@ function exportClientSchedule(clientKey){
       status:s.status||'의뢰', thumb:thumb
     };
   });
-  // 출고 예정일 빠른 순 → 날짜 미정은 맨 아래
+  // 고객사 납기일 빠른 순 → 날짜 미정은 맨 아래
   rows.sort((a,b)=>{
     if(a.dk && b.dk) return a.dk<b.dk?-1:(a.dk>b.dk?1:a.name.localeCompare(b.name,'ko'));
     if(a.dk) return -1; if(b.dk) return 1;
@@ -30013,12 +30013,12 @@ function exportClientSchedule(clientKey){
   const groups=[]; const gmap={};
   rows.forEach(r=>{ const k=r.dk||'__none__'; if(!gmap[k]){ gmap[k]={k:k,d:r.d,dd:r.dd,items:[]}; groups.push(gmap[k]); } gmap[k].items.push(r); });
 
-  const dLabel=g=>g.d?`${g.d.getMonth()+1}월 ${g.d.getDate()}일 (${WD[g.d.getDay()]})`:'출고일 협의 중';
+  const dLabel=g=>g.d?`${g.d.getMonth()+1}월 ${g.d.getDate()}일 (${WD[g.d.getDay()]})`:'납기일 협의 중';
   const ddLabel=dd=>dd===null?'':(dd===0?'오늘':(dd>0?'D-'+dd:''));
   const stMap={'의뢰':['접수','#6b7280'],'제작중':['제작중','#2563eb'],'수정중':['수정중','#d97706']};
   const stOf=st=>stMap[st]||[st,'#6b7280'];
 
-  // ── 상단 요약: 출고 예정일별 카드 ──
+  // ── 상단 요약: 고객사 납기일별 카드 ──
   const cards=groups.map(g=>{
     const dl=ddLabel(g.dd);
     return `<div class="card${g.d?'':' none'}">
@@ -30030,7 +30030,7 @@ function exportClientSchedule(clientKey){
   let no=0;
   const body=groups.map(g=>{
     const dl=ddLabel(g.dd);
-    const head=`<tr class="grp"><td colspan="7">${g.d?'📦 ':''}${dLabel(g)}${g.d?' 출고 예정':''} <span class="gc">${g.items.length}건</span>${dl?`<span class="gd">${dl}</span>`:''}</td></tr>`;
+    const head=`<tr class="grp"><td colspan="7">${g.d?'📅 ':''}${dLabel(g)}${g.d?' 고객사 납기':''} <span class="gc">${g.items.length}건</span>${dl?`<span class="gd">${dl}</span>`:''}</td></tr>`;
     return head+g.items.map(r=>{
       no++;
       const st=stOf(r.status);
@@ -30116,11 +30116,11 @@ function exportClientSchedule(clientKey){
         <th style="width:82px">유형</th>
         <th style="width:170px">소재 / 도금 · 사이즈</th>
         <th style="width:70px">진행상태</th>
-        <th style="width:92px">출고 예정일</th>
+        <th style="width:100px">고객사 납기일</th>
       </tr></thead>
       <tbody>${body}</tbody>
     </table>
-    <div class="foot">※ 출고 예정일은 당사 출고 기준이며, 제작 진행 상황에 따라 변동될 수 있습니다. 변동 시 별도로 안내드리겠습니다.</div>
+    <div class="foot">※ 위 날짜는 고객사 납기일 기준이며, 제작 진행 상황에 따라 변동될 수 있습니다. 변동 시 별도로 안내드리겠습니다.</div>
     <div class="toolbar noprint"><button onclick="window.print()">🖨 PDF 저장 / 인쇄</button></div>
     </body></html>`;
 
