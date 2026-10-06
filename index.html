@@ -29929,13 +29929,49 @@ function _csActiveSamples(){
     return !(st==='확정'||st==='완료'||st==='취소');
   });
 }
-function openClientSchedulePicker(){
-  const act=_csActiveSamples();
-  if(!act.length){ if(typeof showToast==='function') showToast('진행중인 샘플이 없습니다','var(--t2)',2500); return; }
+// 진행중 발주를 품목 단위로 펼쳐 샘플과 같은 모양으로 돌려준다 (고객사별 발주 일정표용).
+//   고객사 = 발주의 업체명(vendor), 고객사 납기일 = 요청 출고일(ship).
+//   확정·취소보류 발주와 이미 전량 출고된 품목은 제외. 부분 출고 품목은 잔여 수량을 함께 표기.
+function _csActiveOrderItems(){
+  const out=[];
+  (typeof orders!=='undefined'?orders:[]).forEach(o=>{
+    const st=(typeof normalizeOrderStatus==='function')?normalizeOrderStatus(o.status):(o.status||'의뢰');
+    if(st==='확정'||st==='취소보류') return;
+    const oRows=Array.isArray(o.rows)?o.rows:[];
+    oRows.forEach(r=>{
+      if(!r) return;
+      const tot=(typeof parseOrdQty==='function')?parseOrdQty(r.qty):(+r.qty||0);
+      const shipped=(Array.isArray(r.shipLog)?r.shipLog:[]).reduce((a,h)=>a+(+((h&&h.qty)||0)),0);
+      if(tot>0 && shipped>=tot) return;
+      let th='';
+      if(Array.isArray(r.imgs)){ const im=r.imgs.find(x=>x&&x.url&&/^https?:\/\//.test(x.url)); if(im) th=im.url; }
+      if(!th && r.img){
+        if(typeof r.img==='string' && /^https?:\/\//.test(r.img)) th=r.img;
+        else if(typeof r.img==='object' && r.img.url && /^https?:\/\//.test(r.img.url)) th=r.img.url;
+      }
+      if(!th) th=_thumbByCode(r.code||r.itemCode||r.name);
+      const code=String(r.code||r.itemCode||'').trim();
+      out.push({
+        manager:o.vendor, due:o.ship, status:st,
+        name:r.name||r.itemName||code||'(품목)',
+        itemCode:code, _code:[String(o.no||'').trim(),code].filter(Boolean).join(' · '),
+        mat:r.mat, plating:r.plating, size:r.size, qty:r.qty,
+        _remain:(tot>0 && shipped>0)?(tot-shipped):null, _thumb:th
+      });
+    });
+  });
+  return out;
+}
+function openClientSchedulePicker(kind){
+  const isOrd=kind==='order';
+  const act=isOrd?_csActiveOrderItems():_csActiveSamples();
+  if(!act.length){ if(typeof showToast==='function') showToast(isOrd?'진행중인 발주 품목이 없습니다':'진행중인 샘플이 없습니다','var(--t2)',2500); return; }
   // 고객사 칩으로 이미 한 곳을 골라 둔 상태면 선택 단계 없이 바로 출력
   try{
-    const m=(typeof smpAdvFilter!=='undefined' && smpAdvFilter && smpAdvFilter.manager) ? String(smpAdvFilter.manager).trim() : '';
-    if(m){ const k=_fpClientKey(m); if(act.some(s=>_fpClientKey(s.manager)===k)){ exportClientSchedule(k); return; } }
+    const m=isOrd
+      ? ((typeof ordAdvFilter!=='undefined' && ordAdvFilter && ordAdvFilter.vendor) ? String(ordAdvFilter.vendor).trim() : '')
+      : ((typeof smpAdvFilter!=='undefined' && smpAdvFilter && smpAdvFilter.manager) ? String(smpAdvFilter.manager).trim() : '');
+    if(m){ const k=_fpClientKey(m); if(act.some(s=>_fpClientKey(s.manager)===k)){ exportClientSchedule(k,kind); return; } }
   }catch(e){}
   const cnt={};
   act.forEach(s=>{ const k=_fpClientKey(s.manager); cnt[k]=(cnt[k]||0)+1; });
@@ -29943,35 +29979,39 @@ function openClientSchedulePicker(){
     if(a==='(고객사 미지정)') return 1; if(b==='(고객사 미지정)') return -1;
     return (cnt[b]-cnt[a]) || a.localeCompare(b,'ko');
   });
-  window._csNames=names;
+  window._csNames=names; window._csKind=isOrd?'order':'sample';
+  const kw=isOrd?'발주':'샘플';
   let ov=document.getElementById('mClientSched');
   if(!ov){
     ov=document.createElement('div');
     ov.className='ov'; ov.id='mClientSched';
-    ov.innerHTML=`<div class="modal" style="max-width:460px">
-      <div class="mt">📅 고객사별 샘플 일정표 — 고객사 선택</div>
-      <div style="font-size:12px;color:var(--t3);margin-bottom:12px">고객사를 누르면 그 고객사의 진행중 샘플과 고객사 납기일만 PDF로 나옵니다. (공장명·타 고객사 정보는 포함되지 않습니다)</div>
+    document.body.appendChild(ov);
+  }
+  // 샘플·발주가 같은 창을 쓰므로 열 때마다 문구를 다시 채운다
+  ov.innerHTML=`<div class="modal" style="max-width:460px">
+      <div class="mt">📅 고객사별 ${kw} 일정표 — 고객사 선택</div>
+      <div style="font-size:12px;color:var(--t3);margin-bottom:12px">고객사를 누르면 그 고객사의 진행중 ${kw}${isOrd?' 품목':''}과 고객사 납기일만 PDF로 나옵니다. (공장명·타 고객사 정보는 포함되지 않습니다)</div>
       <div id="clientSchedBody"></div>
       <div class="ma"><button class="btn bgo" onclick="closeM('mClientSched')">닫기</button></div>
     </div>`;
-    document.body.appendChild(ov);
-  }
   document.getElementById('clientSchedBody').innerHTML=names.map((n,i)=>{
     const ci=_clientInit2(n==='(고객사 미지정)'?'':n);
     const badge=ci?`<span style="display:inline-block;min-width:30px;padding:2px 6px;border-radius:6px;color:#fff;font-size:12px;font-weight:800;text-align:center;margin-right:8px;background:${ci.color}">${_escHtml(ci.init)}</span>`:'';
-    return `<button onclick="closeM('mClientSched');exportClientSchedule(window._csNames[${i}])"
+    return `<button onclick="closeM('mClientSched');exportClientSchedule(window._csNames[${i}],window._csKind)"
       style="display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;padding:12px 14px;margin-bottom:8px;border:1px solid var(--bdr);border-radius:8px;background:var(--s1);cursor:pointer;font-family:inherit">
       <span style="font-size:14px;font-weight:700;color:var(--t1)">${badge}${_escHtml(n)}${n==='(고객사 미지정)'?' ⚠':''}</span>
-      <span style="font-size:11.5px;color:var(--t3)">샘플 ${cnt[n]}건</span>
+      <span style="font-size:11.5px;color:var(--t3)">${kw}${isOrd?' 품목':''} ${cnt[n]}건</span>
     </button>`;
   }).join('');
   if(typeof openM==='function') openM('mClientSched'); else ov.classList.add('open');
 }
 
-function exportClientSchedule(clientKey){
+function exportClientSchedule(clientKey, kind){
   const key=String(clientKey||'');
-  const list=_csActiveSamples().filter(s=>_fpClientKey(s.manager)===key);
-  if(!list.length){ if(typeof showToast==='function') showToast('선택한 고객사의 진행중 샘플이 없습니다','var(--t2)',2500); return; }
+  const isOrd=kind==='order';
+  const kw=isOrd?'발주':'샘플';
+  const list=(isOrd?_csActiveOrderItems():_csActiveSamples()).filter(s=>_fpClientKey(s.manager)===key);
+  if(!list.length){ if(typeof showToast==='function') showToast(`선택한 고객사의 진행중 ${kw}${isOrd?' 품목이':'이'} 없습니다`,'var(--t2)',2500); return; }
 
   const pad=n=>String(n).padStart(2,'0');
   const now=new Date();
@@ -29992,12 +30032,13 @@ function exportClientSchedule(clientKey){
       const im=s.imgs.find(i=>i && i.url && /^(https?:\/\/|data:image\/)/.test(i.url));
       if(im) thumb=im.url;
     }
+    if(!thumb && s._thumb) thumb=s._thumb;
     if(!thumb) thumb=_thumbByCode(s.itemCode||s.itemNo);
     const po=_fdProdOpt(s.itemCode||s.itemNo)||{};
     return {
       d:d, dk:d?(d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())):'',
       dd:d?Math.round((d-today0)/86400000):null,
-      name:s.name||'', code:s.itemCode||s.itemNo||'', type:s.type||'',
+      name:s.name||'', code:s._code||s.itemCode||s.itemNo||'', type:s.type||'', remain:(s._remain==null?null:s._remain),
       mat:String(s.mat||'').trim()||String(po.mat||'').trim(),
       plating:String(s.plating||'').trim()||String(po.plating||'').trim(),
       size:String(s.size||'').trim(), qty:String(s.qty==null?'':s.qty).trim(),
@@ -30015,7 +30056,7 @@ function exportClientSchedule(clientKey){
 
   const dLabel=g=>g.d?`${g.d.getMonth()+1}월 ${g.d.getDate()}일 (${WD[g.d.getDay()]})`:'납기일 협의 중';
   const ddLabel=dd=>dd===null?'':(dd===0?'오늘':(dd>0?'D-'+dd:''));
-  const stMap={'의뢰':['접수','#6b7280'],'제작중':['제작중','#2563eb'],'수정중':['수정중','#d97706']};
+  const stMap={'의뢰':['접수','#6b7280'],'제작중':['제작중','#2563eb'],'수정중':['수정중','#d97706'],'부분출고':['부분출고','#7c3aed']};
   const stOf=st=>stMap[st]||[st,'#6b7280'];
 
   // ── 상단 요약: 고객사 납기일별 카드 ──
@@ -30040,7 +30081,9 @@ function exportClientSchedule(clientKey){
         <td class="c num">${no}</td>
         <td class="c"><div class="thumb ${r.thumb?'':'noimg'}">${img}</div></td>
         <td><div class="nm">${_escHtml(r.name)}</div>${r.code?`<div class="code">${_escHtml(r.code)}</div>`:''}</td>
-        <td class="c sm">${r.type?_escHtml(r.type):'<span class="dash">—</span>'}${r.qty?`<div class="qty">${_escHtml(r.qty)}</div>`:''}</td>
+        <td class="c sm">${isOrd
+          ? `${r.qty?_escHtml(r.qty):'<span class="dash">—</span>'}${r.remain!==null?`<div class="qty">잔여 ${Number(r.remain).toLocaleString()}</div>`:''}`
+          : `${r.type?_escHtml(r.type):'<span class="dash">—</span>'}${r.qty?`<div class="qty">${_escHtml(r.qty)}</div>`:''}`}</td>
         <td class="sm">${md||'<span class="dash">—</span>'}${r.size?`<div class="size">${_escHtml(r.size)}</div>`:''}</td>
         <td class="c"><span class="st" style="background:${st[1]}">${_escHtml(st[0])}</span></td>
         <td class="c due">${r.d?`${r.d.getMonth()+1}/${r.d.getDate()} <span>(${WD[r.d.getDay()]})</span>`:'<span class="tbd">협의 중</span>'}</td>
@@ -30048,7 +30091,7 @@ function exportClientSchedule(clientKey){
     }).join('');
   }).join('');
 
-  const title=`${key==='(고객사 미지정)'?'':key+' '}샘플 일정표 ${todayStr}`;
+  const title=`${key==='(고객사 미지정)'?'':key+' '}${kw} 일정표 ${todayStr}`;
   const html=`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
     <title>${_escHtml(title)}</title>
     <style>
@@ -30102,8 +30145,8 @@ function exportClientSchedule(clientKey){
     </style></head><body>
     <div class="head">
       <div>
-        <div class="ttl">샘플 진행 일정표</div>
-        <div class="sub">발행일 ${todayStr} · 진행중 샘플 ${rows.length}건</div>
+        <div class="ttl">${kw} 진행 일정표</div>
+        <div class="sub">발행일 ${todayStr} · 진행중 ${kw}${isOrd?' 품목':''} ${rows.length}건</div>
       </div>
       <div class="to">${key==='(고객사 미지정)'?'':_escHtml(key)+' 귀중'}<span>EK International (이케이아이엔티)</span></div>
     </div>
@@ -30112,8 +30155,8 @@ function exportClientSchedule(clientKey){
       <thead><tr>
         <th style="width:28px">#</th>
         <th style="width:66px">사진</th>
-        <th>샘플명</th>
-        <th style="width:82px">유형</th>
+        <th>${isOrd?'품명 · 발주번호':'샘플명'}</th>
+        <th style="width:82px">${isOrd?'수량':'유형'}</th>
         <th style="width:170px">소재 / 도금 · 사이즈</th>
         <th style="width:70px">진행상태</th>
         <th style="width:100px">고객사 납기일</th>
@@ -30133,7 +30176,7 @@ function exportClientSchedule(clientKey){
   const warn=[]; if(late) warn.push('납기일 지난 건 '+late); if(none) warn.push('납기일 미입력 '+none);
   if(typeof showToast==='function'){
     if(warn.length) showToast(`⚠ ${key} 일정표 생성 — ${warn.join(' · ')}건, 전달 전 날짜를 확인하세요`,'var(--red)',6000);
-    else showToast(`✓ ${key} 샘플 일정표 생성 — ${rows.length}건`,'var(--grn)',3500);
+    else showToast(`✓ ${key} ${kw} 일정표 생성 — ${rows.length}건`,'var(--grn)',3500);
   }
 }
 function _orderItemsSummaryPlain(o){
@@ -30377,6 +30420,7 @@ function renderOrder(){
         return `<button class="btn bs" onclick="migrateOrderNumbers()" title="옛 ORD-... 형식 발주번호를 새 형식(예: VT0414)으로 일괄 변환" style="font-size:11px;background:var(--org-bg);color:var(--org);border:1px solid rgba(168,90,16,.35);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">🔄 발주번호 정리 (${legacyCount}건)</button>`;
       })()}
       <button class="btn bs" onclick="openFactoryPicker('order')" title="공장을 선택해 해당 공장의 진행중 발주만 납기확인 PDF로 생성 (사진 포함)" style="font-size:11px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">🏭 공장별 발주 납기확인서</button>
+      <button class="btn bs" onclick="openClientSchedulePicker('order')" title="고객사를 선택해 해당 고객사의 진행중 발주 납기 일정을 PDF로 생성 (고객사 전달용)" style="font-size:11px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:5px;padding:4px 10px;cursor:pointer;font-family:inherit;font-weight:600;margin-right:6px">📅 고객사별 발주 일정표</button>
       <button class="btn bp bs" onclick="ordRowsBuf=[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];openOrdModal(null)">+ 발주서 등록</button>
     </div>
     <div class="frow">
