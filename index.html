@@ -5535,7 +5535,21 @@ function _ekStampLogo(html){
 }
 // 본 페이지에서 바로 인쇄하는 문서(#printArea 사용: 거래명세서·AS청구서 등)
 try{ if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',function(){_ekStampDoc(document);}); else _ekStampDoc(document); }catch(_){}
-function _pdSelValidIds(){ const have=new Set(productDB.map(p=>String(p.id))); return new Set([...pdSelected].filter(id=>have.has(id))); }
+// 🔑 제품 식별 키 — 노션에서 받아온 제품은 id가 비어 있는 경우가 대부분이라(_notionId만 있음) id만으로는 서로 구분되지 않는다.
+//    체크박스 선택·삭제는 이 키로 판별한다.
+function _pdKey(p){ return (p && p.id!=null && p.id!=='') ? String(p.id) : ((p && p._notionId) ? 'n:'+p._notionId : ''); }
+// 제품 객체(또는 id)로 productDB 안의 위치를 찾는다: 같은 객체 → _notionId → id 순
+function _pdFindIdx(ref){
+  if(ref && typeof ref==='object'){
+    let i=productDB.indexOf(ref);
+    if(i<0 && ref._notionId) i=productDB.findIndex(x=>x && x._notionId && x._notionId===ref._notionId);
+    if(i<0 && ref.id!=null && ref.id!=='') i=productDB.findIndex(x=>x && x.id!=null && String(x.id)===String(ref.id));
+    return i;
+  }
+  if(ref==null || ref==='') return -1;
+  return productDB.findIndex(x=>x && x.id!=null && String(x.id)===String(ref));
+}
+function _pdSelValidIds(){ const have=new Set(productDB.map(_pdKey)); return new Set([...pdSelected].filter(id=>id && have.has(id))); }
 function pdToggleOne(cb){ const id=String(cb.value); if(cb.checked) pdSelected.add(id); else pdSelected.delete(id); pdUpdateBulkBar(); }
 function _pdCodePrefix(p){ const c=String((p&&p.code)||'').trim().toUpperCase(); return /^[A-Z]{2}/.test(c) ? c.slice(0,2) : ''; }
 function _pdClientMatch(p){ return pdFilterClient==='전체' || _pdCodePrefix(p)===pdFilterClient; }
@@ -5975,7 +5989,7 @@ function renderProducts(){
           return `
         <tr style="border-bottom:1px solid var(--bdr);cursor:pointer" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
           <td style="padding:7px 10px" onclick="event.stopPropagation()">
-            <input type="checkbox" class="pd-chk" value="${p.id}" ${pdSelected.has(String(p.id))?'checked':''} onchange="pdToggleOne(this)">
+            <input type="checkbox" class="pd-chk" value="${_pdKey(p)}" ${pdSelected.has(_pdKey(p))?'checked':''} onchange="pdToggleOne(this)">
           </td>
           <td style="padding:5px 6px" onclick="event.stopPropagation()">${thumbCell}</td>
           <td style="padding:7px 10px;font-family:monospace;font-size:11px;color:var(--t3);white-space:nowrap" onclick="openProductModalByIdx(${_i})">${p.code||'—'}</td>
@@ -6048,10 +6062,12 @@ function renderProducts(){
 
 // ── 제품DB 삭제 함수들 ──
 function pdDeleteOne(id){
-  const p=(id && typeof id==='object') ? id : productDB.find(x=>x.id==id);
-  showConfirm(`"${p?.name||'제품'}"을 삭제합니다.`,()=>{
-    if(p) deleteProductFromNotion(p);
-    productDB=productDB.filter(x=>x.id!=id);
+  const p=productDB[_pdFindIdx(id)];
+  if(!p){ showToast('⚠ 삭제할 제품을 찾지 못했습니다 — 새로고침 후 다시 시도하세요','var(--red)',4000); return; }
+  showConfirm(`"${p.name||'제품'}"을 삭제합니다.`,()=>{
+    const i=_pdFindIdx(p);   // 확인창이 떠 있는 동안 동기화로 목록이 바뀌었을 수 있어 다시 찾는다
+    deleteProductFromNotion(p);
+    if(i>=0) productDB=productDB.filter((x,k)=>k!==i);
     save();renderTab();
     showToast('✓ 삭제됨','var(--grn)');
   },'제품 삭제','🗑');
@@ -6083,7 +6099,7 @@ function _pdCheckedIdSet(){ return _pdSelValidIds(); } // 화면에 안 보이�
 function _pdGetSelectedProducts(){
   const ids=_pdCheckedIdSet();
   if(!ids.size) return [];
-  return productDB.filter(p=>ids.has(String(p.id)));
+  return productDB.filter(p=>ids.has(_pdKey(p)));
 }
 // 현재 화면 필터/정렬과 동일한 목록을 재계산 (페이지네이션 무시, 전체)
 function _pdGetFilteredList(){
@@ -6414,7 +6430,7 @@ function _pdExportPdf(sel){
 function pdDeleteSelected(){
   const ids=_pdCheckedIdSet();
   if(!ids.size) return;
-  const targets=productDB.filter(p=>ids.has(String(p.id)));
+  const targets=productDB.filter(p=>ids.has(_pdKey(p)));
   // 안전장치: 실제 삭제 대상 수가 체크 수와 다르면 중단 (id 중복·불일치로 엉뚱한 대량 삭제 방지)
   if(targets.length!==ids.size){
     showToast(`⚠ 삭제 중단: 체크 ${ids.size}개인데 대상이 ${targets.length}개로 잡힙니다. 새로고침 후 다시 시도하세요`,'var(--red)',6000);
@@ -6422,7 +6438,7 @@ function pdDeleteSelected(){
   }
   showConfirm(`선택한 ${targets.length}개 품목을 삭제합니다.`,()=>{
     targets.forEach(p=>deleteProductFromNotion(p));
-    productDB=productDB.filter(p=>!ids.has(String(p.id)));
+    productDB=productDB.filter(p=>!ids.has(_pdKey(p)));
     pdSelected.clear();
     save();renderTab();
     showToast(`✓ ${targets.length}개 삭제됨`,'var(--grn)');
@@ -7543,12 +7559,17 @@ function saveProduct(){
   }
 }
 function deleteProduct(){
-  const id=gv('pd_id');if(!id)return;
-  const p=productDB.find(x=>x.id==id);
-  showConfirm(`"${p?.name||'제품'}"을 삭제합니다.`,()=>{
-    if(p) deleteProductFromNotion(p);
-    productDB=productDB.filter(x=>x.id!=id);
+  // 수정 창을 연 그 제품을 찾는다. (예전엔 id가 비어 있으면 아무 반응 없이 끝났다 — 노션에서 받은 제품 대부분이 해당)
+  let idx=_pdFindIdx(window._pdEditing);
+  if(idx<0) idx=_pdFindIdx(gv('pd_id'));
+  const p=productDB[idx];
+  if(!p){ showToast('⚠ 삭제할 제품을 찾지 못했습니다 — 창을 닫고 다시 열어 주세요','var(--red)',4000); return; }
+  showConfirm(`"${p.name||'제품'}"을 삭제합니다.`,()=>{
+    const i=_pdFindIdx(p);   // 확인창이 떠 있는 동안 동기화로 목록이 바뀌었을 수 있어 다시 찾는다
+    deleteProductFromNotion(p);
+    if(i>=0) productDB=productDB.filter((x,k)=>k!==i);
     save();closeM('mProduct');renderTab();
+    showToast('✓ 삭제됨','var(--grn)');
   },'제품 삭제','🗑');
 }
 
