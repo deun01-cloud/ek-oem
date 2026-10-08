@@ -11767,7 +11767,11 @@ async function _tryNotionFallback(type){
   res.rows.forEach(function(r){ try{ var m=mapper(r); if(m) mapped.push(m); }catch(e){} });
   if(!mapped.length){ console.warn(RT_LOG_PREFIX,'🛟 변환 결과 0건 → 폴백 취소:',type); return false; }
   var arr=_rtGetLocalArray(type);
-  if(arr){ arr.length=0; mapped.forEach(function(it){ arr.push(it); }); }
+  // 🛡 [2026-10-08] 아직 노션에 올라가지 않은 로컬 항목(_notionId 없음)은 교체 대상에서 빼고 보존한다.
+  //    (대량 등록·업로드 도중 폴백이 돌면 미전송 항목이 통째로 사라질 수 있었다.)
+  var _unsynced = arr ? arr.filter(function(it){ return it && !it._notionId; }) : [];
+  if(arr){ arr.length=0; mapped.forEach(function(it){ arr.push(it); }); _unsynced.forEach(function(it){ arr.push(it); }); }
+  if(_unsynced.length) console.log(RT_LOG_PREFIX, '🛟 미전송 로컬 항목 보존:', type, _unsynced.length, '건');
   if(type==='invoice'){ try{ if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds(); if(typeof markInvoiceDirty==='function') markInvoiceDirty(); }catch(_){} }
   if(typeof save==='function') save();
   if(typeof renderTab==='function'){ try{ renderTab(); updateBadges(); }catch(_){} }
@@ -12372,8 +12376,19 @@ function refreshTypeFromServer(type, force){
     if(!force && (now - (_lastTypeSnapshotReq[type]||0)) < 3000) return false; // 3초 쿨다운
     _lastTypeSnapshotReq[type] = now;
     if(typeof _rtConnected !== 'undefined' && _rtConnected && typeof _rtSend === 'function'){
-      _rtSend({ op:'subscribe', clientId:(typeof _rtClientId!=='undefined'?_rtClientId:null), types:[type] });
-      console.log('[sync] 🔄 서버 스냅샷 요청:', type, '— 서버 기준 동기화');
+      var _sub = { op:'subscribe', clientId:(typeof _rtClientId!=='undefined'?_rtClientId:null), types:[type] };
+      // 📉 [2026-10-08] 머지 타입(제품·재고이력 등)은 탭을 열 때마다 전체(제품 3MB+)를 다시 받지 않고
+      //    마지막 수신 이후 변경분만 받는다. 전체를 매번 받으면 대량 등록 중 응답이 6초를 넘겨
+      //    '서버 동기화 불가'가 잘못 뜨고 노션 폴백까지 발동했다.
+      //    SSOT 타입(통째 교체)은 기존대로 전체 스냅샷 유지.
+      try{
+        if(!RT_SSOT_TYPES.has(type) && _rtWatermarks[type]){
+          var _la = (typeof _rtGetLocalArray==='function') ? _rtGetLocalArray(type) : null;
+          if(Array.isArray(_la) && _la.length){ _sub.since = {}; _sub.since[type] = _rtWatermarks[type]; }
+        }
+      }catch(_){}
+      _rtSend(_sub);
+      console.log('[sync] 🔄 서버 스냅샷 요청:', type, _sub.since?'(증분)':'(전체)', '— 서버 기준 동기화');
       _armNotionFallbackTimer(type); // 무응답이면 노션 폴백
       return true;
     } else if(typeof realtimeConnect === 'function'){
@@ -12400,13 +12415,20 @@ var _notionFallbackTimers = {};
 //    0건으로 돌려주는 상태 — 폴백이 꺼져 있으면 다른 기기의 변경이 영영 안 보인다.
 //    폴백은 '노션을 끝까지 완전히 받았고 0건이 아닐 때'만 적용하므로 기기 간 숫자도 어긋나지 않는다.
 var ENABLE_NOTION_FALLBACK = true;
-function _armNotionFallbackTimer(type){
+function _armNotionFallbackTimer(type, _retry){
   if(!RT_NOTION_FALLBACK_MAP[type]) return;
   if(_notionFallbackTimers[type]) clearTimeout(_notionFallbackTimers[type]);
-  try{ if(typeof _rtSnapshotReceived!=='undefined' && _rtSnapshotReceived.delete) _rtSnapshotReceived.delete(type); }catch(_){}
+  if(!_retry){ try{ if(typeof _rtSnapshotReceived!=='undefined' && _rtSnapshotReceived.delete) _rtSnapshotReceived.delete(type); }catch(_){} }
   _notionFallbackTimers[type]=setTimeout(function(){
     var got=false;
     try{ got = (typeof _rtSnapshotReceived!=='undefined' && _rtSnapshotReceived.has) ? _rtSnapshotReceived.has(type) : false; }catch(_){}
+    // ⏳ [2026-10-08] 연결이 살아 있으면 '느린 것'이지 '죽은 것'이 아니다 — 최대 30초까지 조용히 더 기다린다.
+    //    (대량 등록 중엔 서버·브라우저가 바빠 6초를 넘길 수 있다. 이때 경고·노션 폴백을 띄우면 안 된다.)
+    if(!got && (_retry||0) < 4){
+      var alive=false;
+      try{ alive = (typeof _rtConnected!=='undefined' && _rtConnected && typeof _rtWs!=='undefined' && _rtWs && _rtWs.readyState===WebSocket.OPEN); }catch(_){}
+      if(alive){ _armNotionFallbackTimer(type, (_retry||0)+1); return; }
+    }
     if(!got){
       console.warn('[sync] ⏱ 서버 스냅샷 무응답('+type+') — 서버 동기화 불가');
       _showSyncDownWarning();
