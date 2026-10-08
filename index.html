@@ -11432,6 +11432,8 @@ function realtimePublish(type, item, opts){
   //    서버(SSOT)가 옛 버전을 유지 → 재접속 때 수정분이 조용히 사라졌다(거래명세서 품번 없는 행 등).
   //    예외: 노션 저장 완료 후의 '보강 재발행'은 {keepTs:true} — 그 사이 다른 기기 수정분을 덮지 않도록 원래 시각 유지.
   if(!(opts && opts.keepTs)){ try{ item._ts = Date.now(); }catch(_){} }
+  // 📝 이 기기가 방금 발행한 버전 기록 — 전체 스냅샷이 이 변경을 옛 버전으로 덮지 못하게 한다(_rtKeepNewerLocal).
+  try{ if(item._ts) _rtLocalPub[type+':'+key] = +item._ts; }catch(_){}
   // 서버에 저장될 형태: id 필드를 _notionId(또는 로컬 id)로 통일
   const payload = { ...item, id: key };
   const ts = Date.now();
@@ -11927,6 +11929,53 @@ function _dedupAllTypes(silent){
 window.dedupAll = function(){ return _dedupAllTypes(false); };
 
 window.dedupIo = function(){ var n=_dedupIoItems(); if(typeof save==='function') save(); if(typeof renderTab==='function') try{renderTab();}catch(e){} console.log('중복 제거:', n, '건'); return n; };
+// 🛡 [근본수정 2026-10-08] SSOT 전체 스냅샷 교체 시 '이 기기가 방금 저장한 변경'을 보존한다.
+//    저장 직후 renderTab()이 서버에 전체 스냅샷을 요청하는데, 이 요청이 저장분(upsert)보다 먼저 서버에 도착하면
+//    서버는 '저장 전' 상태를 돌려주고, 로컬이 그걸로 통째 교체돼 방금 저장한 내용(첨부파일·체크리스트 등)이
+//    화면에서 사라졌다(서버에는 저장돼 있어 새로고침하면 다시 보임).
+//    규칙: 이 기기가 발행했고(_rtLocalPub) 로컬 _ts가 서버보다 새것인 항목만 로컬 버전을 유지한다.
+//          그 외(다른 기기 변경·서버 삭제)는 기존대로 서버가 기준.
+var _rtLocalPub = {};   // 'type:key' → 이 기기가 발행한 _ts
+function _rtKeepNewerLocal(type, serverList, localArr){
+  try{
+    if(!Array.isArray(localArr) || !localArr.length) return serverList;
+    var now = Date.now(), mine = {}, n = 0;
+    localArr.forEach(function(x){
+      if(!x) return;
+      var k = _rtItemKey(x); if(!k) return;
+      var rec = _rtLocalPub[type+':'+k];
+      if(rec && +x._ts === rec){ mine[k] = x; n++; }
+    });
+    if(!n) return serverList;
+    var seen = {}, resend = [];
+    var out = serverList.map(function(it){
+      var k = it && (it._notionId || (it.id!=null ? String(it.id) : null));
+      var loc = k ? mine[k] : null;
+      if(!loc) return it;
+      seen[k] = true;
+      if((+loc._ts||0) > (+it._ts||0)){ resend.push(loc); return loc; }   // 서버가 아직 옛 버전 → 로컬 유지
+      delete _rtLocalPub[type+':'+k];                                      // 서버 반영 확인 → 기록 정리
+      return it;
+    });
+    // 서버에 아직 없는 '방금 만든' 항목(발행이 전송 중) — 30초 이내 것만 유지
+    Object.keys(mine).forEach(function(k){
+      if(seen[k]) return;
+      if(now - (+mine[k]._ts||0) < 30000) out.push(mine[k]);
+      else delete _rtLocalPub[type+':'+k];
+    });
+    if(resend.length){
+      console.log(RT_LOG_PREFIX, '🛡 '+type+' 스냅샷이 방금 저장한 '+resend.length+'건보다 옛 버전 — 로컬 유지');
+      // 발행이 유실됐을 경우를 대비해 3초 뒤에도 서버가 옛 버전이면 같은 시각으로 재발행(자가 복구)
+      setTimeout(function(){
+        resend.forEach(function(x){
+          try{ var k=_rtItemKey(x); if(k && _rtLocalPub[type+':'+k] === +x._ts) realtimePublish(type, x, {keepTs:true}); }catch(_){}
+        });
+      }, 3000);
+    }
+    return out;
+  }catch(e){ console.warn('[rt] 로컬 최신분 보존 실패:', e && e.message); return serverList; }
+}
+
 function _rtHandleSnapshot(msg){
   // ── 0) 서버가 실패를 알려온 경우 — 조용히 넘기지 않는다 ──
   //    예전엔 서버가 한도 초과로 빈 배열을 주면 '데이터 없음'으로 처리돼
@@ -11994,7 +12043,7 @@ function _rtHandleSnapshot(msg){
           serverList = serverList.filter(function(it){ return !(it && it._notionId && _isNotionIdDeleted(it._notionId)); });
         }
         var arr = _rtGetLocalArray('io');
-        if(arr){ arr.length = 0; serverList.forEach(function(it){ arr.push(it); }); }
+        if(arr){ serverList = _rtKeepNewerLocal('io', serverList, arr.slice()); arr.length = 0; serverList.forEach(function(it){ arr.push(it); }); }
         try{ if(typeof _dedupIoItems==='function') _dedupIoItems(); }catch(_e){}
         if(typeof save==='function') save();
         _rtSuppressRefresh = true;
@@ -12007,7 +12056,7 @@ function _rtHandleSnapshot(msg){
     try{
       var serverList2 = items.map(function(it){ return JSON.parse(JSON.stringify(it)); });
       var arr2 = _rtGetLocalArray(msg.type);
-      if(arr2){ arr2.length = 0; serverList2.forEach(function(it){ arr2.push(it); }); }
+      if(arr2){ serverList2 = _rtKeepNewerLocal(msg.type, serverList2, arr2.slice()); arr2.length = 0; serverList2.forEach(function(it){ arr2.push(it); }); }
       if(msg.type === 'invoice'){
         if(typeof normalizeInvoiceIds==='function') normalizeInvoiceIds();
         if(typeof markInvoiceDirty==='function') markInvoiceDirty();
@@ -33247,7 +33296,8 @@ function saveSmp(){
       uploadImagesToR2([...smpCadBuf]),
     ]).then(([up1,up2,up3])=>doSaveSmp(up1,up2,up3)).catch(e=>{ console.warn('샘플 파일 업로드 실패:',e); _releaseSmpLock(); showToast('⚠ 파일 업로드 실패 — 다시 시도해주세요','var(--red)',3000); });
   } else {
-    doSaveSmp(obj.imgs, obj.sourceDoc, obj.cadFiles);
+    // 🛡 저장 중 예외가 나면 잠금이 영구히 걸려 이후 저장 버튼이 무반응이 되던 문제 방지
+    doSaveSmp(obj.imgs, obj.sourceDoc, obj.cadFiles).catch(e=>{ console.error('샘플 저장 실패:',e); _releaseSmpLock(); showToast('⚠ 저장 실패 — 다시 시도해주세요','var(--red)',3000); });
   }
 }
 function saveAndInvoice(){
