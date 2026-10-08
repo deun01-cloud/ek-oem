@@ -5589,6 +5589,16 @@ function pdGroupByName(key){
 
 // 헤더 클릭 시 정렬 토글: 1번 클릭 → 정렬 시작, 2번 클릭 → 역순, 3번 클릭 → 원래 순서
 function pdToggleSort(key){
+  // 🛠 [FIX 2026-10-08] 최종수정일은 기본 순서가 이미 '최신순'이라, 예전엔 첫 클릭(최신순)이 화면상 아무 변화가 없어 버튼이 안 먹는 것처럼 보였다.
+  //   → 최신순 ↔ 오래된순 2단계 토글로 단순화: 누를 때마다 반드시 순서가 바뀐다.
+  if(key==='lastModified'){
+    const isLatest = (pdSortKey==='lastModified' && pdSortDir==='desc') || (!pdSortKey && pdFilterName==='전체');
+    pdSortKey='lastModified';
+    pdSortDir = isLatest ? 'asc' : 'desc';
+    pdPage=1;
+    renderProducts();
+    return;
+  }
   if(pdSortKey!==key){
     pdSortKey=key;
     // 재고/날짜는 처음 클릭 시 '많은 순/최신순'(내림차순)이 기본, 나머지는 가나다순
@@ -5648,6 +5658,7 @@ function setPdDateFilter(value){
   }
   pdPage = 1;
   // 드롭다운 닫기
+  pdDateDdOpen = false;
   const dd = document.getElementById('pdDateFilterDropdown');
   if(dd) dd.style.display = 'none';
   renderProducts();
@@ -5661,24 +5672,24 @@ function setPdDateRangeCustom(from, to){
   renderProducts();
 }
 
+// 🛠 [FIX 2026-10-08] 열림 상태를 DOM이 아닌 변수에 보관.
+//   예전엔 목록이 다시 그려지면(실시간 동기화·직접입력 날짜 한쪽 선택 등) 드롭다운이 바로 닫혀 버튼이 안 먹는 것처럼 보였다.
+var pdDateDdOpen = false;
 function togglePdDateFilterDropdown(e){
   e?.stopPropagation();
+  pdDateDdOpen = !pdDateDdOpen;
   const dd = document.getElementById('pdDateFilterDropdown');
-  if(!dd) return;
-  dd.style.display = dd.style.display === 'block' ? 'none' : 'block';
-  // 다른 곳 클릭 시 닫기
-  if(dd.style.display === 'block'){
-    setTimeout(()=>{
-      const closer = (ev)=>{
-        if(!dd.contains(ev.target) && !ev.target.closest('#pdDateFilterBtn')){
-          dd.style.display = 'none';
-          document.removeEventListener('click', closer);
-        }
-      };
-      document.addEventListener('click', closer);
-    }, 0);
-  }
+  if(dd) dd.style.display = pdDateDdOpen ? 'block' : 'none';
 }
+// 다른 곳 클릭 시 닫기 (리스너는 한 번만 등록)
+document.addEventListener('click', function(ev){
+  if(!pdDateDdOpen) return;
+  const t = ev.target;
+  if(t && t.closest && (t.closest('#pdDateFilterDropdown') || t.closest('#pdDateFilterBtn'))) return;
+  pdDateDdOpen = false;
+  const dd = document.getElementById('pdDateFilterDropdown');
+  if(dd) dd.style.display = 'none';
+});
 
 // 현재 적용된 날짜 필터의 표시 라벨
 function _getPdDateFilterLabel(){
@@ -5941,11 +5952,11 @@ function renderProducts(){
           <th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">출고단가</th>
           <th style="padding:8px 10px;text-align:right;font-weight:600;white-space:nowrap">입고원가</th>
           <th style="padding:8px 10px;text-align:center;font-weight:600;white-space:nowrap;position:relative">
-            <span style="cursor:pointer;user-select:none" onclick="pdToggleSort('lastModified')" title="클릭하여 정렬 (처음 클릭 = 최신순)">
-              최종수정일${pdSortKey==='lastModified'?(pdSortDir==='asc'?' ▲':' ▼'):" <span style='color:var(--t3);opacity:.4'>⇅</span>"}
+            <span style="cursor:pointer;user-select:none" onclick="pdToggleSort('lastModified')" title="클릭할 때마다 최신순 ↔ 오래된순 전환">
+              최종수정일${pdSortKey==='lastModified'?(pdSortDir==='asc'?' ▲':' ▼'):((!pdSortKey && pdFilterName==='전체')?' ▼':" <span style='color:var(--t3);opacity:.4'>⇅</span>")}
             </span>
             <button id="pdDateFilterBtn" onclick="togglePdDateFilterDropdown(event)" title="기간 필터" style="margin-left:4px;padding:1px 5px;font-size:9.5px;background:${pdDateFilter!=='all'?'var(--gold-bg)':'var(--s2)'};border:1px solid ${pdDateFilter!=='all'?'var(--gold-line)':'var(--bdr)'};border-radius:3px;cursor:pointer;color:${pdDateFilter!=='all'?'var(--gold-lt)':'var(--t3)'};font-family:inherit;font-weight:${pdDateFilter!=='all'?'700':'500'}">${pdDateFilter!=='all' ? '🔽 ' + _getPdDateFilterLabel() : '🔽'}</button>
-            <div id="pdDateFilterDropdown" style="display:none;position:absolute;top:100%;right:0;margin-top:4px;background:var(--s1);border:1px solid var(--bdr);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:100;min-width:200px;text-align:left;padding:4px">
+            <div id="pdDateFilterDropdown" style="display:${pdDateDdOpen?'block':'none'};position:absolute;top:100%;right:0;margin-top:4px;background:var(--s1);border:1px solid var(--bdr);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.15);z-index:100;min-width:200px;text-align:left;padding:4px">
               <div onclick="setPdDateFilter('all')" style="padding:7px 12px;font-size:11.5px;cursor:pointer;border-radius:4px;color:${pdDateFilter==='all'?'var(--gold-lt)':'var(--t1)'};background:${pdDateFilter==='all'?'var(--gold-bg)':'transparent'};font-weight:${pdDateFilter==='all'?'600':'500'}" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='${pdDateFilter==='all'?'var(--gold-bg)':'transparent'}'">전체</div>
               <div onclick="setPdDateFilter('today')" style="padding:7px 12px;font-size:11.5px;cursor:pointer;border-radius:4px;color:${pdDateFilter==='today'?'var(--gold-lt)':'var(--t1)'};background:${pdDateFilter==='today'?'var(--gold-bg)':'transparent'};font-weight:${pdDateFilter==='today'?'600':'500'}" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='${pdDateFilter==='today'?'var(--gold-bg)':'transparent'}'">오늘</div>
               <div onclick="setPdDateFilter('week')" style="padding:7px 12px;font-size:11.5px;cursor:pointer;border-radius:4px;color:${pdDateFilter==='week'?'var(--gold-lt)':'var(--t1)'};background:${pdDateFilter==='week'?'var(--gold-bg)':'transparent'};font-weight:${pdDateFilter==='week'?'600':'500'}" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='${pdDateFilter==='week'?'var(--gold-bg)':'transparent'}'">최근 7일</div>
@@ -6034,8 +6045,9 @@ function renderProducts(){
     </select>
   </div>` : `<div style="padding:48px;text-align:center;color:var(--t3);font-size:13px">
     <div style="font-size:36px;margin-bottom:12px">📦</div>
-    <div>등록된 제품이 없습니다</div>
-    <div style="font-size:11.5px;margin-top:6px">상단 <b>+ 제품 등록</b> 버튼 또는 <b>이카운트 엑셀 업로드</b>로 추가하세요</div>
+    ${pdDateFilter!=='all' ? `<div>기간 필터(${_getPdDateFilterLabel()})에 해당하는 제품이 없습니다</div>
+    <button onclick="setPdDateFilter('all')" style="margin-top:10px;padding:6px 14px;font-size:11.5px;background:var(--gold-bg);color:var(--gold-lt);border:1px solid var(--gold-line);border-radius:6px;font-weight:700;cursor:pointer;font-family:inherit">기간 필터 해제</button>` : `<div>등록된 제품이 없습니다</div>
+    <div style="font-size:11.5px;margin-top:6px">상단 <b>+ 제품 등록</b> 버튼 또는 <b>이카운트 엑셀 업로드</b>로 추가하세요</div>`}
   </div>`;
 
   // 일괄 삭제 바
