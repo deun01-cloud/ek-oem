@@ -8249,19 +8249,29 @@ function openConsolidationFromSelection(){
     showToast('⚠ 선택된 명세서를 찾을 수 없습니다','var(--red)');
     return;
   }
-  // 검증 1: 합본 자체가 포함됐는지 — 합본 만들기 의미 없음
+  // 📑 합본 합치기: 같은 고객사의 합본끼리(또는 합본 + 일반 명세서)를 하나의 합본으로 재구성.
+  //    선택된 합본은 '자식 명세서'로 펼쳐서 후보에 넣고, 실제 발행 확정 시점에만 기존 합본을 해제한다.
+  //    (모달에서 취소하면 기존 합본은 그대로)
   const consoInSelection = selectedInvs.filter(v => v._isConsolidated);
-  if(consoInSelection.length){
-    showToast('⚠ 합본 청구서는 다시 합칠 수 없습니다 — 합본만 선택했으면 [선택 합본 해제] 버튼을 사용하세요','var(--org)',4500);
+  const ordinarySel = selectedInvs.filter(v => !v._isConsolidated);
+  if(consoInSelection.length === 1 && !ordinarySel.length){
+    showToast('⚠ 합본 1건만 선택됨 — 합칠 합본이나 명세서를 함께 선택하세요 (해제는 [선택 합본 해제])','var(--org)',4500);
     return;
   }
-  // 검증 2: 이미 다른 합본에 묶여있는 명세서
-  const alreadyInConso = selectedInvs.filter(v => v._consolidatedInvoiceId);
+  // 입금 기록이 있는 합본은 해제 시 입금 기록이 사라지므로 합치기 불가
+  const paidConso = consoInSelection.filter(c => (+c.totalPaid||0) > 0 || c._invStage==='done');
+  if(paidConso.length){
+    showToast('⚠ 입금 기록이 있는 합본은 합칠 수 없습니다 ('+paidConso.map(c=>c.consolidationMonth||'').join(', ')+')','var(--org)',4500);
+    return;
+  }
+  // 검증: 일반 명세서가 (선택되지 않은) 다른 합본에 이미 묶여있는지
+  const _selConsIdSet = new Set(consoInSelection.map(c => String(c.id)));
+  const alreadyInConso = ordinarySel.filter(v => v._consolidatedInvoiceId && !_selConsIdSet.has(String(v._consolidatedInvoiceId)));
   if(alreadyInConso.length){
-    showToast('⚠ 이미 다른 합본에 묶여있는 명세서가 '+alreadyInConso.length+'건 — 합본 해제 후 다시 선택하세요','var(--org)',3500);
+    showToast('⚠ 이미 다른 합본에 묶여있는 명세서가 '+alreadyInConso.length+'건 — 그 합본을 함께 선택하거나 해제 후 다시 선택하세요','var(--org)',4000);
     return;
   }
-  // 검증 2: 고객사가 모두 동일해야 함
+  // 검증: 고객사가 모두 동일해야 함 (합본 포함)
   const vendors = [...new Set(selectedInvs.map(v => v.vendor).filter(Boolean))];
   if(vendors.length > 1){
     showToast('⚠ 다른 고객사의 명세서는 같이 묶을 수 없습니다 (현재 '+vendors.length+'개사 선택됨: '+vendors.join(', ')+')','var(--red)',4500);
@@ -8271,11 +8281,32 @@ function openConsolidationFromSelection(){
     showToast('⚠ 고객사 정보가 없는 명세서 — 정리 후 다시 시도해주세요','var(--red)',3500);
     return;
   }
-  // 청구월 — 가장 최근 발행월을 기본값으로
-  const months = [...new Set(selectedInvs.map(v => (v.issuedAt||'').slice(0,7)).filter(Boolean))].sort().reverse();
+  // 선택된 합본을 자식 명세서로 펼침
+  const childInvs = [];
+  consoInSelection.forEach(c => {
+    const ids = new Set((c.includedInvoiceIds||[]).map(String));
+    invoiceHistory.forEach(x => {
+      if(!x || x._isConsolidated) return;
+      if(ids.has(String(x.id)) || String(x._consolidatedInvoiceId)===String(c.id)) childInvs.push(x);
+    });
+  });
+  const expanded = [];
+  const _seen = new Set();
+  ordinarySel.concat(childInvs).forEach(v => { const k=String(v.id); if(!_seen.has(k)){ _seen.add(k); expanded.push(v); } });
+  if(consoInSelection.length && expanded.length < 2){
+    showToast('⚠ 합칠 명세서를 찾을 수 없습니다 (합본의 세부 명세서 누락)','var(--red)',4000);
+    return;
+  }
+  // 청구월 — 합본의 청구월 + 일반 명세서 발행월 중 가장 최근
+  const months = [...new Set(
+    consoInSelection.map(c => c.consolidationMonth||'')
+      .concat(ordinarySel.map(v => (v.issuedAt||'').slice(0,7)))
+      .filter(Boolean)
+  )].sort().reverse();
   const targetMonth = months[0] || new Date().toISOString().slice(0,7);
   // 📌 직접 선택 모드 활성화 — 발행월 필터 무시하고 고른 명세서를 후보로 사용
-  _consExplicitIds = new Set(selectedInvs.map(v => String(v.id)));
+  _consExplicitIds = new Set(expanded.map(v => String(v.id)));
+  _consMergeFromIds = consoInSelection.length ? _selConsIdSet : null;
   // 모달 열기 + 선택된 명세서 ID들로 초기화
   openConsolidationModal({ keepExplicit: true });
   // openConsolidationModal이 vendor/month/selectedIds를 자체 초기화하므로
@@ -8285,8 +8316,8 @@ function openConsolidationFromSelection(){
     const monthInp = document.getElementById('cons_month');
     if(vendorSel) vendorSel.value = vendors[0];
     if(monthInp) monthInp.value = targetMonth;
-    // 선택 집합 — 사용자가 고른 것만
-    _consSelectedIds = new Set(selectedInvs.map(v => String(v.id)));
+    // 선택 집합 — 사용자가 고른 것만 (합본은 자식 명세서로 펼친 상태)
+    _consSelectedIds = new Set(expanded.map(v => String(v.id)));
     _refreshConsolidationPreview();
   }, 50);
 }
@@ -9060,7 +9091,7 @@ function renderInvoiceHistory(){
   if(subTab==='draft'){
     h+='<div style="margin-bottom:10px;padding:8px 14px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;font-size:11px;color:var(--t2);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">📦</span><span>출고완료된 명세서들을 — 월말 합본 청구 대상입니다. 체크박스로 선택해서 <b style="color:#7A4DB5">합본 청구서 작성</b> 또는 행의 <b style="color:var(--blu)">청구하기</b>를 누르면 <b style="color:var(--blu)">청구</b> 탭으로 이동합니다. (<b style="color:#7A4DB5">원자재 선금</b>도 여기서 청구 가능)</span></div>';
   } else if(subTab==='billing'){
-    h+='<div style="margin-bottom:10px;padding:8px 14px;background:rgba(26,109,181,.06);border:1px solid rgba(26,109,181,.2);border-radius:6px;font-size:11px;color:var(--blu);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">🧾</span><span>출고완료 명세서들 — <b>월말 합본 청구 대상</b>입니다. 체크박스로 선택해서 <b>📑 합본 청구서 작성</b> 또는 <b style="color:var(--red)">🗑 선택 합본 해제</b> 가능. (체크 없이 합본 작성 누르면 고객사+월 자동 선택)</span></div>';
+    h+='<div style="margin-bottom:10px;padding:8px 14px;background:rgba(26,109,181,.06);border:1px solid rgba(26,109,181,.2);border-radius:6px;font-size:11px;color:var(--blu);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">🧾</span><span>출고완료 명세서들 — <b>월말 합본 청구 대상</b>입니다. 체크박스로 선택해서 <b>📑 합본 청구서 작성</b> 또는 <b style="color:var(--red)">🗑 선택 합본 해제</b> 가능. 같은 고객사 합본끼리 체크하면 <b>📑 합본 합치기</b>. (체크 없이 합본 작성 누르면 고객사+월 자동 선택)</span></div>';
   } else if(subTab==='done'){
     h+='<div style="margin-bottom:10px;padding:8px 14px;background:rgba(46,139,44,.06);border:1px solid rgba(46,139,44,.2);border-radius:6px;font-size:11px;color:var(--grn);line-height:1.5;display:flex;align-items:center;gap:8px"><span style="font-size:14px">✓</span><span>입금까지 끝난 보관용 명세서들입니다 (<b style="color:#7A4DB5">합본 포함</b> — ▶ 클릭해서 펼침). <b>월별 탭</b>은 <b>결산월</b> 기준입니다. 다른 월 결산에 넣으려면 PC는 행을 끌어 월 탭에 놓거나, 행의 <b>결산월 ▼</b> 드롭다운으로 옮기세요.</span></div>';
     // 📅 완료 탭 전용 — 결산월 하위 탭
@@ -9146,9 +9177,11 @@ function renderInvoiceHistory(){
   }
   h+='<button onclick="openSalesExcelExport()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid var(--grn);background:var(--grn-bg);color:var(--grn);font-weight:600">📊 매출내역 엑셀 다운로드</button>';
   // 📌 합본 청구서 작성 — 선택된 게 일반 명세서만일 때 강조, 합본이 섞이면 비활성
-  if(_selConsCount > 0 && _selOrdinaryCount === 0){
-    // 합본만 선택됨 → 합본 만들기 버튼 회색 처리 (의미 없음)
-    h+='<button disabled style="padding:5px 12px;border-radius:14px;font-size:11px;font-family:inherit;border:1px solid var(--bdr);background:var(--s2);color:var(--t3);font-weight:500;opacity:.6;cursor:not-allowed" title="합본만 선택된 상태 — 합본 해제 버튼을 사용하세요">📑 합본 청구서 작성</button>';
+  if(_selConsCount === 1 && _selOrdinaryCount === 0){
+    // 합본 1건만 선택됨 → 합칠 대상이 없음
+    h+='<button disabled style="padding:5px 12px;border-radius:14px;font-size:11px;font-family:inherit;border:1px solid var(--bdr);background:var(--s2);color:var(--t3);font-weight:500;opacity:.6;cursor:not-allowed" title="합본 1건만 선택된 상태 — 같은 고객사의 합본이나 명세서를 함께 선택하면 합칠 수 있습니다">📑 합본 청구서 작성</button>';
+  } else if(_selConsCount > 0){
+    h+='<button onclick="openConsolidationFromSelection()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid #7A4DB5;background:#7A4DB5;color:#fff;font-weight:700" title="같은 고객사의 선택한 합본(과 명세서)을 하나의 합본으로 합칩니다 — 입금 기록이 있는 합본은 제외">📑 합본 합치기 ('+_selIds.length+'건 선택)</button>';
   } else {
     h+='<button onclick="openConsolidationFromSelection()" style="padding:5px 12px;border-radius:14px;font-size:11px;cursor:pointer;font-family:inherit;border:1px solid #7A4DB5;background:rgba(122,77,181,.10);color:#7A4DB5;font-weight:600" title="체크박스로 선택한 명세서가 있으면 그 명세서들을, 없으면 고객사+월 선택해서 자동으로 묶습니다">📑 합본 청구서 작성'+(_selOrdinaryCount>0?' ('+_selOrdinaryCount+'건 선택)':'')+'</button>';
   }
@@ -41199,13 +41232,15 @@ window.migrateDuplicateCodes = async function(opts){
 // 설정돼 있으면 발행월 필터를 무시하고 이 ID들을 후보로 사용한다.
 let _consExplicitIds = null;
 let _consOriginTab = 'draft';  // 합본을 만든 탭(draft/billing) — 합본의 시작 단계 결정
+let _consMergeFromIds = null;   // 📑 합본 합치기 — 발행 확정 시 해제 후 흡수할 기존 합본 id(Set)
 
 function getConsolidationCandidates(vendor, month){
   // 직접 선택 모드 — 발행월 무관, 고객사 동일·미합본 조건만 검증
   if(_consExplicitIds && _consExplicitIds.size){
     return invoiceHistory.filter(v => {
       if(v._isConsolidated) return false;
-      if(v._consolidatedInvoiceId) return false;
+      // 합치기 대상 합본에 묶인 명세서는 후보로 허용
+      if(v._consolidatedInvoiceId && !(_consMergeFromIds && _consMergeFromIds.has(String(v._consolidatedInvoiceId)))) return false;
       if((v.vendor||'') !== vendor) return false;
       return _consExplicitIds.has(String(v.id));
     });
@@ -41349,6 +41384,7 @@ function createConsolidatedInvoice(vendor, month, options){
   // 묶인 명세서들에 합본ID 표시 (역참조 — 중복 묶음 방지)
   targets.forEach(v => {
     v._consolidatedInvoiceId = String(newId);
+    if(typeof realtimePublish === 'function') realtimePublish('invoice', v);
   });
   // invoiceHistory 맨 앞에 추가
   invoiceHistory.unshift(invRec);
@@ -41608,7 +41644,7 @@ function openConsolidationModal(opts){
   //    (출고완료 탭에서 만들면 기존처럼 draft로 시작)
   _consOriginTab = (invFilter && invFilter.subTab) || 'draft';
   // 일반(고객사+월 자동) 진입이면 직접 선택 모드 해제
-  if(!opts.keepExplicit) _consExplicitIds = null;
+  if(!opts.keepExplicit){ _consExplicitIds = null; _consMergeFromIds = null; }
   // 합본 후보가 있는 고객사들만 옵션으로
   const eligibleVendors = [...new Set(
     invoiceHistory
@@ -41653,6 +41689,7 @@ function openConsolidationModal(opts){
 function _resetConsSelection(){
   // 사용자가 고객사를 바꾸면 자동(전체 후보) 모드로 전환
   _consExplicitIds = null;
+  _consMergeFromIds = null;
   // 📌 고객사의 모든 명세서를 보여주므로, 기본은 '선택 없음' → 사용자가 원하는 것만 체크.
   //    (전체 선택 버튼으로 한 번에 고를 수도 있음)
   _consSelectedIds = new Set();
@@ -41795,11 +41832,29 @@ function confirmConsolidation(){
   if(skipped > 0){
     msg += `\n\n※ 선택하지 않은 ${skipped}건은 합본에 들어가지 않습니다 (개별 상태로 남음)`;
   }
+  const _mergeCons = _consMergeFromIds ? invoiceHistory.filter(v => v._isConsolidated && _consMergeFromIds.has(String(v.id))) : [];
+  if(_mergeCons.length){
+    msg += `\n\n📑 기존 합본 ${_mergeCons.length}건(${_mergeCons.map(c=>c.consolidationMonth+' '+(c.includedInvoiceIds||[]).length+'건').join(', ')})을 해제하고 하나로 합칩니다.`;
+  }
   if(!confirm(msg)) return;
   // 가드 활성화 + 버튼 비활성화 (확인 다이얼로그 후 시점)
   _consolidationInProgress = true;
   if(btn){ btn.disabled = true; btn.style.opacity = '.5'; btn.textContent = '발행 중...'; }
   try {
+    // 📑 합본 합치기 — 기존 합본 해제 (자식 명세서의 단계/출고 상태는 보존해 복원)
+    if(_mergeCons.length){
+      const _snap = {};
+      _mergeCons.forEach(c => {
+        invoiceHistory.forEach(x => {
+          if(x && !x._isConsolidated && String(x._consolidatedInvoiceId)===String(c.id)) _snap[String(x.id)] = { st: x._invStage, sh: x._shipped };
+        });
+        unwindConsolidatedInvoice(c.id);
+      });
+      Object.keys(_snap).forEach(id => {
+        const x = invoiceHistory.find(v => String(v.id)===id);
+        if(x){ x._invStage = _snap[id].st; x._shipped = _snap[id].sh; }
+      });
+    }
     // createConsolidatedInvoice에 invoiceIds 옵션 전달 (선택된 것만 묶음)
     const cons = createConsolidatedInvoice(vendor, month, { memo, invoiceIds: selectedIds });
     if(!cons){
@@ -41808,6 +41863,8 @@ function confirmConsolidation(){
     }
     _consSelectedIds = null; // 다음 모달 열림 시 재초기화
     _consExplicitIds = null; // 직접 선택 모드 해제
+    _consMergeFromIds = null;
+    if(typeof _invSelectedForCons!=='undefined' && _invSelectedForCons.clear) _invSelectedForCons.clear();
     closeM('mConsolidate');
     showToast(`✓ ${month} ${vendor} 합본 청구서 발행됨 (${cons.includedInvoiceIds.length}건)`,'#7A4DB5', 3500);
     // 거래명세서 탭이면 새로고침
