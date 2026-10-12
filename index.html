@@ -24460,6 +24460,54 @@ function moveSmpFile(fromBuf, fromIdx, toBuf){
   renderSmpPrev();
   renderSmpCadPrev();
 }
+// ── 각인·캐드 파일 미리보기/다운로드 (data URL · R2 URL 공통) ──
+//    미리보기: 이미지 → 확대 뷰어 / PDF·AI(PDF 호환)·SVG → 새 탭 / 그 외(DXF·DWG·STL 등) → 다운로드
+async function _cadFileBlob(f){
+  const url = f && (f.url||'');
+  if(!url) throw new Error('파일 URL 없음');
+  const res = await fetch(url, url.startsWith('data:') ? undefined : {mode:'cors'});
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  return await res.blob();
+}
+async function openCadFile(f, mode){
+  if(!f || !f.url){ showToast('⚠ 파일 데이터가 없습니다','var(--org)',2000); return; }
+  const name = f.name || 'file';
+  const ext = (name.split('.').pop()||'').toLowerCase();
+  const isImg = (f.type||'').startsWith('image/') || ['jpg','jpeg','png','gif','webp','bmp'].includes(ext);
+  if(mode !== 'dl' && isImg){ openPrevList([{url:f.url,name}],0,false); return; }
+  let win = null;
+  if(mode !== 'dl') win = window.open('', '_blank'); // 팝업 차단 방지: 클릭 시점에 탭 확보
+  try{
+    let blob = await _cadFileBlob(f);
+    if(mode !== 'dl'){
+      let viewType = '';
+      if(ext==='pdf' || (f.type||'').includes('pdf')) viewType = 'application/pdf';
+      else if(ext==='svg') viewType = 'image/svg+xml';
+      else if(ext==='ai'){
+        // 일러스트 파일은 대부분 PDF 호환으로 저장됨 → 헤더가 %PDF 면 PDF로 미리보기
+        const head = await blob.slice(0,1024).text();
+        if(head.indexOf('%PDF') >= 0) viewType = 'application/pdf';
+      }
+      if(viewType){
+        const u = URL.createObjectURL(new Blob([blob], {type:viewType}));
+        if(win) win.location.href = u; else window.open(u,'_blank');
+        setTimeout(()=>URL.revokeObjectURL(u), 120000);
+        return;
+      }
+      if(win) win.close();
+      showToast(`${ext.toUpperCase()} 파일은 브라우저 미리보기가 안 돼 다운로드합니다`,'var(--blu)',2500);
+    }
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = u; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(u), 5000);
+    showToast('✓ 다운로드 시작','var(--grn)',1500);
+  }catch(e){
+    console.warn('[CAD] 열기 실패:', e);
+    if(win) win.location.href = f.url; else window.open(f.url,'_blank');
+    showToast('새 탭에서 열었습니다 — 저장하려면 우클릭/다운로드','var(--org)',3000);
+  }
+}
 function renderSmpCadPrev(){
   const el=document.getElementById('smpCadPrev'); if(!el) return;
   const wrap=document.getElementById('smpCadPrevWrap');
@@ -24472,12 +24520,15 @@ function renderSmpCadPrev(){
     const thumb = isImg
       ? `<img src="${f.url}" style="width:26px;height:26px;object-fit:cover;border-radius:3px;cursor:pointer" onclick="openPrevList([{url:'${f.url}',name:'${safeName}'}],0,false)">`
       : `<span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;font-size:8.5px;font-weight:700;color:var(--gold-lt)">${ext}</span>`;
-    return `<div style="display:inline-flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:5px 9px;font-size:11.5px;max-width:240px">
+    const _cb='background:none;border:1px solid var(--bdr);border-radius:10px;padding:2px 7px;font-size:10px;cursor:pointer;color:var(--t2);font-family:inherit;white-space:nowrap';
+    return `<div style="display:inline-flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:5px 9px;font-size:11.5px;max-width:340px">
       ${thumb}
-      <div style="min-width:0;flex:1">
+      <div style="min-width:0;flex:1;cursor:pointer" onclick="openCadFile(smpCadBuf[${i}],'view')" title="클릭하여 미리보기">
         <div style="font-weight:500;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.name}</div>
         ${sz?`<div style="font-size:9.5px;color:var(--t3)">${sz}</div>`:''}
       </div>
+      <button type="button" onclick="event.stopPropagation();openCadFile(smpCadBuf[${i}],'view')" style="${_cb}" title="미리보기">👁 보기</button>
+      <button type="button" onclick="event.stopPropagation();openCadFile(smpCadBuf[${i}],'dl')" style="${_cb}" title="다운로드">⬇ 받기</button>
       <button onclick="smpCadBuf.splice(${i},1);renderSmpCadPrev()" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:15px;padding:0 4px;line-height:1;font-family:inherit">×</button>
     </div>`;
   }).join('');
@@ -32435,7 +32486,7 @@ function renderSmMultiRows(){
         <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;font-size:10.5px">
           ${(r.imgs||[]).map((f,j)=>`<span style="background:rgba(46,139,44,.08);border:1px solid rgba(46,139,44,.25);color:var(--grn);padding:3px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:5px">🖼 ${(f.name||'image').slice(0,18)} <button onclick="event.stopPropagation();smRowRemoveFile(${i},'imgs',${j})" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0;font-size:13px;line-height:1">×</button></span>`).join('')}
           ${(r.sourceDoc||[]).map((f,j)=>`<span style="background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);padding:3px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:5px">📄 ${(f.name||'doc').slice(0,18)} <button onclick="event.stopPropagation();smRowRemoveFile(${i},'sourceDoc',${j})" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0;font-size:13px;line-height:1">×</button></span>`).join('')}
-          ${(r.cadFiles||[]).map((f,j)=>`<span style="background:rgba(60,108,170,.08);border:1px solid rgba(60,108,170,.3);color:var(--blu);padding:3px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:5px">📐 ${(f.name||'cad').slice(0,18)} <button onclick="event.stopPropagation();smRowRemoveFile(${i},'cadFiles',${j})" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0;font-size:13px;line-height:1">×</button></span>`).join('')}
+          ${(r.cadFiles||[]).map((f,j)=>`<span onclick="event.stopPropagation();openCadFile(_smRowsBuf[${i}].cadFiles[${j}],'view')" title="클릭하여 미리보기 · 다운로드" style="cursor:pointer;background:rgba(60,108,170,.08);border:1px solid rgba(60,108,170,.3);color:var(--blu);padding:3px 8px;border-radius:4px;display:inline-flex;align-items:center;gap:5px">📐 ${(f.name||'cad').slice(0,18)} <button onclick="event.stopPropagation();smRowRemoveFile(${i},'cadFiles',${j})" style="background:none;border:none;color:var(--red);cursor:pointer;padding:0;font-size:13px;line-height:1">×</button></span>`).join('')}
         </div>` : ''}
       </div>
     </div>`;
