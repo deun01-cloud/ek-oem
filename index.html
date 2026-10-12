@@ -2267,7 +2267,7 @@ window.addEventListener('message', function(ev){
       <input class="fi" id="s_mat" list="smpMatList" placeholder="선택 또는 직접입력">
       <datalist id="smpMatList">
         <option value="브라스 (BRASS)"><option value="브라스 + 실버 플레이팅"><option value="925 실버">
-        <option value="써지컬스틸"><option value="14K 골드"><option value="18K 골드">
+        <option value="써지컬스틸"><option value="10K 골드"><option value="14K 골드"><option value="18K 골드">
         <option value="티타늄"><option value="기타">
       </datalist>
     </div>
@@ -2949,7 +2949,7 @@ window.addEventListener('message', function(ev){
   <div class="fr3">
     <div class="fg"><label>소재</label>
       <select class="fs" id="pd_mat" onchange="updatePdCostAnalysis()">
-        <option>브라스 (BRASS)</option><option>925 실버</option><option>14K 골드</option>
+        <option>브라스 (BRASS)</option><option>925 실버</option><option>14K 골드</option><option>10K 골드</option>
         <option>스테인리스</option><option>아연합금</option><option>기타</option>
       </select>
     </div>
@@ -2976,13 +2976,13 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>안전재고 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(0=알림 끔)</span></label><input class="fi" type="number" id="pd_safetyStock" placeholder="0" min="0"></div>
   </div>
   <div class="fr2">
-    <div class="fg"><label>금속 종류</label><input class="fi" id="pd_metal" placeholder="브라스"></div>
+    <div class="fg"><label>금속 종류</label><input class="fi" id="pd_metal" list="pdMetalList" placeholder="브라스" oninput="syncPdMatFromMetal()" title="10K·14K 골드를 고르면 소재도 같이 맞춰져 원가 분석에 함량이 반영됩니다"><datalist id="pdMetalList"><option value="브라스"><option value="실버 925"><option value="써지컬 스틸"><option value="10K 골드"><option value="14K 골드"></datalist></div>
     <div class="fg"><label>도금 컬러 / 스펙</label><input class="fi" id="pd_platingSpec" placeholder="로듐"></div>
   </div>
   <div class="fr3" style="grid-template-columns:repeat(4,1fr);align-items:end">
     <div class="fg"><label>중량 (g) <span style="font-size:9.5px;color:var(--gold-lt);font-weight:400">★ JPRO 견적 핵심</span></label><input class="fi" type="number" id="pd_weight" placeholder="실측 중량" step="0.1" oninput="updatePdCostAnalysis()"></div>
     <div class="fg"><label>입고단가 (¥) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(원가 계산용)</span></label><input class="fi" type="number" id="pd_cnyPrice" placeholder="0" min="0" step="0.01" oninput="updatePdCostAnalysis();updatePdJproHint()"></div>
-    <div class="fg"><label>원자재 시세 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(₩/g · 금은 순금 기준, 해리 10% 자동)</span></label><input class="fi" type="number" id="pd_matRate" placeholder="0" min="0" step="1" oninput="updatePdCostAnalysis()"></div>
+    <div class="fg"><label>원자재 시세 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(₩/g · 금은 순금 기준, 해리 10%·10K 15% 자동)</span></label><input class="fi" type="number" id="pd_matRate" placeholder="0" min="0" step="1" oninput="updatePdCostAnalysis()"></div>
     <div class="fg"><label>마진 (%)</label><input class="fi" type="number" id="pd_marginPct" placeholder="30" min="0" max="99" step="1" title="OEM 품번: 권장 출고단가 = 생산원가 ÷ (1 − 마진/100)&#10;자사 브랜드(VV·VC·RH) 품번: 생산원가 × 1.1 로 계산되어 이 값은 쓰이지 않습니다" oninput="updatePdCostAnalysis()"></div>
   </div>
   <!-- 원가 분석 자동 표시 영역 -->
@@ -3281,7 +3281,7 @@ window.addEventListener('message', function(ev){
       <div class="form-sec">소재 / 도금 / 사이즈</div>
       <div class="fg"><label>소재</label>
         <input class="fi" id="sr_mat" list="srMatList" placeholder="예: 신주 / 925실버 / 써지컬" oninput="renderSmpReqPreview()">
-        <datalist id="srMatList"><option value="신주"><option value="925실버"><option value="브라스 (BRASS)"><option value="써지컬"><option value="14K 골드"><option value="18K 골드"><option value="아연합금"><option value="스테인리스"><option value="기타"></datalist>
+        <datalist id="srMatList"><option value="신주"><option value="925실버"><option value="브라스 (BRASS)"><option value="써지컬"><option value="10K 골드"><option value="14K 골드"><option value="18K 골드"><option value="아연합금"><option value="스테인리스"><option value="기타"></datalist>
       </div>
       <div class="fr2">
         <div class="fg"><label>도금</label>
@@ -5775,7 +5775,7 @@ function renderProducts(){
   if(pdSubTab==='catalog'){ c.innerHTML = subTabBar + _renderCatalog(); return; }
   const _origInner = (html)=>{ c.innerHTML = subTabBar + html; };
   const types=['전체','EARRING','RING','NECKLACE','BRACELET','BROOCH','기타'];
-  const mats=['전체','브라스 (BRASS)','925 실버','14K 골드','스테인리스','아연합금','기타'];
+  const mats=['전체','브라스 (BRASS)','925 실버','14K 골드','10K 골드','스테인리스','아연합금','기타'];
   const TYPE_ICO={EARRING:'💎',RING:'💍',NECKLACE:'📿',BRACELET:'🔗',BROOCH:'🌸',기타:'📦'};
 
   let list=productDB;
@@ -6922,7 +6922,7 @@ function handlePdImgs(e){
 //   ※ 두 가지 '단가' 필드를 구분합니다:
 //     - 입고단가 (원): 이카운트 ERP에서 가져온 원화 단가 — 표시/보존만, 원가 계산에 사용 안 함
 //     - 위안화 입고단가 (¥): 중국 입고가 — 원가 계산에 사용 (× 240 환산)
-//   생산원가 = 위안화 입고단가 × 240 + 중량(g) × 시세 × 함량(14K 0.585) × 금 해리 1.1 (matCostFactor)
+//   생산원가 = 위안화 입고단가 × 240 + 중량(g) × 시세 × 함량(14K 0.585 · 10K 0.417) × 금 해리 1.1 (10K 1.15) (matCostFactor)
 //   판매단가 = 생산원가 ÷ (1 - 마진/100)
 // 사용자 흐름:
 //   1. 위안화 입고단가/중량/시세/마진 입력
@@ -6963,6 +6963,17 @@ function updatePdJproHint(){
   const v=(x,f)=>x?f(x):'<span style="color:var(--red)">없음</span>';
   el.innerHTML='💎 JPRO 자동 연동 — 공임 <b>'+v(d.laborCost,x=>'₩'+x.toLocaleString())+'</b> (입고단가 기준) · 최장 길이 <b>'+v(d.maxLenMm,x=>x+'mm')+'</b> · 최소 두께 <b>'+v(d.thickMm,x=>x+'mm')+'</b> (규격/사이즈 기준) · 제작 노트 = 메모';
 }
+// 금속 종류에 금 K(10K·14K)를 넣으면 소재 선택을 같은 K로 맞춘다 — 원가 계산 기준은 '소재' 한 곳(matCostFactor).
+//   '14K 도금'처럼 도금 표기는 금 소재가 아니므로 건드리지 않는다. 소재 목록에 없는 K는 그대로 둔다.
+function syncPdMatFromMetal(){
+  const metalEl=document.getElementById('pd_metal'), matEl=document.getElementById('pd_mat');
+  if(!metalEl||!matEl||!isGoldMat(metalEl.value)) return;
+  const k=String(metalEl.value).toUpperCase().match(/(\d{1,2})\s*K/);
+  const want=k?(+k[1])+'K 골드':'';
+  if(want && matEl.value!==want && Array.from(matEl.options).some(o=>o.value===want)){
+    matEl.value=want; updatePdCostAnalysis();
+  }
+}
 function updatePdCostAnalysis(){
   const cnyPriceEl = document.getElementById('pd_cnyPrice');
   const weightEl = document.getElementById('pd_weight');
@@ -6985,7 +6996,7 @@ function updatePdCostAnalysis(){
   const prodCost = Math.round(cny * QUOTE_CN_RATE + wt * mr * _mf);
   const _cfEl = document.getElementById('pd_costFormula');
   if(_cfEl) _cfEl.textContent = isGoldMat(_pdMatVal)
-    ? '위안가×240 + 중량×순금시세×' + _purity + '×1.1(해리)' + (mr ? ' (환산 ₩' + Math.round(mr*_mf).toLocaleString() + '/g)' : '')
+    ? '위안가×240 + 중량×순금시세×' + _purity + '×' + (1 + goldLossRate(_pdMatVal)).toFixed(2).replace(/0$/,'') + '(해리)' + (mr ? ' (환산 ₩' + Math.round(mr*_mf).toLocaleString() + '/g)' : '')
     : '위안가×240 + 중량×시세';
 
   // 입력값이 모두 0이면 분석 영역 숨김
@@ -7740,6 +7751,7 @@ function guessMat(metal){
   if(m.includes('brass')||m.includes('브라스')) return '브라스 (BRASS)';
   if(m.includes('실버')&&(m.includes('925')||m.includes('sterling'))) return '925 실버';
   if(m.includes('실버')) return '925 실버';
+  if(m.includes('10k')) return '10K 골드';
   if(m.includes('14k')||m.includes('골드')||m.includes('gold')) return '14K 골드';
   if(m.includes('스테인')||m.includes('서지컬')||m.includes('써지컬')||m.includes('surgical')) return '스테인리스';
   if(m.includes('아연')) return '브라스 (BRASS)';
@@ -28419,7 +28431,7 @@ function _buildItemCode(input){
   let matChar = '';
   if(matStr.includes('BRASS') || matStr.includes('브라스')) matChar = 'B';
   else if(matStr.includes('SILVER') || matStr.includes('실버') || matStr.includes('925')) matChar = 'S';
-  else if(matStr.includes('GOLD') || matStr.includes('골드') || /\b(14K|18K|24K)\b/.test(matStr)) matChar = 'G';
+  else if(matStr.includes('GOLD') || matStr.includes('골드') || /\b(10K|14K|18K|24K)\b/.test(matStr)) matChar = 'G';
   else if(matStr.includes('TITAN') || matStr.includes('티타늄')) matChar = 'T';
   else if(matStr.includes('STEEL') || matStr.includes('스틸') || matStr.includes('써지컬')) matChar = 'L';
   else if(matStr.includes('ZINC') || matStr.includes('아연')) matChar = 'Z';
@@ -33893,7 +33905,7 @@ function renderOrdRows(){
   // 컬럼 헤더 (맨 위에 1회만) + 공유 datalist
   const header=`
   <datalist id="ordPlatingList"><option value="실버"><option value="골드"><option value="로즈골드"><option value="무도금"><option value="건메탈"><option value="블랙"><option value="기타"></datalist>
-  <datalist id="ordMatList"><option value="브라스 (BRASS)"><option value="925 실버"><option value="14K 골드"><option value="스테인리스"><option value="써지컬스틸"><option value="아연합금"><option value="기타"></datalist>
+  <datalist id="ordMatList"><option value="브라스 (BRASS)"><option value="925 실버"><option value="14K 골드"><option value="10K 골드"><option value="스테인리스"><option value="써지컬스틸"><option value="아연합금"><option value="기타"></datalist>
   <datalist id="factoryList"></datalist>
   <div style="display:grid;grid-template-columns:22px 28px 50px 1fr 60px 80px 100px 65px 90px 50px 28px;gap:4px;align-items:center;padding:6px 0 4px 0;border-bottom:1px solid var(--bdr);margin-bottom:2px;font-size:10px;color:var(--t3);font-weight:600;letter-spacing:.3px">
     <div style="text-align:center">#</div>
@@ -38315,11 +38327,17 @@ function matPurity(mat){
   return 1;
 }
 window.matPurity = matPurity;
-// 🥇 금 해리(loss) — 금 소재는 소재비에 10%를 더한다 (2026-10-06 DW 지시).
-//   소재비 = 중량 × 순금 시세 × 함량 × (1 + 해리율)   → 14K: 0.585 × 1.1 = 0.6435
+// 🥇 금 해리(loss) — 금 소재는 소재비에 해리율을 더한다: 기본 10% (2026-10-06), 10K는 15% (2026-10-12 DW 지시).
+//   소재비 = 중량 × 순금 시세 × 함량 × (1 + 해리율)   → 14K: 0.585 × 1.1 = 0.6435 · 10K: 0.417 × 1.15 = 0.4796
 //   금이 아닌 소재(실버·브라스·스틸·도금 표기)는 1 — 해리를 붙이지 않는다.
 //   ※ 생산원가 계산은 모두 matCostFactor 를 거친다. 해리율을 바꿀 때는 이 한 곳만 수정.
 const GOLD_LOSS_RATE = 0.10;
+const GOLD_LOSS_RATE_BY_K = { 10: 0.15 }; // K별 예외 해리율 — 없으면 GOLD_LOSS_RATE
+function goldLossRate(mat){
+  if(!isGoldMat(mat)) return 0;
+  const k = +String(mat||'').toUpperCase().match(/(\d{1,2})\s*K/)[1];
+  return (k in GOLD_LOSS_RATE_BY_K) ? GOLD_LOSS_RATE_BY_K[k] : GOLD_LOSS_RATE;
+}
 function isGoldMat(mat){
   const m = String(mat||'').toUpperCase();
   if(/도금|플레이팅|PLAT|브라스|BRASS|신주|실버|SILVER|925|써지컬|서지컬|스테인|STEEL|아연|티타늄|TITAN/.test(m)) return false;
@@ -38327,9 +38345,9 @@ function isGoldMat(mat){
   return !!k && +k[1] > 0 && +k[1] <= 24;
 }
 function matCostFactor(mat){
-  return isGoldMat(mat) ? Math.round(matPurity(mat) * (1 + GOLD_LOSS_RATE) * 10000) / 10000 : 1;
+  return isGoldMat(mat) ? Math.round(matPurity(mat) * (1 + goldLossRate(mat)) * 10000) / 10000 : 1;
 }
-window.isGoldMat = isGoldMat; window.matCostFactor = matCostFactor;
+window.isGoldMat = isGoldMat; window.matCostFactor = matCostFactor; window.goldLossRate = goldLossRate;
 
 // 중량 문자열에서 숫자 추출 ("0.5g" → 0.5, "1.3" → 1.3)
 function parseWeightNum(w){
@@ -38988,7 +39006,7 @@ function _renderQtRows(){
           </div>
           <div style="display:flex;align-items:center;gap:4px">
             <span style="color:var(--t3);font-size:9.5px;flex-shrink:0">시세</span>
-            <input class="fi" type="number" value="${r.matRate||''}" oninput="_qtRowsBuf[${i}].matRate=+this.value;_updateQtRowCalc(${i})" placeholder="0" style="font-size:11px;padding:3px 5px;text-align:right" title="원자재 시세 (g당 KRW). 금은 순금(24K) 시세 입력 — 소재가 14K면 ×0.585, 18K면 ×0.75 자동 환산 + 해리 10%. 중량이 비어있으면 반영되지 않음">
+            <input class="fi" type="number" value="${r.matRate||''}" oninput="_qtRowsBuf[${i}].matRate=+this.value;_updateQtRowCalc(${i})" placeholder="0" style="font-size:11px;padding:3px 5px;text-align:right" title="원자재 시세 (g당 KRW). 금은 순금(24K) 시세 입력 — 소재가 14K면 ×0.585, 10K면 ×0.417, 18K면 ×0.75 자동 환산 + 해리 10%(10K는 15%). 중량이 비어있으면 반영되지 않음">
           </div>
           <div style="display:flex;align-items:center;gap:4px;background:rgba(192,144,32,.08);padding:3px 6px;border-radius:3px">
             <span style="color:var(--t3);font-size:9.5px;flex-shrink:0">생산원가</span>
@@ -39005,7 +39023,7 @@ function _renderQtRows(){
       </div>`;
     }).join('')}
     <div style="font-size:10px;color:var(--t3);padding:4px 8px;background:var(--s1);border-radius:4px;margin-top:6px">
-      💡 <b>생산원가</b> = 입고단가 × ${QUOTE_CN_RATE} + 중량 × 원자재시세 (금은 순금 시세 × 함량 × 해리 1.1 — 14K 0.585) · 🔒 내부 원가 정보는 고객사 PDF에 노출되지 않습니다
+      💡 <b>생산원가</b> = 입고단가 × ${QUOTE_CN_RATE} + 중량 × 원자재시세 (금은 순금 시세 × 함량 × 해리 — 14K 0.585×1.1 · 10K 0.417×1.15) · 🔒 내부 원가 정보는 고객사 PDF에 노출되지 않습니다
     </div>
   `;
 }
