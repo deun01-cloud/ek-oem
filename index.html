@@ -2949,8 +2949,8 @@ window.addEventListener('message', function(ev){
   <div class="fr3">
     <div class="fg"><label>소재</label>
       <select class="fs" id="pd_mat" onchange="updatePdCostAnalysis()">
-        <option>브라스 (BRASS)</option><option>925 실버</option><option>14K 골드</option><option>10K 골드</option>
-        <option>스테인리스</option><option>아연합금</option><option>기타</option>
+        <option>브라스 (BRASS)</option><option>925 실버</option><option>10K 골드</option><option>14K 골드</option><option>18K 골드</option>
+        <option>써지컬 스틸</option><option>스테인리스</option><option>아연합금</option><option>기타</option>
       </select>
     </div>
     <div class="fg"><label>도금</label>
@@ -2965,19 +2965,11 @@ window.addEventListener('message', function(ev){
     <div class="fg">
       <label>출고단가 (원)</label>
       <input class="fi" type="number" id="pd_price" placeholder="13000" min="0" oninput="onPdPriceManualEdit()">
-      <div id="pd_recommendedHint" style="display:none;margin-top:4px;font-size:10.5px;color:var(--gold-lt);line-height:1.4">
-        💡 권장 출고단가: <b id="pd_recommendedHintVal" style="font-family:monospace">₩0</b>
-        <button type="button" onclick="applyRecommendedPrice()" style="margin-left:4px;font-size:10px;padding:1px 7px;border:1px solid var(--gold-lt);background:transparent;color:var(--gold-lt);border-radius:4px;cursor:pointer;font-family:inherit" title="권장 출고단가를 출고단가 입력칸에 적용">적용</button>
-      </div>
     </div>
-    <div class="fg"><label>생산원가 (원) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(ERP 참고)</span></label><input class="fi" type="number" id="pd_costPrice" placeholder="0" min="0"></div>
+    <div class="fg"><label>입고원가 (원) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(ERP 참고)</span></label><input class="fi" type="number" id="pd_costPrice" placeholder="0" min="0"></div>
     <div class="fg"><label>개발비 (원)</label><input class="fi" type="number" id="pd_devCost" placeholder="0" min="0"></div>
     <div class="fg"><label>재고 수량</label><input class="fi" type="number" id="pd_stock" placeholder="0" min="0"></div>
     <div class="fg"><label>안전재고 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(0=알림 끔)</span></label><input class="fi" type="number" id="pd_safetyStock" placeholder="0" min="0"></div>
-  </div>
-  <div class="fr2">
-    <div class="fg"><label>금속 종류</label><input class="fi" id="pd_metal" list="pdMetalList" placeholder="브라스" oninput="syncPdMatFromMetal()" title="10K·14K 골드를 고르면 소재도 같이 맞춰져 원가 분석에 함량이 반영됩니다"><datalist id="pdMetalList"><option value="브라스"><option value="실버 925"><option value="써지컬 스틸"><option value="10K 골드"><option value="14K 골드"></datalist></div>
-    <div class="fg"><label>도금 컬러 / 스펙</label><input class="fi" id="pd_platingSpec" placeholder="로듐"></div>
   </div>
   <div class="fr3" style="grid-template-columns:repeat(4,1fr);align-items:end">
     <div class="fg"><label>중량 (g) <span style="font-size:9.5px;color:var(--gold-lt);font-weight:400">★ JPRO 견적 핵심</span></label><input class="fi" type="number" id="pd_weight" placeholder="실측 중량" step="0.1" oninput="updatePdCostAnalysis()"></div>
@@ -3006,7 +2998,7 @@ window.addEventListener('message', function(ev){
       </div>
       <div>
         <div style="color:var(--t3);font-size:10px">권장 출고단가</div>
-        <div id="pd_recommendedPrice" style="font-weight:700;font-family:monospace;color:var(--gold-lt)">₩0</div>
+        <div style="display:flex;align-items:center;gap:5px"><span id="pd_recommendedPrice" style="font-weight:700;font-family:monospace;color:var(--gold-lt)">₩0</span><button type="button" id="pd_applyRecBtn" onclick="applyRecommendedPrice()" style="display:none;font-size:10px;padding:1px 7px;border:1px solid var(--gold-lt);background:transparent;color:var(--gold-lt);border-radius:4px;cursor:pointer;font-family:inherit" title="권장 출고단가를 출고단가 입력칸에 적용">적용</button></div>
         <div id="pd_priceFormula" style="font-size:9px;color:var(--t3);margin-top:1px">생산원가 ÷ (1 - 마진/100)</div>
       </div>
     </div>
@@ -6880,13 +6872,15 @@ function openProductModal(idOrNull){
   }
   // 📌 유형이 표준 옵션에 없는 커스텀 값이면 → 직접입력 모드로 열기
   _setPdType(pdTypeVal);
-  sv('pd_mat',p?p.mat:'브라스 (BRASS)');
-  sv('pd_plating',p?p.plating:'골드');sv('pd_size',p?p.size:'');
+  // 소재 = 예전 '금속 종류'와 합친 한 칸. 소재가 비었거나 금이 아닌데 금속 종류가 10K·14K 골드면 그 값을 쓴다
+  _pdSetSel('pd_mat', p ? (function(){ const a=String(p.mat||'').trim(), b=String(p.metal||'').trim();
+    return (isGoldMat(b) && !isGoldMat(a)) ? b : (a||b); })() : '브라스 (BRASS)');
+  _pdSetSel('pd_plating', p ? (String(p.plating||'').trim() || String(p.platingSpec||'').trim()) : '골드');sv('pd_size',p?p.size:'');
   sv('pd_price',p?p.price||'':'');sv('pd_costPrice',p?p.costPrice||'':'');
   sv('pd_devCost',p?p.devCost||'':'');
   sv('pd_cnyPrice', p?p.cnyPrice||'':'');
-  sv('pd_stock',p?p.stock||0:0);sv('pd_safetyStock',p?p.safetyStock||0:0);sv('pd_metal',p?p.metal||'':'');
-  sv('pd_platingSpec',p?p.platingSpec||'':'');sv('pd_weight',p?p.weight||'':'');
+  sv('pd_stock',p?p.stock||0:0);sv('pd_safetyStock',p?p.safetyStock||0:0);
+  sv('pd_weight',p?p.weight||'':'');
   // 원가 분석 필드 (시세, 마진)
   sv('pd_matRate', p?p.matRate||'':'');
   sv('pd_marginPct', p?(p.marginPct||30):30); // 디폴트 30%
@@ -6965,6 +6959,14 @@ function updatePdJproHint(){
 }
 // 금속 종류에 금 K(10K·14K)를 넣으면 소재 선택을 같은 K로 맞춘다 — 원가 계산 기준은 '소재' 한 곳(matCostFactor).
 //   '14K 도금'처럼 도금 표기는 금 소재가 아니므로 건드리지 않는다. 소재 목록에 없는 K는 그대로 둔다.
+function _pdSetSel(id, v){
+  const el=document.getElementById(id); if(!el) return;
+  v=String(v||'').trim();
+  if(v && el.tagName==='SELECT' && !Array.from(el.options).some(o=>o.value===v)){
+    const o=document.createElement('option'); o.textContent=v; el.appendChild(o);
+  }
+  el.value=v;
+}
 function syncPdMatFromMetal(){
   const metalEl=document.getElementById('pd_metal'), matEl=document.getElementById('pd_mat');
   if(!metalEl||!matEl||!isGoldMat(metalEl.value)) return;
@@ -7034,16 +7036,8 @@ function updatePdCostAnalysis(){
 
   // 출고단가 입력칸 아래 '권장 출고단가' 힌트 갱신
   // - 권장가가 있고, 현재 출고단가와 다를 때만 표시 (같으면 굳이 안내할 필요 없음)
-  const hintEl = document.getElementById('pd_recommendedHint');
-  const hintValEl = document.getElementById('pd_recommendedHintVal');
-  if(hintEl && hintValEl){
-    if(recommendedPrice > 0 && recommendedPrice !== currentPrice){
-      hintValEl.textContent = '₩' + recommendedPrice.toLocaleString();
-      hintEl.style.display = '';
-    } else {
-      hintEl.style.display = 'none';
-    }
-  }
+  const applyBtn = document.getElementById('pd_applyRecBtn');
+  if(applyBtn) applyBtn.style.display = (recommendedPrice > 0 && recommendedPrice !== currentPrice) ? '' : 'none';
 
   // 잠금 UI는 더 이상 사용하지 않음 (출고단가는 항상 사용자 입력만 사용)
   const lockBadge = document.getElementById('pd_priceLockBadge');
@@ -7131,7 +7125,7 @@ async function recalcOwnBrandShipPrices(){
 // 권장 출고단가를 출고단가 입력칸에 수동으로 적용 (사용자가 [적용] 버튼 클릭 시에만)
 function applyRecommendedPrice(){
   const priceEl = document.getElementById('pd_price');
-  const hintValEl = document.getElementById('pd_recommendedHintVal');
+  const hintValEl = document.getElementById('pd_recommendedPrice');
   if(!priceEl || !hintValEl) return;
   const raw = (hintValEl.textContent||'').replace(/[^\d]/g,'');
   const rec = +raw || 0;
@@ -7322,7 +7316,7 @@ function saveProduct(){
     code,name,type:(typeof _getPdType==='function'?_getPdType():gv('pd_type')),mat:gv('pd_mat'),plating:gv('pd_plating'),
     size:gv('pd_size'),price:+gv('pd_price')||0,costPrice:+gv('pd_costPrice')||0,
     devCost:+gv('pd_devCost')||0,
-    stock:newStock,safetyStock:newSafety,metal:gv('pd_metal'),platingSpec:gv('pd_platingSpec'),
+    stock:newStock,safetyStock:newSafety,metal:gv('pd_mat'),platingSpec:String((window._pdEditing||{}).platingSpec||''),
     weight:+gv('pd_weight')||0,memo:gv('pd_memo'),
     // ★ JPRO 연동 필드 (AI 견적 학습용) — 공임·최장 길이·두께는 기존 칸에서 자동 추출, 제작 노트 = 메모
     difficulty:gv('pd_difficulty'),
