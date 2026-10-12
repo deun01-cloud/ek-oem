@@ -27006,6 +27006,8 @@ function renderWeekGoalsPanel(){
   const pct=total?Math.round(done/total*100):0;
   const off=_dashGoalOff;
   const lbl=off===0?'이번 주':off===-1?'지난주':off===1?'다음 주':(off<0?(-off)+'주 전':off+'주 후');
+  // 지난주 미완료 → 이번 주 이관 버튼 (이번 주·지난주 화면에서, 옮길 게 있을 때만 표시)
+  const carryN=(off===0||off===-1)?_dashPrevWeekUndone().length:0;
   const rows=list.map(it=>{
     const k=_gdArg(_dashGoalKey(it));
     if(_dashGoalEditKey!==null && _dashGoalKey(it)===_dashGoalEditKey){
@@ -27030,12 +27032,36 @@ function renderWeekGoalsPanel(){
       ${off!==0?`<button class="gd-link" onclick="_dashGoalOff=0;renderDash()">이번 주</button>`:''}
     </div>
     ${total?`<div class="gd-bar"><i style="width:${pct}%"></i></div>`:''}
+    ${carryN?`<div><button class="gd-btn" onclick="dashCarryOverGoals()" title="지난주에 완료하지 못한 목표를 이번 주 목표로 옮깁니다">지난주 미완료 ${carryN}건 이번 주로 이관</button></div>`:''}
     ${total?`<div class="gd-list">${rows}</div>`:`<div class="gd-empty">${lbl} 목표가 아직 없습니다. 아래에 적어 보세요.</div>`}
     <div class="gd-add">
       <input class="gd-in" id="gdGoalIn" placeholder="${lbl} 목표 추가" aria-label="주간 목표 추가" value="${_gdEsc(_dashGoalDraft)}" oninput="_dashGoalDraft=this.value" onkeydown="if(event.key==='Enter'&&!event.isComposing)dashAddGoal()">
       <button class="gd-btn" onclick="dashAddGoal()">추가</button>
     </div>
   </section>`;
+}
+// 지난주(오늘 기준 직전 주)의 미완료 목표
+function _dashPrevWeekUndone(){
+  if(typeof weekChecklist==='undefined' || !Array.isArray(weekChecklist)) return [];
+  const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()-7);
+  const pk=getWeekKey(d);
+  return weekChecklist.filter(it=>it && it.weekKey===pk && !it.done);
+}
+// 지난주 미완료 목표를 이번 주로 이관 — 복사가 아니라 '이동'(weekKey만 변경)이라 중복이 생기지 않는다.
+//   같은 항목(_notionId/id 유지)을 수정 발행하므로 노션·실시간 서버에도 한 건으로 남는다.
+function dashCarryOverGoals(){
+  const items=_dashPrevWeekUndone();
+  if(!items.length) return;
+  const wk=getWeekKey(new Date());
+  items.forEach(it=>{
+    it.weekKey=wk;
+    try{ syncChecklistItemToNotion(it,'week',true); }catch(e){}
+    try{ if(typeof realtimePublish==='function') realtimePublish('checklist', it); }catch(e){}
+  });
+  saveChecklists();
+  _dashGoalOff=0;
+  if(currentTab==='dash') renderDash();
+  try{ showToast('✓ 지난주 미완료 '+items.length+'건을 이번 주로 이관했습니다','var(--grn)',2500); }catch(e){}
 }
 function dashAddGoal(){
   const inp=document.getElementById('gdGoalIn');
