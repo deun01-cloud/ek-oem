@@ -14788,7 +14788,12 @@ async function pullFromNotion(opts){
         if(!out.shipDate && prev.shipDate) out.shipDate=prev.shipDate;
         // 🔒 최근 sync된 항목은 사용자 입력 필드를 로컬 값으로 보호
         // (노션 PATCH가 PULL보다 늦게 반영되는 race condition 방어)
-        const recentlyPushed = prev._syncedAt && (nowForProtect - new Date(prev._syncedAt).getTime()) < PROTECT_MS_FIELDS;
+        // 🕒 [근본수정 2026-10-13] 3분 보호창만으로는 노션 저장이 대기열에 밀리면(재시도 적체·429) 3분 뒤
+        //    옛 노션 값이 로컬 수정(사진 순서 등)을 덮어썼다. 로컬 마지막 수정(_ts)이 노션 마지막 편집보다
+        //    1분 이상 새로우면 '아직 노션에 안 올라간 변경'으로 보고 로컬을 유지한다.
+        const _rEd = out._nEditedAt ? Date.parse(out._nEditedAt) : NaN;
+        const _localNewer = !!(prev._ts && !isNaN(_rEd) && (+prev._ts > _rEd + 60000));
+        const recentlyPushed = _localNewer || (prev._syncedAt && (nowForProtect - new Date(prev._syncedAt).getTime()) < PROTECT_MS_FIELDS);
         if(recentlyPushed){
           USER_FIELDS.forEach(f=>{
             if(prev[f] !== undefined && prev[f] !== null && prev[f] !== ''){
@@ -15086,7 +15091,7 @@ async function pullFromNotion(opts){
           // 변경 없음 — DB sync time은 그대로 유지 (현재 시각으로 갱신해도 무방하나, 안전을 위해 유지)
           return localArr;
         }
-        const mapped=remoteRows.map(mapper);
+        const mapped=remoteRows.map(function(row){ var m=mapper(row); try{ if(m && row && row.last_edited_time) m._nEditedAt=row.last_edited_time; }catch(_){} return m; });
         const next=upsertMerge(mapped, localArr, idFields);
         // 받은 row 중 가장 최신 last_edited_time을 sync time으로 저장
         const maxT=maxEditedTime(remoteRows);
@@ -15096,7 +15101,7 @@ async function pullFromNotion(opts){
       }
       // 풀 모드: 기존 안전장치 + 전체 머지
       if(isSafePull(remoteRows, localArr, label) && (remoteRows.length || localArr.some(x=>x._notionId))){
-        const mapped=remoteRows.map(mapper);
+        const mapped=remoteRows.map(function(row){ var m=mapper(row); try{ if(m && row && row.last_edited_time) m._nEditedAt=row.last_edited_time; }catch(_){} return m; });
         const next=mergeLocalAttachments(mapped, localArr, idFields, label);
         // 풀 동기화에서도 sync time 기록 (이후 증분 시작점)
         const maxT=maxEditedTime(remoteRows);
@@ -20380,6 +20385,25 @@ function _markPushOk(obj){
 // nUpdate 결과 검증판 — 실패 시 표식·큐 등록 후 예외를 던진다(생성 실패와 동일한 계약)
 async function _nUpdateChecked(pageId, props, obj, type, label){
   const r = await nUpdate(pageId, props);
+  if((!r || !r.id) && type==='io' && obj && obj._notionId===pageId && !obj._relinking
+     && _notionLastError && _notionLastError.status===404 && /object_not_found/.test(String(_notionLastError.message||''))){
+    // 🪦 노션에서 페이지가 지워진 입출고 — 재시도해도 영원히 404라 재시도 큐가 막히고(다른 저장까지 지연)
+    //    노션 풀이 옛 값으로 되돌린다. 새 페이지를 만들어 다시 연결하고, 실시간 서버의 옛 키는 지운다.
+    obj._relinking = true;
+    try{
+      delete obj._notionId;
+      const ok = await syncIOToNotion(obj);
+      if(ok && obj._notionId && obj._notionId !== pageId){
+        try{ if(typeof realtimeDelete==='function') realtimeDelete('io', pageId); }catch(_){}
+        try{ if(typeof _syncRetryQueue!=='undefined' && _syncRetryQueue.delete) _syncRetryQueue.delete('io:'+obj.id); }catch(_){}
+        _markPushOk(obj);
+        try{ if(typeof save==='function') save(); }catch(_){}
+        console.log('[relink] 노션 페이지 없음 → 새 페이지로 재연결', String(pageId).slice(-6), '→', String(obj._notionId).slice(-6));
+        return {id: obj._notionId, relinked: true};
+      }
+      if(!obj._notionId) obj._notionId = pageId;   // 재연결 실패 → 원래 값 유지(다음 재시도)
+    } finally { delete obj._relinking; }
+  }
   if(!r || !r.id){
     _markPushFailed(obj, type, true, label);
     const d = (typeof _notionLastError!=='undefined' && _notionLastError && _notionLastError.message)
@@ -36111,17 +36135,48 @@ function renderOrdFilePrev(){
     const statusBadge=isR2
       ? '<span style="font-size:9px;background:rgba(46,139,44,.12);color:var(--grn);padding:1px 5px;border-radius:3px;font-weight:600" title="클라우드에 저장됨 (영구)">☁ 저장됨</span>'
       : '<span style="font-size:9px;background:rgba(168,90,16,.12);color:var(--org);padding:1px 5px;border-radius:3px;font-weight:600" title="로컬에만 저장됨. 저장 버튼을 누르면 클라우드에 업로드됩니다">💾 로컬</span>';
+    const thumb=isImg&&f.url?`<img src="${f.url}" draggable="false" style="width:34px;height:34px;object-fit:cover;border-radius:4px;pointer-events:none">`:`<span>${icon}</span>`;
     return`
-    <div style="display:inline-flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:5px 9px;font-size:11px;cursor:pointer"
+    <div class="ord-file-chip" draggable="true" data-i="${i}"
+      ondragstart="_ordFileDragStart(event,${i})" ondragover="_ordFileDragOver(event)" ondragleave="this.style.boxShadow=''"
+      ondrop="_ordFileDrop(event,${i})" ondragend="_ordFileDragEnd()"
+      style="display:inline-flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:5px 9px;font-size:11px;cursor:grab"
       onclick="openFilePreviewList(ordFileBuf,${i})"
-      title="클릭하여 미리보기 · ${f.name||''}">
-      <span>${icon}</span>
+      title="드래그해서 순서 변경 · 클릭하여 미리보기 · ${f.name||''}">
+      <span style="font-size:9px;font-weight:800;color:var(--t3)">${i+1}</span>${thumb}
       <span style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2);font-weight:500">${f.name||'파일'}</span>
       ${sz?`<span style="font-size:9.5px;color:var(--t3)">${sz}</span>`:''}
       ${statusBadge}
       <button onclick="event.stopPropagation();ordFileBuf.splice(${i},1);renderOrdFilePrev()" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:0 2px" title="제거">×</button>
     </div>`;
   }).join('');
+}
+
+// 🖱 발주 첨부파일 드래그 순서 변경 (샘플 모달과 같은 '놓은 칸으로 이동' 방식)
+let _ordFileDragFrom = null;
+function _ordFileDragStart(e, i){
+  _ordFileDragFrom = i;
+  try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain','ordfile:'+i); }catch(_){}
+  const el=e.currentTarget; setTimeout(function(){ if(el) el.style.opacity='.35'; },0);
+}
+function _ordFileDragOver(e){
+  if(_ordFileDragFrom===null) return;          // 바깥 파일 드롭은 그대로 업로드 영역이 처리
+  e.preventDefault(); e.stopPropagation();
+  try{ e.dataTransfer.dropEffect='move'; }catch(_){}
+  e.currentTarget.style.boxShadow='inset 0 0 0 2px #b8923a';
+}
+function _ordFileDrop(e, to){
+  if(_ordFileDragFrom===null) return;
+  e.preventDefault(); e.stopPropagation();
+  const from=_ordFileDragFrom; _ordFileDragFrom=null;
+  if(from===to || from<0 || from>=ordFileBuf.length) { renderOrdFilePrev(); return; }
+  const it=ordFileBuf.splice(from,1)[0]; ordFileBuf.splice(to,0,it);
+  try{ const ov=document.getElementById('mOrd'); if(ov) ov._extraDirty=true; }catch(_){}
+  renderOrdFilePrev();
+}
+function _ordFileDragEnd(){
+  _ordFileDragFrom=null;
+  document.querySelectorAll('.ord-file-chip').forEach(function(el){ el.style.opacity=''; el.style.boxShadow=''; });
 }
 
 // ════════════════════════════════
