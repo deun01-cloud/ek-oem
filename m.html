@@ -4891,14 +4891,12 @@ function ordEditPickImage(idx){
       window._ordEditRows[idx].img=rd.result;
       _refreshOrdEditRows();
       // R2 백그라운드 업로드
-      if(typeof uploadFileToR2==='function'){
-        uploadFileToR2(f).then(function(r2){
-          if(r2&&r2.publicUrl&&window._ordEditRows&&window._ordEditRows[idx]){
-            window._ordEditRows[idx].img=r2.publicUrl;
-            _refreshOrdEditRows();
-          }
-        }).catch(function(){});
-      }
+      uploadImageToR2(f).then(function(r2){
+        if(r2&&/^https?:/.test(r2.url||'')&&window._ordEditRows&&window._ordEditRows[idx]){
+          window._ordEditRows[idx].img=r2.url;
+          _refreshOrdEditRows();
+        }
+      }).catch(function(){});
     };
     rd.readAsDataURL(f);
   };
@@ -4928,11 +4926,8 @@ async function ordEditRegisterToDB(idx){
     memo: '발주(모바일)에서 신규 등록'
   };
   try{
-    if(typeof syncProductToNotion==='function' && typeof notionCfg!=='undefined' && notionCfg && notionCfg.workerUrl && notionCfg.productDb){
-      await syncProductToNotion(newP, false);
-    }
     productDB.push(newP);
-    if(typeof LS!=='undefined' && LS.prod && typeof safeSave==='function') safeSave(LS.prod, productDB);
+    saveAll();   // 로컬 저장 (서버 전송은 아래 저장→서버 연결 목록에서 처리)
     _refreshOrdEditRows();
     showToast('✓ 제품DB에 등록됨');
   }catch(e){
@@ -5125,7 +5120,7 @@ async function downloadOrdFactPrevPngMobile(){
     const canvas = await html2canvas(target, {scale:2, backgroundColor:'#fff', useCORS:true});
     const url = canvas.toDataURL('image/png');
     const a = document.createElement('a');
-    a.download = '발주서_'+new Date().toISOString().slice(0,10)+'.png';
+    a.download = '발주서_'+toLocalDateStr(new Date())+'.png';
     a.href = url; a.click();
     showToast('✓ PNG 저장됨');
   }catch(e){
@@ -6935,7 +6930,7 @@ window.onload = async ()=>{
     'saveIo','deleteIo','_applyIoToStock',
     'saveOrdEdit','changeOrdStatus','_addRcv','_removeRcvHist','_updateRcvHist',
     'mSaveReturn','mConfirmReturnComplete','mUndoReturnComplete',
-    'saveProdEdit','adjustProdStock','_applyStockCount'];
+    'saveProdEdit','adjustProdStock','_applyStockCount','ordEditRegisterToDB'];
   var wrapped = 0;
   NAMES.forEach(function(n){
     var orig = window[n]; if(typeof orig !== 'function') return;

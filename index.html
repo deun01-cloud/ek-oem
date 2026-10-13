@@ -1170,7 +1170,7 @@ window.addEventListener('message', function(ev){
           }catch(_e){}
         }
       }
-      _p.lastModified = new Date().toISOString().slice(0,10);
+      _p.lastModified = toLocalDateStr(new Date());
       if(typeof save==='function') save();
       // 🛠 [FIX] 저장 결과를 브랜드커머스에 회신 — 실패를 성공으로 표시하지 않게 한다.
       //    (예전엔 bc.html이 결과와 무관하게 "저장했어요" 토스트를 띄웠다)
@@ -4595,7 +4595,7 @@ function renderAS(){
     </div>
     <div style="overflow-x:auto"><table>
       <thead><tr>
-        <th style="text-align:center;width:30px"><input type="checkbox" ${active.length&&active.every(a=>_asSelected.has(String(a.id)))?'checked':''} onclick="toggleASSelectAll(${JSON.stringify(active.map(a=>String(a.id)))},event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
+        <th style="text-align:center;width:30px"><input type="checkbox" ${active.length&&active.every(a=>_asSelected.has(String(a.id)))?'checked':''} onclick="toggleASSelectAll(${JSON.stringify(active.map(a=>String(a.id))).replace(/"/g,'&quot;')},event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
         <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
         <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th><th style="text-align:center">수리주체</th>
         <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
@@ -4608,7 +4608,7 @@ function renderAS(){
     <div class="ch"><div class="ch-t">✅ 완료 / 반송 <span style="font-size:12px;font-weight:400;color:var(--t3)">(${done.length}건${currentGroupName?` · ${currentGroupName} 필터`:''})</span></div></div>
     <div style="overflow-x:auto"><table>
       <thead><tr>
-        <th style="text-align:center;width:30px"><input type="checkbox" ${done.length&&done.every(a=>_asSelected.has(String(a.id)))?'checked':''} onclick="toggleASSelectAll(${JSON.stringify(done.map(a=>String(a.id)))},event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
+        <th style="text-align:center;width:30px"><input type="checkbox" ${done.length&&done.every(a=>_asSelected.has(String(a.id)))?'checked':''} onclick="toggleASSelectAll(${JSON.stringify(done.map(a=>String(a.id))).replace(/"/g,'&quot;')},event)" style="cursor:pointer;width:14px;height:14px" title="이 테이블 전체 선택"></th>
         <th>접수일</th><th style="text-align:center">고객사</th><th>품목</th><th style="text-align:center">수량</th>
         <th style="text-align:right">개당 수리비</th><th style="text-align:right">합계</th><th style="text-align:center">수리종류</th><th style="text-align:center">수리주체</th>
         <th>진행 상태</th><th>청구 상태</th><th>완료 예정</th><th>비고</th>
@@ -6362,7 +6362,7 @@ async function _pdExportXlsx(sel){
     mediaFiles.forEach(m=>zip.file('xl/media/'+m.name, m.b64, {base64:true}));
 
     const blob=await zip.generateAsync({type:'blob',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-    const fn=`제품목록_${sel.length}건_${new Date().toISOString().slice(0,10)}.xlsx`;
+    const fn=`제품목록_${sel.length}건_${toLocalDateStr(new Date())}.xlsx`;
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fn;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(()=>URL.revokeObjectURL(a.href),4000);
@@ -6732,7 +6732,7 @@ function _catalogPDF(){
   const list=_getCatalogForOutput();
   if(!list.length){ if(typeof showToast==='function') showToast('출력할 제품이 없습니다','var(--red)'); return; }
   const _selN=_loadCatSel().length;
-  const today=new Date().toISOString().slice(0,10);
+  const today=toLocalDateStr(new Date());
   const filterDesc=[];
   if(_selN){ filterDesc.push('선택 '+_selN+'건'); }
   else {
@@ -8692,24 +8692,6 @@ function maintainInvoiceData(){
     });
     if(typeof save === 'function') save();
     console.log('[invoice] ✓', _dupsRemoved, '건 중복 정리됨 (로컬)');
-    // 📌 노션에서도 정리 — 제거된 객체에 _notionId가 있으면 archive 시도
-    //    (단, 유지된 쪽과 같은 _notionId면 archive 안 함 — 그 페이지가 진실의 원천이라 살아있어야 함)
-    if(typeof notionCfg !== 'undefined' && notionCfg.workerUrl && typeof notionApiRequest === 'function'){
-      _removedRecords.forEach(removed => {
-        if(!removed._notionId) return;
-        // 유지된 쪽에 같은 _notionId가 있는지 확인
-        const keepHasSame = invoiceHistory.some(v => v._notionId === removed._notionId);
-        if(keepHasSame){
-          console.log('[invoice] 노션 페이지 ID 동일 — archive 스킵:', removed._notionId);
-          return;
-        }
-        // 노션에 중복 페이지가 있다는 뜻 → archive
-        console.log('[invoice] 노션 중복 페이지 archive 시도:', removed._notionId);
-        notionApiRequest('PATCH', '/v1/pages/'+removed._notionId, { archived: true })
-          .then(()=>console.log('[invoice] ✓ 노션 페이지 archive 완료:', removed._notionId))
-          .catch(e=>console.warn('[invoice] 노션 archive 실패 (무시):', e.message));
-      });
-    }
   }
   // 🔗 0-B단계: 합본 ↔ 자식 역참조 동기화 (자식이 합본 밖에 중복으로 보이는 것 방지)
   //    합본의 includedInvoiceIds/includedChildKeys로 해석되는 자식에게 _consolidatedInvoiceId를
@@ -9800,7 +9782,7 @@ function openInvDetail(id){
     bd+='<input type="text" id="quickPrepay_amount" placeholder="금액 입력 (예: 800000)" inputmode="numeric" onkeydown="if(event.key===\'Enter\'){addQuickPrepayment('+v.id+');}" style="width:100%;padding:8px 36px 8px 12px;font-size:13px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;background:var(--s1);box-sizing:border-box">';
     bd+='<span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--t3);pointer-events:none">원</span>';
     bd+='</div>';
-    var _todayStr=(typeof toLocalDateStr==="function")?toLocalDateStr(new Date()):new Date().toISOString().slice(0,10);
+    var _todayStr=toLocalDateStr(new Date());
     bd+='<div style="display:flex;align-items:center;gap:4px">';
     bd+='<span style="font-size:11px;color:var(--t3);white-space:nowrap">입금일</span>';
     bd+='<input type="date" id="quickPrepay_date" value="'+_todayStr+'" onkeydown="if(event.key===\'Enter\'){addQuickPrepayment('+v.id+');}" style="padding:8px 10px;font-size:13px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;background:var(--s1);box-sizing:border-box">';
@@ -9978,7 +9960,7 @@ function openInvDetail(id){
     b+='<input type="text" id="quickPrepay_amount" placeholder="금액 입력 (예: 800000)" inputmode="numeric" onkeydown="if(event.key===\'Enter\'){addQuickPrepayment('+v.id+');}" style="width:100%;padding:8px 36px 8px 12px;font-size:13px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;background:var(--s1);box-sizing:border-box">';
     b+='<span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--t3);pointer-events:none">원</span>';
     b+='</div>';
-    var _todayStr=(typeof toLocalDateStr==="function")?toLocalDateStr(new Date()):new Date().toISOString().slice(0,10);
+    var _todayStr=toLocalDateStr(new Date());
     b+='<div style="position:relative;display:flex;align-items:center;gap:4px">';
     b+='<span style="font-size:11px;color:var(--t3);white-space:nowrap">입금일</span>';
     b+='<input type="date" id="quickPrepay_date" value="'+_todayStr+'" onkeydown="if(event.key===\'Enter\'){addQuickPrepayment('+v.id+');}" style="padding:8px 10px;font-size:13px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;background:var(--s1);box-sizing:border-box">';
@@ -11007,7 +10989,7 @@ try { anthropicKey = localStorage.getItem(ANTHROPIC_KEY_SK)||''; } catch(e) {}
 async function syncApiKeyToNotion(){
   if(!notionCfg.workerUrl){ return {ok:false, msg:'Worker URL 미설정'}; }
   if(!anthropicKey){ return {ok:false, msg:'저장할 API 키가 없음'}; }
-  const todayISO = new Date().toISOString().split('T')[0];
+  const todayISO = toLocalDateStr(new Date());
   try{
     // 기존 "anthropic_api_key" 페이지가 있는지 확인
     const existing = await nQueryAll(APP_SETTINGS_DB);
@@ -11052,7 +11034,6 @@ async function pullApiKeyFromNotion(){
       anthropicKey = val.trim();
       try{ localStorage.setItem(ANTHROPIC_KEY_SK, anthropicKey); }catch(e){}
       // 설정 화면이 열려있으면 UI 갱신
-      if(typeof renderSettingsUI==='function'){ try{ renderSettingsUI(); }catch(e){} }
       return true;
     }
     return false;
@@ -15650,7 +15631,7 @@ function openKakaoBillModal(){
     +   '<label style="display:flex;align-items:center;gap:5px">포장 용역비 <input type="number" id="kko_pack" value="'+KKO_FEE.pack+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도 · 주문 라인당)</span></label>'
     +   '<label style="display:flex;align-items:center;gap:5px">교환 물류비 <input type="number" id="kko_exchange" value="'+KKO_FEE.exchange+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도 · 교환건당)</span></label>'
     +   '<label style="display:flex;align-items:center;gap:5px">환불 물류비 <input type="number" id="kko_refund" value="'+KKO_FEE.refund+'" onchange="_kkoBillRender()" style="width:82px;padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit;text-align:right"> <span style="color:var(--t3);font-size:10.5px">원 (VAT 별도 · 환불건당)</span></label>'
-    +   '<label style="display:flex;align-items:center;gap:5px;margin-left:auto">발행일 <input type="date" id="kko_date" value="'+new Date().toISOString().slice(0,10)+'" style="padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit"></label>'
+    +   '<label style="display:flex;align-items:center;gap:5px;margin-left:auto">발행일 <input type="date" id="kko_date" value="'+toLocalDateStr(new Date())+'" style="padding:4px 7px;border:1px solid var(--bdr);border-radius:5px;font-family:inherit"></label>'
     + '</div>'
     + '<div id="kkoBillBody" style="overflow:auto;flex:1;padding:0 20px"></div>'
     + '<div id="kkoBillFoot" style="padding:14px 20px;border-top:1px solid var(--bdr);background:var(--s2);border-radius:0 0 12px 12px"></div>'
@@ -15794,7 +15775,7 @@ async function _kkoBillIssue(){
   if(!c.n && !c.xn && !c.rn){ showToast('⚠ 청구할 건이 없습니다','var(--red)',2000); return; }
   // 📅 청구월 필터 적용: 실제로 청구·표기할 대상은 '이 달·선택·미청구' 건만
   var _billIds = _kkoShippedFiltered().filter(function(io){ return (_kkoBillReissue || !io.billNo) && _kkoBillSel.has(String(io.id)); }).map(function(io){ return String(io.id); });
-  var issuedAt = (document.getElementById('kko_date')||{}).value || new Date().toISOString().slice(0,10);
+  var issuedAt = (document.getElementById('kko_date')||{}).value || toLocalDateStr(new Date());
   var _reN = _kkoShippedFiltered().filter(function(io){ return io.billNo && _kkoBillSel.has(String(io.id)); }).length;
   if(!confirm((_kkoBillReissue?'♻ 재발행 — 이미 청구된 '+_reN+'건을 새 명세서로 재발행합니다.\n(기존 명세서는 자동 삭제되지 않으니 SCM>거래명세서에서 정리하세요)\n\n':'')+'카카오에 청구할 거래명세서를 발행합니다.\n\n· 출고 '+c.n+'라인 → 배송 '+c.ships+'건 (일반 '+c.genShips+' + 도서산간 '+c.m+')'+((c.n>c.ships)?(' · 합배송 '+(c.n-c.ships)+'건 물류비 제외'):'')+'\n· 포장 '+c.n+'건 · 각인 '+c.engN+'개 (미각인 '+c.noEngN+' 제외)'+((c.xn||c.rn)?('\n· 교환 '+c.xn+'건 · 환불 '+c.rn+'건'):'')+'\n· 공급가액 ₩'+c.supply.toLocaleString()+' / 부가세 ₩'+c.tax.toLocaleString()+'\n· 합계 ₩'+c.total.toLocaleString()+'\n\n계속할까요?')) return;
   var items = [];
@@ -16125,11 +16106,11 @@ function _renderIoCommerce(){
   const _statBrandFilter = (io) => _ioCommerceBrand === 'all' || (io.brand||'미지정') === _ioCommerceBrand;
   const _shipStatFiltered = _shipStatItems.filter(_statBrandFilter);
   const _now = new Date();
-  const _todayStr = _now.toISOString().slice(0,10);
+  const _todayStr = toLocalDateStr(_now);
   // 이번 주(월요일 시작) 범위
   const _dow = (_now.getDay()+6)%7;   // 월=0
   const _weekStart = new Date(_now); _weekStart.setDate(_now.getDate()-_dow); _weekStart.setHours(0,0,0,0);
-  const _weekStartStr = _weekStart.toISOString().slice(0,10);
+  const _weekStartStr = toLocalDateStr(_weekStart);
   const _thisMonth = _todayStr.slice(0,7);
   const _shipDateOf = (io) => (io.shipDate || io.date || '').slice(0,10);
   let weekShipCount=0, monthShipCount=0;
@@ -16391,7 +16372,7 @@ function _renderIoCommerce(){
       const _o_split = _ioSplitItemOpt(io.items||'');
       const _o_opt = io.option || _o_split.opt;
       const _o_req = io.reqShipDate || _addBusinessDays(io.date||'', 10);
-      const _o_late = _o_req && _o_req < new Date().toISOString().slice(0,10);
+      const _o_late = _o_req && _o_req < toLocalDateStr(new Date());
       return `<tr style="border-bottom:1px solid var(--bdr-lt);cursor:pointer;${checked?'background:rgba(168,118,49,.07)':''}" onclick="openIoDetail('${io.id}')" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${checked?'rgba(168,118,49,.07)':''}'">
         <td style="padding:7px 10px;text-align:center" onclick="event.stopPropagation()"><input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation();_ioToggleChecked('${io.id}',this.checked)" style="width:auto;margin:0;cursor:pointer"></td>
         <td style="padding:7px 10px;font-size:11px;font-weight:600;color:var(--t1)">${escHtml(io.brand||'-')}</td>
@@ -16710,7 +16691,7 @@ function _invRunMatch(rows, cols){
     + `\n계속 진행할까요?`;
   if(!confirm(msg)) return;
 
-  const today=new Date().toISOString().slice(0,10);
+  const today=toLocalDateStr(new Date());
   matched.forEach(m=>{
     m.io.invoice = m.inv;
     if(m.courier) m.io.courier = m.courier;
@@ -17203,7 +17184,7 @@ function openIoModal(idOrNull){
     <div class="mt">🚚 ${isEdit?'입출고 수정':'입출고 등록'}</div>
     <div style="padding:0 16px 14px;max-height:75vh;overflow-y:auto">
       <div class="fr3" style="grid-template-columns:120px 110px 1fr;gap:10px">
-        <div class="fg"><label>일자 *</label><input class="fi" type="date" id="io_date" value="${v('date', new Date().toISOString().slice(0,10))}"></div>
+        <div class="fg"><label>일자 *</label><input class="fi" type="date" id="io_date" value="${v('date', toLocalDateStr(new Date()))}"></div>
         <div class="fg"><label>구분 *</label><select class="fi" id="io_kind">
           ${IO_KIND_OPTIONS.map(k=>`<option value="${k}" ${v('kind')===k?'selected':''}>${k}</option>`).join('')}
         </select></div>
@@ -17315,8 +17296,9 @@ async function _addIoPhoto(event){
     // R2 업로드 가능하면 시도, 아니면 base64로 저장 (제한적)
     try {
       let url;
-      if(typeof uploadImageToR2 === 'function'){
-        url = await uploadImageToR2(file);
+      const r2 = await uploadFileToR2(file);
+      if(r2){
+        url = r2.publicUrl;
       } else {
         url = await new Promise((res,rej)=>{
           const r = new FileReader();
@@ -17662,7 +17644,7 @@ function _showCommerceDetail(io){
         <div style="color:var(--t3);font-weight:600">주문일자</div>
         <div style="font-family:monospace">${escHtml(io.date||'-')}</div>
         ${(io.reqShipDate || io.date) ? `<div style="color:var(--t3);font-weight:600">요청출고일</div>
-        <div style="font-family:monospace;font-weight:700;color:${((io.reqShipDate||_addBusinessDays(io.date||'',10)) < new Date().toISOString().slice(0,10) && !io.shipDate) ? 'var(--red)':'var(--t1)'}">${escHtml(io.reqShipDate||_addBusinessDays(io.date||'',10)||'-')} <span style="font-size:10px;color:var(--t3);font-weight:400">(주문일+영업일 10일)</span></div>` : ''}
+        <div style="font-family:monospace;font-weight:700;color:${((io.reqShipDate||_addBusinessDays(io.date||'',10)) < toLocalDateStr(new Date()) && !io.shipDate) ? 'var(--red)':'var(--t1)'}">${escHtml(io.reqShipDate||_addBusinessDays(io.date||'',10)||'-')} <span style="font-size:10px;color:var(--t3);font-weight:400">(주문일+영업일 10일)</span></div>` : ''}
         ${io.shipDate ? `<div style="color:var(--t3);font-weight:600">출고일</div><div style="font-family:monospace">${escHtml(io.shipDate)}</div>` : ''}
         <div style="color:var(--t3);font-weight:600">수령인</div>
         <div style="font-weight:700;font-size:13.5px">${escHtml(io.recipient||'-')}</div>
@@ -17868,7 +17850,7 @@ function openCommerceUpload(){
   _cuAiRun++; _cuAiBusy=false; _cuAiNote='';   // 진행 중이던 AI 매칭은 무효화
   const brands = loadCommerceBrands();
   // 오늘 날짜 default
-  const today = new Date().toISOString().slice(0,10);
+  const today = toLocalDateStr(new Date());
   let mU = document.getElementById('mCommerceUpload');
   if(!mU){
     mU = document.createElement('div');
@@ -18604,7 +18586,7 @@ function openReturnModal(ioId){
     showToast('⚠ 이미 교환/환불이 등록된 항목입니다','var(--org)',2500);
     return;
   }
-  const today = new Date().toISOString().slice(0,10);
+  const today = toLocalDateStr(new Date());
   const _mp = (typeof _resolveIoMatchedProduct === 'function') ? _resolveIoMatchedProduct(io) : (io._matchedProductId != null ? productDB.find(x=>x.id==io._matchedProductId) : null);
   let mR = document.getElementById('mReturn');
   if(!mR){
@@ -18683,7 +18665,7 @@ async function saveReturn(ioId){
   const io = _findIoByKey(ioId);
   if(!io) return;
   const type = document.querySelector('input[name="rt_type"]:checked')?.value || '교환';
-  const date = document.getElementById('rt_date')?.value || new Date().toISOString().slice(0,10);
+  const date = document.getElementById('rt_date')?.value || toLocalDateStr(new Date());
   const reason = (document.getElementById('rt_reason')?.value || '').trim();
   // 상태 설정
   io.returnStatus = type === '교환' ? '교환요청' : '환불요청';
@@ -18761,7 +18743,7 @@ async function confirmReturnComplete(ioId){
     : `\n\n⚠ 매칭된 제품이 없어 재고 복원은 안 됩니다.`;
   if(!confirm(`${type} 입고가 도착했습니까?\n수령인: ${io.recipient||'-'}\n품목: ${io.items||'-'}${willRestockMsg}`)) return;
 
-  const today = new Date().toISOString().slice(0,10);
+  const today = toLocalDateStr(new Date());
   io.returnStatus = type === '교환' ? '교환완료' : '환불완료';
   io.returnCompletedAt = today;
 
@@ -18852,7 +18834,7 @@ function openExchangeReship(ioId){
   if((io.returnStatus||'') !== '교환완료'){
     showToast('⚠ 입고확인(완료) 후에 재출고할 수 있습니다','var(--org)',3000); return;
   }
-  const today = new Date().toISOString().slice(0,10);
+  const today = toLocalDateStr(new Date());
   // 기본 선택 = 기존 매칭 제품(같은 제품, 사이즈만 변경인 경우 그대로)
   const _mp = (typeof _resolveIoMatchedProduct==='function') ? _resolveIoMatchedProduct(io) : null;
   _exchReshipPick = null;
@@ -18928,7 +18910,7 @@ async function _confirmExchangeReship(ioId){
   const io = _findIoByKey(ioId); if(!io) return;
   if(!_exchReshipPick){ showToast('⚠ 바뀐 제품을 검색해서 선택하세요','var(--red)',2500); return; }
   const opt = (document.getElementById('exch_opt')||{}).value || '';
-  const date = (document.getElementById('exch_date')||{}).value || new Date().toISOString().slice(0,10);
+  const date = (document.getElementById('exch_date')||{}).value || toLocalDateStr(new Date());
   const inv = (document.getElementById('exch_inv')||{}).value || '';
   const p = (productDB||[]).find(x=>x.id==_exchReshipPick.id);
   // 이미 재출고된 상태면 이전 차감을 되돌리고 새로 차감 (제품 변경 대응)
@@ -19466,7 +19448,7 @@ window.loadCommerceDemo = function(){
   const ymd = (offsetDays) => {
     const d = new Date(today);
     d.setDate(d.getDate() + offsetDays);
-    return d.toISOString().slice(0,10);
+    return toLocalDateStr(d);
   };
   // 비비케이트 주문 시뮬레이션 (실제 엑셀에서 추출한 22명)
   const demoData = [
@@ -19977,6 +19959,36 @@ function _verifyImageUrl(url, timeoutMs){
       img.src=url + (url.indexOf('?')<0?'?_v=':'&_v=') + Date.now(); // 캐시 우회
     }catch(e){ resolve(false); }
   });
+}
+
+// R2 업로드/삭제용 워커 (notion-proxy는 R2 바인딩 없음 → ek-proxy 사용)
+var R2_PROXY = 'https://ek-proxy.deun01.workers.dev';
+function r2FileUrl(key){ return R2_PROXY + '/r2/file/' + encodeURIComponent(key); }
+// File → R2 업로드 (앱 전체 공용). 성공 시 {key, publicUrl, size}, 실패 시 null
+async function uploadFileToR2(file){
+  try{
+    var resp = await fetch(R2_PROXY + '/r2/upload', {
+      method:'POST',
+      headers:{
+        'Content-Type': 'application/octet-stream',
+        'X-File-Name':  encodeURIComponent(file.name || 'file'),
+        'X-File-Type':  file.type || 'application/octet-stream'
+      },
+      body: file
+    });
+    if(!resp.ok){ console.warn('R2 업로드 실패:', resp.status); return null; }
+    var d = await resp.json();
+    if(!d || !d.key || d.size === 0){ console.warn('R2 업로드 응답 이상:', d); return null; }
+    return { key: d.key, publicUrl: r2FileUrl(d.key), size: d.size };
+  }catch(e){
+    console.warn('R2 업로드 예외:', e && e.message); return null;
+  }
+}
+// R2에서 파일 삭제
+async function deleteFileFromR2(key){
+  if(!key) return false;
+  try{ return (await fetch(r2FileUrl(key), { method:'DELETE' })).ok; }
+  catch(e){ return false; }
 }
 
 async function r2Upload(dataUrl, fileName, fileType){
@@ -21613,7 +21625,6 @@ function slLoad(){try{
 const elapsed=d=>d?Math.floor((TODAY-new Date(d))/86400000):0;
 const ddChip=ds=>{const n=dday(ds);if(n===null)return '';if(n<0)return`<span class="dd dd-r">D+${Math.abs(n)}초과</span>`;if(n===0)return`<span class="dd dd-r">D-DAY</span>`;if(n<=3)return`<span class="dd dd-r">D-${n}</span>`;if(n<=7)return`<span class="dd dd-o">D-${n}</span>`;return`<span class="dd dd-g">D-${n}</span>`;};
 const fmtAmt=v=>v?Number(v).toLocaleString()+'만원':'-';
-const clColor=id=>{const i=clients.findIndex(c=>c.id==id);return CL_COLORS[Math.max(0,i)%CL_COLORS.length];};
 const billCls=b=>({미청구:'cr','청구 예정':'co','청구 완료':'cg','청구 불가':'chip'})[b]||'chip';
 const gn=id=>{const el=document.getElementById(id);return el?parseFloat(el.value)||0:0;};
 
@@ -22227,11 +22238,7 @@ function save(){
           return v;
         });
         localStorage.setItem(key, JSON.stringify(stripped));
-        // 인메모리 원본의 큰 base64도 정리해 이후 save에서 반복 초과되지 않도록 함
-        const _strip=(obj)=>{ if(!obj||typeof obj!=='object')return; for(const kk in obj){ const vv=obj[kk];
-          if(typeof vv==='string'&&vv.startsWith('data:')&&vv.length>2000) obj[kk]='';
-          else if(vv&&typeof vv==='object') _strip(vv); } };
-        if(Array.isArray(data)) data.forEach(_strip); else _strip(data);
+        // ⚠ 메모리 원본은 건드리지 않는다 — 지우면 서버 동기화로 사진이 영구 유실된다
         showToast(`⚠ 용량 초과 — ${label}의 사진은 저장되지 않았습니다(등록은 완료). R2 저장소 연결을 확인하세요`,'var(--red)',6000);
         return true;
       }catch(e2){
@@ -23582,7 +23589,6 @@ async function deduplicateAllData(){
     const notionMsg = notionIdsToDelete.length ? ` · Notion ${notionIdsToDelete.length}개 삭제` : '';
     showToast(`✓ ${totalRemoved}건 중복 제거됨 (${detail}${notionMsg})`,'var(--grn)',5000);
   }
-  if(tab!=='io') { try{ if(typeof _stopCommercePoll==='function') _stopCommercePoll(); }catch(e){} }
   renderTab();updateBadges();
 }
 
@@ -23622,7 +23628,7 @@ function exportAllData(){
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download=`EK_백업_${new Date().toISOString().slice(0,10)}.json`;
+  a.download=`EK_백업_${toLocalDateStr(new Date())}.json`;
   a.click();
   showToast('✓ 백업 파일 다운로드 완료','var(--grn)');
 }
@@ -24900,8 +24906,8 @@ function showParseResult(parsed,imgs,resultEl){
     <div class="parse-body">${fieldsHtml||'<div class="parse-low">필드 인식 결과가 없습니다. 수동으로 입력해 주세요.</div>'}</div>
     ${imgsHtml?`<div class="parse-imgs">${imgsHtml}</div>`:''}
     <div style="padding:10px 14px;border-top:1px solid rgba(46,139,44,.2);display:flex;gap:8px;justify-content:flex-end">
-      ${doc==='샘플의뢰서'?`<button class="btn bp-blu" onclick="applyParseToSmp(${JSON.stringify(parsed).replace(/</g,'&lt;')},${JSON.stringify(window.parseImgList).replace(/</g,'&lt;')});closeM('mUpload')">이 내용으로 샘플의뢰서 열기</button>`:''}
-      ${doc==='발주서'?`<button class="btn bp-grn" onclick="applyParseToOrd(${JSON.stringify(parsed).replace(/</g,'&lt;')});closeM('mUpload')">이 내용으로 발주서 열기</button>`:''}
+      ${doc==='샘플의뢰서'?`<button class="btn bp-blu" onclick="applyParseToSmp(${JSON.stringify(parsed).replace(/"/g,'&quot;')},${JSON.stringify(window.parseImgList).replace(/"/g,'&quot;')});closeM('mUpload')">이 내용으로 샘플의뢰서 열기</button>`:''}
+      ${doc==='발주서'?`<button class="btn bp-grn" onclick="applyParseToOrd(${JSON.stringify(parsed).replace(/"/g,'&quot;')});closeM('mUpload')">이 내용으로 발주서 열기</button>`:''}
       <button class="btn bgo" onclick="closeM('mUpload')">취소</button>
     </div>
   </div>`;
@@ -27306,22 +27312,8 @@ var _noticeFilesOrig=[];   // 모달을 열 때 이미 저장돼 있던 key
 var _noticeUploading=0;
 var _noticeSession=0;      // 모달 열림 회차 — 닫힌 뒤 끝난 업로드를 구분
 var NOTICE_FILE_MAX=20*1024*1024;
-var NOTICE_R2='https://ek-proxy.deun01.workers.dev';
-function _noticeFileUrl(key){ return NOTICE_R2+'/r2/file/'+encodeURIComponent(key); }
-// ⚠ uploadFileToR2/deleteFileFromR2는 MGT 클로저 안에 있어 여기서 못 쓴다 → 공지 전용으로 직접 호출
-async function _noticeUpload(file){
-  try{
-    const res=await fetch(NOTICE_R2+'/r2/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name||'file'),'X-File-Type':file.type||'application/octet-stream'},body:file});
-    if(!res.ok){ console.warn('[공지 첨부] 업로드 HTTP '+res.status); return null; }
-    const d=await res.json();
-    if(!d||!d.key||!(d.size>0)){ console.warn('[공지 첨부] 업로드 응답 이상',d); return null; }
-    return d;
-  }catch(e){ console.warn('[공지 첨부] 업로드 예외:',e&&e.message); return null; }
-}
-function _noticeDelFile(key){
-  if(!key) return;
-  fetch(NOTICE_R2+'/r2/file/'+encodeURIComponent(key),{method:'DELETE'}).catch(function(e){ console.warn('[공지 첨부] 삭제 실패:',e&&e.message); });
-}
+function _noticeFileUrl(key){ return r2FileUrl(key); }
+function _noticeDelFile(key){ deleteFileFromR2(key); }
 function _noticeFmtSize(n){ n=+n||0; return n>=1048576?(n/1048576).toFixed(1)+'MB':n>=1024?Math.round(n/1024)+'KB':n+'B'; }
 function _noticeFilesHtml(n){
   const fs=(n&&Array.isArray(n.files))?n.files:[];
@@ -27343,7 +27335,7 @@ async function noticeAddFiles(fl){
   _noticeUploading+=ok.length; _noticeRenderFiles();
   for(const f of ok){
     let r=null;
-    r=await _noticeUpload(f);
+    r=await uploadFileToR2(f);
     _noticeUploading=Math.max(0,_noticeUploading-1);
     if(!r||!r.key) toast('업로드 실패: '+f.name);
     else if(session!==_noticeSession){ _noticeDelFile(r.key); }   // 올리는 사이 모달이 닫힘 → 고아 파일 방지
@@ -31109,9 +31101,9 @@ function renderOrder(){
             color=strToColor(e.vendorRaw);
           }
           const isActive=activeVendor===e.vendorRaw;
-          const safeV=e.vendorRaw.replace(/'/g,'&#39;');
+          const safeV=JSON.stringify(e.vendorRaw).replace(/"/g,'&quot;');
           const displayName=cl?cl.name:e.vendorRaw;
-          return`<span onclick="toggleOrdVendorFilter('${safeV}')"
+          return`<span onclick="toggleOrdVendorFilter(${safeV})"
             title="${displayName} — 진행중 발주 ${e.count}건${isActive?' (해제하려면 다시 클릭)':''}"
             style="display:inline-flex;align-items:center;gap:5px;padding:3px 9px 3px 3px;background:${isActive?'var(--gold-bg)':'var(--s1)'};border:1.5px solid ${isActive?'var(--gold)':'var(--bdr)'};border-radius:14px;cursor:pointer;font-size:11px;font-weight:${isActive?'700':'500'};color:var(--t1);transition:all .15s"
             onmouseover="this.style.borderColor='var(--gold)'" onmouseout="this.style.borderColor='${isActive?'var(--gold)':'var(--bdr)'}'">
@@ -34196,7 +34188,7 @@ function ordRowPickImage(idx){
       ordRowsBuf[idx].img=rd.result;
       renderOrdRows();
       // R2 백그라운드 업로드 (실패해도 base64 그대로 보존)
-      if(typeof uploadFileToR2==='function'){
+      {
         uploadFileToR2(f).then(function(r2){
           if(r2&&r2.publicUrl&&ordRowsBuf[idx]){
             ordRowsBuf[idx].img=r2.publicUrl;
@@ -34221,7 +34213,7 @@ function ordRowHandleImageDrop(ev, idx){
   rd.onload=function(){
     ordRowsBuf[idx].img=rd.result;
     renderOrdRows();
-    if(typeof uploadFileToR2==='function'){
+    {
       uploadFileToR2(f).then(function(r2){
         if(r2&&r2.publicUrl&&ordRowsBuf[idx]){
           ordRowsBuf[idx].img=r2.publicUrl;
@@ -34513,7 +34505,7 @@ async function downloadOrdFactPrevPng(){
     const url = canvas.toDataURL('image/png');
     const a=document.createElement('a');
     const gv = (id)=>{ const el=document.getElementById(id); return el?el.value:''; };
-    const name = ('발주서_'+(gv('o_vendor')||'')+'_'+(gv('o_no')||new Date().toISOString().slice(0,10))).replace(/[\\\/:*?"<>|]/g,'_');
+    const name = ('발주서_'+(gv('o_vendor')||'')+'_'+(gv('o_no')||toLocalDateStr(new Date()))).replace(/[\\\/:*?"<>|]/g,'_');
     a.download = name+'.png';
     a.href = url; a.click();
     showToast('✓ PNG 저장됨','var(--grn)');
@@ -34814,7 +34806,7 @@ async function downloadSmpFactPrevPng(){
     const url = canvas.toDataURL('image/png');
     const a=document.createElement('a');
     const gv = (id)=>{ const el=document.getElementById(id); return el?el.value:''; };
-    const fname = ('샘플의뢰서_'+(gv('s_name')||new Date().toISOString().slice(0,10))).replace(/[\\\/:*?"<>|]/g,'_');
+    const fname = ('샘플의뢰서_'+(gv('s_name')||toLocalDateStr(new Date()))).replace(/[\\\/:*?"<>|]/g,'_');
     a.download = fname+'.png';
     a.href = url; a.click();
     showToast('✓ PNG 저장됨','var(--grn)');
@@ -35814,7 +35806,7 @@ async function printInvoice(opts){
     const firstSmp = samples.find(x=>x.id==smpIds[0]) || {};
     const vendor = (firstSmp.client && firstSmp.client.name) || firstSmp.manager || firstSmp.brand || '샘플';
     const itemSummary = items.map(it=>`${it.name} ×${it.qty}`).join(', ');
-    const today = invDate || (new Date().toISOString().slice(0,10));
+    const today = invDate || (toLocalDateStr(new Date()));
     // 같은 invNo가 이미 invoiceHistory에 있으면 그것을 갱신 (재발행)
     const existingIdx = invoiceHistory.findIndex(v=>v._fromSample && v.invNo===invNo);
     // (prepaidInput은 if 블록 위에서 정의됨 — PDF에서도 사용)
@@ -36781,7 +36773,7 @@ function _loadClFiles(files){
       window.clFilesBuf.push(entry);
       renderClFilePrev();
       // R2 백그라운드 업로드
-      if(typeof uploadFileToR2 === 'function'){
+      {
         uploadFileToR2(f).then(r2 => {
           if(r2 && r2.publicUrl){
             const idx = window.clFilesBuf.indexOf(entry);
@@ -37410,22 +37402,10 @@ function _stR2Proxy(){
   }catch(e){}
   return 'https://ek-proxy.deun01.workers.dev';
 }
-// 영업 자료 R2 업로드 (경영지원과 동일 방식: base64 헤더 전송)
+// 영업 자료 R2 업로드 — 공용 uploadFileToR2 사용
 async function _stR2Upload(file){
-  try{
-    var dataUrl = await _fileToDataUrl(file);
-    var b64 = String(dataUrl).indexOf('base64,')>=0 ? String(dataUrl).split('base64,')[1] : '';
-    if(!b64) return null;
-    var resp = await fetch(_stR2Proxy()+'/r2/upload', {
-      method:'POST',
-      headers:{ 'Content-Type':'text/plain', 'X-File-Name':encodeURIComponent(file.name), 'X-File-Type':file.type||'application/octet-stream', 'X-Encoding':'base64' },
-      body: b64
-    });
-    if(!resp.ok){ console.warn('[영업자료 R2] HTTP', resp.status); return null; }
-    var d = await resp.json();
-    if(!d.key) return null;
-    return { key:d.key, url:_stR2Proxy()+'/r2/file/'+encodeURIComponent(d.key) };
-  }catch(e){ console.warn('[영업자료 R2] 예외', e.message); return null; }
+  var r = await uploadFileToR2(file);
+  return r ? { key:r.key, url:r.publicUrl } : null;
 }
 
 function vSalesTools(c){
@@ -37607,7 +37587,7 @@ function _renderSalesToolBody(){
 function _stFindFile(pageId){
   var f=(_salesToolFiles||[]).find(function(x){return x.pageId===pageId;});
   if(f) return {f:f, board:'sales'};
-  f=(typeof _contractFiles!=='undefined'?_contractFiles:[]||[]).find(function(x){return x.pageId===pageId;});
+  f=(typeof _contractFiles!=='undefined'?_contractFiles:[]).find(function(x){return x.pageId===pageId;});
   if(f) return {f:f, board:'contract'};
   return {f:null, board:null};
 }
@@ -37898,7 +37878,7 @@ async function vaultExport(){
   var blob = new Blob([JSON.stringify(raw)], {type:'application/json'});
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'EK_로그인정보_암호화백업_'+new Date().toISOString().slice(0,10)+'.json';
+  a.download = 'EK_로그인정보_암호화백업_'+toLocalDateStr(new Date())+'.json';
   a.click(); URL.revokeObjectURL(a.href);
   if(typeof showToast==='function') showToast('암호화된 백업 파일을 내려받았습니다','var(--grn)',3000);
 }
@@ -38038,7 +38018,7 @@ function _memoProps(m){
     '제목':{title:[{text:{content:(m.title||'(제목 없음)').slice(0,200)}}]},
     '내용':{rich_text:[{text:{content:(m.body||'').slice(0,1900)}}]},
     '분류':{select:{name:m.cat||'일반'}},
-    '작성일':{date:{start:m.date||new Date().toISOString().slice(0,10)}},
+    '작성일':{date:{start:m.date||toLocalDateStr(new Date())}},
     '작성자':{rich_text:[{text:{content:(m.author||'').slice(0,80)}}]}
   };
 }
@@ -38105,7 +38085,7 @@ async function _memoSave(){
     if(m){ var nid=await _memoNotionUpdate(m); if(nid && !m._notionId){ m._notionId=nid; _memoSaveLocal(list); _renderMemos(); } }
     _memoEditId=null;
   } else {
-    var m2={ id:Date.now(), title:t.trim(), body:b, cat:cat, date:new Date().toISOString().slice(0,10), author:author };
+    var m2={ id:Date.now(), title:t.trim(), body:b, cat:cat, date:toLocalDateStr(new Date()), author:author };
     list.unshift(m2); _memoSaveLocal(list); _renderMemos();
     var nid2=await _memoNotionCreate(m2);
     if(nid2){ m2._notionId=nid2; _memoSaveLocal(list); _renderMemos(); }
@@ -40287,7 +40267,7 @@ function addQuickPrepayment(invId){
     if(!confirm(`청구액(₩${total.toLocaleString()})을 초과하는 입금입니다.\n\n현재 입금합계: ₩${currentPaid.toLocaleString()}\n추가 입금: ₩${amount.toLocaleString()}\n예상 입금합계: ₩${(currentPaid+amount).toLocaleString()}\n\n그래도 추가하시겠습니까?`)) return;
   }
   // 오늘 날짜 (사용자 입력 우선)
-  const today = (typeof toLocalDateStr==='function') ? toLocalDateStr(new Date()) : new Date().toISOString().slice(0,10);
+  const today = toLocalDateStr(new Date());
   const dateInput = document.getElementById('quickPrepay_date');
   let payDate = today;
   if(dateInput && dateInput.value){
@@ -40989,13 +40969,8 @@ window.pushUnsyncedInquiriesToNotion = async function(){
   for(const q of unsynced){
     try{
       // 기존 저장 함수가 있다면 사용 (보통 저장 시 자동으로 노션 송신)
-      if(typeof saveInquiry === 'function'){
-        await saveInquiry(q, false); // false = 새로 만들기
-        success++;
-      } else {
-        console.warn('⚠ saveInquiry 함수 없음 — 수동 저장 필요');
-        fail++;
-      }
+      await syncInqToNotion(q, false); // false = 새로 만들기
+      success++;
     }catch(e){
       fail++;
       console.warn('실패:', q.client, e);
@@ -41388,7 +41363,7 @@ function createConsolidatedInvoice(vendor, month, options){
     return _existing;
   }
   const summary = calcConsolidationSummary(targets);
-  const today = (typeof toLocalDateStr==='function') ? toLocalDateStr(new Date()) : new Date().toISOString().slice(0,10);
+  const today = toLocalDateStr(new Date());
   const newId = Date.now();
   const itemSummary = `${month} 합본 (${targets.length}건) — ` + targets.map(v=>v.ordNo||(v._fromSample?'샘플':'')).filter(Boolean).join(', ').slice(0, 200);
   const invRec = {
@@ -42505,7 +42480,7 @@ function confirmUnwindConsolidationFromModal(){
 function addConsPayment(consId){
   const cons = invoiceHistory.find(v => v._isConsolidated && String(v.id)===String(consId));
   if(!cons){ showToast('⚠ 합본을 찾을 수 없습니다','var(--red)'); return; }
-  const today = (typeof toLocalDateStr==='function')?toLocalDateStr(new Date()):new Date().toISOString().slice(0,10);
+  const today = toLocalDateStr(new Date());
   // 입금일
   const date = prompt('입금일 (YYYY-MM-DD)', today);
   if(date===null) return;
@@ -46150,69 +46125,7 @@ var FILE_TYPE_LABEL = {
   'cninv':  '중국인보이스증빙'
 };
 
-// R2 public 도메인 (워커 EK_FILES 버킷의 Public Development URL)
-var R2_PUBLIC = 'https://pub-e54f6e37b612499fb17dc3c01db50a06.r2.dev';
-// R2 업로드/삭제용 워커 (notion-proxy는 R2 바인딩 없음 → ek-proxy 사용)
-var R2_PROXY  = 'https://ek-proxy.deun01.workers.dev';
-
-// File → R2 업로드. 성공 시 {key, publicUrl} 반환, 실패 시 null
-async function uploadFileToR2(file){
-  try{
-    // 작은 파일(<5MB)은 base64로, 큰 파일은 binary로 전송
-    var body, headers;
-    var isLarge = file.size > 5*1024*1024;
-    if(isLarge){
-      body = await file.arrayBuffer();
-      headers = {
-        'Content-Type': 'application/octet-stream',
-        'X-File-Name':  encodeURIComponent(file.name),
-        'X-File-Type':  file.type || 'application/octet-stream'
-      };
-    } else {
-      // base64로 변환 (CORS 안전)
-      var buf = await file.arrayBuffer();
-      var b64 = arrayBufferToBase64(buf);
-      body = b64;
-      headers = {
-        'Content-Type': 'text/plain',
-        'X-File-Name':  encodeURIComponent(file.name),
-        'X-File-Type':  file.type || 'application/octet-stream',
-        'X-Encoding':   'base64'
-      };
-    }
-    var resp = await fetch(R2_PROXY + '/r2/upload', {
-      method:'POST', headers:headers, body:body
-    });
-    if(!resp.ok){ console.warn('R2 업로드 실패:', resp.status); return null; }
-    var d = await resp.json();
-    if(!d.key) return null;
-    // 워커 경유 URL로 제공 (공개 r2.dev 도메인은 Public Access 미설정 시 404 → 워커가 직접 서빙)
-    var servedUrl = R2_PROXY + '/r2/file/' + encodeURIComponent(d.key);
-    return { key: d.key, publicUrl: servedUrl };
-  }catch(e){
-    console.warn('R2 업로드 예외:', e.message); return null;
-  }
-}
-
-function arrayBufferToBase64(buf){
-  var bytes = new Uint8Array(buf), bin = '';
-  var CHUNK = 0x8000;
-  for(var i=0;i<bytes.length;i+=CHUNK){
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i+CHUNK));
-  }
-  return btoa(bin);
-}
-
-// R2에서 파일 삭제
-async function deleteFileFromR2(key){
-  if(!key) return false;
-  try{
-    var resp = await fetch(R2_PROXY + '/r2/file/' + encodeURIComponent(key), {
-      method:'DELETE'
-    });
-    return resp.ok;
-  }catch(e){ return false; }
-}
+// R2 업로드/삭제는 전역 uploadFileToR2 / deleteFileFromR2 사용 (R2 파일 스토리지 모듈)
 
 // 파일을 R2에 업로드 + 노션 파일 DB에 새 행 생성 (external URL로 자동 첨부)
 async function uploadFileToNotion(file, type, period, extraInfo){
@@ -47057,7 +46970,7 @@ function _finRenderOutflows(){
 
 function _finRenderReceivables(){
   var tb=document.getElementById('fin-recv-body'); if(!tb) return;
-  var today=new Date().toISOString().slice(0,10);
+  var today=toLocalDateStr(new Date());
   var rows='';
   (FIN.receivables||[]).forEach(function(r,i){
     var overdue=(r.status!=='입금완료' && r.due && r.due<today);
@@ -47136,7 +47049,7 @@ function _finRenderLoans(){
 
 function _finRenderSummary(){
   var box=document.getElementById('fin-summary'); if(!box) return;
-  var today=new Date().toISOString().slice(0,10);
+  var today=toLocalDateStr(new Date());
   var annualOut=0, onceOut=0;
   (FIN.outflows||[]).forEach(function(o){
     if(o.paid) return;  // 지급완료 항목은 출금 예상·연환산에서 제외
@@ -47169,7 +47082,7 @@ function _finRenderSummary(){
 
 // CRUD
 function finAddOutflow(){ FIN.outflows.push({name:'',cat:'',amount:0,cycle:'월',month:'',memo:''}); _finRenderOutflows(); _finRenderSummary(); saveFinPlan(); }
-function finAddReceivable(){ FIN.receivables.push({client:'',amount:0,date:new Date().toISOString().slice(0,10),due:'',status:'미입금',memo:''}); _finRenderReceivables(); _finRenderSummary(); saveFinPlan(); }
+function finAddReceivable(){ FIN.receivables.push({client:'',amount:0,date:toLocalDateStr(new Date()),due:'',status:'미입금',memo:''}); _finRenderReceivables(); _finRenderSummary(); saveFinPlan(); }
 function finAddTax(){ FIN.taxes.push({name:'',month:'',amount:0,done:false,memo:''}); _finRenderTaxes(); _finRenderSummary(); saveFinPlan(); }
 function finAddLoan(){ FIN.loans.push({name:'',monthly:0,balance:0,maturity:'',memo:''}); _finRenderLoans(); _finRenderSummary(); saveFinPlan(); }
 function finSeedTaxes(){
@@ -47248,7 +47161,7 @@ function finDelReceivableFile(i, fileIdx){
   var f=FIN.receivables[i].files[fileIdx]; if(!f) return;
   if(!confirm('첨부 "'+f.name+'"을(를) 삭제할까요?')) return;
   // R2/노션 정리 (실패해도 목록에서는 제거)
-  try{ if(f.r2key && typeof deleteFileFromR2==='function') deleteFileFromR2(f.r2key); }catch(e){}
+  try{ if(f.r2key) deleteFileFromR2(f.r2key); }catch(e){}
   try{ if(f.pageId) fetch(NOTION_PROXY+'/pages/'+f.pageId,{method:'PATCH',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({archived:true})}).catch(function(){}); }catch(e){}
   FIN.receivables[i].files.splice(fileIdx,1);
   _finRenderReceivables(); saveFinPlan(true);
