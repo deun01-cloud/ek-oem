@@ -11866,9 +11866,10 @@ function _ioDupKey(io){
   //    주문번호가 다르거나 없어도 같은 송장이면 중복으로 판정한다. (주문번호 우선은 송장-중복을 놓쳤음)
   var inv = String(io.invoice||'').replace(/[-\s]/g,'').trim();
   if(inv) return brand+'|i:'+inv+'|'+rcp+'|'+opt;
-  // 송장 없으면(미출고) 주문번호로 — 서로 다른 주문(주문번호 다름)은 보존
+  // 송장 없으면(미출고) 주문번호+수령인+옵션으로 — 한 주문번호에 여러 품목(쿠팡 발주서 88줄, 카카오 다품목 주문)은
+  //   품목마다 별개 행이므로 주문번호만으로 묶으면 1건만 남고 나머지가 사라진다(2026-10-13 쿠팡 PO 실측).
   var ord = String(io.orderNo||'').trim();
-  if(ord) return brand+'|o:'+ord;
+  if(ord) return brand+'|o:'+ord+'|'+rcp+'|'+opt;
   return null;                                              // 송장·주문번호 둘 다 없으면 dedup 안 함(보호)
 }
 function _dedupIoItems(){
@@ -16639,6 +16640,12 @@ function openInvoiceMatchDialog(){
         const ws=wb.Sheets[wb.SheetNames[0]];
         const rows=XLSX.utils.sheet_to_json(ws,{defval:'',header:1});
         if(!rows.length){ showToast('빈 파일입니다','var(--red)',2500); return; }
+        // 🛒 쿠팡 로켓 발주서(Supplier Hub)는 송장 파일이 아니라 '주문' 파일 → 커머스 주문 업로드로 넘겨 품목 매칭·등록
+        if(typeof _findCoupangPOHeader==='function' && _findCoupangPOHeader(rows)>=0){
+          openCommerceUpload();
+          setTimeout(function(){ _handleCommerceFile(f); }, 50);
+          return;
+        }
         // 헤더 행 찾기 (송장번호 컬럼이 있는 첫 행)
         let hi=0, cols=null;
         for(let i=0;i<Math.min(5,rows.length);i++){
@@ -17977,6 +17984,7 @@ async function _handleCommerceFile(file){
     const wb = XLSX.read(buf, {type:'array'});
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    window._cuSheetName = String(wb.SheetNames[0]||'');
     _parseCommerceRows(rows);
   } catch(e){
     console.error(e);
@@ -18012,7 +18020,27 @@ var _COUPANG_SKU_SEED={
   '78953563':'VVBS010201S','79150821':'VVRG090906G','79150823':'VVRG090907G','79150824':'VVRG090908G',
   '79150825':'VVRG090909G','79150826':'VVRG090910G','79150828':'VVNG060901G','79150835':'VVNG090902G',
   '79150836':'VVNG060902G','79150838':'VVNG090906G','79150839':'VVNG090908G','79150843':'VVNB052701S',
-  '79150846':'VVBB052701S','79352773':'VVEB010202G','79352775':'VVEB010204G'
+  '79150846':'VVBB052701S','79352773':'VVEB010202G','79352775':'VVEB010204G',
+  // 2026-10-13 발주서 No.143982252 확정분 — 79150xxx 재리스팅은 기존 상품 공급가 ×1.25로 동일 제품 확인
+  //   (오브 볼드 = 볼드 라운드 페이브링 = ORBE BOLD RING / 오브 마이크로 파베 = ROUND PAVE RING / 머큐리 큐빅 = MERCURY
+  //    세르클 베젤 테니스 = CLASSIC TENNIS / 아르크 파베 후프 = U HOOP STONE / 루멘 슬림 = SLIM PAVE / 리본 모이사나이트 = RIBBON RING)
+  '78525773':'VVRB060402G','78557041':'VVRB060401G','78567787':'VVRB060402S','78566176':'VVRB060404S','78566718':'VVRB060405G',
+  '78567560':'VVRB060404G','78567704':'VVRB060401S','78567959':'VVRB060403G','78689467':'VVRB060403S',
+  '79150860':'VVRB060402S','79150862':'VVRB060403S','79150863':'VVRB060404S','79150864':'VVRB060405S',
+  '79150865':'VVRB060402G','79150866':'VVRB060403G','79150867':'VVRB060404G','79150868':'VVRB060405G',
+  '79150855':'VVRS012702S','79150856':'VVRS012703S','79150857':'VVRS012704S','79150858':'VVRS012705S',
+  '79150869':'VVRB060209S','79150870':'VVRB052701S',
+  '78729000':'VVRS012710S','78867313':'VVRB060502S','78722613':'VVRS012711S','78953118':'VVRS012713S',
+  '78751588':'VVRS012714S','78868032':'VVRB060501S','78866357':'VVRS012702S','78872486':'VVRS012709G',
+  '78767995':'VVEB010201S','79150853':'VVEB010201S','79150854':'VVEB010203S','78871743':'VVEB010202G',
+  '78870950':'VVEB010205S','79150852':'VVEB010205S','78871357':'VVEB010206G','78873124':'VVEB011901G',
+  '79150850':'VVEB060801S','78764122':'VVEB060801S','79702488':'VVEB061901S',
+  '79150873':'VVRB051203S','79150871':'VVRB051201S','79150844':'VVNS123001S','79150851':'VVEB010202S',
+  '79150875':'VVSR081301S','79234884':'VVRS082402S','79150877':'VVRS080401S','78566564':'VVRB052702S',
+  '78871866':'VVNS010203S','79150842':'VVNS010203S','79150845':'VVBS010601S',
+  '79150847':'VVEG081405G','79150848':'VVEG092802G','79150849':'VVEG090901G','79352779':'VVRS052204S',
+  '79704158':'name:벨루아 반지 (9호) - GD','79704159':'VVRS010208G','79704160':'VVRS010507G','79704161':'VVRS010508G',
+  '79150818':'VVRG090901G','79150820':'VVRG090904G','79150840':'VVNB081301G'
 };
 function _findCoupangPOHeader(rawRows){
   for(var r=0; r<Math.min(60, (rawRows||[]).length); r++){
@@ -18025,7 +18053,8 @@ function _parseCoupangPO(rawRows, hdrRow){
   var S=function(v){ return String(v==null?'':v).replace(/[\u00a0\s]+/g,' ').trim(); };
   var hdr=(rawRows[hdrRow]||[]).map(function(c){ return S(c).replace(/\s/g,''); });
   var cSku=hdr.indexOf('상품코드'), cName=hdr.findIndex(function(h){ return h.indexOf('상품명')===0; }),
-      cOrdQty=hdr.indexOf('발주수량'), cOkQty=hdr.indexOf('업체납품가능수량');
+      cOrdQty=hdr.indexOf('발주수량'), cOkQty=hdr.indexOf('업체납품가능수량'),
+      cCenter=hdr.indexOf('물류센터');   // '상품정보'만 내려받은 파일은 센터가 행마다 들어 있다 (여러 센터 묶음)
   // 발주정보: 라벨 셀 오른쪽(같은 행)의 첫 값 / 물류센터 표는 머리글 바로 아래 행
   var poNo='', center='', addr='', eta='', phone='';
   for(var r=0; r<hdrRow; r++){
@@ -18045,6 +18074,7 @@ function _parseCoupangPO(rawRows, hdrRow){
     }
   }
   if(!poNo){ var t=S((rawRows[0]||[])[0]).match(/No\.?\s*(\d+)/i); if(t) poNo=t[1]; }
+  if(!poNo && /^\d{6,}$/.test(String(window._cuSheetName||'').trim())) poNo=String(window._cuSheetName).trim();   // 시트명 = 발주번호
   var em=eta.match(/(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})/);
   var etaDate=em ? (em[1]+'-'+('0'+em[2]).slice(-2)+'-'+('0'+em[3]).slice(-2)) : '';
   addr=addr.replace(/\s*\(택배수령담당자[^)]*\)\s*$/,'');
@@ -18052,6 +18082,11 @@ function _parseCoupangPO(rawRows, hdrRow){
   var _mx=_cuMatcher(true);
   var _seedHit=function(sku){
     var code=_COUPANG_SKU_SEED[sku]; if(!code || typeof productDB==='undefined' || !Array.isArray(productDB)) return null;
+    if(code.indexOf('name:')===0){   // 품번이 비어 있는 제품은 정확한 제품명으로 지정
+      var nm=code.slice(5);
+      var hits=productDB.filter(function(p){ return p && String(p.name||'').trim()===nm; });
+      return hits.length===1 ? hits[0] : null;
+    }
     return productDB.find(function(p){ return p && String(p.code||'').trim().toUpperCase()===code; }) || null;
   };
   for(var i=hdrRow+1; i<rawRows.length; i++){
@@ -18067,8 +18102,9 @@ function _parseCoupangPO(rawRows, hdrRow){
     var m=_mx(name, '', '');                                // 품번 → 학습(확인해 등록한 매칭)
     var st=m.product?'자동매칭':'미매칭';
     if(!m.product){ var sp=_seedHit(sku); if(sp){ m={product:sp, score:0}; st='AI매칭'; } }   // 추천표 → 확인 필요
+    var rowCenter=(cCenter>=0 && S(rw[cCenter])) ? S(rw[cCenter]) : center;
     _commerceUploadRows.push({
-      recipient: '쿠팡 '+(center||'물류센터'), phone: phone, address: addr,
+      recipient: '쿠팡 '+(rowCenter||'물류센터'), phone: phone, address: addr,
       deliveryMemo: poNo?('발주서 No.'+poNo):'',
       itemText: name, option: option, qty: qty,
       orderDate: '', orderNo: poNo, shipDate: '', invoice: '',
