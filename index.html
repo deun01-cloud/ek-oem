@@ -48017,7 +48017,7 @@ async function editInvoiceUsd(idsCsv, val){
       // 기존 동일 인보이스 COGS 행 찾기
       var q = await fetch(NOTION_PROXY+'/databases/'+NOTION_COGS_DB+'/query',{method:'POST',headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'},body:JSON.stringify({page_size:100, filter:{ and:[ {property:'구분', rich_text:{equals:'중국인보이스'}}, {property:'기간', rich_text:{equals:invPeriod}} ] }})});
       var existId='';
-      if(q.ok){ var qd=await q.json(); (qd.results||[]).forEach(function(p){ var bg=p.properties&&p.properties['비고']&&p.properties['비고'].rich_text&&p.properties['비고'].rich_text[0]?p.properties['비고'].rich_text[0].plain_text:''; if(bg.indexOf(dupTag)>=0 && !p.archived) existId=p.id; }); }
+      if(q.ok){ var qd=await q.json(); (qd.results||[]).forEach(function(p){ var bg=p.properties&&p.properties['비고']&&p.properties['비고'].rich_text&&p.properties['비고'].rich_text[0]?p.properties['비고'].rich_text[0].plain_text:''; if(!p.archived && !existId && (bg.indexOf(dupTag)>=0 || ids.some(function(id){ return bg.indexOf('SRC:'+id)>=0; }))) existId=p.id; }); }   // SRC: 업로드 파일 pageId로 연결된 행도 같은 인보이스
       var _vname = (rep.vendor||'').trim() || '중국공장';
       var props = {
         '항목명':{title:[{text:{content:invName}}]},
@@ -48036,7 +48036,7 @@ async function editInvoiceUsd(idsCsv, val){
       if(invPeriod===period){
         if(!S.cnList) S.cnList=[];
         var found=S.cnList.find(function(c){return c.fname===invName;});
-        if(found){ found.usd=usd; found._rate=rate; } else { S.cnList.push({fname:invName, usd:usd, _rate:rate, invNo:rep.invNo||'', invDate:rep.invDate||''}); }
+        if(found){ found.usd=usd; found._rate=rate; found._key=found._key||(rep.invNo||rep.pageId||ids[0]); found.period=invPeriod; } else { S.cnList.push({fname:invName, usd:usd, _rate:rate, invNo:rep.invNo||'', invDate:rep.invDate||'', _key:(rep.invNo||rep.pageId||ids[0]), period:invPeriod}); }
       }
     }catch(e){ console.warn('인보이스 금액(COGS) 저장 실패:', e.message); }
   }
@@ -48645,6 +48645,7 @@ async function removeUploadedFile(pageId, period){
       await syncCogsToNotion(period);
       console.log('[지출] 노션 재동기화 완료');
     } else if(ftype==='cn' && S.cnList){
+      try{ S._cnDel=S._cnDel||{}; S._cnDel[period+'|'+fname]=1; S.cnList.forEach(function(x){ if(x.fname===fname && x._key) S._cnDel[period+'|'+x._key]=1; }); }catch(e){}
       S.cnList = S.cnList.filter(function(x){ return x.fname !== fname; });
       if(!S.cnList.length){ S.cn = null; resetDz('cn'); }
       else { var totalUSD = S.cnList.reduce(function(s,i){return s+i.usd;},0); markDz('dz-cn','i-cn','s-cn',S.cnList.length+'개', 'USD '+totalUSD.toFixed(0)); }
@@ -49277,7 +49278,7 @@ function rf(file,type){
         var parsed=parseCN(wb);
         S.cn=parsed;
         var _lrx=parseFloat((document.getElementById('usd-rate')||{}).value)||1350;
-        S.cnList.push({fname:file.name, usd:parsed.usd, lastRow:parsed.lastRow, invNo:parsed.invNo, invDate:parsed.invDate, _rate:_lrx});
+        S.cnList.push({fname:file.name, usd:parsed.usd, lastRow:parsed.lastRow, invNo:parsed.invNo, invDate:parsed.invDate, _rate:_lrx, period:_p});
         var totalUSD=S.cnList.reduce(function(s,i){return s+i.usd},0);
         var dateInfo=parsed.invDate?' ('+parsed.invDate+')':'';
         markDz('dz-cn','i-cn','s-cn',file.name,S.cnList.length+'개 · USD '+totalUSD.toFixed(0)+dateInfo);
@@ -49692,7 +49693,7 @@ function _showCnConfirm(file, period, info){
     // 집계 반영 (parseCN 결과와 동일한 형태로 S.cnList에 추가)
     if(!S.cnList) S.cnList=[];
     var lockedRate0 = parseFloat((document.getElementById('usd-rate')||{}).value)||1350;
-    S.cnList.push({fname:file.name, usd:usd, lastRow:null, invNo:no, invDate:date, _aiImg:true, _cur:cur, _rate:lockedRate0});
+    S.cnList.push({fname:file.name, usd:usd, lastRow:null, invNo:no, invDate:date, _aiImg:true, _cur:cur, _rate:lockedRate0, period:month});
     S.cn={usd:usd, invNo:no, invDate:date};
     var totalUSD=S.cnList.reduce(function(s,i){return s+i.usd;},0);
     markDz('dz-cn','i-cn','s-cn',file.name,S.cnList.length+'개 · '+cur+' '+totalUSD.toFixed(0)+(date?' ('+date+')':''));
@@ -50021,7 +50022,7 @@ function lfOtherSales(inp, kind){
   r.readAsArrayBuffer(file);
 }
 
-function addManual(){S.manual.push({label:'',amount:0});renderManual()}
+function addManual(){S.manual.push({label:'',amount:0,period:(document.getElementById('g-period')||{}).value||''});renderManual()}
 
 function renderManual(){
   var el=document.getElementById('manual-list');
@@ -51245,7 +51246,7 @@ async function syncCogsToNotion(period){
     }
 
     // ── 이 기간의 서버 매입 행 1회 조회(지출/공장/직접입력 모두) ──
-    var _srvExp=[], _cnManPages=[];
+    var _srvExp=[], _cnManPages=[], _srvCn=[];
     var qR = await fetch(NOTION_PROXY+'/databases/'+NOTION_COGS_DB+'/query',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({page_size:200, filter:{property:'기간', rich_text:{equals:period}}})});
     if(qR.ok){
       var qD = await qR.json();
@@ -51256,8 +51257,11 @@ async function syncCogsToNotion(period){
         if(g==='지출내역'){
           var eb=gt('비고'); var eid=(eb.match(/EID:([A-Za-z0-9_\-]+)/)||[])[1]||'';
           _srvExp.push({pageId:pg.id, eid:eid, vendor:gt('거래처'), amount:(pr['금액']?pr['금액'].number:0), period:gt('기간')||period, eb:eb});
-        } else if(g==='중국인보이스' || g==='직접입력'){
-          _cnManPages.push(pg.id);   // 공장/직접입력은 종전처럼 archive+재생성
+        } else if(g==='중국인보이스'){
+          var cb=gt('비고');
+          _srvCn.push({pageId:pg.id, name:(pr['항목명']&&pr['항목명'].title&&pr['항목명'].title[0]?pr['항목명'].title[0].plain_text:''), key:((cb.match(/INVKEY:(\S+)/)||[])[1]||''), src:((cb.match(/SRC:(\S+)/)||[])[1]||''), amount:(pr['금액']?pr['금액'].number:0)});
+        } else if(g==='직접입력'){
+          _cnManPages.push(pg.id);   // 직접입력은 이 기간 목록을 로드한 뒤에만 archive+재생성 (아래)
         }
       });
     }
@@ -51302,30 +51306,60 @@ async function syncCogsToNotion(period){
     }
     if(_adopted.length){ try{ _renderBoardRows(); calcPnL(); }catch(e){} }
 
-    // ── 공장 인보이스(cn)·직접입력(manual): 종전처럼 이 기간 행 archive 후 재생성 ──
-    if(_cnManPages.length){
+    // ── 공장 인보이스(cn): 인보이스별 upsert ──
+    //  종전엔 이 기간의 cn 행을 전부 archive한 뒤 메모리의 S.cnList로 재생성했다.
+    //  S.cnList는 월을 바꿔도 비워지지 않아서 ① 이전 달 인보이스가 새 달로 복사되고
+    //  ② 그 달에 직접 입력해 둔 인보이스(editInvoiceUsd 저장분)가 지워졌다.
+    //  → 이 기간 소속 항목만, INVKEY(없으면 항목명+금액)로 매칭해 갱신/생성한다.
+    //    서버에만 있는 행은 건드리지 않고, 이 기기에서 삭제한 것과 같은 키의 중복만 정리한다.
+    var rate = parseFloat(document.getElementById('usd-rate').value)||1350;
+    S._cnDel = S._cnDel || {};
+    var _cnLocal = (S.cnList||[]).filter(function(inv){ return (inv.period||'')===period; });
+    var _cnUsed={}, _cnKeep={}, _cnJobs=[];
+    _cnLocal.forEach(function(inv){
+      var _ir = inv._rate || rate;
+      var amt = Math.round((+inv.usd||0)*_ir);
+      var key = inv._key || inv.invNo || inv.fname || '중국인보이스';
+      if(!inv._key && _cnKeep[key]) key = key+'|'+amt;   // 이름만 같은 다른 인보이스는 별도 키
+      inv._key = key;
+      var m = _srvCn.find(function(r){ return !_cnUsed[r.pageId] && r.key===key; })
+           || _srvCn.find(function(r){ return !_cnUsed[r.pageId] && !r.key && r.name===(inv.fname||'') && Math.round(r.amount||0)===amt; })
+           || _srvCn.find(function(r){ return !_cnUsed[r.pageId] && !r.key && r.name===(inv.fname||''); });
+      var props = {
+        '항목명':{title:[{text:{content:inv.fname||'중국인보이스'}}]},
+        '기간':  {rich_text:[{text:{content:period}}]},
+        '구분':  {rich_text:[{text:{content:'중국인보이스'}}]},
+        '거래처':{rich_text:[{text:{content:inv.vendor||'중국공장'}}]},
+        '금액':  {number:amt},
+        '비고':  {rich_text:[{text:{content:('USD '+inv.usd+' RATE '+(Math.round(_ir*100)/100)+(inv.invDate?' / '+inv.invDate:'')+(inv.invNo?' / '+inv.invNo:'')+' INVKEY:'+key+((inv._src||(m&&m.src))?' SRC:'+(inv._src||m.src):'')).slice(0,1900)}}]}
+      };
+      _cnKeep[key]=1; _cnKeep[(inv.fname||'')+'|'+amt]=1;
+      if(m){ _cnUsed[m.pageId]=1; _cnJobs.push(fetch(NOTION_PROXY+'/pages/'+m.pageId,{method:'PATCH', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({properties:props})})); }
+      else { _cnJobs.push(fetch(NOTION_PROXY+'/pages',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({parent:{database_id:NOTION_COGS_DB}, properties:props})})); }
+    });
+    var _cnSeen={};
+    _srvCn.forEach(function(r){
+      if(_cnUsed[r.pageId]) return;
+      var k1 = r.key || '', k2 = (r.name||'')+'|'+Math.round(r.amount||0);
+      var dup = (k1 && (_cnKeep[k1]||_cnSeen[k1])) || _cnKeep[k2] || _cnSeen[k2];
+      var del = S._cnDel[period+'|'+(r.name||'')] || (k1 && S._cnDel[period+'|'+k1]);
+      if(dup || del){ _cnJobs.push(fetch(NOTION_PROXY+'/pages/'+r.pageId,{method:'PATCH', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({archived:true})})); return; }
+      if(k1) _cnSeen[k1]=1; _cnSeen[k2]=1;
+    });
+    await Promise.all(_cnJobs);
+
+    // ── 직접입력(manual): 이 기간 목록을 노션에서 로드한 경우에만 archive 후 재생성 ──
+    //   (로드 전에 지우면 그 달 직접입력분이 사라진다)
+    var _manOk = (S._manualLoadedFor===period);
+    if(_manOk && _cnManPages.length){
       await Promise.all(_cnManPages.map(function(pid){
         return fetch(NOTION_PROXY+'/pages/'+pid,{method:'PATCH', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({archived:true})});
       }));
     }
-    var rate = parseFloat(document.getElementById('usd-rate').value)||1350;
-    if(S.cnList&&S.cnList.length){
-      for(var i=0;i<S.cnList.length;i++){
-        var inv=S.cnList[i];
-        var _ir = inv._rate || rate;
-        await fetch(NOTION_PROXY+'/pages',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({parent:{database_id:NOTION_COGS_DB}, properties:{
-          '항목명':{title:[{text:{content:inv.fname||'중국인보이스'}}]},
-          '기간':  {rich_text:[{text:{content:period}}]},
-          '구분':  {rich_text:[{text:{content:'중국인보이스'}}]},
-          '거래처':{rich_text:[{text:{content:'중국공장'}}]},
-          '금액':  {number:Math.round(inv.usd*_ir)},
-          '비고':  {rich_text:[{text:{content:'USD '+inv.usd+' RATE '+_ir+(inv.invDate?' / '+inv.invDate:'')+(inv.invNo?' / '+inv.invNo:'')}}]}
-        }})});
-      }
-    }
-    if(S.manual&&S.manual.length){
+    if(_manOk && S.manual&&S.manual.length){
       for(var i=0;i<S.manual.length;i++){
         var m=S.manual[i];
+        if((m.period||period)!==period) continue;
         if(!m.amount && !m.usd) continue; // 금액(원/달러) 둘 다 없으면 스킵
         var memoM='수동입력';
         if(m.cur==='USD' && m.usd){ var rM=(m.amount&&m.usd)?Math.round(m.amount/m.usd):0; memoM='USD '+m.usd+(rM?' RATE '+rM:''); }
@@ -51408,6 +51442,7 @@ async function loadPeriodFromNotion(period, silent){
 
     if(r3&&r3.ok){
       var d3 = await r3.json();
+      var _cogsOk = true;   // 이 기간 매입 행을 실제로 받아왔음 (아래에서 cn/직접입력 목록을 이 기간 것으로 교체)
       (d3.results||[]).filter(function(p){return !p.archived;}).forEach(function(p){
         var pr=p.properties;
         var getText=function(k){return pr[k]&&pr[k].rich_text&&pr[k].rich_text[0]?pr[k].rich_text[0].plain_text:'';};
@@ -51437,20 +51472,32 @@ async function loadPeriodFromNotion(period, silent){
           var rateMatch = bigo.match(/RATE\s*([\d.]+)/i);
           var dateMatch = bigo.match(/(\d{4}-\d{2}-\d{2})/);
           var usd = usdMatch ? parseFloat(usdMatch[1]) : amt/rate;
-          var lockedRate = rateMatch ? parseFloat(rateMatch[1]) : 0;
+          var lockedRate = rateMatch ? parseFloat(rateMatch[1]) : ((usdMatch && usd) ? (amt/usd) : 0);   // RATE 없는 옛 행: 저장 금액 유지
           var invDate = dateMatch ? dateMatch[1] : '';
           var fname = getText('항목명');
-          loaded.cnList[fname] = {fname:fname, usd:usd, invDate:invDate, invNo:'', _rate:lockedRate};
+          var _ik = (bigo.match(/INVKEY:(\S+)/)||[])[1]||'';
+          // 같은 인보이스(INVKEY, 없으면 항목명+금액)는 1건으로 — 이름만 같은 다른 인보이스는 유지
+          loaded.cnList[_ik || (fname+'|'+Math.round(amt||0))] = {fname:fname, usd:usd, invDate:invDate, invNo:'', _rate:lockedRate, _key:_ik, _src:((bigo.match(/SRC:(\S+)/)||[])[1]||''), vendor:getText('거래처'), period:period};
         } else if(gubun==='직접입력'){
           var mBigo=getText('비고');
           var mUsdM=mBigo.match(/USD\s*([\d.]+)/i);
-          var manItem={label:getText('항목명'), amount:amt};
+          var manItem={label:getText('항목명'), amount:amt, period:period};
           if(mUsdM){ manItem.cur='USD'; manItem.usd=parseFloat(mUsdM[1])||0; } else { manItem.cur='KRW'; }
           loaded.manual.push(manItem);
         }
       });
     }
 
+    // 🔒 공장 인보이스·직접입력은 '이 기간' 목록으로 항상 교체 (비어 있어도).
+    //    종전엔 비어 있으면 이전 달 목록이 그대로 남아, 저장 시 이 달로 복사됐다.
+    if(_cogsOk){
+      var _cnThis = Object.keys(loaded.cnList).map(function(k){ return loaded.cnList[k]; });
+      S.cnList = _cnThis;
+      S.cn = _cnThis[0] || null;
+      S.manual = loaded.manual;
+      S._manualLoadedFor = period;
+      try{ renderManual(); }catch(e){}
+    }
     var hasData = loaded.sales.length||loaded.sample.length||loaded.exp.length||Object.keys(loaded.cnList).length||loaded.manual.length||loaded.salesAS.length||loaded.salesCommerce.length;
     if(!hasData){
       if(status && !silent) status.textContent='📭 Notion에 '+period+' 데이터 없음';
@@ -51630,6 +51677,42 @@ function sanitizeRecord(rec){
   return rec;
 }
 
+// 이 기간의 공장 인보이스(cn)·직접입력(manual) 목록만 노션에서 다시 읽는다 (매출/지출은 건드리지 않음)
+async function _loadCnManualForPeriod(period){
+  try{
+    var r = await fetch(NOTION_PROXY+'/databases/'+NOTION_COGS_DB+'/query',{method:'POST', headers:{'Content-Type':'application/json','Notion-Version':'2022-06-28'}, body:JSON.stringify({page_size:200, filter:{property:'기간', rich_text:{equals:period}}})});
+    if(!r.ok) return false;
+    var d = await r.json();
+    var rate = parseFloat((document.getElementById('usd-rate')||{}).value)||1350;
+    var cn = {}, man = [];
+    (d.results||[]).filter(function(p){return !p.archived;}).forEach(function(p){
+      var pr=p.properties;
+      var gt=function(k){return pr[k]&&pr[k].rich_text&&pr[k].rich_text[0]?pr[k].rich_text[0].plain_text:'';};
+      var name = pr['항목명']&&pr['항목명'].title&&pr['항목명'].title[0]?pr['항목명'].title[0].plain_text:'';
+      var amt = pr['금액']?pr['금액'].number:0;
+      var g = gt('구분'), b = gt('비고');
+      if(g==='중국인보이스'){
+        var um=b.match(/USD\s*([\d.]+)/), rm=b.match(/RATE\s*([\d.]+)/i), dm=b.match(/(\d{4}-\d{2}-\d{2})/);
+        var ik=(b.match(/INVKEY:(\S+)/)||[])[1]||'';
+        var _u = um?parseFloat(um[1]):amt/rate;
+        cn[ik || (name+'|'+Math.round(amt||0))] = {fname:name, usd:_u, invDate:(dm?dm[1]:''), invNo:'', _rate:(rm?parseFloat(rm[1]):(_u?amt/_u:0)), _key:ik, _src:((b.match(/SRC:(\S+)/)||[])[1]||''), vendor:gt('거래처'), period:period};
+      } else if(g==='직접입력'){
+        var mu=b.match(/USD\s*([\d.]+)/i);
+        var it={label:name, amount:amt, period:period};
+        if(mu){ it.cur='USD'; it.usd=parseFloat(mu[1])||0; } else { it.cur='KRW'; }
+        man.push(it);
+      }
+    });
+    if((document.getElementById('g-period')||{}).value!==period) return false;   // 그새 월이 바뀜
+    S.cnList = Object.keys(cn).map(function(k){ return cn[k]; });
+    S.cn = S.cnList[0] || null;
+    S.manual = man;
+    S._manualLoadedFor = period;
+    try{ renderManual(); }catch(e){}
+    return true;
+  }catch(e){ console.warn('공장 인보이스/직접입력 로드 실패:', e.message); return false; }
+}
+
 async function onPeriodChange(){
   var period = document.getElementById('g-period').value;
   if(!period) return;
@@ -51648,9 +51731,17 @@ async function onPeriodChange(){
   if(!S.sales||!S.sales.length) renderSales();
   if(!S.sample||!S.sample.length) renderSample();
 
+  // 🔒 공장 인보이스·직접입력은 월 소속 데이터 → 다른 달 것은 즉시 비운다.
+  //    (안 비우면 이전 달 인보이스가 이 달 저장 시 복사되고, 이 달 행이 지워졌다)
+  S.cnList = (S.cnList||[]).filter(function(x){ return x.period===period; });
+  S.cn = S.cnList[0] || null;
+  S.manual = (S.manual||[]).filter(function(m){ return m.period===period; });
+  if(S._manualLoadedFor!==period) S._manualLoadedFor = null;
   var hasLive = (S.sales&&S.sales.length)||(S.sample&&S.sample.length)||(S.exp&&S.exp.length);
   if(!hasLive){
     await loadPeriodFromNotion(period);
+  } else {
+    await _loadCnManualForPeriod(period);
   }
   // [신규] 기간 바뀌면 해당 기간의 파일 목록도 갱신
   await loadFilesFromNotion(period);
