@@ -361,6 +361,8 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .cl-cat-tags .cct.on{background:var(--gold-bg,#f5efe2);border-color:var(--gold-lt,#9a7b3f);color:var(--gold-lt,#9a7b3f)}
 .cl-cat-chip{display:inline-block;font-size:9.5px;font-weight:600;color:var(--gold-lt,#9a7b3f);background:var(--gold-bg,#f5efe2);padding:2px 8px;border-radius:9px;margin:1px 2px}
 /* ── 고객사 카드 그리드 ── */
+.cl-grp-h{display:flex;align-items:baseline;gap:6px;font-size:13px;font-weight:700;color:var(--t1);margin:18px 2px 8px;padding-bottom:6px;border-bottom:1px solid var(--bdr)}.cl-grp-h span{font-size:11px;font-weight:400;color:var(--t3)}
+.cl-grp-empty{font-size:12px;color:var(--t3);padding:10px 4px 4px}
 .cl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;padding:4px 2px}
 .cl-card{position:relative;border:1px solid var(--bdr);border-radius:12px;background:var(--s1);padding:14px 15px;cursor:pointer;transition:.14s;display:flex;flex-direction:column;gap:9px}
 .cl-card:hover{border-color:var(--gold-line);box-shadow:0 4px 16px rgba(0,0,0,.08);transform:translateY(-2px)}
@@ -38432,14 +38434,22 @@ function deleteFactory(){
 
 function vClients(c){
   _ensureIds(clients, '고객사');
-  c.innerHTML=`<div class="card"><div class="ch"><div><div class="ch-t">고객사 관리 <span style="font-size:11px;color:var(--t3);font-weight:400">${clients.length}곳</span></div></div><button class="btn bp bs" onclick="openM('mCl')">+ 등록</button></div>
-  <div class="cl-grid">${clients.map(cl=>`
+  // 카테고리별 그룹 — 복수 카테고리 고객사는 각 그룹에 모두 표시. 순서: 기본 태그 → 그 외(종합 등) → 미지정
+  const _cats=cl=>(cl.cat||'').split(',').map(t=>t.trim()).filter(Boolean);
+  const _extra=[...new Set(clients.flatMap(_cats))].filter(t=>!CL_CAT_TAGS.includes(t));
+  const _groups=[...CL_CAT_TAGS,..._extra].map(t=>({t,list:clients.filter(cl=>_cats(cl).includes(t))}));
+  _groups.push({t:'카테고리 미지정',list:clients.filter(cl=>!_cats(cl).length)});
+  const _card=cl=>`
     <div class="cl-card" onclick="showClientDp('${String(cl.id).replace(/'/g,"\\'")}')" title="클릭해서 상세 보기">
       <button class="cl-card-edit" onclick="event.stopPropagation();openClModal('${String(cl.id).replace(/'/g,"\\'")}')" title="수정">✏️</button>
       <div class="cl-card-top">${clInitHtml(cl)}<span class="cl-card-name" title="${cl.name}">${cl.name}</span></div>
       <div class="cl-card-cats">${(cl.cat||'').split(',').map(t=>t.trim()).filter(Boolean).map(t=>`<span class="cl-cat-chip">${t}</span>`).join('')||'<span style="font-size:11px;color:var(--t3)">카테고리 미지정</span>'}</div>
       ${cl.status==='inactive'?'<span class="cl-card-inactive">미활성</span>':''}
-    </div>`).join('')}</div></div>`;
+    </div>`;
+  c.innerHTML=`<div class="card"><div class="ch"><div><div class="ch-t">고객사 관리 <span style="font-size:11px;color:var(--t3);font-weight:400">${clients.length}곳</span></div></div><button class="btn bp bs" onclick="openM('mCl')">+ 등록</button></div>
+  ${_groups.filter(g=>g.list.length||CL_CAT_TAGS.includes(g.t)).map(g=>`
+    <div class="cl-grp-h">${g.t}<span>${g.list.length}곳</span></div>
+    ${g.list.length?`<div class="cl-grid">${g.list.map(_card).join('')}</div>`:'<div class="cl-grp-empty">등록된 고객사 없음 — 영업 필요</div>'}`).join('')}</div>`;
 }
 function _vClients_OLD_TABLE(c){
   _ensureIds(clients, '고객사');
