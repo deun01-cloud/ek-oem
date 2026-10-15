@@ -15038,12 +15038,19 @@ async function pullFromNotion(opts){
           //    — 그래야 방금 추가한 '주문'이 pull 후 'shipped'로 뒤집혀 주문 탭에서 사라지지 않음
           if(merged.shipStage===undefined && prev.shipStage!==undefined) merged.shipStage=prev.shipStage;
           if(!merged.shipDate && prev.shipDate) merged.shipDate=prev.shipDate;
+          // 🕒 [근본수정 2026-10-15] 배열(사진 등)은 예전엔 '더 긴 쪽'을 골랐다 → 폰에서 사진을 바꾸거나 지워도
+          //    PC는 옛 사진을 유지했다. 풀 동기화(mergeLocalAttachments)와 같은 규칙으로 맞춘다:
+          //    이 기기 수정이 노션보다 새로우면 로컬, 노션이 비었으면 로컬(유실 방지), 그 외엔 노션.
+          const _rEd = merged._nEditedAt ? Date.parse(merged._nEditedAt) : NaN;
+          const _localNewer = !!(prev._ts && !isNaN(_rEd) && (+prev._ts > _rEd + 60000))
+                              || !!(prev._syncedAt && (Date.now() - new Date(prev._syncedAt).getTime()) < 180*1000);
           idFields.forEach(f=>{
             const isArr=Array.isArray(prev[f])||Array.isArray(merged[f]);
             if(isArr){
               const prevArr=Array.isArray(prev[f])?prev[f]:[];
               const remoteArr=Array.isArray(merged[f])?merged[f]:[];
-              merged[f]=prevArr.length>=remoteArr.length?prevArr:remoteArr;
+              if(f==='priceHistory' || f==='priceHistDeleted') merged[f]=prevArr.length>=remoteArr.length?prevArr:remoteArr; // 이력 로그는 기존 규칙 유지
+              else merged[f]=(_localNewer || (!remoteArr.length && prevArr.length)) ? prevArr : remoteArr;
             } else if(prev[f]!==undefined){
               merged[f]=prev[f];
             }
@@ -15297,11 +15304,14 @@ async function syncIOToNotion(io){
   };
   if(io.date) props["일자"] = {date:{start: io.date}};
   // 사진은 외부 URL만 노션에 보낼 수 있어요 (file_id는 불가)
-  if(Array.isArray(io.files) && io.files.length){
-    const externalFiles = io.files.filter(f=>f.url && f.url.startsWith('http'))
+  if(Array.isArray(io.files)){
+    const externalFiles = io.files.filter(f=>f && f.url && f.url.startsWith('http'))
       .slice(0,10) // 노션 file 필드 한계
       .map(f=>({name: f.name||'photo', type:'external', external:{url: f.url}}));
-    if(externalFiles.length) props["사진"] = {files: externalFiles};
+    // 🛠 [FIX 2026-10-15] 전부 클라우드(R2)에 올라간 상태면 빈 목록도 보낸다 — 예전엔 마지막 사진을 지워도
+    //    노션에 남아 있어 다음 동기화 때 되살아났다. (base64가 남아 있으면 기존처럼 올라간 것만 보냄)
+    const _stillLocal = io.files.some(f=>f && typeof f.url==='string' && f.url.startsWith('data:'));
+    if(externalFiles.length || !_stillLocal) props["사진"] = {files: externalFiles};
   }
   // 커머스 필드 (값 있을 때만 PATCH — null로 덮어쓰지 않음)
   if(io.brand)        props["자체브랜드"] = {select:{name: io.brand}};

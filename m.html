@@ -2048,7 +2048,22 @@ async function manualSync(silent){
         _skipped.push(`${label}(노션 ${rows.length} < 로컬 ${_uniqLocal})`);
         return localArr;
       }
-      return rows.map(mapFn).map((x,i)=>({id:Date.now()+idBase+i, ...x}));
+      // 🔑 [근본수정 2026-10-15] 예전엔 노션 결과로 배열을 통째로 갈아끼우며 id까지 매번 새로 만들었다.
+      //    → 수정 창을 연 채 사진을 고르러 카메라/갤러리에 다녀오면(포커스 복귀 = 자동 동기화) id가 바뀌어
+      //      저장할 대상을 못 찾아 수정·사진이 통째로 사라졌고, 노션에 아직 안 올라간 수정도 되돌려졌다.
+      //    → 같은 노션 페이지는 로컬 id와 로컬 전용 필드를 유지하고, 노션 반영 전(_pending)인 건은 로컬을 그대로 둔다.
+      const _byNid = new Map();
+      localArr.forEach(x=>{ if(x && x._notionId && !_byNid.has(String(x._notionId))) _byNid.set(String(x._notionId), x); });
+      const _base = Date.now()+idBase;
+      const _out = rows.map((r,i)=>{
+        const m = mapFn(r);
+        const prev = (m && m._notionId) ? _byNid.get(String(m._notionId)) : null;
+        if(!prev) return {id:_base+i, ...m};
+        if(prev._pending) return prev;
+        return {...prev, ...m, id:prev.id};
+      });
+      const _pendNew = localArr.filter(x=>x && x._pending && !x._notionId);
+      return _pendNew.concat(_out);
     }
     samples       = _safeApply(notionCfg.smpDb,  smpRows,  samples,        mapNotionSample,  0,    '샘플');
     orders        = _safeApply(notionCfg.ordDb,  ordRows,  orders,         mapNotionOrder,   1000, '발주');
@@ -2066,6 +2081,8 @@ async function manualSync(silent){
     saveAll();
     _lastSyncAt = Date.now();
     _updateSyncLabel();
+    // 📤 노션에 아직 못 올라간 입출고(사진 포함) 재시도
+    try{ ioItems.filter(x=>x && x._pending).forEach(x=>{ _mIoPush(x.id); }); }catch(e){}
 
     // 🔔 변경 감지 → 알림 생성 (첫 동기화는 prev가 비어있어서 자동 스킵)
     _detectChanges({
@@ -5982,6 +5999,7 @@ function openIoEdit(ioId){ openIoForm(ioId); }
 function openIoForm(ioId){
   window._currentIoFormId = ioId; // 품목 다중 선택 모달이 백업/복원할 때 사용
   const io = ioId ? ioItems.find(x=>x.id==ioId) : null;
+  window._currentIoFormNid = io ? (io._notionId||null) : null; // 저장 시 대상 재확인용 (id가 바뀌어도 찾을 수 있게)
   const isEdit = !!io;
   _ioFileBuf = io ? [...(io.files||[])] : [];
   _photoInit('ioAdd', _ioFileBuf);
@@ -6230,7 +6248,8 @@ function openIoItemPicker(){
       io_memo: getVal('io_memo'),
       io_user: getVal('io_user'),
       io_applyStock: document.getElementById('io_applyStock')?.checked || false,
-    }
+    },
+    photos: _photoGet('ioAdd').slice()   // 📸 품목 선택 후 돌아와도 방금 추가한 사진이 지워지지 않게
   };
 
   // 이미 입력된 품목들은 미리 체크 상태로 표시
@@ -6336,6 +6355,7 @@ function _restoreIoForm(){
   _ioFormBackup = null;
   // 입출고 모달을 다시 열기 (저장된 ioId 그대로)
   openIoForm(backup.ioId);
+  if(Array.isArray(backup.photos)){ _photoInit('ioAdd', backup.photos); _photoRefresh('ioAdd'); }
   // DOM이 그려진 직후 백업값 복원
   setTimeout(()=>{
     Object.entries(backup.fields).forEach(([id, val])=>{
@@ -6348,12 +6368,18 @@ function _restoreIoForm(){
 }
 
 // ──── 저장 ────
+// 🔑 [근본수정 2026-10-15] 예전 흐름: 사진 재업로드 → 노션 저장을 '기다린 뒤' 로컬에 반영.
+//    그 사이 자동 동기화가 배열을 바꾸면 대상을 못 찾아(또는 old.id 오류로) 수정이 조용히 사라졌고,
+//    노션 실패 시엔 다음 동기화가 로컬 수정을 노션 옛 값으로 되돌렸다. 실시간 서버 발행도 없어 PC에 반영이 안 됐다.
+//    → 로컬에 즉시 저장(_pending) + 실시간 서버 발행, 노션은 백그라운드로 올리고 실패하면 다음 동기화 때 재시도.
 async function saveIo(ioId){
   const date = document.getElementById('io_date').value || todayStr();
   const kind = document.getElementById('io_kind').value;
   if(!kind){ showToast('구분을 선택해주세요','warn'); return; }
   const isEdit = !!ioId;
-  const old = isEdit ? ioItems.find(x=>x.id==ioId) : null;
+  let old = isEdit ? ioItems.find(x=>x.id==ioId) : null;
+  if(isEdit && !old && window._currentIoFormNid) old = ioItems.find(x=>x._notionId===window._currentIoFormNid);
+  if(isEdit && !old){ showToast('⚠ 수정할 기록을 찾지 못했습니다 — 목록에서 다시 열어주세요','error'); return; }
 
   // 자동 제목 생성
   let title = document.getElementById('io_title').value.trim();
@@ -6363,134 +6389,143 @@ async function saveIo(ioId){
   }
 
   const applyStock = document.getElementById('io_applyStock').checked;
-
-  // 📸 사진 사전 처리: base64 상태인 사진 있으면 저장 전에 R2 재업로드 시도
-  // (모바일에서 사진 등록 → 곧바로 저장 누르면 R2 업로드 실패한 경우가 있음)
-  let _photoFiles = _photoGet('ioAdd');
-  const _hasBase64 = (_photoFiles||[]).some(f => f && f.url && !String(f.url).startsWith('http'));
-  if(_hasBase64 && notionCfg && notionCfg.workerUrl){
-    showToast('🔄 사진 R2 재업로드 중...','info');
-    try{
-      const retried = [];
-      for(const f of _photoFiles){
-        if(f && f.url && !String(f.url).startsWith('http')){
-          // base64 → File 객체로 변환 후 재업로드
-          try{
-            const m = String(f.url).match(/^data:([^;]+);base64,(.+)$/);
-            if(m){
-              const mime = m[1] || 'image/jpeg';
-              const b64 = m[2];
-              const bin = atob(b64);
-              const u8 = new Uint8Array(bin.length);
-              for(let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i);
-              const blob = new Blob([u8], {type:mime});
-              const fileObj = new File([blob], f.name||'photo.jpg', {type:mime});
-              const r2 = await uploadImageToR2(fileObj);
-              if(r2 && r2.url && String(r2.url).startsWith('http')){
-                retried.push(r2);
-                continue;
-              }
-            }
-          }catch(e){ console.warn('재업로드 실패:', e); }
-          // 재업로드 실패해도 로컬엔 유지 (브라우저엔 보임)
-          retried.push(f);
-        } else {
-          retried.push(f);
-        }
-      }
-      _photoFiles = retried;
-      window._photoBufs['ioAdd'] = retried; // 버퍼도 갱신
-    }catch(e){ console.warn('사진 재업로드 전체 실패:', e); }
-  }
+  const invoice = document.getElementById('io_invoice').value.trim();
+  const toNotion = !!(notionCfg && notionCfg.workerUrl && notionCfg.ioDb);
 
   const updated = {
     ...(old||{}),
-    id: isEdit ? old.id : Date.now(),
+    id: old ? old.id : Date.now(),
     date, kind, title,
     flow: document.getElementById('io_flow').value,
     vendor: document.getElementById('io_vendor').value.trim(),
     qty: +document.getElementById('io_qty').value || 0,
-    invoiceNo: document.getElementById('io_invoice').value.trim(),
+    invoice, invoiceNo: invoice,   // PC는 invoice, 옛 모바일은 invoiceNo — 둘 다 갱신 (예전엔 invoice가 옛 값으로 남아 노션에 옛 송장이 올라갔다)
     items: document.getElementById('io_items').value.trim(),
     memo: document.getElementById('io_memo').value.trim(),
     user: document.getElementById('io_user').value.trim(),
     applyStock,
-    // 사진: _localDataUrl은 임시(표시용)이라 localStorage엔 저장하지 않음 (용량 절약)
-    files: (_photoFiles||[]).map(f=>{
+    // 사진: _localDataUrl은 임시(표시용)이라 저장하지 않음 (용량 절약)
+    files: (_photoGet('ioAdd')||[]).map(f=>{
       const {_localDataUrl, ...rest} = f;
       return rest;
     }),
-    createdAt: (old && old.createdAt) || new Date().toISOString()
+    createdAt: (old && old.createdAt) || new Date().toISOString(),
+    _ts: Date.now()
   };
+  if(toNotion) updated._pending = true;
 
-  // 노션 동기화
-  if(notionCfg && notionCfg.workerUrl && notionCfg.ioDb){
-    showToast('🔄 노션 ' + (isEdit?'수정':'등록') + ' 중...','info');
-    try{
-      const props = {
-        "제목":{title:[{text:{content:title}}]},
-        "구분":{select:{name:kind}},
-        "일자":{date:{start:date}},
-        "고객사/공장":{rich_text:[{text:{content:updated.vendor||''}}]},
-        "품목":{rich_text:[{text:{content:updated.items||''}}]},
-        "송장번호":{rich_text:[{text:{content:updated.invoice||updated.invoiceNo||''}}]},
-        "메모":{rich_text:[{text:{content:updated.memo||''}}]},
-        "등록자":{rich_text:[{text:{content:updated.user||''}}]},
-        "수량":{number:+updated.qty||null}
-      };
-      // 사진 — 외부 URL만 노션에 보낼 수 있음 (R2 업로드된 것만)
-      const externalFiles = (updated.files||[]).filter(f=>f.url && f.url.startsWith('http'))
-        .slice(0,10)
-        .map(f=>({name: f.name||'photo', type:'external', external:{url: f.url}}));
-      if(externalFiles.length) props["사진"] = {files: externalFiles};
-      if(updated.flow) props["흐름"] = {select:{name:updated.flow}};
-      // 커머스 필드
-      if(updated.brand)        props["자체브랜드"] = {select:{name: updated.brand}};
-      if(updated.recipient)    props["수령인"]    = {rich_text:[{text:{content:(updated.recipient||'').slice(0,200)}}]};
-      if(updated.phone)        props["연락처"]    = {phone_number:(updated.phone||'').slice(0,50)};
-      if(updated.address)      props["주소"]      = {rich_text: chunkRichText((updated.address||''))};
-      if(updated.deliveryMemo) props["배송메모"]   = {rich_text: chunkRichText((updated.deliveryMemo||''))};
-      if(updated.matchStatus)  props["매칭상태"]   = {select:{name: updated.matchStatus}};
-      // 교환/환불 필드
-      if(updated.returnStatus)      props["반품상태"]   = {select:{name: updated.returnStatus}};
-      if(updated.returnReason)      props["반품사유"]   = {rich_text: chunkRichText((updated.returnReason||''))};
-      if(updated.returnRequestedAt) props["반품요청일"] = {date:{start: updated.returnRequestedAt}};
-      if(updated.returnCompletedAt) props["반품입고일"] = {date:{start: updated.returnCompletedAt}};
-
-      if(isEdit && updated._notionId){
-        await nUpdate(updated._notionId, props);
-      } else {
-        const res = await nCreate(notionCfg.ioDb, props);
-        if(res && res.id) updated._notionId = res.id;
-      }
-      showToast('✓ ' + (isEdit?'수정':'등록') + ' 완료','success');
-    }catch(e){
-      console.error(e);
-      showToast('로컬에만 저장됨','warn');
-    }
-  } else {
-    showToast('✓ ' + (isEdit?'수정':'등록') + ' (로컬)','success');
-  }
-
-  if(isEdit){
-    const i = ioItems.findIndex(x=>x.id==ioId);
-    if(i>=0) ioItems[i] = updated;
+  if(old){
+    const i = ioItems.indexOf(old);
+    if(i>=0) ioItems[i] = updated; else ioItems.unshift(updated);
   } else {
     ioItems.unshift(updated);
   }
 
   // 재고 자동 반영 (신규일 때만)
+  let stockMsg = '';
   if(applyStock && !isEdit){
     const applied = _applyIoToStock(updated);
-    if(applied > 0){
-      showToast(`✓ 등록 완료 · 재고 ${applied}건 반영됨`,'success');
-    }
+    if(applied > 0) stockMsg = ` · 재고 ${applied}건 반영`;
   }
 
   saveAll();
   closeModal();
   renderIoList();
   renderDash();
+
+  // 🌐 실시간 서버 즉시 발행 — PC·다른 폰에 바로 반영.
+  //    신규 건은 노션 ID를 받은 뒤 발행한다(로컬 id 키로 먼저 올리면 서버에 같은 건이 두 개 생긴다).
+  if(updated._notionId || !toNotion){ try{ realtimePublish('io', updated); }catch(e){} }
+
+  if(!toNotion){ showToast('✓ ' + (isEdit?'수정':'등록') + ' (로컬)' + stockMsg,'success'); return; }
+  showToast('✓ ' + (isEdit?'수정':'등록') + ' 완료' + stockMsg + ' · 노션 반영 중','success');
+  const ok = await _mIoPush(updated.id);
+  if(ok === false) showToast('⚠ 노션 반영 실패 — 이 폰에 저장돼 있고 다음 동기화 때 자동으로 다시 올립니다','warn');
+}
+
+// 📤 입출고 1건을 노션에 반영 (사진 R2 재업로드 포함). 성공하면 _pending 해제 + 서버 재발행.
+//    반환: true 성공 / false 실패(다음 동기화 때 재시도) / null 이미 진행 중
+const _mIoPushing = new Set();
+function _mIoProps(io, files, stillLocal){
+  const props = {
+    "제목":{title:[{text:{content:io.title||''}}]},
+    "구분":{select:{name:io.kind}},
+    "일자":{date:{start:io.date}},
+    "흐름": io.flow ? {select:{name:io.flow}} : {select:null},
+    "고객사/공장":{rich_text:[{text:{content:(io.vendor||'').slice(0,2000)}}]},
+    "품목":{rich_text:[{text:{content:(io.items||'').slice(0,2000)}}]},
+    "송장번호":{rich_text:[{text:{content:(io.invoice||io.invoiceNo||'').slice(0,200)}}]},
+    "메모":{rich_text:[{text:{content:(io.memo||'').slice(0,2000)}}]},
+    "등록자":{rich_text:[{text:{content:(io.user||'').slice(0,100)}}]},
+    "수량":{number:+io.qty||null}
+  };
+  // 사진 — 노션엔 외부 URL(R2)만 보낼 수 있다. 전부 올라간 상태면 빈 목록도 보낸다(폰에서 지운 사진이 노션에서도 지워지게).
+  const ext = (files||[]).filter(f=>f && f.url && String(f.url).startsWith('http')).slice(0,10)
+    .map(f=>({name: (f.name||'photo').slice(0,100), type:'external', external:{url: f.url}}));
+  if(ext.length || !stillLocal) props["사진"] = {files: ext};
+  // 커머스 필드
+  if(io.brand)        props["자체브랜드"] = {select:{name: io.brand}};
+  if(io.recipient)    props["수령인"]    = {rich_text:[{text:{content:(io.recipient||'').slice(0,200)}}]};
+  if(io.phone)        props["연락처"]    = {phone_number:(io.phone||'').slice(0,50)};
+  if(io.address)      props["주소"]      = {rich_text: chunkRichText((io.address||''))};
+  if(io.deliveryMemo) props["배송메모"]   = {rich_text: chunkRichText((io.deliveryMemo||''))};
+  if(io.matchStatus)  props["매칭상태"]   = {select:{name: io.matchStatus}};
+  // 교환/환불 필드
+  if(io.returnStatus)      props["반품상태"]   = {select:{name: io.returnStatus}};
+  if(io.returnReason)      props["반품사유"]   = {rich_text: chunkRichText((io.returnReason||''))};
+  if(io.returnRequestedAt) props["반품요청일"] = {date:{start: io.returnRequestedAt}};
+  if(io.returnCompletedAt) props["반품입고일"] = {date:{start: io.returnCompletedAt}};
+  return props;
+}
+async function _mIoPush(id){
+  const key = String(id);
+  if(_mIoPushing.has(key)) return null;
+  const cur = ioItems.find(x=>String(x.id)===key);
+  if(!cur || !(notionCfg && notionCfg.workerUrl && notionCfg.ioDb)) return false;
+  _mIoPushing.add(key);
+  const stamp = cur._ts;
+  try{
+    // 1) 아직 R2에 못 올라간 사진(base64)이 있으면 다시 올린다
+    let files = (cur.files||[]).slice();
+    if(files.some(f=>f && f.url && String(f.url).startsWith('data:'))){
+      files = await Promise.all(files.map(async f=>{
+        const m = (f && f.url) ? String(f.url).match(/^data:([^;]+);base64,(.+)$/) : null;
+        if(!m) return f;
+        try{
+          const bin = atob(m[2]); const u8 = new Uint8Array(bin.length);
+          for(let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i);
+          const r2 = await uploadImageToR2(new File([u8], f.name||'photo.jpg', {type:m[1]||'image/jpeg'}));
+          if(r2 && r2.url && String(r2.url).startsWith('http')){ const {_localDataUrl, ...rest} = r2; return rest; }
+        }catch(e){ console.warn('[io] 사진 재업로드 실패:', e); }
+        return f;
+      }));
+    }
+    const stillLocal = files.some(f=>f && f.url && String(f.url).startsWith('data:'));
+    // 2) 노션 저장
+    const props = _mIoProps(cur, files, stillLocal);
+    let nid = cur._notionId;
+    if(nid) await nUpdate(nid, props);
+    else { const res = await nCreate(notionCfg.ioDb, props); nid = res.id; }
+    // 3) 최신 배열에서 다시 찾아 반영 (그 사이 동기화·재수정이 있었을 수 있음)
+    const live = ioItems.find(x=>String(x.id)===key) || ioItems.find(x=>x._notionId && x._notionId===nid);
+    if(live){
+      if(!live._notionId) live._notionId = nid;
+      if(live._ts === stamp){
+        live.files = files;
+        if(!stillLocal) delete live._pending;
+      }
+      saveAll();
+      try{ realtimePublish('io', live); }catch(e){}
+      if(live._pending && live._ts !== stamp) setTimeout(()=>_mIoPush(live.id), 0); // 올리는 사이 또 수정됨 → 최신본으로 한 번 더
+      if(curPage === 'pgIo') try{ renderIoList(); }catch(e){}
+    }
+    return !stillLocal;
+  }catch(e){
+    console.warn('[io] 노션 반영 실패 — 다음 동기화 때 재시도:', e);
+    return false;
+  }finally{
+    _mIoPushing.delete(key);
+  }
 }
 
 // 재고 자동 반영 헬퍼
@@ -6565,6 +6600,8 @@ async function deleteIo(ioId){
   // 2) 로컬에서 제거
   ioItems = ioItems.filter(x=>x.id!=ioId);
   saveAll();
+  // 🌐 실시간 서버에도 삭제 반영 (예전엔 빠져 있어 PC·서버에 남아 있다가 다시 나타났다)
+  try{ realtimeDelete('io', io); }catch(e){}
   closeModal();
   renderIoList();
   showToast(notionOk ? '✓ 삭제됨' : '⚠ 로컬만 삭제 — 노션 실패','success');
