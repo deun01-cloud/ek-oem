@@ -13943,6 +13943,10 @@ async function nQueryAll(dbId, sinceISO, opts){
     console.error(`[nQueryAll] ⚠ DB(${dbId.slice(0,8)}...) 응답 실패로 ${results.length}건에서 중단 — 20,000건 한계가 아님(속도 제한/네트워크)`);
     try{ if(typeof showToast==='function') showToast(`⚠ 노션 응답이 끊겨 ${results.length}건까지만 동기화됐습니다 — 잠시 후 다시 동기화하세요`,'var(--org)',6000); }catch(e){}
   }
+  // 🛡 [FIX 2026-10-16] 완전 수신 여부를 '이 호출의 결과'에 직접 표시한다.
+  //    _nQueryLastComplete는 전역 하나뿐이라 14개 DB를 Promise.all로 병렬 조회하면 서로 덮어써 믿을 수 없었다.
+  //    (제품DB 61페이지 중 1페이지만 끊겨도 전체 풀로 오인 → 그 100건이 로컬에서 제외되는 사고의 원인)
+  try{ Object.defineProperty(results, '_complete', {value: _nQueryLastComplete, enumerable:false}); }catch(_){ }
   return results;
 }
 
@@ -15109,6 +15113,13 @@ async function pullFromNotion(opts){
         return next;
       }
       // 풀 모드: 기존 안전장치 + 전체 머지
+      // 🛡 [FIX 2026-10-16] 불완전 수신(페이지 중단)이면 전체 머지를 하지 않는다.
+      //    노션-우선 병합은 "받은 목록에 없는 로컬 항목(3분 지난 것)"을 제외하므로,
+      //    일부만 받은 결과를 전체로 취급하면 멀쩡히 노션에 있는 제품이 로컬에서 사라져 보인다.
+      if(remoteRows && remoteRows._complete === false){
+        console.warn(`[pull] ${label}: 노션 수신 불완전(${remoteRows.length}건) — 로컬 보호를 위해 전체 머지 생략`);
+        return localArr;
+      }
       if(isSafePull(remoteRows, localArr, label) && (remoteRows.length || localArr.some(x=>x._notionId))){
         const mapped=remoteRows.map(function(row){ var m=mapper(row); try{ if(m && row && row.last_edited_time) m._nEditedAt=row.last_edited_time; }catch(_){} return m; });
         const next=mergeLocalAttachments(mapped, localArr, idFields, label);

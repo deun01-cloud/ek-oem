@@ -4929,6 +4929,14 @@ async function ordEditRegisterToDB(idx){
   if(dup){
     if(!confirm('동일 품명이 이미 제품DB에 있습니다.\n그래도 새 항목으로 등록할까요?\n\n기존: '+(dup.code||'(품번없음)')+' / '+dup.name)) return;
   }
+  // 🔒 [FIX 2026-10-16] 노션-우선: 예전엔 로컬 배열에만 넣고 노션엔 올리지 않았다.
+  //    제품DB는 다음 자동 동기화(_safeApply) 때 노션 결과로 다시 짜이므로, _notionId 없는 이 항목은
+  //    "등록됐다가 사라지는" 증상으로 이어졌다. → PC(ordRowRegisterToProductDB)와 같이 노션 생성 성공 후에만 로컬 반영.
+  if(!(notionCfg && notionCfg.workerUrl && notionCfg.productDb)){
+    showToast('⚠ 제품 등록은 Notion 연결이 필요합니다 (설정에서 Worker URL·제품DB ID 확인)');
+    return;
+  }
+  const _price = +(r.unitPrice||0) || 0;
   const newP={
     id: genId(),
     name: name,
@@ -4936,17 +4944,40 @@ async function ordEditRegisterToDB(idx){
     type: '',
     mat: r.mat||'',
     plating: r.plating||'',
+    size: r.size||'',
     sz1: r.size||'',
-    unitPrice: r.unitPrice||0,
+    price: _price,
+    unitPrice: _price,
+    stock: 0,
     imgs: r.img ? [r.img] : [],
     status: '등록',
-    memo: '발주(모바일)에서 신규 등록'
+    memo: '발주(모바일)에서 신규 등록',
+    createdDate: todayStr(),
+    lastModified: todayStr()
   };
   try{
+    showToast('🔄 Notion에 등록 중...');
+    const _imgsHttp = newP.imgs.filter(u=>typeof u==='string' && /^https?:\/\//.test(u)).map(u=>({name:'', url:u, type:''}));
+    const props = {
+      "품목코드":{title:[{text:{content:''}}]},
+      "품목명":{rich_text:[{text:{content:newP.name}}]},
+      "규격":{rich_text:[{text:{content:newP.size||''}}]},
+      "출고단가":{number:_price},
+      "재고수량":{number:0},
+      "메모":{rich_text:[{text:{content:newP.memo}}]},
+      "이미지JSON":{rich_text:[{text:{content:JSON.stringify(_imgsHttp)}}]},
+      "최초등록일":{date:{start:newP.createdDate}},
+      "최종수정일":{date:{start:newP.lastModified}}
+    };
+    if(newP.mat)     props["소재"]={select:{name:newP.mat}};
+    if(newP.plating) props["도금"]={select:{name:newP.plating}};
+    const res = await nCreate(notionCfg.productDb, props);   // 실패 시 throw → 로컬에 넣지 않음
+    newP._notionId = res.id;
+    newP._syncedAt = new Date().toISOString();
     productDB.push(newP);
-    saveAll();   // 로컬 저장 (서버 전송은 아래 저장→서버 연결 목록에서 처리)
+    saveAll();
     _refreshOrdEditRows();
-    showToast('✓ 제품DB에 등록됨');
+    showToast('✓ 제품DB에 등록됨 (품번 미설정 — 제품DB에서 품번을 지정하세요)');
   }catch(e){
     console.warn('제품DB 등록 실패:', e);
     showToast('등록 실패: '+(e.message||e));
