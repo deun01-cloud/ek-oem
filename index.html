@@ -44246,7 +44246,35 @@ function buildQuoteHtml(q){
   //         본문 칸은 가운데 정렬이라 머리글과 값이 서로 어긋났다. 열 너비도 내용 따라 제멋대로 잡혔다.
   //   해결: 열 너비를 colgroup으로 고정하고, 머리칸·본문칸이 같은 열 정의(_qCols)의 정렬·여백을 함께 쓴다.
   //         전역 스타일에 기대지 않도록 필요한 속성은 모두 칸에 직접 적는다. 열을 바꿀 땐 _qCols만 고칠 것.
-  const _qCols = [
+  // 🖼 [2026-10-19] 품번(itemCode)이 있는 품목은 제품DB 대표 사진을 품명 앞에 썸네일로 표시.
+  //   행의 img(제품DB/샘플에서 끌어온 값) → 없으면 제품DB를 품번으로 다시 찾는다(http·data: 모두 허용).
+  //   사진이 하나도 없는 견적은 사진 열 자체를 넣지 않아 기존 레이아웃 그대로 출력된다.
+  const _qThumb = (r)=>{
+    try{
+      const pick = v => { if(!v) return ''; const u = typeof v==='string' ? v : (v.url||''); return /^(https?:\/\/|data:image\/)/.test(u) ? u : ''; };
+      let u = pick(r.img);
+      const code = String(r.itemCode||r.code||'').trim();
+      if(!u && code && typeof productDB!=='undefined'){
+        const p = productDB.find(x=>String(x.code||'').trim()===code);
+        if(p && Array.isArray(p.imgs)){ for(const im of p.imgs){ u = pick(im); if(u) break; } }
+      }
+      return u;
+    }catch(e){ return ''; }
+  };
+  const _qThumbs = (q.rows||[]).map(_qThumb);
+  const _qHasImg = _qThumbs.some(Boolean);
+  const _qCols = _qHasImg ? [
+    {h:'NO',   w:'5%',  al:'center'},
+    {h:'사진',  w:'9%',  al:'center'},
+    {h:'품 명', w:'20%', al:'left'},
+    {h:'소재',  w:'10%', al:'center'},
+    {h:'도금',  w:'12%', al:'center'},
+    {h:'규격',  w:'11%', al:'center'},
+    {h:'중량',  w:'7%',  al:'center'},
+    {h:'수량',  w:'6%',  al:'right'},
+    {h:'단가',  w:'9%',  al:'right'},
+    {h:'금액',  w:'11%', al:'right'}
+  ] : [
     {h:'NO',   w:'5%',  al:'center'},
     {h:'품 명', w:'24%', al:'left'},
     {h:'소재',  w:'11%', al:'center'},
@@ -44257,24 +44285,26 @@ function buildQuoteHtml(q){
     {h:'단가',  w:'10%', al:'right'},
     {h:'금액',  w:'12%', al:'right'}
   ];
+  const _qI = (h)=>_qCols.findIndex(c=>c.h===h); // 열 인덱스는 제목으로 찾는다 (사진 열 유무에 따라 밀리므로)
   const _qPad = 'padding:7px 8px';
   const _qNum = 'font-variant-numeric:tabular-nums;white-space:nowrap';
   const _qColgroup = '<colgroup>'+_qCols.map(c=>`<col style="width:${c.w}">`).join('')+'</colgroup>';
   const _qHead = _qCols.map(c=>`<th style="${_qPad};font-size:10.5px;font-weight:700;text-align:${c.al};background:#3a6b3a;color:#fff;letter-spacing:0;text-transform:none;white-space:nowrap;border:1px solid #3a6b3a;vertical-align:middle">${c.h}</th>`).join('');
   const _qTd = (i,extra)=>`${_qPad};font-size:10.5px;text-align:${_qCols[i].al};vertical-align:middle;border:1px solid #ddd;word-break:keep-all;overflow-wrap:anywhere;line-height:1.4${extra?';'+extra:''}`;
-  const _qSum = (label,val,big)=>`<tr${big?' style="background:#f0e9d8"':''}><td colspan="8" style="${_qPad};text-align:right;font-size:${big?'12px;font-weight:700;color:#7a5a18':'11px;color:#666'};border:1px solid #ddd${big?';background:#f0e9d8':''}">${label}</td><td style="${_qPad};text-align:right;${_qNum};font-size:${big?'13px;font-weight:700;color:#7a5a18':'11px'};border:1px solid #ddd${big?';background:#f0e9d8':''}">${val}</td></tr>`;
+  const _qSum = (label,val,big)=>`<tr${big?' style="background:#f0e9d8"':''}><td colspan="${_qCols.length-1}" style="${_qPad};text-align:right;font-size:${big?'12px;font-weight:700;color:#7a5a18':'11px;color:#666'};border:1px solid #ddd${big?';background:#f0e9d8':''}">${label}</td><td style="${_qPad};text-align:right;${_qNum};font-size:${big?'13px;font-weight:700;color:#7a5a18':'11px'};border:1px solid #ddd${big?';background:#f0e9d8':''}">${val}</td></tr>`;
 
   const rowsHtml = (q.rows||[]).map((r,i)=>`
     <tr>
-      <td style="${_qTd(0)}">${i+1}</td>
-      <td style="${_qTd(1,'font-size:11px')}">${escHtml(r.name||'')}</td>
-      <td style="${_qTd(2)}">${escHtml(r.mat||'')}</td>
-      <td style="${_qTd(3)}">${escHtml(r.plating||'')}</td>
-      <td style="${_qTd(4)}">${escHtml(r.spec||'')}</td>
-      <td style="${_qTd(5)}">${escHtml(r.weight||'')}</td>
-      <td style="${_qTd(6,_qNum)}">${(Number(r.qty)||0).toLocaleString()}</td>
-      <td style="${_qTd(7,_qNum)}">${fmt(r.unitPrice)}</td>
-      <td style="${_qTd(8,_qNum+';font-weight:600')}">${fmt((+r.qty||0)*(+r.unitPrice||0))}</td>
+      <td style="${_qTd(_qI('NO'))}">${i+1}</td>
+      ${_qHasImg ? `<td style="${_qTd(_qI('사진'),'padding:3px')}">${_qThumbs[i] ? `<img src="${escHtml(_qThumbs[i])}" alt="" style="width:46px;height:46px;object-fit:cover;border-radius:4px;border:1px solid #e3e3e3;display:block;margin:0 auto;-webkit-print-color-adjust:exact;print-color-adjust:exact">` : ''}</td>` : ''}
+      <td style="${_qTd(_qI('품 명'),'font-size:11px')}">${escHtml(r.name||'')}</td>
+      <td style="${_qTd(_qI('소재'))}">${escHtml(r.mat||'')}</td>
+      <td style="${_qTd(_qI('도금'))}">${escHtml(r.plating||'')}</td>
+      <td style="${_qTd(_qI('규격'))}">${escHtml(r.spec||'')}</td>
+      <td style="${_qTd(_qI('중량'))}">${escHtml(r.weight||'')}</td>
+      <td style="${_qTd(_qI('수량'),_qNum)}">${(Number(r.qty)||0).toLocaleString()}</td>
+      <td style="${_qTd(_qI('단가'),_qNum)}">${fmt(r.unitPrice)}</td>
+      <td style="${_qTd(_qI('금액'),_qNum+';font-weight:600')}">${fmt((+r.qty||0)*(+r.unitPrice||0))}</td>
     </tr>
   `).join('');
 
