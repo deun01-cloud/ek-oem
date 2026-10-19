@@ -27881,6 +27881,7 @@ function renderSample(){
           <span onclick="toggleAllSmpChk()" style="color:${window._smpChecked.size?'var(--gold-lt)':'var(--t3)'};font-weight:600;cursor:pointer;user-select:none;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px" title="전체 선택/해제 토글">${window._smpChecked.size?window._smpChecked.size+'건 선택됨':'전체 선택'}</span>
           <button class="btn bs" onclick="exportSelectedSamplesExcel()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--grn)':'var(--s3)'};color:${window._smpChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📊 엑셀</button>
           <button class="btn bs" onclick="openBulkInvoice()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--gold-bg)':'var(--s3)'};color:${window._smpChecked.size?'var(--gold-lt)':'var(--t3)'};border:1px solid ${window._smpChecked.size?'var(--gold-line)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">🧾 명세서 발행</button>
+          <button class="btn bs" onclick="openBulkOrderFromSamples()" ${window._smpChecked.size?'':'disabled'} title="선택한 샘플들을 품목 행으로 묶어 발주서 1건을 작성합니다 (같은 고객사만 가능)" style="font-size:11px;background:${window._smpChecked.size?'var(--blu)':'var(--s3)'};color:${window._smpChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📋 발주서 생성</button>
           <button class="btn bs" onclick="deleteBulkSamples()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--red)':'var(--s3)'};color:${window._smpChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">🗑 선택 삭제</button>
           ${window._smpChecked.size?`<button class="btn bgo bs" onclick="window._smpChecked.clear();renderSample()" style="font-size:11px">해제</button>`:''}
         </div>
@@ -28415,6 +28416,53 @@ function applySmpIndeterminate(){
   cb.indeterminate = some && !all;
 }
 
+// ── 선택한 샘플 여러 건 → 발주서 1건으로 이관 (품목 행으로 묶음)
+//    발주서 모달에 미리 채워 열기만 하고, 저장(saveOrd)에서 샘플을 '확정' 처리 + 발주에 smpIds 연결
+function openBulkOrderFromSamples(){
+  if(!window._smpChecked||!window._smpChecked.size){showToast('⚠ 항목을 선택해 주세요','var(--org)');return;}
+  const ids=[...window._smpChecked];
+  const selected=ids.map(id=>samples.find(s=>String(s.id)===String(id))).filter(Boolean);
+  if(!selected.length){showToast('⚠ 선택된 샘플을 찾을 수 없습니다','var(--red)');return;}
+  // 발주서는 고객사 1곳 단위 — 고객사가 섞여 있으면 중단
+  const vendors=[...new Set(selected.map(s=>(s.manager||'').trim()))];
+  if(vendors.length>1){
+    showToast('⚠ 고객사가 다른 샘플이 섞여 있습니다 ('+vendors.filter(Boolean).join(', ')+') — 같은 고객사의 샘플만 선택해 주세요','var(--org)',5000);
+    return;
+  }
+  const vendor=vendors[0]||'';
+  // 샘플 → 발주 행 매핑 (샘플: name, qty, itemNo, sz1~4, mat, plating, wt, unitPrice, imgs)
+  ordRowsBuf=selected.map(s=>{
+    const size=[s.sz1,s.sz2,s.sz3,s.sz4].map(x=>(x||'').trim()).filter(Boolean).join(' / ');
+    let img='';
+    if(Array.isArray(s.imgs)&&s.imgs.length){ const f=s.imgs[0]; img=typeof f==='string'?f:(f&&f.url)||''; }
+    return {
+      name:s.name||'', qty:s.qty||'',
+      plating:s.plating||'실버', mat:s.mat||'브라스 (BRASS)',
+      size, weight:s.wt||'',
+      unitPrice:+s.unitPrice||0,
+      itemCode:s.itemNo||'',
+      note:'', img,
+      rcvHistory:[]
+    };
+  });
+  // 요청 출고일: 샘플 납기 중 가장 늦은 날 (없으면 기본값 유지)
+  const dues=selected.map(s=>s.due).filter(Boolean).sort();
+  const shipDate=dues.length?dues[dues.length-1]:'';
+  if(typeof openOrdModal!=='function'){showToast('⚠ 발주서 모달을 열 수 없습니다','var(--red)');return;}
+  openOrdModal(null);
+  window._transferFromSamples={ smpIds:selected.map(s=>s.id), vendor };
+  setTimeout(()=>{
+    const vEl=document.getElementById('o_vendor'); if(vEl&&vendor) vEl.value=vendor;
+    const shEl=document.getElementById('o_ship'); if(shEl&&shipDate&&!shEl.value) shEl.value=shipDate;
+    const memoEl=document.getElementById('o_memo');
+    if(memoEl){
+      const ref='샘플 이관: '+selected.map(s=>s.name||'').filter(Boolean).join(', ');
+      memoEl.value=memoEl.value?memoEl.value+'\n'+ref:ref;
+    }
+    if(typeof renderOrdRows==='function') renderOrdRows();
+  },100);
+  showToast(`✓ 샘플 ${selected.length}건을 발주서 품목으로 이관 — 수량·단가 확인 후 저장하세요`,'var(--blu)',5000);
+}
 // ── 일괄 명세서 발행
 function deleteBulkSamples(){
   if(!window._smpChecked||!window._smpChecked.size){showToast('⚠ 항목을 선택해 주세요','var(--org)');return;}
@@ -33840,6 +33888,7 @@ document.addEventListener('input', e=>{
 
 function openOrdModal(idOrNull){
   const o=idOrNull?orders.find(x=>x.id==idOrNull):null;
+  window._transferFromSamples=null; // 샘플 일괄 이관 마커는 openBulkOrderFromSamples가 모달을 연 '뒤'에 다시 세팅
   ordFileBuf=o?(o.files||[]):[]; // load existing files
   renderOrdFilePrev();
   document.getElementById('mOrd_t').childNodes[0].textContent=o?'발주서 수정 ':'발주서 등록 ';
@@ -35312,9 +35361,25 @@ async function saveOrd(forceOverwrite){
   } else {
     ordId=Date.now();
     const newOrd = {id:ordId,createdAt:now,...obj};
+    // 📌 샘플 일괄 이관으로 열린 발주면 출처 샘플 id를 발주에 기록
+    const _fromSmp = (window._transferFromSamples && Array.isArray(window._transferFromSamples.smpIds) && window._transferFromSamples.smpIds.length) ? window._transferFromSamples : null;
+    if(_fromSmp) newOrd.smpIds = _fromSmp.smpIds.slice();
     // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
     const ok = await createWithNotion(orders, newOrd, syncOrderToNotion, '발주서');
     if(!ok) return; // 실패 — 모달 유지
+    // 📌 저장 성공 → 이관된 샘플들은 '확정' 처리 (단일 confirmSmp와 동일한 상태 전환) + 동기화
+    if(_fromSmp){
+      window._transferFromSamples=null;
+      let _n=0;
+      _fromSmp.smpIds.forEach(sid=>{
+        const s=samples.find(x=>String(x.id)===String(sid));
+        if(!s||s.status==='확정'||s.status==='취소') return;
+        s.status='확정'; _n++;
+        if(s._notionId && typeof debouncedSync==='function') debouncedSync('sample', s, true);
+      });
+      if(window._smpChecked) window._smpChecked.clear();
+      if(_n) showToast(`✓ 샘플 ${_n}건 확정 처리 → 발주 ${obj.no||''}`,'var(--grn)',3500);
+    }
     // 📌 신규 저장 성공 → 모달의 숨은 id 필드를 채워서, 같은 모달에서 다시 저장하면
     //    isNew=false(수정)로 처리되도록 한다. (이게 없으면 저장을 또 누를 때마다 발주가 중복 생성됨)
     { const _oidEl = document.getElementById('o_id'); if(_oidEl) _oidEl.value = ordId; }
