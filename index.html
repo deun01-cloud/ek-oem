@@ -37147,9 +37147,17 @@ function vMonthly(c){
     (v.ordId && v.ordId===o.id) ||
     (o.no && v.ordNo && v.ordNo===o.no)
   );
+  // 집계 키: 등록 고객사가 찾아지면 고객사명(표기 변형 통합), 아니면 정규화된 거래처명
+  //  → "포에리" / "(주)포에리" 처럼 적힌 발주가 한 줄로 묶이도록
+  const _clientKey=(raw)=>{
+    const v=String(raw||'').trim()||'기타';
+    const cl=findClientByVendor(v);
+    if(cl&&cl.name) return cl.name.trim();
+    return normalizeVendorName(v)||v;
+  };
   const clientOrdMap={};
   orders.forEach(o=>{
-    const key=(o.vendor||'기타').trim();
+    const key=_clientKey(o.vendor);
     if(!clientOrdMap[key])clientOrdMap[key]={name:key,doneAmt:0,doneCnt:0,pendAmt:0,pendCnt:0,remainAmt:0,remainCnt:0};
     const st=o.status||'의뢰';
     const a=ordAmt(o);
@@ -37190,7 +37198,7 @@ function vMonthly(c){
   samples.forEach(s=>{
     if(!s.reqDate || s.reqDate<smp3mStartStr) return;
     if(isOrderCanceled(s.status)) return;
-    const key=(s.manager||'기타').trim();
+    const key=_clientKey(s.manager);
     if(!clientSmpMap[key])clientSmpMap[key]={name:key,doneCnt:0,pendCnt:0};
     if(isOrderShipped(s.status)) clientSmpMap[key].doneCnt++;
     else clientSmpMap[key].pendCnt++;
