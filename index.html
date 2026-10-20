@@ -2730,8 +2730,10 @@ window.addEventListener('message', function(ev){
     <input class="fi" id="itemSearchQ" placeholder="품번코드 (VTBB...), 샘플명, 소재 등으로 검색..." oninput="renderItemSearchResults()" style="font-size:13px;padding:8px 12px">
   </div>
   <div id="itemSearchResults" style="max-height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
-  <div class="ma">
+  <div class="ma" style="display:flex;align-items:center;gap:8px">
+    <span id="itemSearchSelInfo" style="flex:1;font-size:11.5px;color:var(--t2)">☐ 체크로 여러 개 선택 · 클릭은 1개 즉시 반영</span>
     <button class="btn bgo" onclick="closeM('mItemSearch')">닫기</button>
+    <button class="btn bp" id="itemSearchApplyBtn" onclick="applySelectedItemsToRows()" style="display:none">선택 반영</button>
   </div>
 </div></div>
 
@@ -34857,13 +34859,61 @@ let _itemSearchPdPage = 1;
 let _itemSearchSmpPage = 1;
 const ISEARCH_PAGE_SIZE = 20;
 
+// 다중 선택: 검색어·페이지를 바꿔도 유지. key = 'pd:'+id / 'smp:'+id
+const _itemSearchSel = new Map();
+
 function openItemSearch(rowIdx){
   _itemSearchRowIdx = rowIdx;
   _itemSearchPdPage = 1;
   _itemSearchSmpPage = 1;
+  _itemSearchSel.clear();
   sv('itemSearchQ','');
   renderItemSearchResults();
   openM('mItemSearch');
+}
+
+function _itemSearchKey(kind,obj){ return kind+':'+(obj.id??obj._notionId??(kind==='pd'?obj.code:obj.itemCode)??obj.name); }
+function toggleItemSearchSel(kind,idx,checked){
+  const pool = kind==='pd' ? (window._itemSearchPdPool||[]) : (window._itemSearchSmpPool||[]);
+  const obj = pool[idx]; if(!obj) return;
+  const key=_itemSearchKey(kind,obj);
+  if(checked) _itemSearchSel.set(key,{kind,obj}); else _itemSearchSel.delete(key);
+  // 카드 테두리만 갱신 (전체 재렌더 없이)
+  const card=document.querySelector(`#itemSearchResults [data-iskey="${CSS.escape(key)}"]`);
+  if(card){ card.style.borderColor=checked?'var(--gold-lt)':'var(--bdr)'; card.style.background=checked?'var(--gold-bg)':'var(--s1)'; }
+  _updateItemSearchSelUI();
+}
+function _updateItemSearchSelUI(){
+  const n=_itemSearchSel.size;
+  const btn=document.getElementById('itemSearchApplyBtn');
+  const info=document.getElementById('itemSearchSelInfo');
+  if(btn){ btn.style.display=n?'':'none'; btn.textContent=`선택 ${n}개 반영`; }
+  if(info) info.textContent = n ? `${n}개 선택됨 — 첫 항목은 현재 행, 나머지는 아래에 행 추가` : '☐ 체크로 여러 개 선택 · 클릭은 1개 즉시 반영';
+}
+function _itemSearchCheckbox(kind,idx,obj){
+  const key=_itemSearchKey(kind,obj);
+  const on=_itemSearchSel.has(key);
+  return `<input type="checkbox" ${on?'checked':''} onclick="event.stopPropagation();toggleItemSearchSel('${kind}',${idx},this.checked)" title="여러 개 선택" style="width:16px;height:16px;flex-shrink:0;cursor:pointer;accent-color:var(--gold-lt);margin:0">`;
+}
+
+// 선택 항목 일괄 반영: 첫 항목 → 현재 행, 나머지 → 현재 행 바로 아래에 새 행으로 삽입
+function applySelectedItemsToRows(){
+  const picks=[..._itemSearchSel.values()];
+  if(!picks.length){ showToast('⚠ 선택된 항목이 없습니다','var(--org)'); return; }
+  const i=_itemSearchRowIdx;
+  if(i<0||i>=ordRowsBuf.length) return;
+  picks.forEach((pk,k)=>{
+    let rowIdx=i;
+    if(k>0){
+      ordRowsBuf.splice(i+k,0,{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:'',itemCode:'',unitPrice:0,rcvHistory:[]});
+      rowIdx=i+k;
+    }
+    if(pk.kind==='pd') _fillOrdRowFromProduct(rowIdx,pk.obj); else _fillOrdRowFromSample(rowIdx,pk.obj);
+  });
+  _itemSearchSel.clear();
+  closeM('mItemSearch');
+  renderOrdRows();
+  showToast(`✓ ${picks.length}개 품목 반영됨`,'var(--gold-lt)');
 }
 
 function renderItemSearchResults(){
@@ -34919,7 +34969,8 @@ function renderItemSearchResults(){
     const dateLine = (regDate || modDate)
       ? `<div style="font-size:9.5px;color:var(--t3);margin-top:2px">${regDate?`📅 등록 ${regDate}`:''}${regDate&&modDate?' · ':''}${modDate?`✎ 수정 ${modDate}`:''}</div>`
       : '';
-    return`<div onclick="applyProductToRowByIdx(${_i})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:5px;margin-bottom:3px"><span style="font-size:9.5px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);font-weight:700">📦 제품DB</span>${p.code?`<span style="font-size:10px;font-family:monospace;color:var(--t3)">${p.code}</span>`:''}</div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div><div style="font-size:10.5px;color:var(--t2)">${p.type||''} · ${p.mat||''} / ${p.plating||''}${p.size?' · '+p.size:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${p.price?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${p.price.toLocaleString()}원</div>`:''}</div></div>`;
+    const _on=_itemSearchSel.has(_itemSearchKey('pd',p));
+    return`<div data-iskey="${_itemSearchKey('pd',p)}" onclick="applyProductToRowByIdx(${_i})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid ${_on?'var(--gold-lt)':'var(--bdr)'};border-radius:7px;cursor:pointer;background:${_on?'var(--gold-bg)':'var(--s1)'}" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="if(this.style.borderColor!=='var(--gold-lt)')this.style.background='var(--s1)'">${_itemSearchCheckbox('pd',_i,p)}${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:5px;margin-bottom:3px"><span style="font-size:9.5px;padding:1px 6px;border-radius:4px;background:var(--gold-bg);border:1px solid var(--gold-line);color:var(--gold-lt);font-weight:700">📦 제품DB</span>${p.code?`<span style="font-size:10px;font-family:monospace;color:var(--t3)">${p.code}</span>`:''}</div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div><div style="font-size:10.5px;color:var(--t2)">${p.type||''} · ${p.mat||''} / ${p.plating||''}${p.size?' · '+p.size:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${p.price?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${p.price.toLocaleString()}원</div>`:''}</div></div>`;
   };
   const mkSmp=(s,_i)=>{
     const hasCode=!!s.itemCode;
@@ -34931,7 +34982,8 @@ function renderItemSearchResults(){
     const dateLine = (reqDate || dueDate)
       ? `<div style="font-size:9.5px;color:var(--t3);margin-top:2px">${reqDate?`📅 의뢰 ${reqDate}`:''}${reqDate&&dueDate?' → ':''}${dueDate?`납기 <b style="color:var(--t2)">${dueDate}</b>`:''}</div>`
       : '';
-    return`<div onclick="applyItemToRowByIdx(${_i})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--bdr);border-radius:7px;cursor:pointer;background:var(--s1)" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="this.style.background='var(--s1)'">${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:6px;margin-bottom:3px">${hasCode?`<span style="font-size:10px;font-weight:700;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 6px;border-radius:4px">📌 ${s.itemCode}</span>`:'<span style="font-size:10px;color:var(--t3);background:var(--s2);padding:1px 6px;border-radius:4px">품번없음</span>'}<span class="chip ${stCls}" style="font-size:9.5px">${s.status}</span></div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div><div style="font-size:10.5px;color:var(--t2)">${s.type||''} · ${s.mat||''} / ${s.plating||''}${s.sz1?' · '+s.sz1:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${s.unitPrice?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${s.unitPrice.toLocaleString()}원</div>`:''}</div></div>`;
+    const _on=_itemSearchSel.has(_itemSearchKey('smp',s));
+    return`<div data-iskey="${_itemSearchKey('smp',s)}" onclick="applyItemToRowByIdx(${_i})" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid ${_on?'var(--gold-lt)':'var(--bdr)'};border-radius:7px;cursor:pointer;background:${_on?'var(--gold-bg)':'var(--s1)'}" onmouseover="this.style.background='var(--gold-bg)'" onmouseout="if(this.style.borderColor!=='var(--gold-lt)')this.style.background='var(--s1)'">${_itemSearchCheckbox('smp',_i,s)}${img}<div style="flex:1;min-width:0"><div style="display:flex;gap:6px;margin-bottom:3px">${hasCode?`<span style="font-size:10px;font-weight:700;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 6px;border-radius:4px">📌 ${s.itemCode}</span>`:'<span style="font-size:10px;color:var(--t3);background:var(--s2);padding:1px 6px;border-radius:4px">품번없음</span>'}<span class="chip ${stCls}" style="font-size:9.5px">${s.status}</span></div><div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.name}</div><div style="font-size:10.5px;color:var(--t2)">${s.type||''} · ${s.mat||''} / ${s.plating||''}${s.sz1?' · '+s.sz1:''}</div>${dateLine}</div><div style="text-align:right;flex-shrink:0">${s.unitPrice?`<div style="font-size:12px;font-weight:700;color:var(--gold-lt)">${s.unitPrice.toLocaleString()}원</div>`:''}</div></div>`;
   };
 
   let html='';
@@ -34949,6 +35001,7 @@ function renderItemSearchResults(){
       +mkNav(_itemSearchSmpPage,smpTotalPages,`_itemSearchSmpPage--;renderItemSearchResults()`,`_itemSearchSmpPage++;renderItemSearchResults()`);
   }
   el.innerHTML=`<div style="display:flex;flex-direction:column">${html}</div>`;
+  _updateItemSearchSelUI();
 }
 
 // 인덱스로 정확히 해당 품목을 발주 행에 적용 (id float 변환 오류 방지)
@@ -34963,10 +35016,8 @@ function applyItemToRowByIdx(idx){
   applyItemToRow(s);
 }
 
-function applyProductToRow(pdId){
-  const p=(pdId && typeof pdId==='object') ? pdId : productDB.find(x=>x.id==pdId); if(!p)return;
-  const i=_itemSearchRowIdx;
-  if(i<0||i>=ordRowsBuf.length)return;
+// 제품DB 항목을 발주 행 i에 채움 (단일/다중 선택 공용)
+function _fillOrdRowFromProduct(i,p){
   ordRowsBuf[i].name=p.code?`${p.name} [${p.code}]`:p.name;
   ordRowsBuf[i].itemCode=p.code||'';
   ordRowsBuf[i].plating=p.plating||ordRowsBuf[i].plating;
@@ -34982,17 +35033,20 @@ function applyProductToRow(pdId){
       if(imgUrl) ordRowsBuf[i].img = imgUrl;
     }
   }
+}
+
+function applyProductToRow(pdId){
+  const p=(pdId && typeof pdId==='object') ? pdId : productDB.find(x=>x.id==pdId); if(!p)return;
+  const i=_itemSearchRowIdx;
+  if(i<0||i>=ordRowsBuf.length)return;
+  _fillOrdRowFromProduct(i,p);
   closeM('mItemSearch');
   renderOrdRows();
   showToast(`✓ "${p.name}" 적용됨`,'var(--gold-lt)');
 }
 
-function applyItemToRow(smpId){
-  const s = (smpId && typeof smpId==='object') ? smpId : samples.find(x=>x.id==smpId);
-  if(!s) return;
-  const i = _itemSearchRowIdx;
-  if(i < 0 || i >= ordRowsBuf.length) return;
-  
+// 샘플의뢰 항목을 발주 행 i에 채움 (단일/다중 선택 공용)
+function _fillOrdRowFromSample(i,s){
   // 품목명: "샘플명 [품번]" 형식
   ordRowsBuf[i].name = s.itemCode ? `${s.name} [${s.itemCode}]` : s.name;
   ordRowsBuf[i].itemCode = s.itemCode||'';
@@ -35009,7 +35063,14 @@ function applyItemToRow(smpId){
       if(imgUrl) ordRowsBuf[i].img = imgUrl;
     }
   }
-  
+}
+
+function applyItemToRow(smpId){
+  const s = (smpId && typeof smpId==='object') ? smpId : samples.find(x=>x.id==smpId);
+  if(!s) return;
+  const i = _itemSearchRowIdx;
+  if(i < 0 || i >= ordRowsBuf.length) return;
+  _fillOrdRowFromSample(i,s);
   closeM('mItemSearch');
   renderOrdRows();
   showToast(`✓ "${s.name}" 적용됨`, 'var(--gold-lt)');
