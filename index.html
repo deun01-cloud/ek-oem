@@ -1438,11 +1438,6 @@ window.addEventListener('message', function(ev){
 </script>
 
 
-<!-- 실행취소(Ctrl+Z) 플로팅 버튼 — 되돌릴 작업이 있을 때만 표시 -->
-<button id="undoFab" onclick="undoLastChange()" title="실행취소 (Ctrl+Z)"
-  style="display:none;position:fixed;right:18px;bottom:18px;z-index:8000;align-items:center;gap:7px;background:var(--s1,#fff);color:var(--t1,#222);border:1px solid var(--bdr,#ddd);border-radius:24px;padding:9px 16px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.14);transition:.15s">
-  <span style="font-size:15px">↩️</span><span id="undoFabLbl">되돌리기</span>
-</button>
 <!-- ===== 💼 경영지원(손익관리) 모듈 — 비밀번호 게이트 + 본문 ===== -->
 <div id="mgtRoot" style="display:none">
   <div id="mgtGate" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(15,18,28,.55);align-items:center;justify-content:center;flex-direction:column">
@@ -21684,96 +21679,6 @@ let prevImages=[], prevIdx=0;
 // STORAGE
 // ════════════════════════════════
 const SK={s:'ek3_smp',o:'ek3_ord',p:'ek3_proc',t:'ek3_task',a:'ek3_as',pd:'ek3_products',iv:'ek3_invoices',sh:'ek3_stock_hist',io:'ek3_io'};
-// ══════════════════════════════════════════════════════════════
-//  ↩️ 전역 실행취소 (Ctrl+Z) — 모든 변경은 save()를 거치므로 그 직전 상태를 스냅샷
-// ══════════════════════════════════════════════════════════════
-// 💾 제품DB(SK.pd)는 IndexedDB로 이전되어 localStorage 스냅샷 대상에서 제외한다.
-const _UNDO_KEYS = [SK.s, SK.o, SK.p, SK.t, SK.a, SK.iv, SK.sh, SK.io];
-let _undoStack = [];      // [{label, snap:{key:json}}]
-let _undoMax = 30;
-let _undoSuppressed = false;  // 복원 중에는 스냅샷 안 찍음
-let _lastUndoLabel = '';
-
-// save() 진입 시 호출 — localStorage에 아직 남아있는 '변경 전' 값을 캡쳐
-function _pushUndoSnapshot(label){
-  if(_undoSuppressed) return;
-  try{
-    const snap = {};
-    let any = false;
-    _UNDO_KEYS.forEach(k=>{ const v=localStorage.getItem(k); snap[k] = (v===null?null:v); if(v!==null) any=true; });
-    // 직전 스냅샷과 동일하면 중복 저장 안 함
-    if(_undoStack.length){
-      const prev = _undoStack[_undoStack.length-1].snap;
-      let same = true;
-      for(const k of _UNDO_KEYS){ if((prev[k]||'')!==(snap[k]||'')){ same=false; break; } }
-      if(same) return;
-    }
-    _undoStack.push({label: label||_lastUndoLabel||'', snap});
-    if(_undoStack.length>_undoMax) _undoStack.shift();
-    _refreshUndoFab();
-  }catch(e){}
-}
-// 다음 변경에 표시할 라벨 힌트 (선택) — 예: _setUndoLabel('샘플 삭제')
-function _setUndoLabel(label){ _lastUndoLabel = label||''; }
-
-// 플로팅 실행취소 버튼 표시 갱신
-function _refreshUndoFab(){
-  var fab=document.getElementById('undoFab'); if(!fab) return;
-  if(_undoStack.length){
-    var last=_undoStack[_undoStack.length-1];
-    var lbl=document.getElementById('undoFabLbl');
-    if(lbl) lbl.textContent = last && last.label ? ('되돌리기: '+last.label) : '되돌리기';
-    fab.style.display='inline-flex';
-  } else {
-    fab.style.display='none';
-  }
-}
-
-function undoLastChange(){
-  if(!_undoStack.length){
-    if(typeof showToast==='function') showToast('↩️ 되돌릴 작업이 없습니다','var(--t3)',1600);
-    return;
-  }
-  const entry = _undoStack.pop();
-  _undoSuppressed = true;
-  try{
-    // 스냅샷 복원: localStorage + 인메모리 배열 모두
-    _UNDO_KEYS.forEach(k=>{
-      if(entry.snap[k]===null){ try{ localStorage.removeItem(k); }catch(e){} }
-      else { try{ localStorage.setItem(k, entry.snap[k]); }catch(e){} }
-    });
-    // 인메모리 배열 재로드
-    if(typeof load==='function') load();
-    // 화면 갱신
-    if(typeof renderTab==='function') renderTab();
-    // 노션 동기화 (있으면) — 복원된 상태를 백그라운드로 반영
-    try{ if(typeof autoSyncNotion==='function') autoSyncNotion(); }catch(e){}
-    if(typeof showToast==='function') showToast('↩️ 되돌렸습니다'+(entry.label?(' ('+entry.label+')'):'')+' · 남은 단계 '+_undoStack.length,'var(--blu)',2200);
-  }catch(e){
-    console.warn('실행취소 실패:', e.message);
-    if(typeof showToast==='function') showToast('⚠ 실행취소 실패','var(--red)',2000);
-  }finally{
-    _undoSuppressed = false;
-    _lastUndoLabel = '';
-    _refreshUndoFab();
-  }
-}
-
-// Ctrl+Z / Cmd+Z 키 바인딩 (입력 필드 안에서는 기본 텍스트 취소 우선)
-document.addEventListener('keydown', function(e){
-  const z = (e.key==='z' || e.key==='Z');
-  if(!z) return;
-  if(!(e.ctrlKey || e.metaKey)) return;
-  if(e.shiftKey || e.altKey) return; // Ctrl+Shift+Z(다시실행 등)는 제외
-  const el = e.target;
-  const tag = (el && el.tagName) ? el.tagName.toUpperCase() : '';
-  const editable = tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT' || (el && el.isContentEditable);
-  // 편집 중인 칸에서는 그 칸의 텍스트 실행취소를 우선 (전역 취소 안 함)
-  if(editable) return;
-  e.preventDefault();
-  undoLastChange();
-}, true);
-
 // 🧹 저장공간 정리 — 이미지 배열에서 'R2/http URL이 있는 항목'의 base64 중복만 제거.
 //    (R2 URL이 없는 base64는 유일본이므로 건드리지 않는다 → 사진 유실 방지)
 function _cleanupImgArrayDupes(arr){
@@ -22268,8 +22173,6 @@ async function _loadProductsFromIdb(){
 }
 
 function save(){
-  _pushUndoSnapshot(_lastUndoLabel);  // 변경 전 상태 보존 (이번 save로 덮어쓰기 직전)
-  _lastUndoLabel = '';
   const saveKey=(key, data, label)=>{
     try{
       const json=JSON.stringify(data);
@@ -33593,7 +33496,7 @@ function showConfirm(msg, onOk, title, icon, okLabel, okColor, onCancel){
     btn.style.color='';
     btn.style.border='';
   }
-  btn.onclick = ()=>{ closeM('mConfirm'); try{ if(typeof _setUndoLabel==='function') _setUndoLabel((title&&title!=='삭제하시겠습니까?')?title:(okLabel||'삭제')); }catch(e){} onOk(); };
+  btn.onclick = ()=>{ closeM('mConfirm'); onOk(); };
   // 취소 버튼이 있으면 onCancel 연결 (안전: 기존 동작 보존)
   const cancelBtn = document.querySelector('#mConfirm .btn:not(#confirmOkBtn)');
   if(cancelBtn && onCancel){
@@ -34326,35 +34229,50 @@ async function ordRowRegisterToProductDB(idx){
   const r=ordRowsBuf[idx]; if(!r) return;
   const name=(r.name||'').trim();
   if(!name){ showToast('품목명을 먼저 입력해 주세요','var(--red)'); return; }
-  // 동일 품명 존재 확인
-  const dup=(productDB||[]).find(function(p){
-    return p&&((p.name||'').trim()===name);
-  });
+  // 🔒 노션-우선: 제품DB 신규 등록은 노션 연결 필수
+  if(typeof requireNotion==='function' && !requireNotion('productDb','제품DB')) return;
+  // 동일 품명 존재 확인 → 기존 품번을 행에 연결 (중복 생성 방지)
+  const dup=(productDB||[]).find(function(p){ return p&&((p.name||'').trim()===name); });
   if(dup){
-    if(!confirm('동일 품명이 이미 제품DB에 있습니다.\n그래도 새 항목으로 등록할까요?\n\n기존: '+(dup.code||'(품번없음)')+' / '+dup.name)) return;
+    if(dup.code && confirm('동일 품명이 이미 제품DB에 있습니다.\n\n기존: '+dup.code+' / '+dup.name+'\n\n[확인] 기존 품번을 이 행에 연결   [취소] 새 품번으로 등록')){
+      r.itemCode=dup.code;
+      if(!r.img && Array.isArray(dup.imgs)&&dup.imgs.length){ const f=dup.imgs[0]; r.img=typeof f==='string'?f:(f&&f.url)||''; }
+      renderOrdRows();
+      showToast('✓ 기존 품번 연결: '+dup.code,'var(--grn)');
+      return;
+    }
   }
-  // 신규 product 객체 생성
+  // 📌 품번 자동 생성 — 견적/샘플/제품DB와 같은 패턴 {고객사2}{카테고리1}{소재1}{MMDD}{시퀀스2}{도금1}
+  const vendor=(document.getElementById('o_vendor')||{}).value||'';
+  let typeName='';
+  if(typeof genQuoteProductCode==='function'){
+    // 카테고리는 품목명·규격에서 추정 (팔찌/목걸이/귀걸이/반지/브로치)
+    typeName=(genQuoteProductCode({spec:name+' '+(r.size||''), mat:r.mat||'', plating:r.plating||''}, vendor).typeName)||'';
+  }
+  const code=_buildItemCode({ vendor, type:typeName, mat:r.mat||'', plating:r.plating||'' });
+  const todayStr=toLocalDateStr(new Date());
   const newP={
     id: genId(),
-    name: name,
-    code: '',
-    type: '',
+    name, code,
+    type: typeName,
     mat: r.mat||'',
-    plating: r.plating||'',
-    sz1: r.size||'',
-    unitPrice: r.unitPrice||0,
+    plating: (typeof _normPlating==='function'?_normPlating(r.plating):r.plating)||'',
+    size: r.size||'',
+    weight: (typeof parseWeightNum==='function'?parseWeightNum(r.weight):(+r.weight||0))||0,
+    price: +r.unitPrice||0,
+    stock: 0,
     imgs: r.img ? [r.img] : [],
-    status: '등록',
-    memo: '발주에서 신규 등록'
+    memo: '발주서에서 등록'+(vendor?' ('+vendor+')':''),
+    createdDate: todayStr,
+    lastModified: todayStr,
   };
   try{
-    if(typeof syncProductToNotion==='function' && typeof notionCfg!=='undefined' && notionCfg && notionCfg.workerUrl && notionCfg.productDb){
-      await syncProductToNotion(newP, false);
-    }
-    productDB.push(newP);
-    if(typeof LS!=='undefined'&&LS.prod&&typeof safeSave==='function') safeSave(LS.prod, productDB);
+    const ok = await createWithNotion(productDB, newP, syncProductToNotion, '제품', {rtType:'product'});
+    if(!ok) return;
+    r.itemCode=code;          // 행에 품번 연결 → DB 칸이 ✓로 바뀜
+    save();
     renderOrdRows();
-    showToast('✓ 제품DB에 등록됨'+(newP.code?' ('+newP.code+')':' (품번 미설정)'),'var(--grn)');
+    showToast('✓ 제품DB 등록 · 품번 '+code,'var(--grn)',3000);
   }catch(e){
     console.warn('제품DB 등록 실패:', e);
     showToast('등록 실패: '+(e.message||e),'var(--red)');
