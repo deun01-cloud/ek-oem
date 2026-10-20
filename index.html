@@ -35168,6 +35168,9 @@ async function saveOrd(forceOverwrite){
     ordFileBuf=filesToSave; // 버퍼도 업데이트 (모달 다시 열었을 때 R2 URL 유지)
   }
 
+  // 🏢 업체명이 고객사DB에 없으면 자동 등록 (발주번호 이니셜·대시보드 집계가 고객사 기준이므로 먼저 등록)
+  await ensureClientForVendor(vendor, gv('o_manager'));
+
   // 발주번호가 비어있거나 옛 ORD-타임스탬프 형식이면 새 형식({이니셜}{MMDD})으로 자동생성
   let ordNoVal = gv('o_no').trim();
   const isLegacyOrdNo = /^ORD-\d{10,}$/.test(ordNoVal);
@@ -45804,6 +45807,26 @@ function findClientByVendor(vendorName){
 
 // ── 발주번호 자동생성 헬퍼: {이니셜2자}{MMDD} (예: VT0414) ──
 // 같은 날 같은 업체에 발주가 여러 건이면 끝에 -2, -3 자동 부여
+// 🏢 발주서 업체명 → 고객사DB 자동 등록. 이미 등록돼 있으면(표기 변형 포함) 아무것도 안 함.
+//    실패해도 발주 저장은 막지 않는다 (고객사는 나중에 수동 등록 가능).
+async function ensureClientForVendor(vendorName, contact){
+  try{
+    const nm = String(vendorName||'').trim();
+    if(!nm || findClientByVendor(nm)) return null;
+    if(!notionCfg.workerUrl || !notionCfg.clientDb) return null;   // 노션 미연결이면 로컬에만 남기지 않음
+    // 이니셜: genOrderNo와 같은 규칙. 다른 고객사가 이미 쓰는 이니셜이면 비워 둠(오매칭 방지)
+    const base = nm.replace(/^\(.*?\)/,'').trim();
+    let init = /^[A-Za-z]/.test(base) ? base.replace(/[^A-Za-z]/g,'').slice(0,2).toUpperCase() : '';
+    if(init && clients.some(c=>(c.initials||'').trim().toUpperCase()===init)) init='';
+    const newCl = {id:Date.now(),name:nm,initials:init,contact:String(contact||'').trim(),phone:'',email:'',
+      cat:'기타',grade:'일반',cycle:4,brandStyle:'',materials:'',priceRange:'',status:'active',memo:'',files:[]};
+    const ok = await createWithNotion(clients, newCl, syncClientToNotion, '고객사');
+    if(!ok) return null;
+    slSave(); _salesInited=false;
+    showToast(`✓ "${nm}" 고객사 자동 등록`,'var(--grn)',2000);
+    return newCl;
+  }catch(e){ console.warn('ensureClientForVendor',e); return null; }
+}
 function genOrderNo(vendorName, dateStr){
   // 이니셜 추출
   const cl = findClientByVendor(vendorName);
