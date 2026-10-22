@@ -2936,7 +2936,7 @@ window.addEventListener('message', function(ev){
   <div class="mt" id="mProduct_t">📦 제품 등록</div>
   <input type="hidden" id="pd_id">
   <div class="fr3">
-    <div class="fg"><label>품목코드 * <button type="button" onclick="autoGenProductCode()" style="margin-left:6px;padding:1px 7px;font-size:9.5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;color:var(--gold-lt);cursor:pointer;font-family:inherit;font-weight:600">🔄 자동 생성</button></label><input class="fi" id="pd_code" placeholder="VTBB042401S" style="font-family:monospace" oninput="autoSelectTypeFromCode(this.value)"></div>
+    <div class="fg"><label>품목코드 * <button type="button" onclick="autoGenProductCode()" style="margin-left:6px;padding:1px 7px;font-size:9.5px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:4px;color:var(--gold-lt);cursor:pointer;font-family:inherit;font-weight:600">🔄 자동 생성</button></label><input class="fi" id="pd_code" placeholder="VTBB042401S" style="font-family:monospace" oninput="autoSelectTypeFromCode(this.value);updatePdCostAnalysis()"></div>
     <div class="fg"><label>품목명 *</label><input class="fi" id="pd_name" placeholder="박스 체인 팔찌"></div>
     <div class="fg"><label>유형</label>
       <select class="fs" id="pd_type" onchange="_onPdTypeChange();updatePdJproHint()">
@@ -6989,6 +6989,15 @@ function updatePdCostAnalysis(){
   const wt = +weightEl.value || 0;
   const mr = +matRateEl.value || 0;
   const marginPct = Math.min(99, Math.max(0, +marginPctEl.value || 0));
+  // 🔒 자사 브랜드(VV·VC·RH)는 ×1.1 고정 — 쓰이지 않는 마진 입력을 잠근다 (값은 보존)
+  if(marginPctEl){
+    const _ownLock = isOwnBrandCode((document.getElementById('pd_code')?.value || '').trim());
+    marginPctEl.disabled = _ownLock;
+    marginPctEl.style.opacity = _ownLock ? '.5' : '';
+    marginPctEl.style.cursor = _ownLock ? 'not-allowed' : '';
+    const _lbl = marginPctEl.previousElementSibling;
+    if(_lbl && _lbl.tagName==='LABEL') _lbl.textContent = _ownLock ? '마진 (자사 브랜드 ×1.1 고정)' : '마진 (%)';
+  }
 
   // 생산원가 = 위안화 입고단가 × 240 + 중량 × 시세
   const QUOTE_CN_RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 240;
