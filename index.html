@@ -2978,28 +2978,28 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>마진 (%)</label><input class="fi" type="number" id="pd_marginPct" placeholder="30" min="0" max="99" step="1" title="OEM 품번: 권장 출고단가 = 생산원가 ÷ (1 − 마진/100)&#10;자사 브랜드(VV·VC·RH) 품번: 생산원가 × 1.1 로 계산되어 이 값은 쓰이지 않습니다" oninput="updatePdCostAnalysis()"></div>
   </div>
   <!-- 원가 분석 자동 표시 영역 -->
-  <div id="pd_costAnalysis" style="margin-top:8px;padding:10px 14px;background:rgba(232,200,90,.06);border:1px solid rgba(232,200,90,.3);border-radius:6px;font-size:11.5px;display:none">
+  <div id="pd_costAnalysis" style="margin-top:8px;padding:10px 14px;background:rgba(232,200,90,.06);border:1px solid rgba(232,200,90,.3);border-radius:6px;font-size:13px;display:none">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-      <span style="font-size:13px">🧮</span>
+      <span style="font-size:15px">🧮</span>
       <span style="font-weight:700;color:var(--gold-lt)">원가 분석</span>
       <span id="pd_priceLockBadge" style="display:none;font-size:9.5px;background:rgba(204,82,82,.1);color:var(--red);border:1px solid rgba(204,82,82,.3);padding:1px 7px;border-radius:8px;font-weight:600" title="출고단가를 수동 입력했습니다 — 마진 자동 계산이 비활성화됨">🔒 수동 입력</span>
       <button type="button" id="pd_priceUnlockBtn" onclick="resetPdPriceAuto()" style="display:none;margin-left:auto;font-size:10px;padding:2px 9px;border:1px solid var(--bdr);background:var(--s1);color:var(--t2);border-radius:5px;cursor:pointer;font-family:inherit" title="마진 기반 자동 계산으로 되돌립니다">🔄 자동 계산 복귀</button>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-size:13px">
       <div>
-        <div style="color:var(--t3);font-size:10px">생산원가</div>
-        <div id="pd_prodCostDisplay" style="font-weight:700;font-family:monospace;color:var(--t1)">₩0</div>
-        <div id="pd_costFormula" style="font-size:9px;color:var(--t3);margin-top:1px">위안가×240 + 중량×시세</div>
+        <div style="color:var(--t3);font-size:11.5px">생산원가</div>
+        <div id="pd_prodCostDisplay" style="font-size:16px;font-weight:700;font-family:monospace;color:var(--t1)">₩0</div>
+        <div id="pd_costFormula" style="font-size:11px;color:var(--t3);margin-top:2px">위안가×240 + 중량×시세</div>
       </div>
       <div>
-        <div style="color:var(--t3);font-size:10px">예상 마진</div>
-        <div id="pd_marginDisplay" style="font-weight:700;font-family:monospace;color:var(--grn)">₩0</div>
-        <div id="pd_marginPctDisplay" style="font-size:9px;color:var(--t3);margin-top:1px">0%</div>
+        <div style="color:var(--t3);font-size:11.5px">예상 마진</div>
+        <div id="pd_marginDisplay" style="font-size:16px;font-weight:700;font-family:monospace;color:var(--grn)">₩0</div>
+        <div id="pd_marginPctDisplay" style="font-size:11px;color:var(--t3);margin-top:2px">0%</div>
       </div>
       <div>
-        <div style="color:var(--t3);font-size:10px">권장 출고단가</div>
-        <div style="display:flex;align-items:center;gap:5px"><span id="pd_recommendedPrice" style="font-weight:700;font-family:monospace;color:var(--gold-lt)">₩0</span><button type="button" id="pd_applyRecBtn" onclick="applyRecommendedPrice()" style="display:none;font-size:10px;padding:1px 7px;border:1px solid var(--gold-lt);background:transparent;color:var(--gold-lt);border-radius:4px;cursor:pointer;font-family:inherit" title="권장 출고단가를 출고단가 입력칸에 적용">적용</button></div>
-        <div id="pd_priceFormula" style="font-size:9px;color:var(--t3);margin-top:1px">생산원가 ÷ (1 - 마진/100)</div>
+        <div style="color:var(--t3);font-size:11.5px">권장 출고단가</div>
+        <div style="display:flex;align-items:center;gap:5px"><span id="pd_recommendedPrice" style="font-size:16px;font-weight:700;font-family:monospace;color:var(--gold-lt)">₩0</span><button type="button" id="pd_applyRecBtn" onclick="applyRecommendedPrice()" style="display:none;font-size:11.5px;padding:1px 7px;border:1px solid var(--gold-lt);background:transparent;color:var(--gold-lt);border-radius:4px;cursor:pointer;font-family:inherit" title="권장 출고단가를 출고단가 입력칸에 적용">적용</button></div>
+        <div id="pd_priceFormula" style="font-size:11px;color:var(--t3);margin-top:2px">생산원가 ÷ (1 - 마진/100)</div>
       </div>
     </div>
   </div>
@@ -7073,9 +7073,11 @@ function isOwnBrandCode(code){
 function calcShipPrice(code, prodCost, marginPct){
   const cost = +prodCost || 0;
   if(cost <= 0) return null;                   // 생산원가 0 → 계산 건너뜀
-  if(isOwnBrandCode(code)) return Math.round(cost * OWN_BRAND_MARKUP);
+  // 권장 출고단가는 100원 단위로 올림 (마진이 목표보다 낮아지지 않게)
+  const _r100 = v => Math.ceil(Math.round(v) / 100) * 100;
+  if(isOwnBrandCode(code)) return _r100(cost * OWN_BRAND_MARKUP);
   const mr = Math.min(99, Math.max(0, +marginPct || 0));
-  return Math.round(cost / (1 - mr/100));
+  return _r100(cost / (1 - mr/100));
 }
 window.calcShipPrice = calcShipPrice;
 window.isOwnBrandCode = isOwnBrandCode;
