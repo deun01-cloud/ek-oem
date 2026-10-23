@@ -1112,7 +1112,7 @@ function ddayLabel(due){
   if(d<=3) return {cls:'dd-warn', t:`D-${d}`};
   return {cls:'dd-ok', t:`D-${d}`};
 }
-function strHash(s){let h=0;for(let i=0;i<s.length;i++)h=s.charCodeAt(i)+((h<<5)-h);return h;}
+function strHash(s){let h=0;s=String(s).trim();for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return h;}   // PC strToColor와 같은 해시 (색 일치)
 function strColor(s){
   // 색조 분리가 잘 되는 12색 팔레트 — 빨강/주황/금/녹/청록/하늘/파랑/남색/보라/마젠타/핑크/그레이
   const colors=[
@@ -1166,12 +1166,12 @@ function getInitial(name){
     const r = onlyAscii2(cl.initials);
     if(r) return r;
   }
-  // 2) 법인 표기 제거 후 영문만 추출
-  const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜|\(주\)|유한회사|\(유\)/g,'').trim();
-  const r2 = onlyAscii2(clean);
-  if(r2) return r2;
-  // 3) 한글 이름 → 로마자 변환 (이미 영문/숫자만 반환하도록 _hangulToInitial 자체에서 보장)
-  return _hangulToInitial(clean);
+  // 2) 미등록 → 업체명 영문에서 (괄호 안 영문 우선: '소어스 (XOUS)' → XO), 영문 없으면 '?'
+  //    PC의 vendorInit과 같은 규칙 — 기기마다 이니셜이 달라 보이지 않게 (2026-10-23)
+  const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
+  const par=(clean.match(/\(([^)]*)\)/)||[])[1]||'';
+  const a=par.replace(/[^A-Za-z0-9]/g,'') || clean.replace(/[^A-Za-z0-9]/g,'');
+  return a ? a.slice(0,2).toUpperCase() : '?';
 }
 
 // 한글 → 영문 2글자 이니셜 (자음 기준 음역). 최종 결과는 항상 영문/숫자 2글자 보장.
@@ -2965,7 +2965,7 @@ function renderCal(){
       // 발주/샘플인 경우 이니셜 배지를 앞에 붙임
       let prefix = '';
       if(e.init){
-        const bg = strColor(e.vendor||'');
+        const bg = strColor(e.init||getInitial(e.vendor||''));   // 색은 이니셜 기준 고정
         prefix = `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:21px;height:16px;padding:0 4px;border-radius:4px;background:${bg};color:#fff;font-size:10.5px;font-weight:700;margin-right:3px">${escapeHtml(e.init)}</span>`;
       }
       return `<div class="cal-ev ${e.cls}${e.done?' done':''}">${prefix}${escapeHtml(e.t)}</div>`;
@@ -3092,7 +3092,7 @@ function renderOrdCliFilter(){
   const totalCount = list.length;
   const allChip = `<button class="${_ordCliFilter==='all'?'active':''}" data-cli="all" onclick="setOrdCliFilter('all')">전체 <span class="cli-cnt">${totalCount}</span></button>`;
   const chips = sorted.map(([init, g]) => {
-    const color = strColor(g.rep);
+    const color = strColor(init);
     const isAct = _ordCliFilter === init;
     // 툴팁(title)에 풀네임 표시 (이니셜이 무엇인지 확인 가능)
     const tooltip = [...g.names].join(', ');
@@ -3194,7 +3194,7 @@ function renderSmpCliFilter(){
   const totalCount = list.length;
   const allChip = `<button class="${_smpCliFilter==='all'?'active':''}" data-cli="all" onclick="setSmpCliFilter('all')">전체 <span class="cli-cnt">${totalCount}</span></button>`;
   const chips = sorted.map(([init, g]) => {
-    const color = strColor(g.rep);
+    const color = strColor(init);
     const isAct = _smpCliFilter === init;
     const tooltip = [...g.names].join(', ');
     return `<button class="${isAct?'active':''}" data-cli="${escapeHtml(init)}" onclick="setSmpCliFilter('${init.replace(/'/g,"\\'")}')" title="${escapeHtml(tooltip)}"><span class="cli-bdg" style="background:${color}">${init}</span><span class="cli-cnt">${g.count}</span></button>`;
@@ -4772,7 +4772,7 @@ function showOrdDetail(id){
   const docBtn = `<button class="act-btn" onclick="openOrdPdfView('${String(o.id).replace(/'/g,"\\'")}')" style="margin-top:6px">📄 발주서 보기·공유</button>`;
 
   const body = `
-    <div class="dt-row"><span class="l">업체</span><span class="v bold">${getInitial(o.vendor)?`<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:20px;padding:0 6px;border-radius:4px;background:${strColor(o.vendor)};color:#fff;font-size:11px;font-weight:700;margin-right:6px;vertical-align:middle">${getInitial(o.vendor)}</span>`:''}${escapeHtml(o.vendor||'-')}</span></div>
+    <div class="dt-row"><span class="l">업체</span><span class="v bold">${getInitial(o.vendor)?`<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:20px;padding:0 6px;border-radius:4px;background:${strColor(getInitial(o.vendor))};color:#fff;font-size:11px;font-weight:700;margin-right:6px;vertical-align:middle">${getInitial(o.vendor)}</span>`:''}${escapeHtml(o.vendor||'-')}</span></div>
     <div class="dt-row"><span class="l">발주번호</span><span class="v" style="font-family:monospace">${escapeHtml(o.no||'-')}</span></div>
     <div class="dt-row"><span class="l">상태</span><span class="v"><span class="li-status ${stCls}">${_ordStLabel(st)}</span>${ddHtml}</span></div>
     <div class="dt-row"><span class="l">주문일</span><span class="v">${escapeHtml(o.date||'-')}</span></div>
@@ -6166,8 +6166,8 @@ function renderIoVendorDropdown(q){
   if(clientMatches.length){
     html += `<div style="padding:6px 10px;font-size:10px;font-weight:700;color:var(--t3);background:var(--s2);text-transform:uppercase;letter-spacing:.5px">고객사</div>`;
     html += clientMatches.slice(0, 6).map(c=>{
-      const initial = (c.initials||'').trim().toUpperCase() || (c.name||'').slice(0,2).toUpperCase();
-      const color = strColor(c.name||'');
+      const initial = getInitial(c.name||'');
+      const color = strColor(initial);
       return `<div onmousedown="_pickIoVendor('${escapeHtml(c.name||'').replace(/'/g,"\\'")}')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--bdr-lt)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
         <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;font-size:9.5px;font-weight:700;color:#fff;background:${color};flex-shrink:0">${initial}</span>
         <span style="font-size:12.5px;color:var(--t1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.name||'')}</span>

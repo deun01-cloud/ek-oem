@@ -15522,17 +15522,7 @@ async function syncAllStockHistToNotion(){
 function _ioInitial(name){
   const nm=(name||'').trim();
   if(!nm) return '';
-  // 1) 고객사 DB
-  if(typeof findClientByVendor === 'function'){
-    const cl = findClientByVendor(nm);
-    if(cl && cl.initials) return cl.initials.trim().toUpperCase().slice(0,2);
-  }
-  // 2) 영문/숫자 2자
-  const eng = nm.replace(/[^A-Za-z0-9]/g,'');
-  if(eng.length>=2) return eng.slice(0,2).toUpperCase();
-  // 3) 첫 두 글자
-  const clean = nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜|\(주\)/g,'').trim();
-  return clean.slice(0,2);
+  return vendorInit(nm);   // 고객사 이니셜 → 업체명 영문 → '?' (한글 금지)
 }
 
 // IO 리스트 렌더링 (PC 테이블 스타일) — 일반 / 커머스 서브탭
@@ -16109,7 +16099,7 @@ function _renderIoGeneral(){
               <td style="padding:8px 10px;text-align:center;color:var(--t2);font-size:11.5px;font-family:monospace">${escHtml(io.date||'-')}</td>
               <td style="padding:8px 10px;text-align:center"><span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10.5px;font-weight:700;${kindCls}">${escHtml(io.kind||'-')}</span></td>
               <td style="padding:8px 10px;font-weight:600">${escHtml(io.title||'-')}${io.flow?`<span style="font-size:10px;color:var(--t3);font-weight:400;margin-left:6px">${escHtml(io.flow)}</span>`:''}</td>
-              <td style="padding:8px 10px">${init?`<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:18px;padding:0 5px;border-radius:3px;background:${strToColor(io.vendor||'')};color:#fff;font-size:10px;font-weight:700;margin-right:5px">${init}</span>`:''}<span style="font-size:11.5px;color:var(--t2)">${escHtml(io.vendor||'-')}</span></td>
+              <td style="padding:8px 10px">${init?`<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:18px;padding:0 5px;border-radius:3px;background:${vendorColor(io.vendor||'')};color:#fff;font-size:10px;font-weight:700;margin-right:5px">${init}</span>`:''}<span style="font-size:11.5px;color:var(--t2)">${escHtml(io.vendor||'-')}</span></td>
               <td style="padding:8px 10px;color:var(--t2);font-size:11.5px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(io.items||'-')}</td>
               <td style="padding:8px 10px;text-align:right;font-weight:600;font-family:'Cormorant Garamond',serif;font-size:13.5px;color:var(--gold-lt)">${io.qty?(+io.qty).toLocaleString():'-'}</td>
               <td style="padding:8px 10px;text-align:center">${hasPhotos?`<span style="font-size:11px;color:var(--blu)">📷 ${hasPhotos}</span>`:'<span style="color:var(--t3)">-</span>'}</td>
@@ -24625,8 +24615,8 @@ function renderSmpMgrDropdown(kw){
     el.innerHTML='<div style="padding:10px 12px;font-size:11.5px;color:var(--t3);line-height:1.5">일치하는 고객사가 없습니다.<br><span style="color:var(--t2);font-size:10.5px">입력한 값을 그대로 사용하려면 Enter 또는 Tab</span></div>';
   } else {
     el.innerHTML=list.map(c=>{
-      const init=(c.initials||'').trim().toUpperCase()||'??';
-      const color=clInitColor(c);
+      const init=vendorInit(c);
+      const color=vendorColor(c);
       const safeName=(c.name||'').replace(/'/g,'&#39;');
       const safeInit=init.replace(/'/g,'&#39;');
       return `<div onmousedown="event.preventDefault();selectSmpMgr('${safeInit}','${safeName}')"
@@ -28035,9 +28025,8 @@ function renderSample(){
                     // 이니셜 또는 고객사명으로 매칭 (관대한 매칭)
                     const cl=findClientByVendor(m);
                     if(cl) return clInitHtml(cl, true);
-                    // 고객사 DB에 없으면 manager 값 자체를 뱃지로 (최대 2자) + 문자열 해시 색상
-                    const badge=m.replace(/^\(.*?\)/,'').trim().slice(0,2).toUpperCase();
-                    return badge?`<span class="cl-init cl-init-sm" style="background:${strToColor(m)}" title="${m}">${badge}</span>`:'';
+                    // 고객사 DB에 없으면 업체명 영문에서 이니셜 (vendorInit/vendorColor 단일 기준)
+                    return `<span class="cl-init cl-init-sm" style="background:${vendorColor(m)}" title="${m}">${vendorInit(m)}</span>`;
                   })()}
                   <div style="font-weight:500">${s.name}</div>
                 </div>
