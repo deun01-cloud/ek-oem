@@ -2119,7 +2119,8 @@ window.addEventListener('message', function(ev){
           style="text-transform:uppercase;letter-spacing:3px;font-size:16px;font-weight:700;text-align:center;width:72px;flex-shrink:0"
           oninput="this.value=this.value.toUpperCase().slice(0,2);updateInitPreview()">
         <div id="cl_initPreview" style="display:none;width:36px;height:36px;border-radius:8px;align-items:center;justify-content:center;font-size:13px;font-weight:800;letter-spacing:1px;color:#fff;flex-shrink:0"></div>
-        <span style="font-size:10.5px;color:var(--t3)">미입력 시 고객사명으로 표시</span>
+        <input type="color" id="cl_color" title="배지 색 (저장 후 고정)" oninput="updateInitPreview()" style="width:32px;height:32px;padding:0;border:1px solid var(--bdr);border-radius:6px;background:none;cursor:pointer;flex-shrink:0">
+        <span style="font-size:10.5px;color:var(--t3)">색은 자동 배정 · 바꾸려면 클릭</span>
       </div>
     </div>
   </div>
@@ -14312,6 +14313,7 @@ function mapNotionClient(row){
     _notionId:row.id,
     name:      np.title(p['고객사명']),
     initials:  np.text(p['이니셜']),
+    color:     np.text(p['색상']),        // 🏷 배지 색 (한 번 정해지면 고정)
     contact:   np.text(p['담당자']),
     phone:     np.text(p['연락처']),
     email:     np.text(p['이메일']),
@@ -15180,6 +15182,7 @@ async function pullFromNotion(opts){
     procItems     = mergeRows(procRows, procItems,      mapNotionProc,      ['orderId'], '공정',     notionCfg.procDb);
     proposals     = mergeRows(propRows, proposals,      mapNotionProposal,  ['images','productId'], '영업제안', notionCfg.propDb);
     clients       = mergeRows(cliRows,  clients,        mapNotionClient,    ['files'], '고객사',   notionCfg.clientDb);
+    try{ _ensureClientColors(); }catch(_e){}
     factories     = mergeRows(facRows,  factories,      mapNotionFactory,   ['files'], '공장',     notionCfg.factoryDb);
     tasks         = _skTask ? tasks : mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
     asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        ['repairs','files'], 'AS',       notionCfg.asDb);
@@ -20924,6 +20927,7 @@ async function syncClientToNotion(cl, update){
   const p={
     "고객사명":{"title":[{"text":{"content":cl.name||''}}]},
     "이니셜":{"rich_text":[{"text":{"content":cl.initials||''}}]},
+    "색상":{"rich_text":[{"text":{"content":cl.color||''}}]},
     "담당자":{"rich_text":[{"text":{"content":cl.contact||''}}]},
     "연락처":{"rich_text":[{"text":{"content":cl.phone||''}}]},
     "이메일":{"rich_text":[{"text":{"content":cl.email||''}}]},
@@ -36775,6 +36779,7 @@ function openClModal(idOrNull){
   sv('cl_id',cl?cl.id:'');
   sv('cl_nm',cl?cl.name:'');
   sv('cl_init',cl?cl.initials||'':'');
+  sv('cl_color', (cl && cl.color) ? cl.color : _pickClientColor(cl?cl.initials:'', cl));
   sv('cl_ct',cl?cl.contact||'':'');
   sv('cl_ph',cl?cl.phone||'':'');
   sv('cl_em',cl?cl.email||'':'');
@@ -36806,7 +36811,7 @@ async function saveCl(){
   if(!id && !requireNotion('clientDb', '고객사')) return;
   const init=gv('cl_init').toUpperCase().replace(/[^A-Z]/g,'').slice(0,2);
   const obj={
-    name:nm, initials:init, contact:gv('cl_ct'), phone:gv('cl_ph'), email:gv('cl_em'),
+    name:nm, initials:init, color:(gv('cl_color')||'').toUpperCase() || _pickClientColor(init), contact:gv('cl_ct'), phone:gv('cl_ph'), email:gv('cl_em'),
     cat:gv('cl_ca'), grade:gv('cl_gr'), cycle:parseFloat(gv('cl_cycle'))||4,
     brandStyle:gv('cl_bs'), materials:gv('cl_mat'), priceRange:gv('cl_pr'), status:'active', memo:gv('cl_mo'),
     files: Array.isArray(window.clFilesBuf) ? [...window.clFilesBuf] : []
@@ -45794,11 +45799,43 @@ function vendorInit(src){
   var a = par.replace(/[^A-Za-z0-9]/g,'') || nm.replace(/[^A-Za-z0-9]/g,'');
   return a ? a.slice(0,2).toUpperCase() : '?';
 }
+//    색: 고객사 정보에 저장된 색(노션 '색상')이 1순위 — 한 번 배정되면 바뀌지 않는다.
+//        저장된 색이 없을 때만 이니셜 해시 색(임시).
 function vendorColor(src){
-  var ini = vendorInit(src);
-  if(ini!=='?') return strToColor(ini);   // 같은 이니셜 = 항상 같은 색 (목록 순서와 무관)
+  var cl = (src && typeof src==='object') ? src : ((typeof findClientByVendor==='function') ? findClientByVendor(src) : null);
+  if(cl && cl.color) return cl.color;
+  var ini = vendorInit(cl || src);
+  if(ini!=='?'){
+    var same = (typeof clients!=='undefined' && Array.isArray(clients)) ? clients.find(function(c){ return c && c.color && String(c.initials||'').trim().toUpperCase()===ini; }) : null;
+    if(same) return same.color;
+    return strToColor(ini);
+  }
   return strToColor(String((src && typeof src==='object') ? (src.name||'') : (src||'')));
 }
+// 고객사 배지 팔레트 (24색) — 앞 12색은 기존 INIT_COLORS와 같다(지금 보이는 색 유지용)
+var CLIENT_PALETTE = INIT_COLORS.concat(['#A04000','#1E8449','#00838F','#1A237E','#7D3C98','#AD1457','#6D4C41','#827717','#00695C','#F39C12','#3949AB','#880E4F']);
+// 색 고르기: 지금 보이는 색(이니셜 해시)이 덜 쓰였으면 그대로, 아니면 가장 덜 쓰인 색 (팔레트 순서)
+function _pickClientColor(ini, exceptCl){
+  var used = {};
+  (typeof clients!=='undefined' && Array.isArray(clients) ? clients : []).forEach(function(c){ if(c && c!==exceptCl && c.color) used[c.color]=(used[c.color]||0)+1; });
+  var min = Math.min.apply(null, CLIENT_PALETTE.map(function(x){ return used[x]||0; }));
+  var pref = strToColor(String(ini||'').trim().toUpperCase()||'?');
+  if((used[pref]||0)===min) return pref;
+  return CLIENT_PALETTE.find(function(x){ return (used[x]||0)===min; });
+}
+// 색이 없는 고객사에 한 번만 배정·저장 (노션+서버). 순서를 고정해 기기마다 같은 결과가 나온다.
+function _ensureClientColors(){
+  if(typeof clients==='undefined' || !Array.isArray(clients) || !clients.length) return 0;
+  var todo = clients.filter(function(c){ return c && !c.color && c._notionId && c.name; })
+    .sort(function(a,b){ return String(a._notionId).localeCompare(String(b._notionId)); });
+  todo.forEach(function(c){
+    c.color = _pickClientColor(vendorInit(c), c);
+    try{ if(typeof debouncedSync==='function') debouncedSync('client', c, true); }catch(_){}
+  });
+  if(todo.length){ try{ slSave(); }catch(_){} console.log('[고객사 색] '+todo.length+'곳 배정'); }
+  return todo.length;
+}
+try{ window._ensureClientColors = _ensureClientColors; }catch(_){}
 function clInitColor(cl){ return vendorColor(cl); }
 // 문자열(이름/이니셜) 기반 일관된 색상 — 같은 문자열이면 항상 같은 색상
 // 고객사 DB에 등록 안 된 업체도 고유 색상 부여 가능
@@ -45872,7 +45909,7 @@ async function ensureClientForVendor(vendorName, contact){
     const base = nm.replace(/^\(.*?\)/,'').trim();
     let init = vendorInit(base); if(init==='?') init='';   // 영문(괄호 안 우선)에서만 생성 — 한글 이니셜 금지
     if(init && clients.some(c=>(c.initials||'').trim().toUpperCase()===init)) init='';
-    const newCl = {id:Date.now(),name:nm,initials:init,contact:String(contact||'').trim(),phone:'',email:'',
+    const newCl = {id:Date.now(),name:nm,initials:init,color:_pickClientColor(init||vendorInit(base)),contact:String(contact||'').trim(),phone:'',email:'',
       cat:'기타',grade:'일반',cycle:4,brandStyle:'',materials:'',priceRange:'',status:'active',memo:'',files:[]};
     const ok = await createWithNotion(clients, newCl, syncClientToNotion, '고객사');
     if(!ok) return null;
@@ -45985,8 +46022,8 @@ function updateInitPreview(){
   if(!prev)return;
   if(val.length>=1){
     prev.style.display='flex';
-    // pick color based on current client count
-    const color=INIT_COLORS[clients.length%INIT_COLORS.length];
+    // 편집창의 색(저장되면 고정)
+    const color=(document.getElementById('cl_color')?.value)||_pickClientColor(val);
     prev.style.background=color;
     prev.textContent=val;
   } else {

@@ -1113,6 +1113,16 @@ function ddayLabel(due){
   return {cls:'dd-ok', t:`D-${d}`};
 }
 function strHash(s){let h=0;s=String(s).trim();for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return h;}   // PC strToColor와 같은 해시 (색 일치)
+// 🏷 배지 색: 고객사 정보에 저장된 색(노션 '색상')이 1순위 — PC와 같은 기준 (2026-10-23)
+function initColor(init, name){
+  const I=String(init||'').trim().toUpperCase();
+  if(I && I!=='?'){
+    const c=(typeof clients!=='undefined' && Array.isArray(clients)) ? clients.find(x=>x && x.color && String(x.initials||'').trim().toUpperCase()===I) : null;
+    if(c) return c.color;
+    return strColor(I);
+  }
+  return strColor(name||I);
+}
 function strColor(s){
   // 색조 분리가 잘 되는 12색 팔레트 — 빨강/주황/금/녹/청록/하늘/파랑/남색/보라/마젠타/핑크/그레이
   const colors=[
@@ -1220,7 +1230,7 @@ function initBadge(name){
   const init = getInitial(nm);
   // 색상은 클라이언트 DB의 이니셜 기준 해시 → 같은 이니셜 = 같은 색
   const colorKey = init || nm;
-  return `<span class="li-init" style="background:${strColor(colorKey)}">${init}</span>`;
+  return `<span class="li-init" style="background:${initColor(init, nm)}">${init}</span>`;
 }
 
 // 고객사명을 영문 이니셜로 표시 — 모바일 좁은 화면 최적화
@@ -1755,6 +1765,7 @@ function mapNotionClient(row){
     _notionId:row.id,
     name:    np.title(p['업체명']),
     initials:np.text(p['이니셜']),
+    color:np.text(p['색상']),
     contact: np.text(p['담당자']),
     tel:     np.text(p['연락처']),
     email:   np.text(p['이메일'])
@@ -2965,7 +2976,7 @@ function renderCal(){
       // 발주/샘플인 경우 이니셜 배지를 앞에 붙임
       let prefix = '';
       if(e.init){
-        const bg = strColor(e.init||getInitial(e.vendor||''));   // 색은 이니셜 기준 고정
+        const bg = initColor(e.init||getInitial(e.vendor||''), e.vendor);   // 색은 고객사 저장색 → 이니셜 기준
         prefix = `<span style="display:inline-flex;align-items:center;justify-content:center;min-width:21px;height:16px;padding:0 4px;border-radius:4px;background:${bg};color:#fff;font-size:10.5px;font-weight:700;margin-right:3px">${escapeHtml(e.init)}</span>`;
       }
       return `<div class="cal-ev ${e.cls}${e.done?' done':''}">${prefix}${escapeHtml(e.t)}</div>`;
@@ -3092,7 +3103,7 @@ function renderOrdCliFilter(){
   const totalCount = list.length;
   const allChip = `<button class="${_ordCliFilter==='all'?'active':''}" data-cli="all" onclick="setOrdCliFilter('all')">전체 <span class="cli-cnt">${totalCount}</span></button>`;
   const chips = sorted.map(([init, g]) => {
-    const color = strColor(init);
+    const color = initColor(init, g.rep);
     const isAct = _ordCliFilter === init;
     // 툴팁(title)에 풀네임 표시 (이니셜이 무엇인지 확인 가능)
     const tooltip = [...g.names].join(', ');
@@ -3194,7 +3205,7 @@ function renderSmpCliFilter(){
   const totalCount = list.length;
   const allChip = `<button class="${_smpCliFilter==='all'?'active':''}" data-cli="all" onclick="setSmpCliFilter('all')">전체 <span class="cli-cnt">${totalCount}</span></button>`;
   const chips = sorted.map(([init, g]) => {
-    const color = strColor(init);
+    const color = initColor(init, g.rep);
     const isAct = _smpCliFilter === init;
     const tooltip = [...g.names].join(', ');
     return `<button class="${isAct?'active':''}" data-cli="${escapeHtml(init)}" onclick="setSmpCliFilter('${init.replace(/'/g,"\\'")}')" title="${escapeHtml(tooltip)}"><span class="cli-bdg" style="background:${color}">${init}</span><span class="cli-cnt">${g.count}</span></button>`;
@@ -4772,7 +4783,7 @@ function showOrdDetail(id){
   const docBtn = `<button class="act-btn" onclick="openOrdPdfView('${String(o.id).replace(/'/g,"\\'")}')" style="margin-top:6px">📄 발주서 보기·공유</button>`;
 
   const body = `
-    <div class="dt-row"><span class="l">업체</span><span class="v bold">${getInitial(o.vendor)?`<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:20px;padding:0 6px;border-radius:4px;background:${strColor(getInitial(o.vendor))};color:#fff;font-size:11px;font-weight:700;margin-right:6px;vertical-align:middle">${getInitial(o.vendor)}</span>`:''}${escapeHtml(o.vendor||'-')}</span></div>
+    <div class="dt-row"><span class="l">업체</span><span class="v bold">${getInitial(o.vendor)?`<span style="display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:20px;padding:0 6px;border-radius:4px;background:${initColor(getInitial(o.vendor), o.vendor)};color:#fff;font-size:11px;font-weight:700;margin-right:6px;vertical-align:middle">${getInitial(o.vendor)}</span>`:''}${escapeHtml(o.vendor||'-')}</span></div>
     <div class="dt-row"><span class="l">발주번호</span><span class="v" style="font-family:monospace">${escapeHtml(o.no||'-')}</span></div>
     <div class="dt-row"><span class="l">상태</span><span class="v"><span class="li-status ${stCls}">${_ordStLabel(st)}</span>${ddHtml}</span></div>
     <div class="dt-row"><span class="l">주문일</span><span class="v">${escapeHtml(o.date||'-')}</span></div>
@@ -6167,7 +6178,7 @@ function renderIoVendorDropdown(q){
     html += `<div style="padding:6px 10px;font-size:10px;font-weight:700;color:var(--t3);background:var(--s2);text-transform:uppercase;letter-spacing:.5px">고객사</div>`;
     html += clientMatches.slice(0, 6).map(c=>{
       const initial = getInitial(c.name||'');
-      const color = strColor(initial);
+      const color = c.color || initColor(initial, c.name);
       return `<div onmousedown="_pickIoVendor('${escapeHtml(c.name||'').replace(/'/g,"\\'")}')" style="display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--bdr-lt)" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background=''">
         <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:4px;font-size:9.5px;font-weight:700;color:#fff;background:${color};flex-shrink:0">${initial}</span>
         <span style="font-size:12.5px;color:var(--t1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(c.name||'')}</span>
