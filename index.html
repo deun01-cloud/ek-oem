@@ -4449,18 +4449,7 @@ function renderAS(){
     const nm=(name||'').trim();
     if(!nm) return '';
     // 1) 고객사 DB에 등록된 업체면 해당 이니셜 사용 (관대한 매칭)
-    const cl=findClientByVendor(nm);
-    if(cl && cl.initials) return cl.initials.trim().toUpperCase();
-    // 2) 자동 이니셜 생성 (공백 제거, 법인 표기 제거)
-    const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
-    const words=clean.split(/\s+/);
-    let init;
-    if(words.length>=2){
-      init=(words[0][0]+(words[1][0]||'')).toUpperCase();
-    } else {
-      init=clean.slice(0,2).toUpperCase();
-    }
-    return init;
+    return vendorInit(nm);
   };
 
   // 이니셜 기준으로 고객사들을 그룹핑 (표기 변형 통합)
@@ -4713,11 +4702,7 @@ function issueSelectedASInvoice(){
   const getInit=(name)=>{
     const nm=(name||'').trim();
     if(!nm) return '';
-    const cl=findClientByVendor(nm);
-    if(cl && cl.initials) return cl.initials.trim().toUpperCase();
-    const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
-    const words=clean.split(/\s+/);
-    return (words.length>=2 ? (words[0][0]+(words[1][0]||'')) : clean.slice(0,2)).toUpperCase();
+    return vendorInit(nm);
   };
   _asInvoiceContext = {
     init: getInit(vendorName),
@@ -4741,11 +4726,7 @@ function openASInvoiceBuilder(vendorInit){
   const getInit=(name)=>{
     const nm=(name||'').trim();
     if(!nm) return '';
-    const cl=findClientByVendor(nm);
-    if(cl && cl.initials) return cl.initials.trim().toUpperCase();
-    const clean=nm.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
-    const words=clean.split(/\s+/);
-    return (words.length>=2 ? (words[0][0]+(words[1][0]||'')) : clean.slice(0,2)).toUpperCase();
+    return vendorInit(nm);
   };
   // 청구 대상: 같은 고객사 + 미청구/청구예정 + 고객불량
   const allPending = asItems.filter(a =>
@@ -15353,7 +15334,7 @@ async function syncIOToNotion(io){
   // 자동 제목 생성: 비어있으면 "이니셜_구분" (예: VT_출고)
   let title = (io.title||'').trim();
   if(!title){
-    const vInit = (io.vendor||'').replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim().slice(0,2) || '?';
+    const vInit = vendorInit(io.vendor||'');
     title = `${vInit}_${io.kind||'입고'}`;
   }
   const props = {
@@ -27893,13 +27874,7 @@ function renderSample(){
         ${entries.map(e=>{
           const cl=e.client;
           let init, color;
-          if(cl){
-            init=(cl.initials||'').trim().toUpperCase() || (cl.name||'').replace(/^\(.*?\)/,'').trim().slice(0,2).toUpperCase() || '??';
-            color=clInitColor(cl);
-          } else {
-            init=e.managerRaw.replace(/^\(.*?\)/,'').trim().slice(0,2).toUpperCase() || '??';
-            color=strToColor(e.managerRaw);
-          }
+          init=vendorInit(cl||e.managerRaw); color=vendorColor(cl||e.managerRaw);
           const isActive=activeManager===e.managerRaw || (cl && (activeManager===cl.name || activeManager===(cl.initials||'').toUpperCase()));
           const safeMgr=e.managerRaw.replace(/'/g,'&#39;');
           const displayName=cl?cl.name:e.managerRaw;
@@ -30175,27 +30150,7 @@ function _fpRender(){
 function _clientInit2(name){
   const raw=String(name||'').trim();
   if(!raw) return null;
-  let init='', color='';
-  const cl=(typeof findClientByVendor==='function')?findClientByVendor(raw):null;
-  if(cl){
-    init=(cl.initials||'').trim().toUpperCase();
-    if(!init && cl.name){
-      const nm=cl.name.replace(/^\(.*?\)/,'').trim();
-      const w=nm.split(/\s+/);
-      init=(w.length>=2?(w[0][0]+(w[1][0]||'')):nm.slice(0,2)).toUpperCase();
-    }
-    if(typeof clInitColor==='function'){ try{ color=clInitColor(cl); }catch(e){} }
-  }
-  if(!init){
-    // 고객사 DB 미등록 → 영문/숫자 2글자, 없으면 한글 2글자
-    const nm=raw.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
-    const ascii=nm.replace(/[^A-Za-z0-9]/g,'');
-    init = ascii.length>=2 ? ascii.slice(0,2).toUpperCase()
-         : (ascii.length===1 ? ascii.toUpperCase() : nm.slice(0,2).toUpperCase());
-  }
-  if(!init) return null;
-  if(!color) color=(typeof strToColor==='function')?strToColor(init):'#8B6914';
-  return {init:init, color:color, full:raw};
+  return {init:vendorInit(raw), color:vendorColor(raw), full:raw};
 }
 
 // 📦 수량 셀 — 총수량 아래에 입고/미입고를 나눠서 표기 (공장별 진행현황 PDF)
@@ -31150,13 +31105,7 @@ function renderOrder(){
         ${entries.map(e=>{
           const cl=e.client;
           let init, color;
-          if(cl){
-            init=(cl.initials||'').trim().toUpperCase() || (cl.name||'').replace(/^\(.*?\)/,'').trim().slice(0,2).toUpperCase() || '??';
-            color=clInitColor(cl);
-          } else {
-            init=e.vendorRaw.replace(/^\(.*?\)/,'').trim().slice(0,2).toUpperCase() || '??';
-            color=strToColor(e.vendorRaw);
-          }
+          init=vendorInit(cl||e.vendorRaw); color=vendorColor(cl||e.vendorRaw);
           const isActive=activeVendor===e.vendorRaw;
           const safeV=JSON.stringify(e.vendorRaw).replace(/"/g,'&quot;');
           const displayName=cl?cl.name:e.vendorRaw;
@@ -32019,14 +31968,7 @@ function getAutoItems(ds, cat){
     if(clientObj) return clInitHtml(clientObj, true); // small 배지
     // 고객사에 없는 경우 → 이름에서 이니셜 추출 + 해시 기반 색상
     if(!fallbackName) return '';
-    const nm=String(fallbackName).replace(/^\(.*?\)/,'').trim();
-    const words=nm.split(/\s+/);
-    let init='';
-    if(words.length>=2) init=(words[0][0]+(words[1][0]||'')).toUpperCase();
-    else init=nm.slice(0,2).toUpperCase();
-    if(!init) return '';
-    const color=strToColor(fallbackName);
-    return `<span class="cl-init cl-init-sm" style="background:${color}" title="${fallbackName}">${init}</span>`;
+    return `<span class="cl-init cl-init-sm" style="background:${vendorColor(fallbackName)}" title="${fallbackName}">${vendorInit(fallbackName)}</span>`;
   };
   if(cat==='발주출고'){
     // 공정(발주에서 자동 생성) — 클릭 시 해당 발주서로
@@ -45849,10 +45791,26 @@ function deleteNd(id){
 }
 
 // ── 고객사 이니셜 표시 헬퍼 ──
-function clInitColor(cl){
-  const idx=clients.findIndex(c=>c.id===(cl.id||cl));
-  return INIT_COLORS[Math.max(0,idx)%INIT_COLORS.length];
+// 🏷 고객사 이니셜·색 단일 기준 (2026-10-23 DW 지시: 영문 통일 + 한 번 정해지면 글씨·색 고정)
+//    모든 화면은 이 두 함수만 쓴다. 예전엔 화면마다 따로 계산해 미등록 업체가 한글 두 글자로 보이고,
+//    색은 고객사 목록 '순서'로 정해져 고객사가 추가·동기화될 때마다 바뀌었다.
+//    src: 고객사 객체 또는 업체명 문자열
+function vendorInit(src){
+  var cl = (src && typeof src==='object') ? src : ((typeof findClientByVendor==='function') ? findClientByVendor(src) : null);
+  var ini = cl ? String(cl.initials||'').trim().toUpperCase().replace(/[^A-Z0-9]/g,'') : '';
+  if(ini) return ini;
+  // 이니셜 미등록 → 이름의 영문에서 생성 (괄호 안 영문 우선: '소어스 (XOUS)' → XO). 영문이 없으면 '?'
+  var nm = String(cl ? (cl.name||'') : (src||'')).replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
+  var par = (nm.match(/\(([^)]*)\)/)||[])[1] || '';
+  var a = par.replace(/[^A-Za-z0-9]/g,'') || nm.replace(/[^A-Za-z0-9]/g,'');
+  return a ? a.slice(0,2).toUpperCase() : '?';
 }
+function vendorColor(src){
+  var ini = vendorInit(src);
+  if(ini!=='?') return strToColor(ini);   // 같은 이니셜 = 항상 같은 색 (목록 순서와 무관)
+  return strToColor(String((src && typeof src==='object') ? (src.name||'') : (src||'')));
+}
+function clInitColor(cl){ return vendorColor(cl); }
 // 문자열(이름/이니셜) 기반 일관된 색상 — 같은 문자열이면 항상 같은 색상
 // 고객사 DB에 등록 안 된 업체도 고유 색상 부여 가능
 function strToColor(str){
@@ -45867,19 +45825,8 @@ function strToColor(str){
 // 이니셜 뱃지 HTML (small=true이면 더 작게)
 function clInitHtml(cl, small){
   if(!cl)return '';
-  let init=(cl.initials||'').trim().toUpperCase();
-  // 이니셜 미설정 시 이름에서 자동 생성
-  if(!init && cl.name){
-    const nm=cl.name.replace(/^\(.*?\)/,'').trim(); // (주) 제거
-    const words=nm.split(/\s+/);
-    if(words.length>=2){
-      init=(words[0][0]+(words[1][0]||'')).toUpperCase();
-    } else {
-      init=nm.slice(0,2).toUpperCase();
-    }
-  }
-  if(!init)return '';
-  const color=clInitColor(cl);
+  const init=vendorInit(cl);
+  const color=vendorColor(cl);
   const sz=small?'cl-init cl-init-sm':'cl-init';
   return`<span class="${sz}" style="background:${color}" title="${cl.name}">${init}</span>`;
 }
@@ -45934,7 +45881,7 @@ async function ensureClientForVendor(vendorName, contact){
     if(!notionCfg.workerUrl || !notionCfg.clientDb) return null;   // 노션 미연결이면 로컬에만 남기지 않음
     // 이니셜: genOrderNo와 같은 규칙. 다른 고객사가 이미 쓰는 이니셜이면 비워 둠(오매칭 방지)
     const base = nm.replace(/^\(.*?\)/,'').trim();
-    let init = /^[A-Za-z]/.test(base) ? base.replace(/[^A-Za-z]/g,'').slice(0,2).toUpperCase() : '';
+    let init = vendorInit(base); if(init==='?') init='';   // 영문(괄호 안 우선)에서만 생성 — 한글 이니셜 금지
     if(init && clients.some(c=>(c.initials||'').trim().toUpperCase()===init)) init='';
     const newCl = {id:Date.now(),name:nm,initials:init,contact:String(contact||'').trim(),phone:'',email:'',
       cat:'기타',grade:'일반',cycle:4,brandStyle:'',materials:'',priceRange:'',status:'active',memo:'',files:[]};
@@ -45950,14 +45897,9 @@ function genOrderNo(vendorName, dateStr){
   const cl = findClientByVendor(vendorName);
   let init = (cl && cl.initials) ? cl.initials.trim().toUpperCase().slice(0,2) : '';
   if(!init){
-    // 고객사 미등록이면 업체명에서 영문/한글 첫글자로 임시 이니셜 생성
-    const nm = String(vendorName||'').replace(/^\(.*?\)/,'').trim();
-    if(/^[A-Za-z]/.test(nm)){
-      init = nm.replace(/[^A-Za-z]/g,'').slice(0,2).toUpperCase();
-    } else {
-      init = nm.slice(0,2).toUpperCase();
-    }
-    if(!init) init = 'XX';
+    // 고객사 미등록이면 업체명 영문에서 임시 이니셜 (영문 없으면 XX)
+    init = vendorInit(vendorName);
+    if(!init || init==='?') init = 'XX';
   }
   // MMDD
   const d = dateStr ? new Date(dateStr) : new Date();
@@ -46035,38 +45977,16 @@ function vendorInitHtml(vendorName, small){
   //    이름에 영문/숫자가 있으면 그것만 모아 첫 2글자 사용. 없으면 빈 배지(─)로 둠.
   //    → clients가 노션에서 로드된 후 재렌더링 시 진짜 이니셜로 채워지므로,
   //      한글 폴백이 잠깐 보이고 영문으로 바뀌는 깜빡임을 방지함.
-  const nm=name.replace(/^\(.*?\)/,'').replace(/주식회사|㈜/g,'').trim();
-  const ascii=nm.replace(/[^A-Za-z0-9]/g,'');
-  let init='';
-  if(ascii.length>=2){
-    init=ascii.slice(0,2).toUpperCase();
-  } else if(ascii.length===1){
-    init=ascii.toUpperCase()+'·';
-  } else {
-    init='─'; // 한글 전용 이름 — clients 로드 전까지는 중립 표시
-  }
   const sz=small?'cl-init cl-init-sm':'cl-init';
-  // 색상도 이니셜 기준 → 같은 회사를 다른 표기로 입력해도 같은 색 보장
-  const colorKey = (init && init !== '─' && init !== '·') ? init : name;
-  return`<span class="${sz}" style="background:${strToColor(colorKey)}" title="${name}">${init}</span>`;
+  return`<span class="${sz}" style="background:${vendorColor(name)}" title="${name}">${vendorInit(name)}</span>`;
 }
 
 // 고객사 전체 라벨 (뱃지 + 이름 or 뱃지만)
 function clLabel(cl, nameOnly){
   if(!cl)return '?';
-  let init=(cl.initials||'').trim().toUpperCase();
-  if(!init && cl.name){
-    const nm=cl.name.replace(/^\(.*?\)/,'').trim();
-    const words=nm.split(/\s+/);
-    if(words.length>=2){
-      init=(words[0][0]+(words[1][0]||'')).toUpperCase();
-    } else {
-      init=nm.slice(0,2).toUpperCase();
-    }
-  }
-  if(!init)return cl.name||'?';
+  const init=vendorInit(cl);
   if(nameOnly)return init;
-  const color=clInitColor(cl);
+  const color=vendorColor(cl);
   return`<span class="cl-lbl"><span class="cl-init" style="background:${color}">${init}</span><span title="${cl.name}">${cl.name}</span></span>`;
 }
 
