@@ -27845,32 +27845,38 @@ function renderSample(){
       //    - '전체' 탭: 모든 샘플
       //    - 특정 상태 탭: 그 상태 샘플만
       const _nsLocal=(st)=>{ const s=(st||'').trim(); return s==='완료'?'확정':s; };
-      const tally={};  // key = manager string, value = {count, client, displayInit}
+      // 🏢 고객사(이니셜) 기준으로 묶는다 — 'VT'·'주식회사제이스바이브'처럼 표기가 달라도 한 칩 (2026-10-23)
+      const tally={};  // key = 이니셜(미확인이면 원문), value = {count, client, managerRaw, key}
+      const _devKeys=new Set(), _devActive=['의뢰','제작중','수정중']; let _devN=0;
       samples.forEach(s=>{
         const st=_nsLocal(s.status);
+        const m=(s.manager||'').trim();
+        const ini=m?vendorInit(m):'';
+        const key=(ini && ini!=='?')?ini:(m||'');
+        if(m && _devActive.includes(st)){ _devKeys.add(key); _devN++; }
         if(smpFilter && smpFilter!=='전체' && st!==smpFilter) return;
-        const m=(s.manager||'').trim(); if(!m) return;
-        if(!tally[m]){
-          // manager로 clients DB 매칭 (관대한 매칭 — 표기 변형 흡수)
+        if(!m) return;
+        if(!tally[key]){
           const cl=findClientByVendor(m);
-          tally[m]={count:0, client:cl||null, managerRaw:m};
+          tally[key]={count:0, client:cl||null, managerRaw:m, key:key};
         }
-        tally[m].count++;
+        tally[key].count++;
       });
       const entries=Object.values(tally).sort((a,b)=>b.count-a.count);
       if(!entries.length) return '';
       const activeManager=smpAdvFilter.manager;
       const _smpTabLabel=(SMP_CATS.find(c=>c.key===smpFilter)||{}).label||'진행중';
       const _smpChipTitle=(smpFilter && smpFilter!=='전체')?`${_smpTabLabel} 고객사`:'전체 고객사';
+      const _tabTotal=entries.reduce((a,e)=>a+e.count,0);
       return`
       <div style="display:flex;flex-wrap:wrap;gap:6px;padding:4px 0 10px 0;align-items:center">
-        <span style="font-size:10px;color:var(--t3);font-weight:700;margin-right:2px">🏢 ${_smpChipTitle}:</span>
+        <span style="font-size:10px;color:var(--t3);font-weight:700;margin-right:2px" title="개발 진행 중(의뢰·제작중·수정중) 전체: ${_devKeys.size}곳 · ${_devN}건">🏢 ${_smpChipTitle} <b style="color:var(--t1)">${entries.length}곳 · ${_tabTotal}건</b>:</span>
         ${entries.map(e=>{
           const cl=e.client;
           let init, color;
           init=vendorInit(cl||e.managerRaw); color=vendorColor(cl||e.managerRaw);
-          const isActive=activeManager===e.managerRaw || (cl && (activeManager===cl.name || activeManager===(cl.initials||'').toUpperCase()));
-          const safeMgr=e.managerRaw.replace(/'/g,'&#39;');
+          const isActive=activeManager===e.key || activeManager===e.managerRaw || (cl && (activeManager===cl.name || activeManager===(cl.initials||'').toUpperCase()));
+          const safeMgr=String(e.key).replace(/'/g,'&#39;');
           const displayName=cl?cl.name:e.managerRaw;
           return`<span onclick="toggleSmpClientFilter('${safeMgr}')"
             title="${displayName} — ${_smpChipTitle==='전체 고객사'?'전체':_smpTabLabel} ${e.count}건${isActive?' (해제하려면 다시 클릭)':''}"
@@ -27881,6 +27887,7 @@ function renderSample(){
           </span>`;
         }).join('')}
         ${activeManager?`<button onclick="smpAdvFilter.manager='';renderSample()" style="font-size:10.5px;padding:3px 8px;background:none;border:1px solid var(--bdr);border-radius:10px;cursor:pointer;color:var(--t3);font-family:inherit;margin-left:4px" title="고객사 필터 해제">× 전체</button>`:''}
+        <span style="margin-left:auto;font-size:10.5px;color:var(--t3)">개발 진행 중(의뢰·제작중·수정중) <b style="color:var(--t1)">${_devKeys.size}곳 · ${_devN}건</b></span>
       </div>`;
     })()}
     ${smpAdvFilter.panelOpen?(()=>{
@@ -28084,6 +28091,7 @@ function filteredSamples(){
       const m=(s.manager||'').trim();
       // 이니셜로 매칭하거나 이름으로 매칭
       if(m===af.manager) return true;
+      if(m && vendorInit(m)===String(af.manager).trim().toUpperCase()) return true;   // 이니셜로 묶인 칩 — 표기가 달라도 같은 고객사
       const cl=clients.find(c=>(c.initials||'').trim().toUpperCase()===m.toUpperCase() || (c.name||'').trim()===m);
       if(cl && (cl.name===af.manager || (cl.initials||'').toUpperCase()===af.manager.toUpperCase())) return true;
       return false;
