@@ -28146,33 +28146,35 @@ function filteredSamples(){
   };
   // 🏢 기본 정렬 = 고객사별로 묶고, 납기가 가장 빠른 고객사부터 (DW 2026-10-23). 묶음 안은 납기 빠른 순.
   //    납기 빠른 순으로 먼저 정렬한 뒤 처음 등장한 순서대로 고객사를 모으면, 고객사 순서 = 그 고객사의 가장 빠른 납기 순.
-  if(!af.sort || af.sort==='default'){
-    const groups=new Map();
-    [...list].sort(sorters.due_asc).forEach(s=>{ const k=_smpGrpKey(s); if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(s); });
-    const out=[].concat(...groups.values());
-    out._grouped=true;
-    return out;
-  }
+  if(!af.sort || af.sort==='default') return _groupByVendor([...list].sort(sorters.due_asc), s=>s.manager);
   return [...list].sort(sorters[af.sort]||sorters.req_desc);
 }
-// 샘플 고객사 묶음 키 = 고객사 이니셜 (확인 안 되면 원문, 비어 있으면 '')
-function _smpGrpKey(s){
-  const m=String((s&&s.manager)||'').trim();
+// 🏢 고객사 묶음 공용 (샘플·발주) — 키 = 고객사 이니셜 (확인 안 되면 원문, 비어 있으면 '')
+function _vendorGrpKey(v){
+  const m=String(v||'').trim();
   if(!m) return '';
   const ini=vendorInit(m);
   return (ini && ini!=='?') ? ini : m;
 }
-// 묶음이 바뀌는 첫 줄 앞에 고객사 머리줄
-function _smpGrpHead(list, i){
+// 묶음이 바뀌는 첫 줄 앞에 고객사 머리줄 (list._grouped일 때만)
+function _grpHeadRow(list, i, getV, colspan){
   if(!list || !list._grouped) return '';
-  const s=list[i], k=_smpGrpKey(s);
-  if(i>0 && _smpGrpKey(list[i-1])===k) return '';
-  const m=String(s.manager||'').trim();
-  const cl=m?findClientByVendor(m):null;
-  const name=cl?cl.name:(m||'고객사 미지정');
-  const badge=m?`<span class="cl-init cl-init-sm" style="background:${vendorColor(cl||m)}">${vendorInit(cl||m)}</span>`:'';
-  return `<tr class="smp-grp-head" onclick="event.stopPropagation()"><td colspan="14" style="background:var(--s2);padding:8px 10px;border-top:2px solid var(--bdr);cursor:default"><div style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:var(--t1)">${badge}<span>${name}</span></div></td></tr>`;
+  const v=String(getV(list[i])||'').trim(), k=_vendorGrpKey(v);
+  if(i>0 && _vendorGrpKey(getV(list[i-1]))===k) return '';
+  const cl=v?findClientByVendor(v):null;
+  const name=cl?cl.name:(v||'고객사 미지정');
+  const badge=v?`<span class="cl-init cl-init-sm" style="background:${vendorColor(cl||v)}">${vendorInit(cl||v)}</span>`:'';
+  return `<tr class="grp-head" onclick="event.stopPropagation()"><td colspan="${colspan}" style="background:var(--s2);padding:8px 10px;border-top:2px solid var(--bdr);cursor:default"><div style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:var(--t1)">${badge}<span>${name}</span></div></td></tr>`;
 }
+// 날짜순으로 정렬된 목록을, 처음 등장한 순서대로 고객사끼리 모은다 (= 고객사 순서는 각 고객사의 가장 빠른 날짜 순)
+function _groupByVendor(sorted, getV){
+  const groups=new Map();
+  sorted.forEach(x=>{ const k=_vendorGrpKey(getV(x)); if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(x); });
+  const out=[].concat(...groups.values());
+  out._grouped=true;
+  return out;
+}
+function _smpGrpHead(list, i){ return _grpHeadRow(list, i, s=>s.manager, 14); }
 
 // ── 상태 변경 드롭다운 (클릭한 상태 칩 옆에 표시) ──
 function openSmpStatusDropdown(ev, sid){
@@ -30996,7 +30998,8 @@ function renderOrder(){
     created_desc:(a,b)=>(getCreated(b)-getCreated(a))||_ido(a).localeCompare(_ido(b)),
     vendor_asc:(a,b)=>((a.vendor||'').localeCompare(b.vendor||'','ko'))||tieO(a,b),
   };
-  list=list.sort(sorters[af.sort]||sorters.date_desc);
+  // 🏢 기본 정렬 = 업체별로 묶고, 요청출고일이 가장 빠른 업체부터 (DW 2026-10-23). 묶음 안은 출고일 빠른 순.
+  list=(!af.sort || af.sort==='default') ? _groupByVendor(list.sort(sorters.ship_asc), o=>o.vendor) : list.sort(sorters[af.sort]||sorters.date_desc);
   // 5-A: 헤더 체크박스가 직접 참조할 수 있도록 list 노출
   window._ordRenderedList = list;
 
@@ -31189,7 +31192,7 @@ function renderOrder(){
           <div>
             <label style="font-size:10px;color:var(--t3);font-weight:700;display:block;margin-bottom:3px">정렬</label>
             <select class="fs" style="width:100%;font-size:11.5px;padding:5px 7px" onchange="ordAdvFilter.sort=this.value;renderOrder()">
-              <option value="default" ${af.sort==='default'?'selected':''}>기본 정렬</option>
+              <option value="default" ${af.sort==='default'?'selected':''}>업체별 (출고일 빠른순)</option>
               <option value="date_asc" ${af.sort==='date_asc'?'selected':''}>발주일 ↑ (오래된순)</option>
               <option value="date_desc" ${af.sort==='date_desc'?'selected':''}>발주일 ↓ (최근순) ⭐</option>
               <option value="ship_asc" ${af.sort==='ship_asc'?'selected':''}>출고일 ↑ (빠른순)</option>
@@ -31250,7 +31253,7 @@ function renderOrder(){
           </tr>
         </thead>
         <tbody>
-          ${list.map(o=>{
+          ${list.map((o,_gi)=>{
             const dl=dday(o.ship);
             const urg=dl!==null&&dl<=1;
             const warn=dl!==null&&dl<=3&&dl>1;
@@ -31336,7 +31339,7 @@ function renderOrder(){
             // 한 발주를 2행으로 표시: 1행 메타정보 + 2행 품목내역(전체 너비)
             // border-bottom 처리로 시각적으로 묶음 표현
             const openModal = `ordRowsBuf=[...(orders.find(x=>String(x.id)==='${o.id}')?.rows||[])].map(r=>({...r}));openOrdModal('${o.id}')`;
-            return `<tr class="${rowCls} ord-row-top" style="${rowStyle};cursor:pointer" onclick="${openModal}">
+            return _grpHeadRow(list,_gi,x=>x.vendor,ordSubTab==='done'?9:11)+`<tr class="${rowCls} ord-row-top" style="${rowStyle};cursor:pointer" onclick="${openModal}">
               <td onclick="event.stopPropagation()" style="text-align:center;vertical-align:middle;border-bottom:none">
                 <input type="checkbox" ${isOrdChecked?'checked':''} onchange="toggleOrdChk('${o.id}',this.checked)" style="width:14px;height:14px;cursor:pointer;accent-color:var(--gold)">
               </td>
