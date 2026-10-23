@@ -431,8 +431,10 @@ a{color:inherit;text-decoration:none}
 <div id="pgSmp" class="page">
   <div class="search-wrap"><input type="text" id="smpSearch" placeholder="샘플명·품번 검색" oninput="renderSmpList()"></div>
   <div class="fbar">
+    <button data-st="req" onclick="setSmpFilter('req')">의뢰</button>
     <button class="active" data-st="active" onclick="setSmpFilter('active')">진행중</button>
     <button data-st="done" onclick="setSmpFilter('done')">완료</button>
+    <button data-st="cancel" onclick="setSmpFilter('cancel')">취소</button>
     <button data-st="all" onclick="setSmpFilter('all')">전체</button>
   </div>
   <div class="cli-fbar" id="smpCliFbar"></div>
@@ -3230,8 +3232,12 @@ function setSmpCliFilter(c){
 
 function _getSmpAfterStatusFilter(){
   let list = samples.slice();
-  if(_smpFilter==='active') list = list.filter(s=>{ const st=s.status||'의뢰'; return st!=='완료'&&st!=='확정'&&st!=='취소'; });
-  else if(_smpFilter==='done') list = list.filter(s=>{ const st=s.status||'의뢰'; return st==='완료'||st==='확정'; });
+  // PC 샘플 탭과 같은 구분: 의뢰 / 진행중(제작중·수정중) / 완료(확정·완료) / 취소 (2026-10-24)
+  const st = s => String(s.status||'의뢰').trim();
+  if(_smpFilter==='req')         list = list.filter(s=>st(s)==='의뢰');
+  else if(_smpFilter==='active') list = list.filter(s=>st(s)==='제작중'||st(s)==='수정중');
+  else if(_smpFilter==='done')   list = list.filter(s=>st(s)==='완료'||st(s)==='확정');
+  else if(_smpFilter==='cancel') list = list.filter(s=>st(s)==='취소'||st(s)==='취소보류');
   return list;
 }
 
@@ -6902,7 +6908,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-10-23-11';
+const APP_VERSION = '2026-10-24-12';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
