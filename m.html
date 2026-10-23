@@ -490,7 +490,7 @@ a{color:inherit;text-decoration:none}
   <div id="scmInv" style="display:none">
     <div class="search-wrap"><input type="text" id="invSearch" placeholder="번호·고객사 검색" oninput="renderInvList()"></div>
     <div class="form-pills" id="invSubTabs" style="margin-bottom:10px">
-      <button onclick="setInvSubTab('draft')" data-sub="draft" class="active">📋 미청구 <span id="invCntDraft" style="opacity:.7;font-size:11px">0</span></button>
+      <button onclick="setInvSubTab('draft')" data-sub="draft" class="active">📦 출고완료 <span id="invCntDraft" style="opacity:.7;font-size:11px">0</span></button>
       <button onclick="setInvSubTab('billing')" data-sub="billing">💰 청구 <span id="invCntBilling" style="opacity:.7;font-size:11px">0</span></button>
       <button onclick="setInvSubTab('done')" data-sub="done">✓ 완료 <span id="invCntDone" style="opacity:.7;font-size:11px">0</span></button>
       <button onclick="setInvSubTab('all')" data-sub="all">전체 <span id="invCntAll" style="opacity:.7;font-size:11px">0</span></button>
@@ -4093,17 +4093,86 @@ function setInvSubTab(tab){
 //   - draft:   작성중 / 발행완료 — 아직 청구 안 함 (단발 청구 대상)
 //   - billing: 청구완료 / 미수 — 청구는 했고 입금 대기 (합본 대상)
 //   - done:    입금완료 — 끝
-function _getInvStage(v){
-  const s = (v.status||'').trim();
-  if(s === '입금완료') return 'done';
-  if(s === '청구완료' || s === '미수') return 'billing';
-  // 그 외(작성중, 발행완료, 미설정 등)는 draft
+// 🧾 명세서 단계 = PC와 같은 규칙 (2026-10-24)
+//    예전엔 status 글자만 보고 나눠서 PC(입금·계산서·출고·합본 기준)와 탭 숫자가 달랐다.
+//    아래 inferInvStage는 PC index.html의 같은 함수를 그대로 옮긴 것 — PC를 고치면 같이 고칠 것.
+function isOrderShipped(st){ return normalizeOrderStatus(st) === '확정'; }
+function inferInvStage(v){
+  if(!v) return 'draft';
+  // 📌 합본 청구서도 stage 계산 (이전엔 null 반환 → 청구 탭에 안 보이는 버그)
+  //    합본은 발행 = 청구 시작. 입금+계산서 둘 다 완료되면 done.
+  if(v._isConsolidated){
+    const consPaid = (v._paid === true) || (v.status === '입금완료') || ((+v.paymentRatio || 0) >= 100);
+    const consTaxIssued = (v._taxInvoiceIssued === true);
+    if(consPaid && consTaxIssued) return 'done';
+    // 📌 '청구하기'(_consBilled=true)를 눌러야 청구 단계로. 그 전엔 미청구(draft).
+    //    🔑 기기 독립성: _consBilled가 undefined(필드 없음)든 false든 '아직 안 누름'으로 동일 취급한다.
+    //       (이전엔 undefined면 billing으로 빠져서, 같은 합본이 필드 받은 기기=draft / 못 받은 기기=billing 으로
+    //        갈려 출고완료 건수가 기기마다 달라지는 버그가 있었음.)
+    //    단, 입금·계산서가 실제로 진행된 합본은 _consBilled 값과 무관하게 billing(청구 진행 중)으로 본다.
+    if(consPaid || consTaxIssued) return 'billing';
+    if(v._consBilled === true) return 'billing';
+    return 'draft';
+  }
+  // 📌 done(완료) 판정 원칙: "입금 + 계산서" 둘 다 완료된 경우만 done.
+  //    출고 여부는 stage 분류에 영향 없음 (출고는 별도 트래킹).
+  //    선금 100% 받았어도 계산서가 미발행이면 billing(청구중) 유지.
+  const paid      = (v._paid === true) || (v.status === '입금완료') || ((+v.paymentRatio || 0) >= 100);
+  const taxIssued = (v._taxInvoiceIssued === true);
+  // 입금 + 계산서 모두 완료 → done
+  if(paid && taxIssued) return 'done';
+  // 📌 선금만 받고 아직 출고 전인 케이스 보정:
+  //    _shipped가 명시적으로 false이고 계산서도 미발행이면,
+  //    선금 입금(paymentRatio 100)이 있더라도 미청구(draft)로 둔다.
+  //    (돈은 미리 받았지만 출고를 안 했으므로 '청구 진행'이 아니라 '선금 받은 미청구'가 맞다.)
+  //    계산서를 발행했거나 출고완료했으면 아래에서 billing으로 분류된다.
+  if(v._shipped === false && !taxIssued) return 'draft';
+  // 어느 하나라도 진행됐거나 출고됐으면 billing(청구중)
+  if(paid || taxIssued || v._shipped === true) return 'billing';
+  // _shipped가 명시적으로 false면 발주 상태를 보지 않고 draft 유지
+  if(v._shipped === false) return 'draft';
+  // _shipped가 미설정(undefined)인 옛 데이터만 발주 출고완료 여부로 추론
+  if(v.ordId){
+    const o = orders.find(x => String(x.id)===String(v.ordId));
+    if(o && isOrderShipped(o.status)) return 'billing';
+  }
+  // 샘플 명세서는 발주 없음 → status 기준 (발행되면 자동 billing)
+  if(v._fromSample){
+    return (v.status === '발행완료' || v.status === '청구완료' || v.status === '미수')
+      ? 'billing' : 'draft';
+  }
+  // 🛡 [FIX] AS 명세서도 출고 ≠ 청구 — 발행 직후엔 '출고완료'(draft)로 둔다.
+  //    이전엔 출고일(shipDate)만 있으면 billing(청구)으로 분류돼 청구 탭으로 새던 문제.
+  //    입금·계산서가 진행되면 위쪽 검사(paid/taxIssued)에서 billing/done으로 자동 승격된다.
+  if(v._fromAS){
+    return v._shipped === true ? 'billing' : 'draft';
+  }
+  // 그 외 (발주 기반 미출고, 재고 출고 STOCK-, 독립 명세서 등) → draft (미청구)
   return 'draft';
+}
+function _getInvStage(v){ return inferInvStage(v); }
+// 🧾 목록에 보일 명세서 = PC '모든 명세서'와 같은 기준
+//  ① 같은 명세서(노션id·발주번호+출고일 = PC _invStableKey)가 두 줄이면 최신(_ts) 1건만
+//  ② 합본에 묶인 개별 명세서는 뺀다 — 합본 한 줄로 보임. 기기마다 id가 달라 부모 id만으로는 못 찾으므로
+//     합본의 includedChildKeys(기기 독립 키)로도 확인한다 (PC와 동일). 부모가 없는 고아는 그대로 보인다.
+function _invStableKey(v){
+  if(!v) return '';
+  if(v._notionId) return 'n:'+v._notionId;
+  if(v.ordNo) return 'o:'+v.ordNo+'_'+(v.shipDate||v.issuedAt||'');
+  return 'l:'+String(v.id);
+}
+function _invVisible(list){
+  const best = new Map();
+  list.forEach(v=>{ if(!v) return; const k=_invStableKey(v), o=best.get(k); if(!o || (+v._ts||0) > (+o._ts||0)) best.set(k, v); });
+  const D = [...best.values()];
+  const consIds  = new Set(D.filter(v=>v._isConsolidated).map(v=>String(v.id)));
+  const childKeys= new Set(D.filter(v=>v._isConsolidated).flatMap(c=>(c.includedChildKeys||[]).map(String)));
+  return D.filter(v=> v._isConsolidated || !((v._consolidatedInvoiceId!=null && consIds.has(String(v._consolidatedInvoiceId))) || childKeys.has(_invStableKey(v))));
 }
 
 function renderInvList(){
   const q = (document.getElementById('invSearch')?.value||'').toLowerCase();
-  let list = invoiceHistory.slice();
+  let list = _invVisible(invoiceHistory);
   if(q) list = list.filter(v=>(v.vendor||'').toLowerCase().includes(q) || (v.ordNo||'').toLowerCase().includes(q));
 
   // 탭별 카운트 계산 (필터 전 전체 기준)
@@ -4127,7 +4196,7 @@ function renderInvList(){
   document.getElementById('invCnt').textContent = list.length;
   const el = document.getElementById('invList');
   if(!list.length){
-    const emptyMsg = _invSubTab === 'draft' ? '미청구 명세서가 없습니다' :
+    const emptyMsg = _invSubTab === 'draft' ? '출고완료 명세서가 없습니다' :
                      _invSubTab === 'billing' ? '청구된 명세서가 없습니다' :
                      _invSubTab === 'done' ? '완료된 명세서가 없습니다' :
                      '명세서가 없습니다';
@@ -6926,7 +6995,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-10-24-14';
+const APP_VERSION = '2026-10-24-15';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
