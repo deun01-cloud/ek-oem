@@ -15182,7 +15182,7 @@ async function pullFromNotion(opts){
     procItems     = mergeRows(procRows, procItems,      mapNotionProc,      ['orderId'], '공정',     notionCfg.procDb);
     proposals     = mergeRows(propRows, proposals,      mapNotionProposal,  ['images','productId'], '영업제안', notionCfg.propDb);
     clients       = mergeRows(cliRows,  clients,        mapNotionClient,    ['files'], '고객사',   notionCfg.clientDb);
-    try{ _ensureClientColors(); }catch(_e){}
+    try{ _ensureClientColors().catch(function(){}); }catch(_e){}
     factories     = mergeRows(facRows,  factories,      mapNotionFactory,   ['files'], '공장',     notionCfg.factoryDb);
     tasks         = _skTask ? tasks : mergeRows(taskRows, tasks,          mapNotionTask,      ['files'], '업무일지', notionCfg.taskDb);
     asItems       = mergeRows(asRows,   asItems,        mapNotionAS,        ['repairs','files'], 'AS',       notionCfg.asDb);
@@ -45824,16 +45824,29 @@ function _pickClientColor(ini, exceptCl){
   return CLIENT_PALETTE.find(function(x){ return (used[x]||0)===min; });
 }
 // 색이 없는 고객사에 한 번만 배정·저장 (노션+서버). 순서를 고정해 기기마다 같은 결과가 나온다.
-function _ensureClientColors(){
-  if(typeof clients==='undefined' || !Array.isArray(clients) || !clients.length) return 0;
+//  ⚠ 배정 전에 노션에서 그 고객사의 현재 색을 다시 확인한다 — 다른 기기가 이미 정했으면 그 색을 받아들이고
+//    덮어쓰지 않는다. (옛 데이터를 가진 기기가 '색 없음'으로 보고 다시 배정해 색이 바뀌던 문제, 2026-10-23)
+var _clientColorBusy = false;
+async function _ensureClientColors(){
+  if(_clientColorBusy || typeof clients==='undefined' || !Array.isArray(clients) || !clients.length) return 0;
   var todo = clients.filter(function(c){ return c && !c.color && c._notionId && c.name; })
     .sort(function(a,b){ return String(a._notionId).localeCompare(String(b._notionId)); });
-  todo.forEach(function(c){
-    c.color = _pickClientColor(vendorInit(c), c);
-    try{ if(typeof debouncedSync==='function') debouncedSync('client', c, true); }catch(_){}
-  });
-  if(todo.length){ try{ slSave(); }catch(_){} console.log('[고객사 색] '+todo.length+'곳 배정'); }
-  return todo.length;
+  if(!todo.length) return 0;
+  _clientColorBusy = true;
+  var adopted = 0, assigned = 0;
+  try{
+    for(var i=0;i<todo.length;i++){
+      var c = todo[i], remote = '';
+      try{ var pg = await nGetPage(c._notionId); remote = (pg && pg.properties) ? np.text(pg.properties['색상']) : ''; }
+      catch(e){ continue; }   // 확인 못 하면 이번엔 건너뜀(덮어쓰기 방지)
+      if(c.color) continue;    // 기다리는 사이 다른 경로로 받음
+      if(remote){ c.color = remote; adopted++; try{ if(typeof realtimePublish==='function') realtimePublish('client', c, {keepTs:true}); }catch(_){} continue; }
+      c.color = _pickClientColor(vendorInit(c), c); assigned++;
+      try{ if(typeof debouncedSync==='function') debouncedSync('client', c, true); }catch(_){}
+    }
+  }finally{ _clientColorBusy = false; }
+  if(adopted || assigned){ try{ slSave(); }catch(_){} try{ if(typeof renderTab==='function') renderTab(); }catch(_){} console.log('[고객사 색] 노션 색 반영 '+adopted+' / 새로 배정 '+assigned); }
+  return adopted + assigned;
 }
 try{ window._ensureClientColors = _ensureClientColors; }catch(_){}
 function clInitColor(cl){ return vendorColor(cl); }
