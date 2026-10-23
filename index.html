@@ -27847,13 +27847,11 @@ function renderSample(){
       const _nsLocal=(st)=>{ const s=(st||'').trim(); return s==='완료'?'확정':s; };
       // 🏢 고객사(이니셜) 기준으로 묶는다 — 'VT'·'주식회사제이스바이브'처럼 표기가 달라도 한 칩 (2026-10-23)
       const tally={};  // key = 이니셜(미확인이면 원문), value = {count, client, managerRaw, key}
-      const _devKeys=new Set(), _devActive=['의뢰','제작중','수정중']; let _devN=0;
       samples.forEach(s=>{
         const st=_nsLocal(s.status);
         const m=(s.manager||'').trim();
         const ini=m?vendorInit(m):'';
         const key=(ini && ini!=='?')?ini:(m||'');
-        if(m && _devActive.includes(st)){ _devKeys.add(key); _devN++; }
         if(smpFilter && smpFilter!=='전체' && st!==smpFilter) return;
         if(!m) return;
         if(!tally[key]){
@@ -27867,10 +27865,9 @@ function renderSample(){
       const activeManager=smpAdvFilter.manager;
       const _smpTabLabel=(SMP_CATS.find(c=>c.key===smpFilter)||{}).label||'진행중';
       const _smpChipTitle=(smpFilter && smpFilter!=='전체')?`${_smpTabLabel} 고객사`:'전체 고객사';
-      const _tabTotal=entries.reduce((a,e)=>a+e.count,0);
       return`
       <div style="display:flex;flex-wrap:wrap;gap:6px;padding:4px 0 10px 0;align-items:center">
-        <span style="font-size:10px;color:var(--t3);font-weight:700;margin-right:2px" title="개발 진행 중(의뢰·제작중·수정중) 전체: ${_devKeys.size}곳 · ${_devN}건">🏢 ${_smpChipTitle} <b style="color:var(--t1)">${entries.length}곳 · ${_tabTotal}건</b>:</span>
+        <span style="font-size:10px;color:var(--t3);font-weight:700;margin-right:2px">🏢 ${_smpChipTitle}:</span>
         ${entries.map(e=>{
           const cl=e.client;
           let init, color;
@@ -27887,7 +27884,6 @@ function renderSample(){
           </span>`;
         }).join('')}
         ${activeManager?`<button onclick="smpAdvFilter.manager='';renderSample()" style="font-size:10.5px;padding:3px 8px;background:none;border:1px solid var(--bdr);border-radius:10px;cursor:pointer;color:var(--t3);font-family:inherit;margin-left:4px" title="고객사 필터 해제">× 전체</button>`:''}
-        <span style="margin-left:auto;font-size:10.5px;color:var(--t3)">개발 진행 중(의뢰·제작중·수정중) <b style="color:var(--t1)">${_devKeys.size}곳 · ${_devN}건</b></span>
       </div>`;
     })()}
     ${smpAdvFilter.panelOpen?(()=>{
@@ -27930,7 +27926,7 @@ function renderSample(){
           <div>
             <label style="font-size:10px;color:var(--t3);font-weight:700;display:block;margin-bottom:3px">정렬</label>
             <select class="fs" style="width:100%;font-size:11.5px;padding:5px 7px" onchange="smpAdvFilter.sort=this.value;renderSample()">
-              <option value="default" ${af.sort==='default'?'selected':''}>기본 정렬</option>
+              <option value="default" ${af.sort==='default'?'selected':''}>고객사별 (납기 빠른순)</option>
               <option value="req_asc" ${af.sort==='req_asc'?'selected':''}>의뢰일 ↑ (빠른순)</option>
               <option value="req_desc" ${af.sort==='req_desc'?'selected':''}>의뢰일 ↓ (늦은순) ⭐</option>
               <option value="due_asc" ${af.sort==='due_asc'?'selected':''}>납기일 ↑ (빠른순)</option>
@@ -27990,7 +27986,7 @@ function renderSample(){
           </tr>
         </thead>
         <tbody>
-          ${list.length?list.map(s=>{
+          ${list.length?list.map((s,_gi)=>{
             const dl=dday(s.due);
             const urg=s.status!=='확정'&&s.status!=='취소'&&dl!==null&&dl<=1;
             const warn=s.status!=='확정'&&s.status!=='취소'&&dl!==null&&dl<=3&&dl>1;
@@ -28012,7 +28008,7 @@ function renderSample(){
             window[imgsKey]=imgs;
             window[srcKey]=sourceDocs;
             const isChk=window._smpChecked.has(String(s.id));
-            return`<tr class="${rc}${isChk?' checked-row':''}" onclick="openSmpModal('${s.id}')" style="${isChk?'background:rgba(139,105,20,.06)':''}">
+            return _smpGrpHead(list,_gi)+`<tr class="${rc}${isChk?' checked-row':''}" onclick="openSmpModal('${s.id}')" style="${isChk?'background:rgba(139,105,20,.06)':''}">
               <td onclick="event.stopPropagation()" style="text-align:center">
                 <input type="checkbox" ${isChk?'checked':''} onchange="toggleSmpChk('${s.id}',this.checked)">
               </td>
@@ -28148,7 +28144,34 @@ function filteredSamples(){
     created_desc:(a,b)=>(getCreated(b)-getCreated(a))||_id(a).localeCompare(_id(b)),
     name_asc:(a,b)=>((a.name||'').localeCompare(b.name||'','ko'))||tie(a,b),
   };
+  // 🏢 기본 정렬 = 고객사별로 묶고, 납기가 가장 빠른 고객사부터 (DW 2026-10-23). 묶음 안은 납기 빠른 순.
+  //    납기 빠른 순으로 먼저 정렬한 뒤 처음 등장한 순서대로 고객사를 모으면, 고객사 순서 = 그 고객사의 가장 빠른 납기 순.
+  if(!af.sort || af.sort==='default'){
+    const groups=new Map();
+    [...list].sort(sorters.due_asc).forEach(s=>{ const k=_smpGrpKey(s); if(!groups.has(k)) groups.set(k,[]); groups.get(k).push(s); });
+    const out=[].concat(...groups.values());
+    out._grouped=true;
+    return out;
+  }
   return [...list].sort(sorters[af.sort]||sorters.req_desc);
+}
+// 샘플 고객사 묶음 키 = 고객사 이니셜 (확인 안 되면 원문, 비어 있으면 '')
+function _smpGrpKey(s){
+  const m=String((s&&s.manager)||'').trim();
+  if(!m) return '';
+  const ini=vendorInit(m);
+  return (ini && ini!=='?') ? ini : m;
+}
+// 묶음이 바뀌는 첫 줄 앞에 고객사 머리줄
+function _smpGrpHead(list, i){
+  if(!list || !list._grouped) return '';
+  const s=list[i], k=_smpGrpKey(s);
+  if(i>0 && _smpGrpKey(list[i-1])===k) return '';
+  const m=String(s.manager||'').trim();
+  const cl=m?findClientByVendor(m):null;
+  const name=cl?cl.name:(m||'고객사 미지정');
+  const badge=m?`<span class="cl-init cl-init-sm" style="background:${vendorColor(cl||m)}">${vendorInit(cl||m)}</span>`:'';
+  return `<tr class="smp-grp-head" onclick="event.stopPropagation()"><td colspan="14" style="background:var(--s2);padding:8px 10px;border-top:2px solid var(--bdr);cursor:default"><div style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:var(--t1)">${badge}<span>${name}</span></div></td></tr>`;
 }
 
 // ── 상태 변경 드롭다운 (클릭한 상태 칩 옆에 표시) ──
