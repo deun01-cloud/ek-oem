@@ -149,6 +149,8 @@ a{color:inherit;text-decoration:none}
 .day-pop-h button{min-height:40px;padding:9px 14px;background:var(--s2);border-radius:8px;font-size:13px;color:var(--t2)}
 .day-pop-b{padding:10px 14px 80px}
 
+.grp-h{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--s2);border-top:3px solid var(--bdr);border-bottom:1px solid var(--bdr);box-shadow:inset 5px 0 0 var(--bdr);font-size:13px;font-weight:700;color:var(--t1)}
+.grp-h .grp-n{margin-left:auto;font-size:11.5px;font-weight:600;color:var(--t3)}
 .list-item{padding:13px 14px;min-height:56px;border-bottom:1px solid var(--bdr-lt);cursor:pointer;display:flex;flex-direction:column;gap:6px;transition:background .15s}
 .list-item:active{background:var(--s2)}
 .list-item:last-child{border-bottom:none}
@@ -3168,6 +3170,29 @@ function renderOrdCliFilter(){
   wrap.innerHTML = allChip + chips;
 }
 
+// 🏢 고객사 묶음 (PC와 같은 규칙) — 날짜 빠른 순으로 정렬한 뒤, 처음 등장한 순서대로 같은 고객사끼리 모은다.
+//    키 = 고객사 이니셜 (확인 안 되면 원문). 머리줄 = 고객사 지정색 테두리 (2026-10-24)
+function _vendorGrpKey(v){ const m=String(v||'').trim(); if(!m) return ''; const i=getInitial(m); return (i && i!=='?') ? i : m; }
+function _sortByDateAsc(list, getD){
+  return list.sort((a,b)=>{
+    const da=getD(a)||'', db=getD(b)||'';
+    if(!da && db) return 1; if(da && !db) return -1;
+    const d=da.localeCompare(db); if(d) return d;
+    return (+b.id||0) - (+a.id||0);
+  });
+}
+function _groupByVendor(sorted, getV){
+  const g=new Map();
+  sorted.forEach(x=>{ const k=_vendorGrpKey(getV(x)); if(!g.has(k)) g.set(k,[]); g.get(k).push(x); });
+  return [...g.values()];
+}
+function _grpHeadHtml(v, n){
+  const nm=String(v||'').trim();
+  if(!nm) return `<div class="grp-h">고객사 미지정<span class="grp-n">${n}건</span></div>`;
+  const ini=getInitial(nm), col=initColor(ini, nm);
+  const cl=(clients||[]).find(c=>c && String(c.initials||'').trim().toUpperCase()===ini && c.name);
+  return `<div class="grp-h" style="border-top-color:${col};border-bottom-color:${col};box-shadow:inset 5px 0 0 ${col}">${initBadge(nm)}<span>${escapeHtml(cl?cl.name:nm)}</span><span class="grp-n">${n}건</span></div>`;
+}
 function renderOrdList(){
   const q = (document.getElementById('ordSearch')?.value||'').toLowerCase();
   let list = _getOrdAfterStatusFilter();
@@ -3178,19 +3203,15 @@ function renderOrdList(){
   if(q) list = list.filter(o=>{
     return (o.vendor||'').toLowerCase().includes(q) || (o.no||'').toLowerCase().includes(q) || (o.rows||[]).some(r=>(r.name||'').toLowerCase().includes(q));
   });
-  // 📌 발주일(date) 최신순. 같은 날짜면 id가 큰 것(최근 등록) 우선
-  list.sort((a,b)=>{
-    const d = (b.date||'').localeCompare(a.date||'');
-    if(d !== 0) return d;
-    return (+b.id||0) - (+a.id||0);
-  });
+  // 📌 PC와 같은 기본 정렬: 요청출고일 빠른 고객사부터, 같은 고객사끼리 묶음
+  const groups = _groupByVendor(_sortByDateAsc(list, o=>o.ship), o=>o.vendor);
   document.getElementById('ordCnt').textContent = list.length;
   const el = document.getElementById('ordList');
   if(!list.length){
     el.innerHTML = `<div class="empty"><div class="icn">📭</div>발주서가 없습니다</div>`;
     return;
   }
-  el.innerHTML = list.map(o=>{
+  el.innerHTML = groups.map(g=> _grpHeadHtml(g[0].vendor, g.length) + g.map(o=>{
     const st = normalizeOrderStatus(o.status);
     const stCls = _ordStCls(st);
     const dd = ddayLabel(o.ship);
@@ -3211,7 +3232,7 @@ function renderOrdList(){
       </div>
       ${(o.rows||[]).length ? `<div class="li-rows">${rowsHtml}${moreRows}</div>` : ''}
     </div>`;
-  }).join('');
+  }).join('')).join('');
 }
 
 // ──── 샘플 리스트 ────
@@ -3281,19 +3302,15 @@ function renderSmpList(){
     list = list.filter(s => getInitial(s.manager||'') === _smpCliFilter);
   }
   if(q) list = list.filter(s=>(s.name||'').toLowerCase().includes(q) || (s.itemCode||'').toLowerCase().includes(q));
-  // 📌 의뢰일(reqDate) 최신순. 같은 날짜면 id가 큰 것 우선
-  list.sort((a,b)=>{
-    const d = (b.reqDate||'').localeCompare(a.reqDate||'');
-    if(d !== 0) return d;
-    return (+b.id||0) - (+a.id||0);
-  });
+  // 📌 PC와 같은 기본 정렬: 납기 빠른 고객사부터, 같은 고객사끼리 묶음
+  const groups = _groupByVendor(_sortByDateAsc(list, s=>s.due), s=>s.manager);
   document.getElementById('smpCnt').textContent = list.length;
   const el = document.getElementById('smpList');
   if(!list.length){
     el.innerHTML = `<div class="empty"><div class="icn">💎</div>샘플이 없습니다</div>`;
     return;
   }
-  el.innerHTML = list.map(s=>{
+  el.innerHTML = groups.map(g=> _grpHeadHtml(g[0].manager, g.length) + g.map(s=>{
     const st = s.status||'의뢰';
     const stCls = st==='완료'||st==='확정'?'s-done':st==='취소'?'s-cancel':st==='수정중'?'s-fix':st==='제작중'?'s-make':'s-req';
     const dd = ddayLabel(s.due);
@@ -3313,7 +3330,7 @@ function renderSmpList(){
         ${s.itemCode?`<span style="font-family:monospace;color:var(--gold-lt);font-weight:600">${escapeHtml(s.itemCode)}</span>`:''}
       </div>
     </div>`;
-  }).join('');
+  }).join('')).join('');
 }
 
 // ──── 입출고 리스트 ────
@@ -6908,7 +6925,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-10-24-12';
+const APP_VERSION = '2026-10-24-13';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
