@@ -414,6 +414,7 @@ a{color:inherit;text-decoration:none}
 <div id="pgOrd" class="page">
   <div class="search-wrap"><input type="text" id="ordSearch" placeholder="업체·발주번호·품목 검색" oninput="renderOrdList()"></div>
   <div class="fbar">
+    <button data-st="req" onclick="setOrdFilter('req')">의뢰</button>
     <button class="active" data-st="active" onclick="setOrdFilter('active')">진행중</button>
     <button data-st="done" onclick="setOrdFilter('done')">완료</button>
     <button data-st="hold" onclick="setOrdFilter('hold')">보류</button>
@@ -1864,9 +1865,9 @@ function _detectChanges(prev, curr){
     if(!old) return;
     if(old.status !== o.status && o.status){
       // 의미 있는 변화만 알림 (진행중 → 다른 상태)
-      if(o.status === '출고완료' || o.status === '취소' || o.status === '보류'){
+      if(_ordClosed(o.status) && normalizeOrderStatus(old.status)!==normalizeOrderStatus(o.status)){
         _addNotif({
-          ico: o.status === '출고완료' ? '✅' : (o.status === '취소' ? '✕' : '⏸'),
+          ico: normalizeOrderStatus(o.status) === '확정' ? '✅' : '⏸',
           kind:'orderStatus', targetId:o.id,
           msg:`${o.vendor||''} 발주가 ${o.status}로 변경됨`
         });
@@ -2314,10 +2315,7 @@ function clearNotionCfg(){
 let calCur = new Date(); calCur.setDate(1);
 
 function renderDash(){
-  const ordIp = orders.filter(o=>{
-    const st=o.status||'진행중';
-    return st!=='출고완료' && st!=='취소' && st!=='보류';
-  }).length;
+  const ordIp = orders.filter(o=>!_ordClosed(o.status)).length;
   const smpIp = samples.filter(s=>{
     const st=s.status||'의뢰';
     return st!=='완료' && st!=='확정' && st!=='취소';
@@ -2325,8 +2323,7 @@ function renderDash(){
   const today = toLocalDateStr(new Date());
   let urg=0;
   orders.forEach(o=>{
-    const st=o.status||'진행중';
-    if(st==='출고완료'||st==='취소'||st==='보류') return;
+    if(_ordClosed(o.status)) return;
     const dd=dday(o.ship);
     if(dd!==null && dd>=0 && dd<=3) urg++;
   });
@@ -2410,9 +2407,9 @@ function getAutoTasks(ds){
   const items = [];
   // 발주 출고일
   orders.filter(o => o.ship === ds).forEach(o => {
-    const st = o.status || '진행중';
-    const isDone = st === '출고완료' || st === '취소';
-    const doneReason = st === '출고완료' ? '출고완료' : (st === '취소' ? '취소' : '');
+    const st = normalizeOrderStatus(o.status);
+    const isDone = st === '확정' || st === '취소보류';
+    const doneReason = st === '확정' ? '출고완료' : (st === '취소보류' ? '취소' : '');
     (o.rows||[]).forEach((r,i) => {
       // 의미 있는 내용이 없으면(업체명도, 품목명도 비어있으면) 항목 자체를 만들지 않음
       const vendor = (o.vendor||'').trim();
@@ -2927,8 +2924,7 @@ function dayEvents(ds){
   // 고객사 영문 이니셜 2글자만 (getInitial이 영문 우선 추출)
   const ordByVendor = {};
   orders.filter(o=>o.ship===ds).forEach(o=>{
-    const st=o.status||'진행중';
-    const isDone=st==='출고완료'||st==='취소';
+    const isDone=_ordClosed(o.status);
     const init = getInitial(o.vendor) || '?';
     const key = init + '|' + (isDone?'1':'0');
     if(!ordByVendor[key]) ordByVendor[key] = {init, vendor:o.vendor, done:isDone, count:0};
@@ -3043,8 +3039,8 @@ function openDayPop(ds){
   if(ords.length){
     html += `<div style="font-size:11.5px;font-weight:700;color:var(--org);margin:8px 0 4px">📋 발주·출고 (${ords.length})</div>`;
     ords.forEach(o=>{
-      const st=o.status||'진행중';
-      const stCls = st==='출고완료'?'s-done':st==='취소'?'s-cancel':st==='보류'?'s-hold':'s-prog';
+      const st=normalizeOrderStatus(o.status);
+      const stCls = _ordStCls(st);
       // 이 날짜가 무슨 출고일인지 표시
       const shipType = (o.factShip===ds && o.ship===ds) ? '요청·공장출고'
                      : (o.factShip===ds) ? '공장출고일'
@@ -3087,9 +3083,25 @@ function openDayPop(ds){
 }
 function closeDayPop(){ document.getElementById('dayPop').classList.remove('open'); }
 
-function _ordStLabel(s){
-  return {'진행중':'진행중','제작중':'제작중','수정중':'수정중','출고완료':'완료','보류':'보류','취소':'취소'}[s]||s;
+// 🏷 발주 상태 = PC와 같은 값(의뢰·제작중·수정중·부분출고·확정·취소보류). 옛 값은 여기서 정규화 (2026-10-23)
+//    모바일이 옛 값('진행중/출고완료/보류')으로 판정해 '확정'·'의뢰'가 진행중 탭에 섞이던 원인.
+function normalizeOrderStatus(st){
+  if(!st) return '의뢰';
+  const s = String(st).trim();
+  if(s === '진행중') return '제작중';
+  if(s === '확정' || s === '출고완료' || s === '완료') return '확정';
+  if(s === '보류' || s === '취소') return '취소보류';
+  if(['의뢰','제작중','수정중','확정','취소보류','부분출고'].includes(s)) return s;
+  return '의뢰';
 }
+function _ordStLabel(s){
+  const n = normalizeOrderStatus(s);
+  return n==='확정' ? '완료' : n==='취소보류' ? '보류' : n;
+}
+function _ordStCls(st){
+  return {'의뢰':'s-prog','제작중':'s-make','부분출고':'s-make','수정중':'s-fix','확정':'s-done','취소보류':'s-hold'}[normalizeOrderStatus(st)]||'s-prog';
+}
+const _ordClosed = st => { const n=normalizeOrderStatus(st); return n==='확정' || n==='취소보류'; };
 
 // ──── 발주 리스트 ────
 let _ordFilter = 'active';
@@ -3110,9 +3122,11 @@ function setOrdCliFilter(c){
 // 현재 상태 필터 적용된 발주 (고객사 필터는 적용 안함)
 function _getOrdAfterStatusFilter(){
   let list = orders.slice();
-  if(_ordFilter==='active') list = list.filter(o=>{ const st=o.status||'진행중'; return st!=='출고완료'&&st!=='취소'&&st!=='보류'; });
-  else if(_ordFilter==='done') list = list.filter(o=>o.status==='출고완료');
-  else if(_ordFilter==='hold') list = list.filter(o=>o.status==='보류');
+  const n = o => normalizeOrderStatus(o.status);
+  if(_ordFilter==='req')         list = list.filter(o=>n(o)==='의뢰');
+  else if(_ordFilter==='active') list = list.filter(o=>['제작중','수정중','부분출고'].includes(n(o)));
+  else if(_ordFilter==='done')   list = list.filter(o=>n(o)==='확정');
+  else if(_ordFilter==='hold')   list = list.filter(o=>n(o)==='취소보류');
   return list;
 }
 
@@ -3175,10 +3189,10 @@ function renderOrdList(){
     return;
   }
   el.innerHTML = list.map(o=>{
-    const st = o.status||'진행중';
-    const stCls = st==='출고완료'?'s-done':st==='취소'?'s-cancel':st==='보류'?'s-hold':st==='제작중'?'s-make':st==='수정중'?'s-fix':'s-prog';
+    const st = normalizeOrderStatus(o.status);
+    const stCls = _ordStCls(st);
     const dd = ddayLabel(o.ship);
-    const isDone = st==='출고완료'||st==='취소';
+    const isDone = _ordClosed(st);
     const ddHtml = dd && !isDone ? `<span class="dday ${dd.cls}">${dd.t}</span>` : '';
     const rowsHtml = (o.rows||[]).slice(0,3).map(r=>`<span class="item">${escapeHtml((r.name||'').slice(0,15))} ×${parseQty(r.qty)||0}</span>`).join('');
     const moreRows = (o.rows||[]).length>3 ? `<span class="item" style="background:transparent;border:none">+${(o.rows||[]).length-3}</span>` : '';
@@ -4415,9 +4429,9 @@ async function _addRcv(ordId, rowIdx){
   });
   // 모두 완료면 상태도 '출고완료'로 자동 변경 (사용자 확인 필요)
   let autoComplete = false;
-  if(allDone && o.status !== '출고완료'){
+  if(allDone && normalizeOrderStatus(o.status) !== '확정'){
     autoComplete = confirm('모든 품목이 전량 입고되었습니다.\n발주 상태를 "출고완료"로 변경할까요?');
-    if(autoComplete) o.status = '출고완료';
+    if(autoComplete) o.status = '확정';
   }
 
   saveAll();
@@ -4429,7 +4443,7 @@ async function _addRcv(ordId, rowIdx){
       const props = {
         "품목상세JSON": {rich_text: chunkRichText(JSON.stringify(o.rows||[]))}
       };
-      if(autoComplete) props["상태"] = {select:{name:'출고완료'}};
+      if(autoComplete) props["상태"] = {select:{name:'확정'}};
       await nUpdate(o._notionId, props);
     } catch(e){
       console.warn('입고 노션 동기화 실패:', e);
@@ -4698,11 +4712,11 @@ function _copyText(text){
 function showOrdDetail(id){
   const o = orders.find(x=>x.id==id);
   if(!o) return;
-  const st = o.status||'진행중';
+  const st = normalizeOrderStatus(o.status);
   const dd = ddayLabel(o.ship);
-  const isDone = st==='출고완료'||st==='취소';
+  const isDone = _ordClosed(st);
   const ddHtml = dd && !isDone ? `<span class="dday ${dd.cls}" style="margin-left:6px">${dd.t}</span>` : '';
-  const stCls = st==='출고완료'?'s-done':st==='취소'?'s-cancel':st==='보류'?'s-hold':st==='제작중'?'s-make':st==='수정중'?'s-fix':'s-prog';
+  const stCls = _ordStCls(st);
 
   // 발주 행 렌더링 + 입고 처리 UI
   // rcvHistory: [{date, qty, note}] 형식으로 누적 입고 이력 저장 (PC와 동일)
@@ -4808,15 +4822,16 @@ function showOrdDetail(id){
 
   // 상태 변경 액션
   let actHtml = '';
-  if(st !== '출고완료' && st !== '취소'){
+  const _oid = String(o.id).replace(/'/g,"\\'");
+  if(!isDone){
     actHtml = `<div class="act-row">
-      <button class="act-btn success" onclick="changeOrdStatus('${String(o.id).replace(/'/g,"\\'")}','출고완료')">✓ 출고완료</button>
-      ${st!=='보류'?`<button class="act-btn" onclick="changeOrdStatus('${String(o.id).replace(/'/g,"\\'")}','보류')">⏸ 보류</button>`:`<button class="act-btn" onclick="changeOrdStatus('${String(o.id).replace(/'/g,"\\'")}','진행중')">↺ 진행중</button>`}
-      <button class="act-btn danger" onclick="changeOrdStatus('${String(o.id).replace(/'/g,"\\'")}','취소')">✕ 취소</button>
+      ${st==='의뢰'?`<button class="act-btn" onclick="changeOrdStatus('${_oid}','제작중')">▶ 제작중</button>`:''}
+      <button class="act-btn success" onclick="changeOrdStatus('${_oid}','확정')">✓ 출고완료</button>
+      <button class="act-btn" onclick="changeOrdStatus('${_oid}','취소보류')">⏸ 보류</button>
     </div>`;
   } else {
     actHtml = `<div class="act-row">
-      <button class="act-btn" onclick="changeOrdStatus('${String(o.id).replace(/'/g,"\\'")}','진행중')">↺ 진행중으로 되돌리기</button>
+      <button class="act-btn" onclick="changeOrdStatus('${_oid}','제작중')">↺ 진행중으로 되돌리기</button>
     </div>`;
   }
   // 발주서 보기·공유 버튼 (출고완료/취소 제외하고도 항상 노출)
@@ -4843,8 +4858,8 @@ function showOrdDetail(id){
 function openOrdEdit(ordId){
   const o = orders.find(x=>x.id==ordId);
   if(!o) return;
-  const statuses = ['진행중','제작중','수정중','보류','출고완료','취소'];
-  const selOpt = (cur, opts) => opts.map(o => `<option value="${o}" ${cur===o?'selected':''}>${o==='진행중'?'의뢰':o}</option>`).join('');
+  const statuses = ['의뢰','제작중','수정중','부분출고','확정','취소보류'];
+  const selOpt = (cur, opts) => opts.map(o => `<option value="${o}" ${cur===o?'selected':''}>${o==='확정'?'확정(출고완료)':o}</option>`).join('');
 
   // 행 편집 (단가/수량)
   window._ordEditRows = JSON.parse(JSON.stringify(o.rows||[]));
@@ -4860,7 +4875,7 @@ function openOrdEdit(ordId){
         <input type="text" id="ord_no" value="${escapeHtml(o.no||'')}" readonly style="background:var(--s2);color:var(--t3);font-family:monospace">
       </div>
       <div class="form-r" style="margin:0"><label>상태</label>
-        <select id="ord_status">${selOpt(o.status||'진행중', statuses)}</select>
+        <select id="ord_status">${selOpt(normalizeOrderStatus(o.status), statuses)}</select>
       </div>
     </div>
     <div class="form-r-2">
@@ -6887,7 +6902,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-10-23-10';
+const APP_VERSION = '2026-10-23-11';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
