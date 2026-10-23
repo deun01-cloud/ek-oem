@@ -939,6 +939,11 @@ function _rtHandleSnapshot(msg){
     return;
   }
   console.log(RT_LOG_PREFIX, `스냅샷 수신: ${msg.type} ${items.length}건 ${msg.full===false?'(증분)':'(전체)'}`);
+  if(msg.full !== false && _rtReplaceFromServer(msg.type, items)){
+    saveAll();
+    if(typeof renderCurrentPage === 'function') try{ renderCurrentPage(); }catch(_){}
+    return;
+  }
   items.forEach(item => _applyRemoteItem(msg.type, item, msg.ts || Date.now()));
   saveAll();
   // 현재 화면 다시 렌더
@@ -961,6 +966,37 @@ function _rtHandleAck(msg){
   }
 }
 
+// 🏛 전체 스냅샷이면 로컬을 서버 목록으로 교체 (PC의 RT_SSOT_TYPES와 같은 기준 + 고객사)
+//    예전엔 머지만 해서, 노션에서 들어온 중복·옛 행이 모바일에만 계속 남았다.
+//    - 같은 항목(노션id 또는 id 일치)은 로컬 id를 유지 → 열려 있는 수정창이 대상을 잃지 않음
+//    - 서버에 아직 없는 미전송(_pending) 건과 1분 이내 새로 만든 건은 유지
+const RT_SSOT_TYPES_M = new Set(['sample','order','io','task','invoice','client','as']);
+function _rtReplaceFromServer(type, items){
+  if(!RT_SSOT_TYPES_M.has(type)) return false;
+  const arr = _rtGetLocalArray(type); if(!arr) return false;
+  const keysOf = x => [x && x._notionId ? String(x._notionId) : null, x && x.id!=null ? String(x.id) : null].filter(Boolean);
+  const byKey = new Map(); arr.forEach(x=>{ keysOf(x).forEach(k=>{ if(!byKey.has(k)) byKey.set(k, x); }); });
+  const used = new Set(), seen = new Set(), out = [];
+  items.forEach(it=>{
+    if(!it) return;
+    const ks = keysOf(it); if(!ks.length) return;
+    if(ks.some(k=>seen.has(k))) return;            // 서버 목록 안의 중복도 1건만
+    ks.forEach(k=>seen.add(k));
+    let loc = null; for(const k of ks){ if(byKey.has(k)){ loc = byKey.get(k); break; } }
+    if(loc){
+      used.add(loc);
+      if(loc._pending || (+loc._ts||0) > (+it._ts||0)){ out.push(loc); return; }   // 아직 서버에 안 올라간 로컬 수정 유지
+      const m = { ...loc, ...it }; if(loc.id!=null) m.id = loc.id; if(loc._notionId && !m._notionId) m._notionId = loc._notionId;
+      out.push(m);
+    } else out.push({ ...it });
+  });
+  const now = Date.now();
+  arr.forEach(x=>{ if(!x || used.has(x)) return; if(x._pending || (now - (+x._ts||0) < 60000)) out.push(x); });
+  const before = arr.length;
+  arr.length = 0; out.forEach(x=>arr.push(x));
+  console.log(RT_LOG_PREFIX, `🏛 ${type} 서버 기준 교체: ${before} → ${arr.length}건`);
+  return true;
+}
 // 타입 → 로컬 배열 매핑
 function _rtGetLocalArray(type){
   if(type === 'invoice')  return invoiceHistory;
@@ -1763,7 +1799,7 @@ function mapNotionClient(row){
   const p=row.properties||{};
   return {
     _notionId:row.id,
-    name:    np.title(p['업체명']),
+    name:    np.title(p['고객사명']) || np.title(p['업체명']),   // 노션 제목 = '고객사명' (2026-10-23)
     initials:np.text(p['이니셜']),
     color:np.text(p['색상']),
     contact: np.text(p['담당자']),
@@ -2076,14 +2112,18 @@ async function manualSync(silent){
       const _pendNew = localArr.filter(x=>x && x._pending && !x._notionId);
       return _pendNew.concat(_out);
     }
-    samples       = _safeApply(notionCfg.smpDb,  smpRows,  samples,        mapNotionSample,  0,    '샘플');
-    orders        = _safeApply(notionCfg.ordDb,  ordRows,  orders,         mapNotionOrder,   1000, '발주');
-    asItems       = _safeApply(notionCfg.asDb,   asRows,   asItems,        mapNotionAS,      2000, 'AS');
-    ioItems       = _safeApply(notionCfg.ioDb,   ioRows,   ioItems,        mapNotionIO,      3000, '입출고');
+    // 🏛 [근본수정 2026-10-23] 실시간 서버 = 단일 기준(PC와 동일). 서버 스냅샷을 받은 타입은 노션 결과로 덮지 않는다.
+    //    노션 DB에는 중복 행(샘플 261건 등)과 PC에서 지운 옛 행이 남아 있어, 노션으로 덮으면 모바일만 숫자가 달라졌다.
+    //    노션은 서버에 연결되지 않았을 때의 대체 경로로만 쓴다.
+    const _srv = t => _rtSnapshotReceived.has(t);
+    samples       = _srv('sample') ? samples  : _safeApply(notionCfg.smpDb,  smpRows,  samples,        mapNotionSample,  0,    '샘플');
+    orders        = _srv('order')  ? orders   : _safeApply(notionCfg.ordDb,  ordRows,  orders,         mapNotionOrder,   1000, '발주');
+    asItems       = _srv('as')     ? asItems  : _safeApply(notionCfg.asDb,   asRows,   asItems,        mapNotionAS,      2000, 'AS');
+    ioItems       = _srv('io')     ? ioItems  : _safeApply(notionCfg.ioDb,   ioRows,   ioItems,        mapNotionIO,      3000, '입출고');
     if(pdRows) productDB = _safeApply(notionCfg.productDb, pdRows, productDB, mapNotionProduct, 4000, '제품DB');
-    invoiceHistory= _safeApply(notionCfg.invDb,  invRows,  invoiceHistory, mapNotionInvoice, 5000, '거래명세서');
-    tasks         = _safeApply(notionCfg.taskDb, taskRows, tasks,          mapNotionTask,    6000, '업무일지');
-    clients       = _safeApply(notionCfg.clientDb, cliRows, clients,       mapNotionClient,  7000, '고객사');
+    invoiceHistory= _srv('invoice')? invoiceHistory : _safeApply(notionCfg.invDb,  invRows,  invoiceHistory, mapNotionInvoice, 5000, '거래명세서');
+    tasks         = _srv('task')   ? tasks    : _safeApply(notionCfg.taskDb, taskRows, tasks,          mapNotionTask,    6000, '업무일지');
+    clients       = _srv('client') ? clients  : _safeApply(notionCfg.clientDb, cliRows, clients,       mapNotionClient,  7000, '고객사');
     if(_skipped.length){
       console.warn('[sync] 🛡 로컬 보호로 미적용:', _skipped.join(', '));
       // 🔕 데이터가 사라진 게 아니라 '기존 것을 그대로 둔' 상황이므로 담담하게 알린다.
@@ -6847,7 +6887,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-08-20-09';
+const APP_VERSION = '2026-10-23-10';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
@@ -6879,7 +6919,8 @@ async function checkAppVersion(){
     console.warn('캐시 비우기 일부 실패:', e);
   }
 
-  // 3. 버전 업데이트
+  // 3. 버전 업데이트 + 서버에서 전체 다시 받기 (증분 기준점 초기화 → 다음 접속은 전체 스냅샷 = 서버 기준 교체)
+  try{ localStorage.removeItem('ek_rt_watermarks_v1'); }catch(e){}
   localStorage.setItem('ek_app_version', APP_VERSION);
   // 4. 강제 새로고침 (캐시 무시)
   setTimeout(()=>{
