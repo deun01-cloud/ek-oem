@@ -28163,8 +28163,12 @@ function _grpHeadRow(list, i, getV, colspan){
   if(i>0 && _vendorGrpKey(getV(list[i-1]))===k) return '';
   const cl=v?findClientByVendor(v):null;
   const name=cl?cl.name:(v||'고객사 미지정');
-  const badge=v?`<span class="cl-init cl-init-sm" style="background:${vendorColor(cl||v)}">${vendorInit(cl||v)}</span>`:'';
-  return `<tr class="grp-head" onclick="event.stopPropagation()"><td colspan="${colspan}" style="background:var(--s2);padding:8px 10px;border-top:2px solid var(--bdr);cursor:default"><div style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:var(--t1)">${badge}<span>${name}</span></div></td></tr>`;
+  // 머리줄 배경 = 고객사 지정색 (이니셜 배지와 같은 색) → 고객사 경계가 한눈에 보이게. 미지정은 기존 회색
+  const col=v?vendorColor(cl||v):'';
+  const badge=v?`<span class="cl-init cl-init-sm" style="background:rgba(255,255,255,.22);box-shadow:inset 0 0 0 1px rgba(255,255,255,.55)">${vendorInit(cl||v)}</span>`:'';
+  const tdBg=col?`background:${col};border-top:2px solid ${col}`:'background:var(--s2);border-top:2px solid var(--bdr)';
+  const txt=col?'color:#fff;text-shadow:0 1px 1px rgba(0,0,0,.25)':'color:var(--t1)';
+  return `<tr class="grp-head" onclick="event.stopPropagation()"><td colspan="${colspan}" style="${tdBg};padding:8px 10px;cursor:default"><div style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;${txt}">${badge}<span>${name}</span></div></td></tr>`;
 }
 // 날짜순으로 정렬된 목록을, 처음 등장한 순서대로 고객사끼리 모은다 (= 고객사 순서는 각 고객사의 가장 빠른 날짜 순)
 function _groupByVendor(sorted, getV){
