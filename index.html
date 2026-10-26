@@ -40044,6 +40044,23 @@ function selectClientForQuote(clientId){
 // ════════════════════════════════════════════════════════════════
 // 견적서의 행들을 발주서 모달에 채워넣고 모달 열기
 // 사용자가 출고일·메모 등 추가 입력 후 저장하면 정식 발주가 됨
+// 🔁 [2026-10-26] 견적 → 발주/샘플 이관 공통 헬퍼
+//   견적 '규격' 칸에서 종류어(목걸이·반지 등)를 뺀 나머지(예: "목걸이 45cm" → "45cm")를 사이즈로 넘긴다.
+//   예전엔 견적에 없는 r.size만 봐서 샘플 이관 때 규격 값이 사라졌다.
+function _qtSpecSize(spec){
+  return String(spec||'').replace(/EARRING|NECKLACE|BRACELET|BROOCH|RING|귀걸이|귀거리|반지|목걸이|팔찌|브로치|브롯치/gi,' ').replace(/\s+/g,' ').trim();
+}
+//   견적 공통 정보(건명·고객 담당자·납기 조건·특이사항·내부 메모)를 이관 메모에 붙일 줄로 만든다.
+function _qtTransferNote(q){
+  const L=[`견적서 ${q.no||''} 기반`];
+  if(q.subject) L.push('건명: '+q.subject);
+  if(q.cliManager) L.push('고객 담당자: '+q.cliManager);
+  if(q.delivery) L.push('납기 조건: '+q.delivery);
+  if(q.cliMemo) L.push('특이사항: '+q.cliMemo);
+  if(q.intMemo) L.push('내부 메모: '+q.intMemo);
+  return L.join('\n');
+}
+
 function transferQuoteToOrder(quoteId){
   const q = quotes.find(x => String(x.id) === String(quoteId));
   if(!q){ showToast('⚠ 견적서를 찾을 수 없습니다','var(--red)'); return; }
@@ -40102,8 +40119,8 @@ function transferQuoteToOrder(quoteId){
       const memoEl = document.getElementById('o_memo');
       if(memoEl && q.no){
         const existingMemo = memoEl.value || '';
-        const refMemo = `견적서 ${q.no} 기반`;
-        if(!existingMemo.includes(refMemo)){
+        const refMemo = _qtTransferNote(q);
+        if(!existingMemo.includes(`견적서 ${q.no} 기반`)){
           memoEl.value = existingMemo ? existingMemo + '\n' + refMemo : refMemo;
         }
       }
@@ -40171,7 +40188,7 @@ function transferQuoteToSample(quoteId){
     name: r.name || '',
     type: specToType(r.spec),
     qty: r.qty ? String(r.qty) + 'EA' : '1EA',
-    sz1: r.size || '',
+    sz1: r.size || _qtSpecSize(r.spec),
     sz2: '',
     mat: r.mat || '브라스 (BRASS)',
     plating: r.plating || '실버',
@@ -40182,7 +40199,9 @@ function transferQuoteToSample(quoteId){
     devCost: 0,
     memo: '',
     // 🖼 견적 행 썸네일 → 샘플 이미지로 승계 (이관 후에도 사진 유지)
-    imgs: r.img ? [{url:r.img, name:(r.name||'품목')}] : [], sourceDoc: [], cadFiles: []
+    imgs: r.img ? [{url:r.img, name:(r.name||'품목')}] : [],
+    // 📎 견적 첨부파일 → 각 샘플의 원본 자료로 승계 (1행 이관과 동일)
+    sourceDoc: Array.isArray(q.files) ? q.files.map(f=>({...f})) : [], cadFiles: []
   }));
   openSmpMultiModal(prefillRows);
   // 공통 정보 채우기
@@ -40190,7 +40209,7 @@ function transferQuoteToSample(quoteId){
     const setVal = (id, val) => { const el = document.getElementById(id); if(el && val) el.value = val; };
     setVal('sm_vendor', q.vendor || '');
     setVal('sm_reqDate', q.issuedAt || toLocalDateStr(new Date()));
-    setVal('sm_commonMemo', `견적서 ${q.no || ''} 기반`);
+    setVal('sm_commonMemo', _qtTransferNote(q));
     renderSmMultiRows();
   }, 150);
   showToast(`✓ 견적서 ${q.no || ''}의 ${rows.length}개 품목을 샘플 의뢰서로 이관 — 납기일·CAD 등 추가 입력 후 저장하세요`,'var(--blu)', 5000);
@@ -40222,7 +40241,7 @@ function _doTransferToSample(q, row){
       setVal('s_qty', row.qty || '1');
       setVal('s_mat', row.mat);
       setVal('s_plating', row.plating);
-      setVal('s_sz1', row.size || '');
+      setVal('s_sz1', row.size || _qtSpecSize(row.spec));
       setVal('s_wt', row.weight || '');
       // 업체 (s.manager 필드는 실제로는 "업체" 정보)
       setVal('s_manager', q.vendor || '');
@@ -40262,7 +40281,7 @@ function _doTransferToSample(q, row){
         const refParts = [`견적서 ${q.no || ''} 기반`];
         if(q.vendor) refParts.push(q.vendor);
         if(row.unitPrice) refParts.push(`단가 ${(+row.unitPrice).toLocaleString()}원`);
-        const ref = refParts.join(' · ');
+        const ref = [refParts.join(' · ')].concat(_qtTransferNote(q).split('\n').slice(1)).join('\n');
         devNote.value = devNote.value ? devNote.value + '\n' + ref : ref;
       }
       // 의뢰일 = 견적 발행일
