@@ -39261,8 +39261,8 @@ function _renderQtTotalsBox(){
 // 품목 행 렌더 (모달 안) — 2줄 구조: PDF용 / 내부 원가용
 function _renderQtRows(){
   return `
-    <div style="display:grid;grid-template-columns:30px minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.8fr) minmax(0,0.6fr) minmax(0,0.6fr) minmax(0,1fr) minmax(max-content,1.2fr) 30px;gap:4px;align-items:center;font-size:10.5px;color:var(--t3);font-weight:600;padding:4px 4px;background:var(--s1);border-radius:4px;margin-bottom:4px">
-      <div style="text-align:center">NO</div><div>품명</div><div>소재</div><div>도금</div><div>규격</div><div>중량</div><div>수량</div><div style="text-align:right">개당단가</div><div style="text-align:right">합계</div><div></div>
+    <div style="display:grid;grid-template-columns:30px 40px minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.8fr) minmax(0,0.6fr) minmax(0,0.6fr) minmax(0,1fr) minmax(max-content,1.2fr) 30px;gap:4px;align-items:center;font-size:10.5px;color:var(--t3);font-weight:600;padding:4px 4px;background:var(--s1);border-radius:4px;margin-bottom:4px">
+      <div style="text-align:center">NO</div><div style="text-align:center">사진</div><div>품명</div><div>소재</div><div>도금</div><div>규격</div><div>중량</div><div>수량</div><div style="text-align:right">개당단가</div><div style="text-align:right">합계</div><div></div>
     </div>
     ${_qtRowsBuf.map((r,i)=>{
       const prodCost = calcProdCost(r);
@@ -39271,14 +39271,14 @@ function _renderQtRows(){
       const marginPct = sale>0 ? Math.round((margin/sale)*100) : 0;
       const marginColor = margin<0 ? 'var(--red)' : marginPct<20 ? 'var(--org)' : 'var(--grn)';
       return `
-      <div style="border:1px solid var(--bdr);border-radius:5px;padding:5px;margin-bottom:5px;background:var(--s1)">
+      <div style="border:1px solid var(--bdr);border-radius:5px;padding:5px;margin-bottom:5px;background:var(--s1)" ondragover="_qtImgDragOver(event,this)" ondragleave="_qtImgDragLeave(event,this)" ondrop="_qtImgDrop(event,${i},this)" onpaste="_qtImgPaste(event,${i})">
         <!-- 1행: PDF에 표시되는 정보 -->
-        <div style="display:grid;grid-template-columns:30px minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.8fr) minmax(0,0.6fr) minmax(0,0.6fr) minmax(0,1fr) minmax(max-content,1.2fr) 30px;gap:4px;align-items:center;margin-bottom:4px">
+        <div style="display:grid;grid-template-columns:30px 40px minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr) minmax(0,0.8fr) minmax(0,0.6fr) minmax(0,0.6fr) minmax(0,1fr) minmax(max-content,1.2fr) 30px;gap:4px;align-items:center;margin-bottom:4px">
           <div style="text-align:center">
-            ${r.img?`<img src="${String(r.img).replace(/"/g,'&quot;')}" onclick="event.stopPropagation();openPrevList([{url:'${String(r.img).replace(/'/g,"\\'")}',name:'${String(r.name||'품목').replace(/'/g,"\\'").replace(/"/g,'&quot;')}'}],0,false)" onerror="this.style.display='none'" title="클릭하면 크게 보기" style="width:26px;height:26px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);cursor:zoom-in;display:block;margin:0 auto 2px">`:''}
             <div style="font-size:11px;color:var(--t3);font-weight:600">${i+1}</div>
             ${r.itemCode?`<div style="font-size:8.5px;color:var(--gold-lt);font-family:monospace;line-height:1.1;margin-top:1px" title="기존 품번 매칭됨: ${r.itemCode}">📌</div>`:''}
           </div>
+          <div id="qtImg_${i}">${_qtImgCellHtml(r,i)}</div>
           <input class="fi" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].name=this.value" placeholder="품명" style="font-size:11.5px;padding:4px 6px">
           <input class="fi" value="${(r.mat||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].mat=this.value;_updateQtRowCalc(${i})" placeholder="실버925" style="font-size:11.5px;padding:4px 6px">
           <input class="fi" value="${(r.plating||'').replace(/"/g,'&quot;')}" oninput="_qtRowsBuf[${i}].plating=this.value" placeholder="무도금" style="font-size:11.5px;padding:4px 6px">
@@ -39318,6 +39318,69 @@ function _renderQtRows(){
       💡 <b>생산원가</b> = 입고단가 × ${QUOTE_CN_RATE} + 중량 × 원자재시세 (금은 순금 시세 × 함량 × 해리 — 14K 0.585×1.1 · 10K 0.417×1.15) · 🔒 내부 원가 정보는 고객사 PDF에 노출되지 않습니다
     </div>
   `;
+}
+
+// 🖼 [2026-10-26] 견적 품목 사진 — 품명 앞 칸. 클릭(파일 선택)·드래그앤드롭·붙여넣기(Ctrl+V) 지원.
+//   첨부 즉시 축소본(base64)으로 썸네일 표시 → 백그라운드로 R2 업로드 후 URL로 교체.
+//   저장 시 남은 base64는 saveQuote에서 R2로 올린다(노션엔 http URL만 감). PDF·발주 이관은 r.img를 그대로 사용.
+function _qtImgSrc(v){ if(!v) return ''; const u = typeof v==='string' ? v : (v.url||''); return /^(https?:\/\/|data:image\/)/.test(u) ? u : ''; }
+function _qtImgCellHtml(r,i){
+  const u = _qtImgSrc(r && r.img);
+  const box = 'width:34px;height:34px;border-radius:4px;margin:0 auto;position:relative;display:block';
+  if(u){
+    const esc = u.replace(/"/g,'&quot;');
+    const busy = r._imgTok ? '<div style="position:absolute;inset:0;background:rgba(0,0,0,.35);border-radius:4px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px" title="업로드 중">⏳</div>' : '';
+    return `<div style="${box}" tabindex="0" title="클릭: 크게 보기 · 새 사진은 드래그하거나 붙여넣기(Ctrl+V)">
+      <img src="${esc}" onclick="event.stopPropagation();_qtImgView(${i})" onerror="this.style.opacity='.3'" style="width:34px;height:34px;object-fit:cover;border-radius:4px;border:1px solid var(--bdr);cursor:zoom-in;display:block">${busy}
+      <button onclick="event.stopPropagation();_qtImgRemove(${i})" title="사진 삭제" style="position:absolute;top:-5px;right:-5px;width:15px;height:15px;padding:0;border-radius:50%;border:1px solid var(--bdr);background:var(--s1);color:var(--t3);font-size:10px;line-height:12px;cursor:pointer">×</button>
+    </div>`;
+  }
+  return `<label style="${box};border:1px dashed var(--bdr);background:var(--s2);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--t3)" tabindex="0" title="사진 첨부 — 클릭해서 선택, 또는 이 행에 드래그·붙여넣기(Ctrl+V)">📷<input type="file" accept="image/*" style="display:none" onchange="_qtImgPick(event,${i})"></label>`;
+}
+function _qtImgRefresh(i){ const el=document.getElementById('qtImg_'+i); if(el && _qtRowsBuf[i]) el.innerHTML=_qtImgCellHtml(_qtRowsBuf[i],i); }
+function _qtImgView(i){ const r=_qtRowsBuf[i]; const u=_qtImgSrc(r&&r.img); if(u && typeof openPrevList==='function') openPrevList([{url:u,name:r.name||'품목'}],0,false); }
+function _qtImgRemove(i){ const r=_qtRowsBuf[i]; if(!r) return; r.img=''; delete r.imgR2Key; delete r._imgTok; _qtImgRefresh(i); }
+function _qtImgPick(e,i){ const f=e.target.files&&e.target.files[0]; e.target.value=''; if(f) _qtImgAttach(i,f); }
+function _qtImgDragOver(e,el){ const t=e.dataTransfer&&e.dataTransfer.types; if(!t) return; if([...t].some(x=>x==='Files'||x==='text/uri-list'||x==='text/html')){ e.preventDefault(); el.style.outline='2px dashed var(--gold-lt)'; } }
+function _qtImgDragLeave(e,el){ if(!el.contains(e.relatedTarget)) el.style.outline=''; }
+async function _qtImgDrop(e,i,el){
+  el.style.outline='';
+  const dt=e.dataTransfer; if(!dt) return;
+  const f=[...(dt.files||[])].find(x=>/^image\//.test(x.type));
+  if(f){ e.preventDefault(); _qtImgAttach(i,f); return; }
+  // 다른 웹페이지에서 끌어온 이미지: URL → 가능하면 받아서 R2로, 막히면 URL 그대로
+  let url=(dt.getData('text/uri-list')||'').split('\n').find(x=>/^https?:\/\//.test(x.trim()));
+  if(!url){ const m=/<img[^>]+src=["']([^"']+)["']/i.exec(dt.getData('text/html')||''); if(m) url=m[1]; }
+  if(!url) return;
+  e.preventDefault(); url=url.trim();
+  try{ const b=await (await fetch(url)).blob(); if(/^image\//.test(b.type)){ _qtImgAttach(i,new File([b],'drop.'+(b.type.split('/')[1]||'jpg'),{type:b.type})); return; } }catch(_){}
+  const r=_qtRowsBuf[i]; if(r){ r.img=url; delete r.imgR2Key; _qtImgRefresh(i); }
+}
+function _qtImgPaste(e,i){
+  const items=[...((e.clipboardData&&e.clipboardData.items)||[])];
+  const it=items.find(x=>x.kind==='file' && /^image\//.test(x.type));
+  if(!it) return; // 글자 붙여넣기는 그대로 둔다
+  e.preventDefault();
+  const f=it.getAsFile(); if(f) _qtImgAttach(i,f);
+}
+async function _qtImgAttach(i,file){
+  const r=_qtRowsBuf[i]; if(!r) return;
+  if(!file || !/^image\//.test(file.type||'')){ showToast('⚠ 이미지 파일만 첨부할 수 있습니다','var(--org)'); return; }
+  let data = await new Promise(res=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=()=>res(''); fr.readAsDataURL(file); });
+  if(!data) return;
+  try{ if(typeof _shrinkDataUrl==='function') data = await _shrinkDataUrl(data,1600,0.82); }catch(_){}
+  const tok = Date.now()+'_'+Math.random();
+  r.img=data; r._imgTok=tok; delete r.imgR2Key;
+  _qtImgRefresh(i);
+  let up=null;
+  try{ const mt=(/^data:([^;,]+)/.exec(data)||[])[1]||'image/jpeg'; up = await r2Upload(data, (String(r.name||'quote_item').replace(/[\\/:*?"<>|]/g,'_')||'quote_item')+'.'+(mt.split('/')[1]||'jpg'), mt); }catch(_){}
+  // 업로드 중 행이 추가·삭제돼 순번이 바뀌었을 수 있으니 토큰으로 다시 찾는다
+  const j=_qtRowsBuf.findIndex(x=>x && x._imgTok===tok);
+  if(j<0) return;
+  const row=_qtRowsBuf[j]; delete row._imgTok;
+  if(up && up.url){ row.img=up.url; row.imgR2Key=up.key; }
+  else showToast('⚠ 사진 R2 업로드 실패 — 저장할 때 다시 시도합니다','var(--org)',4000);
+  _qtImgRefresh(j);
 }
 
 // 한 행의 생산원가/마진 표시만 갱신 (입력 중 포커스 유지를 위해 행 전체 다시 안 그림)
@@ -40243,6 +40306,17 @@ async function saveQuote(forceOverwrite){
   const total = supply+tax;
   // 내부 원가 합계 (수량 반영) — 노션 "중국입고원가합계" 필드에 저장
   const cnCostTotal = Math.round(_qtRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.cnPrice||0)*QUOTE_CN_RATE, 0));
+
+  // 🖼 품목 사진: 아직 base64인 것(업로드 중·실패분)을 R2로 올려 URL로 바꾼다 — 노션엔 http URL만 저장되므로
+  for(const r of _qtRowsBuf){
+    delete r._imgTok;
+    if(typeof r.img==='string' && r.img.startsWith('data:image/') && typeof uploadImagesToR2==='function'){
+      try{
+        const up = await uploadImagesToR2([{url:r.img, name:(r.name||'quote_item')+'.jpg'}]);
+        if(up && up[0] && up[0].url){ r.img = up[0].url; if(up[0].r2Key) r.imgR2Key = up[0].r2Key; }
+      }catch(e){ console.warn('[견적 품목 사진 업로드]', e && e.message); }
+    }
+  }
 
   const issuedAt = gv('qt_issued') || toLocalDateStr(new Date());
   let no = (gv('qt_no')||'').trim();
