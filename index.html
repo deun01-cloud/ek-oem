@@ -44466,41 +44466,47 @@ function buildQuoteHtml(q){
   };
   const _qThumbs = (q.rows||[]).map(_qThumb);
   const _qHasImg = _qThumbs.some(Boolean);
+  // 📐 [FIX 2026-10-29] 인쇄(A4, 표 폭 약 650px)에서 금액·합계가 칸 밖으로 넘치고 중량·소재가 두 줄로 깨지던 문제.
+  //   원인: 좌우 여백 16px가 좁은 칸(중량·금액 등)을 잠식, nowrap 금액이 칸보다 넓음, 미리보기용 overflow-wrap:anywhere가 '0.98g'을 쪼갬,
+  //         합계 금액(13px 굵게)이 금액 한 칸에 들어가지 않음.
+  //   해결: 칸별로 한 줄(nw) 지정 + 내용 길이에 맞춘 너비 재배분, 좌우 여백 5px, 합계 값은 단가+금액 두 칸을 합쳐 표시.
+  //         머리칸·합계 배경은 print-color-adjust:exact로 인쇄에도 유지. 합계는 tbody로 (tfoot은 페이지마다 반복 인쇄됨).
   const _qCols = _qHasImg ? [
-    {h:'NO',   w:'5%',  al:'center'},
-    {h:'사진',  w:'9%',  al:'center'},
-    {h:'품 명', w:'20%', al:'left'},
-    {h:'소재',  w:'10%', al:'center'},
-    {h:'도금',  w:'12%', al:'center'},
-    {h:'규격',  w:'11%', al:'center'},
-    {h:'중량',  w:'7%',  al:'center'},
-    {h:'수량',  w:'6%',  al:'right'},
-    {h:'단가',  w:'9%',  al:'right'},
-    {h:'금액',  w:'11%', al:'right'}
+    {h:'NO',   w:'4%',   al:'center', nw:1},
+    {h:'사진',  w:'7.5%', al:'center'},
+    {h:'품 명', w:'20%',  al:'left'},
+    {h:'소재',  w:'9%',   al:'center'},
+    {h:'도금',  w:'8%',   al:'center'},
+    {h:'규격',  w:'17%',  al:'center'},
+    {h:'중량',  w:'7%',   al:'center', nw:1},
+    {h:'수량',  w:'5.5%', al:'right',  nw:1},
+    {h:'단가',  w:'9.5%', al:'right',  nw:1},
+    {h:'금액',  w:'12.5%',al:'right',  nw:1}
   ] : [
-    {h:'NO',   w:'5%',  al:'center'},
-    {h:'품 명', w:'24%', al:'left'},
-    {h:'소재',  w:'11%', al:'center'},
-    {h:'도금',  w:'13%', al:'center'},
-    {h:'규격',  w:'11%', al:'center'},
-    {h:'중량',  w:'7%',  al:'center'},
-    {h:'수량',  w:'7%',  al:'right'},
-    {h:'단가',  w:'10%', al:'right'},
-    {h:'금액',  w:'12%', al:'right'}
+    {h:'NO',   w:'4%',   al:'center', nw:1},
+    {h:'품 명', w:'25%',  al:'left'},
+    {h:'소재',  w:'10%',  al:'center'},
+    {h:'도금',  w:'9%',   al:'center'},
+    {h:'규격',  w:'18%',  al:'center'},
+    {h:'중량',  w:'7%',   al:'center', nw:1},
+    {h:'수량',  w:'5.5%', al:'right',  nw:1},
+    {h:'단가',  w:'9%',   al:'right',  nw:1},
+    {h:'금액',  w:'12.5%',al:'right',  nw:1}
   ];
   const _qI = (h)=>_qCols.findIndex(c=>c.h===h); // 열 인덱스는 제목으로 찾는다 (사진 열 유무에 따라 밀리므로)
-  const _qPad = 'padding:7px 8px';
+  const _qPad = 'padding:5px 5px';
+  const _qPca = '-webkit-print-color-adjust:exact;print-color-adjust:exact';
   const _qNum = 'font-variant-numeric:tabular-nums;white-space:nowrap';
   const _qColgroup = '<colgroup>'+_qCols.map(c=>`<col style="width:${c.w}">`).join('')+'</colgroup>';
-  const _qHead = _qCols.map(c=>`<th style="${_qPad};font-size:10.5px;font-weight:700;text-align:${c.al};background:#3a6b3a;color:#fff;letter-spacing:0;text-transform:none;white-space:nowrap;border:1px solid #3a6b3a;vertical-align:middle">${c.h}</th>`).join('');
-  const _qTd = (i,extra)=>`${_qPad};font-size:10.5px;text-align:${_qCols[i].al};vertical-align:middle;border:1px solid #ddd;word-break:keep-all;overflow-wrap:anywhere;line-height:1.4${extra?';'+extra:''}`;
-  const _qSum = (label,val,big)=>`<tr${big?' style="background:#f0e9d8"':''}><td colspan="${_qCols.length-1}" style="${_qPad};text-align:right;font-size:${big?'12px;font-weight:700;color:#7a5a18':'11px;color:#666'};border:1px solid #ddd${big?';background:#f0e9d8':''}">${label}</td><td style="${_qPad};text-align:right;${_qNum};font-size:${big?'13px;font-weight:700;color:#7a5a18':'11px'};border:1px solid #ddd${big?';background:#f0e9d8':''}">${val}</td></tr>`;
+  const _qHead = _qCols.map(c=>`<th style="${_qPad};font-size:10px;font-weight:700;text-align:${c.al};background:#3a6b3a;color:#fff;letter-spacing:0;text-transform:none;white-space:nowrap;overflow:hidden;border:1px solid #3a6b3a;vertical-align:middle;${_qPca}">${c.h}</th>`).join('');
+  const _qTd = (i,extra)=>`${_qPad};font-size:10px;text-align:${_qCols[i].al};vertical-align:middle;border:1px solid #ddd;${_qCols[i].nw?'white-space:nowrap;word-break:normal;overflow-wrap:normal':'word-break:keep-all;overflow-wrap:break-word'};line-height:1.35${extra?';'+extra:''}`;
+  const _qSum = (label,val,big)=>{ const bg = big?`;background:#f0e9d8;${_qPca}`:''; return `<tr style="break-inside:avoid"><td colspan="${_qCols.length-2}" style="${_qPad};text-align:right;font-size:${big?'11.5px;font-weight:700;color:#7a5a18':'10.5px;color:#666'};border:1px solid #ddd;white-space:nowrap${bg}">${label}</td><td colspan="2" style="${_qPad};text-align:right;${_qNum};font-size:${big?'12.5px;font-weight:700;color:#7a5a18':'10.5px'};border:1px solid #ddd${bg}">${val}</td></tr>`; };
 
   const rowsHtml = (q.rows||[]).map((r,i)=>`
-    <tr>
+    <tr style="break-inside:avoid">
       <td style="${_qTd(_qI('NO'))}">${i+1}</td>
-      ${_qHasImg ? `<td style="${_qTd(_qI('사진'),'padding:3px')}">${_qThumbs[i] ? `<img src="${escHtml(_qThumbs[i])}" alt="" style="width:46px;height:46px;object-fit:cover;border-radius:4px;border:1px solid #e3e3e3;display:block;margin:0 auto;-webkit-print-color-adjust:exact;print-color-adjust:exact">` : ''}</td>` : ''}
-      <td style="${_qTd(_qI('품 명'),'font-size:11px')}">${escHtml(r.name||'')}</td>
+      ${_qHasImg ? `<td style="${_qTd(_qI('사진'),'padding:3px')}">${_qThumbs[i] ? `<img src="${escHtml(_qThumbs[i])}" alt="" style="width:38px;height:38px;object-fit:cover;border-radius:4px;border:1px solid #e3e3e3;display:block;margin:0 auto;-webkit-print-color-adjust:exact;print-color-adjust:exact">` : ''}</td>` : ''}
+      <td style="${_qTd(_qI('품 명'),'font-size:10.5px')}">${escHtml(r.name||'')}</td>
       <td style="${_qTd(_qI('소재'))}">${escHtml(r.mat||'')}</td>
       <td style="${_qTd(_qI('도금'))}">${escHtml(r.plating||'')}</td>
       <td style="${_qTd(_qI('규격'))}">${escHtml(r.spec||'')}</td>
@@ -44555,11 +44561,11 @@ function buildQuoteHtml(q){
       ${_qColgroup}
       <thead><tr>${_qHead}</tr></thead>
       <tbody>${rowsHtml}</tbody>
-      <tfoot>
+      <tbody>
         ${_qSum('공급가액', fmt(supply))}
         ${_vi ? _qSum('부가세 (10%)', fmt(tax)) : _qSum('부가세', '별도')}
         ${_qSum('합 계', fmt(total), true)}
-      </tfoot>
+      </tbody>
     </table>
 
     ${(function(){
