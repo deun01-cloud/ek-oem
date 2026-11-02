@@ -28046,7 +28046,7 @@ function renderSample(){
                     </div>`
                   :sourceDocs.length
                   ?`<div style="display:flex;gap:3px">
-                      ${sourceDocs.slice(0,2).map((doc,i)=>`<div title="${(doc.name||'').replace(/"/g,'')}" style="width:32px;height:32px;border-radius:4px;overflow:hidden;border:1.5px solid var(--gold-line);cursor:zoom-in" onclick="event.stopPropagation();openPrevList(window['${srcKey}'],${i},true)"><img src="${doc.url}" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none"></div>`).join('')}
+                      ${sourceDocs.slice(0,2).map((doc,i)=>`<div title="${(doc.name||'').replace(/"/g,'')}" style="width:32px;height:32px;border-radius:4px;overflow:hidden;border:1.5px solid var(--gold-line);cursor:zoom-in" onclick="event.stopPropagation();openPrevList(window['${srcKey}'],${i},true)">${_isImgDoc(doc)?`<img src="${doc.url}" style="width:100%;height:100%;object-fit:cover;display:block;pointer-events:none">`:`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#f3efe6;color:#8b6914;font-size:8.5px;font-weight:800;pointer-events:none">${_docExtLabel(doc)}</div>`}</div>`).join('')}
                     </div>`
                   :`<span style="font-size:10px;color:var(--t3)">없음</span>`}
               </td>
@@ -30047,6 +30047,19 @@ function _orderThumb(o){
 }
 
 // 샘플 1건의 대표 썸네일
+// 첨부파일이 이미지인지 (작업지시서 PDF·AI 등은 <img>로 그리면 깨짐)
+function _isImgDoc(d){
+  if(!d) return false;
+  const t=String(d.type||'').toLowerCase();
+  if(t) return t.startsWith('image/');
+  return /\.(png|jpe?g|gif|webp|bmp|svg|avif|heic)$/i.test(String(d.name||d.url||'').split('?')[0]);
+}
+function _docExtLabel(d){
+  const t=String((d&&d.type)||'').toLowerCase();
+  if(t==='application/pdf') return 'PDF';
+  const ext=String((d&&d.name)||'').split('.').pop();
+  return (ext&&ext.length<=4&&ext!==(d&&d.name))?ext.toUpperCase():'FILE';
+}
 function _sampleThumb(s){
   if(Array.isArray(s.imgs)){
     const im = s.imgs.find(i=>i && i.url && /^https?:\/\//.test(i.url));
