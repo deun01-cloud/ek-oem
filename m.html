@@ -2483,6 +2483,29 @@ function getAutoTasks(ds){
   return items;
 }
 
+// ── 업무 순서 단일 기준 — PC(index.html) _taskDayCmp와 같은 규칙 (2026-11-03) ──
+//   완료는 맨 아래 → PC에서 드래그로 정한 날짜 순번(ord, ordAt===date일 때만) → 카테고리순·옛 ord·오전오후·id
+function _taskDayOrd(t){ return (typeof t.ord==='number' && t.ordAt===t.date) ? t.ord : null; }
+function _taskLegacyCmp(a,b){
+  const CO={'업무':1,'세일즈':2,'커머스':3,'발주출고':4,'샘플출고':5,'중국입고':6,'중국출고':7};
+  const ca=CO[a.cat]||9, cb=CO[b.cat]||9;
+  if(ca!==cb) return ca-cb;
+  const oa=(typeof a.ord==='number')?a.ord:1e9, ob=(typeof b.ord==='number')?b.ord:1e9;
+  if(oa!==ob) return oa-ob;
+  const apa=a.ap||'', apb=b.ap||'';
+  if(apa!==apb) return apa.localeCompare(apb);
+  return String(a.id||'').localeCompare(String(b.id||''),undefined,{numeric:true});
+}
+function _taskDayCmp(a,b){
+  if(!!a.done!==!!b.done) return a.done?1:-1;
+  if(a.done && b.done){ const da=+a.doneAt||0, db=+b.doneAt||0; if(da!==db) return da-db; }   // 방금 완료한 것이 맨 아래
+  const ka=_taskDayOrd(a), kb=_taskDayOrd(b);
+  if(ka!==null && kb!==null) return (ka-kb) || _taskLegacyCmp(a,b);
+  if(ka!==null) return -1;
+  if(kb!==null) return 1;
+  return _taskLegacyCmp(a,b);
+}
+
 function renderTaskDay(){
   const lbl = document.getElementById('taskDayLbl');
   if(!lbl) return;
@@ -2524,6 +2547,12 @@ function renderTaskDay(){
     const cat = t.cat || '업무';
     if(grouped[cat]) grouped[cat].push(t);
     else grouped['업무'].push(t); // 미지정은 업무로
+  });
+
+  // 섹션 안 순서: 미완료(자동 → 수동 PC 순서) → 완료(자동 → 수동). 체크된 항목은 맨 아래.
+  Object.keys(grouped).forEach(k=>{
+    const g=grouped[k], man=g.filter(t=>!t.auto).sort(_taskDayCmp), au=g.filter(t=>t.auto);
+    grouped[k]=[...au.filter(t=>!t.done), ...man.filter(t=>!t.done), ...au.filter(t=>t.done), ...man.filter(t=>t.done)];
   });
 
   // 카테고리별 섹션 렌더
@@ -2594,6 +2623,7 @@ async function toggleTask(taskId){
   const t = tasks.find(x => x.id == taskId);
   if(!t) return;
   t.done = !t.done;
+  t.doneAt = t.done ? Date.now() : 0;   // 완료 시각 — 방금 완료한 업무가 맨 아래 (PC와 같은 규칙)
   saveAll();
   renderTaskDay();
   if(t._notionId && notionCfg && notionCfg.workerUrl){
@@ -2686,6 +2716,7 @@ async function saveTask(taskId){
     ap: document.getElementById('task_ap').value,
     note: document.getElementById('task_note').value.trim(),
     done: document.getElementById('task_done').checked,
+    doneAt: (document.getElementById('task_done').checked === !!(old&&old.done)) ? ((old&&old.doneAt)||0) : (document.getElementById('task_done').checked ? Date.now() : 0),
     createdAt: (old && old.createdAt) || new Date().toISOString()
   };
 
@@ -3073,7 +3104,7 @@ function openDayPop(ds){
       html += `<div onclick="closeDayPop();showIoDetail('${String(io.id).replace(/'/g,"\\'")}')" style="padding:9px;border:1px solid var(--bdr-lt);border-radius:6px;margin-bottom:6px;font-size:13px;cursor:pointer"><div style="display:flex;gap:6px;align-items:center"><span style="font-size:14px">${isShip?'📤':'📥'}</span><span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis">${escapeHtml(io.title||io.vendor||'기록')}</span></div><div style="font-size:11px;color:var(--t3);margin-top:2px">${escapeHtml((io.items||'').slice(0,40))}</div></div>`;
     });
   }
-  const tList = tasks.filter(t=>t.date===ds);
+  const tList = tasks.filter(t=>t.date===ds).sort(_taskDayCmp);
   if(tList.length){
     html += `<div style="font-size:11.5px;font-weight:700;color:var(--gold-lt);margin:8px 0 4px">📝 업무 (${tList.length})</div>`;
     tList.forEach(t=>{

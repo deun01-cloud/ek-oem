@@ -31909,6 +31909,7 @@ function _taskLegacyCmp(a,b){
 }
 function _taskDayCmp(a,b){
   if(!!a.done!==!!b.done) return a.done?1:-1;
+  if(a.done && b.done){ const da=+a.doneAt||0, db=+b.doneAt||0; if(da!==db) return da-db; }   // 방금 완료한 것이 맨 아래
   const ka=_taskDayOrd(a), kb=_taskDayOrd(b);
   if(ka!==null && kb!==null) return (ka-kb) || _taskLegacyCmp(a,b);
   if(ka!==null) return -1;
@@ -35780,7 +35781,7 @@ function deleteTask(){
     if(currentTab==='dash')renderDash();
   },'업무 삭제','🗑');
 }
-function toggleTask(id){const t=tasks.find(x=>x.id==id);if(!t)return;t.done=!t.done;t._syncedAt=new Date().toISOString();debouncedSync('task',t,true);save();if(currentTab==='schedule')renderSchedContent();if(currentTab==='dash')renderDash();}
+function toggleTask(id){const t=tasks.find(x=>x.id==id);if(!t)return;t.done=!t.done;t.doneAt=t.done?Date.now():0;t._syncedAt=new Date().toISOString();debouncedSync('task',t,true);save();if(currentTab==='schedule')renderSchedContent();if(currentTab==='dash')renderDash();}
 
 // ════════════════════════════════
 // PASTE SUPPORT (Ctrl+V / Cmd+V)
