@@ -27030,6 +27030,7 @@ function _gdEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/<
 function _gdArg(s){ return _gdEsc(String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'")); }
 
 function renderDash(){
+  if(_gdDragId){ _gdDashPending=true; return; }   // 드래그 중 실시간 재렌더는 놓은 뒤로 미룸
   const c=document.getElementById('content');
   // 입력 중이던 목표 초안·포커스 보존
   const _gi=document.getElementById('gdGoalIn');
@@ -27096,17 +27097,8 @@ function renderDash(){
 // ── 오늘의 업무 (대시보드 왼쪽 위) ──
 function renderTodayTasksPanel(){
   const ds=toLocalDateStr(new Date());
-  const list=tasks.filter(t=>t.date===ds);
-  // 카테고리별 정렬: SCM 업무 → 세일즈 → 커머스 → 발주출고 → 샘플출고 → 중국입고 → 중국출고
-  const catOrd={'업무':1,'세일즈':2,'커머스':3,'발주출고':4,'샘플출고':5,'중국입고':6,'중국출고':7};
-  list.sort((a,b)=>{
-    if(!!a.done!==!!b.done)return a.done?1:-1;          // 미완료를 위로
-    const ca=catOrd[a.cat]||9,cb=catOrd[b.cat]||9;
-    if(ca!==cb)return ca-cb;
-    const apa=a.ap||'',apb=b.ap||'';
-    if(apa!==apb)return apa.localeCompare(apb);
-    return (a.id||0)-(b.id||0);
-  });
+  // 정렬은 업무일지와 같은 단일 기준(_taskDayCmp): 미완료 → 사용자가 정한 날짜 순서(ord) → 카테고리 기본순
+  const list=tasks.filter(t=>t.date===ds).sort(_taskDayCmp);
   const total=list.length, done=list.filter(t=>t.done).length;
   const pct=total?Math.round(done/total*100):0;
   const CAT={
@@ -27117,7 +27109,9 @@ function renderTodayTasksPanel(){
   const rows=list.map(t=>{
     const cc=CAT[t.cat]||['#f1f3f4','#3c4043'];
     const id=_gdArg(t.id);
-    return `<div class="gd-row${t.done?' dn':''}">
+    // 미완료 업무만 드래그로 순서 변경 (완료는 항상 맨 아래)
+    const dnd=t.done?'':` draggable="true" data-tid="${id}" ondragstart="gdTaskDragStart(event,'${id}')" ondragover="gdTaskDragOver(event,this)" ondragleave="this.classList.remove('gd-drop-b','gd-drop-a')" ondrop="gdTaskDrop(event,this,'${id}')" ondragend="gdTaskDragEnd()"`;
+    return `<div class="gd-row${t.done?' dn':''}"${dnd}>
       <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${id}')" aria-label="완료 처리">
       <span class="gd-chip" style="background:${cc[0]};color:${cc[1]}">${_gdEsc(t.cat||'업무')}</span>
       <span class="tx" onclick="openEditTask('${id}')">${_gdEsc(t.cont||'')}${t.note?`<span class="gd-sub" style="display:block;text-decoration:none">${_gdEsc(t.note)}</span>`:''}</span>
@@ -27137,6 +27131,52 @@ function renderTodayTasksPanel(){
   </section>`;
 }
 
+// ── 오늘의 업무 드래그 순서 변경 (2026-11-03) ──
+var _gdDragId=null, _gdDashPending=false;
+function gdTaskDragStart(e,id){
+  _gdDragId=String(id);
+  try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',String(id)); }catch(_){}
+  if(e.currentTarget) e.currentTarget.classList.add('gd-dragging');
+}
+function gdTaskDragOver(e,el){
+  if(!_gdDragId) return;
+  e.preventDefault();
+  try{ e.dataTransfer.dropEffect='move'; }catch(_){}
+  const r=el.getBoundingClientRect(), after=(e.clientY>r.top+r.height/2);
+  document.querySelectorAll('.gd-drop-b,.gd-drop-a').forEach(x=>{ if(x!==el) x.classList.remove('gd-drop-b','gd-drop-a'); });
+  el.classList.toggle('gd-drop-a',after); el.classList.toggle('gd-drop-b',!after);
+}
+function gdTaskDrop(e,el,targetId){
+  e.preventDefault();
+  const after=el.classList.contains('gd-drop-a');
+  el.classList.remove('gd-drop-b','gd-drop-a');
+  const srcId=_gdDragId;
+  if(!srcId || srcId===String(targetId)) return;
+  const ds=toLocalDateStr(new Date());
+  const list=tasks.filter(t=>t.date===ds).sort(_taskDayCmp);
+  const src=list.find(t=>String(t.id)===srcId);
+  if(!src) return;
+  const rest=list.filter(t=>t!==src);
+  let at=rest.findIndex(t=>String(t.id)===String(targetId));
+  if(at<0) return;
+  if(after) at++;
+  rest.splice(at,0,src);
+  _commitDayOrder(ds,rest);
+}
+function gdTaskDragEnd(){
+  _gdDragId=null;
+  document.querySelectorAll('.gd-dragging').forEach(x=>x.classList.remove('gd-dragging'));
+  document.querySelectorAll('.gd-drop-b,.gd-drop-a').forEach(x=>x.classList.remove('gd-drop-b','gd-drop-a'));
+  _gdDashPending=false;
+  if(currentTab==='dash') renderDash();
+}
+if(!document.getElementById('gdTaskDragStyles')){
+  const st=document.createElement('style'); st.id='gdTaskDragStyles';
+  st.textContent=`.gd-row[draggable="true"]{cursor:grab}.gd-row.gd-dragging{opacity:.4}
+  .gd-row.gd-drop-b{box-shadow:inset 0 2px 0 var(--gold,#1a73e8)}.gd-row.gd-drop-a{box-shadow:inset 0 -2px 0 var(--gold,#1a73e8)}`;
+  document.head.appendChild(st);
+}
+
 // ── 주간 업무 목표 (대시보드 오른쪽 위) — weekChecklist 재사용 ──
 function _dashGoalWeekDate(){ const d=new Date(); d.setHours(12,0,0,0); d.setDate(d.getDate()+_dashGoalOff*7); return d; }
 function _dashGoalKey(it){ return String(it._notionId || it.id); }
@@ -27152,7 +27192,7 @@ function renderWeekGoalsPanel(){
   const sun=new Date(mon); sun.setDate(mon.getDate()+6);
   const f=x=>(x.getMonth()+1)+'월 '+x.getDate()+'일';
   const all=(typeof weekChecklist!=='undefined' && Array.isArray(weekChecklist))?weekChecklist:[];
-  const list=all.filter(it=>it && it.weekKey===key);
+  const list=_doneLast(all.filter(it=>it && it.weekKey===key));   // 달성 항목은 맨 아래
   const total=list.length, done=list.filter(x=>x.done).length;
   const pct=total?Math.round(done/total*100):0;
   const off=_dashGoalOff;
@@ -31851,22 +31891,53 @@ function renderSchedContent(){
 
 // ── 업무 드래그 앤 드롭 ──
 let _draggingTaskId = null;
-// 같은 셀(날짜+카테고리) 안에서 ord 기준으로 정렬된 수동 업무 목록 반환
+// ── 업무 순서 단일 기준 (2026-11-03) ──
+//   대시보드 '오늘의 업무'와 업무일지(주간·일간·월간)가 같은 비교 함수로 정렬한다.
+//   · 완료 업무는 항상 맨 아래
+//   · ord = '그 날짜 전체' 순번, ordAt = 그 순번을 매긴 날짜(날짜가 바뀌면 무효 → 새 날짜에선 맨 뒤)
+//   · ordAt 없는 옛 ord(셀 단위 순번)는 같은 카테고리 안에서만 참고
+function _taskDayOrd(t){ return (typeof t.ord==='number' && t.ordAt===t.date) ? t.ord : null; }
+function _taskLegacyCmp(a,b){
+  const CO={'업무':1,'세일즈':2,'커머스':3,'발주출고':4,'샘플출고':5,'중국입고':6,'중국출고':7};   // 부팅 순서와 무관하게 쓰도록 함수 안에 둠
+  const ca=CO[a.cat]||9, cb=CO[b.cat]||9;
+  if(ca!==cb) return ca-cb;
+  const oa=(typeof a.ord==='number')?a.ord:1e9, ob=(typeof b.ord==='number')?b.ord:1e9;
+  if(oa!==ob) return oa-ob;
+  const apa=a.ap||'', apb=b.ap||'';
+  if(apa!==apb) return apa.localeCompare(apb);
+  return String(a.id||'').localeCompare(String(b.id||''),undefined,{numeric:true});
+}
+function _taskDayCmp(a,b){
+  if(!!a.done!==!!b.done) return a.done?1:-1;
+  const ka=_taskDayOrd(a), kb=_taskDayOrd(b);
+  if(ka!==null && kb!==null) return (ka-kb) || _taskLegacyCmp(a,b);
+  if(ka!==null) return -1;
+  if(kb!==null) return 1;
+  return _taskLegacyCmp(a,b);
+}
+// 새 순서를 날짜 전체 순번으로 저장. subset(셀 등 일부)이면 날짜 전체 정렬에서 그 업무들이 차지하던 자리에 새 순서대로 채운다.
+// 순번이 바뀐 업무는 모두 서버에 발행 — 끌어온 1건만 올리면 다른 기기·새로고침에서 나머지 순서가 되돌아간다.
+function _commitDayOrder(ds, ordered){
+  const ids=new Set(ordered.map(t=>String(t.id)));
+  const all=tasks.filter(t=>t.date===ds).sort(_taskDayCmp);
+  let k=0;
+  const res=all.map(t=> ids.has(String(t.id)) ? ordered[k++] : t);
+  const changed=[];
+  res.forEach((t,i)=>{ if(t.ord!==i || t.ordAt!==ds){ t.ord=i; t.ordAt=ds; changed.push(t); } });
+  save();
+  changed.forEach(t=>{ try{ debouncedSync('task',t,true); }catch(e){} });
+  if(currentTab==='schedule') renderSchedContent();
+  if(currentTab==='dash') renderDash();
+  return changed.length;
+}
+// 같은 셀(날짜+카테고리[+오전오후]) 업무를 단일 기준으로 정렬해 반환
 function _sortedCellTasks(ds, cat, ap){
-  let arr = tasks.filter(t=> t.date===ds && t.cat===cat && (ap===undefined || t.ap===ap));
-  // ord가 없는 기존 항목은 배열 순서를 보존하도록 큰 기본값 부여(안정 정렬)
-  return arr.map((t,i)=>({t, _i:i}))
-    .sort((a,b)=>{
-      const oa = (typeof a.t.ord==='number') ? a.t.ord : (1e9 + a._i);
-      const ob = (typeof b.t.ord==='number') ? b.t.ord : (1e9 + b._i);
-      return oa - ob || a._i - b._i;
-    })
-    .map(x=>x.t);
+  return tasks.filter(t=> t.date===ds && t.cat===cat && (ap===undefined || t.ap===ap)).sort(_taskDayCmp);
 }
 // 대상 셀의 모든 수동 업무에 0,1,2... 순번을 다시 매김(정규화)
 function _renumberCell(ds, cat, ap){
   const ordered = _sortedCellTasks(ds, cat, ap);
-  ordered.forEach((t,i)=>{ t.ord = i; });
+  _commitDayOrder(ds, ordered);
   return ordered;
 }
 function taskDragStart(e, taskId){
@@ -31923,10 +31994,8 @@ function taskItemDrop(e, el, targetTaskId){
                     .filter(t=>String(t.id)!==String(src.id));
   const insertAt = ordered.findIndex(t=>String(t.id)===String(tgt.id));
   ordered.splice(insertAt<0?ordered.length:insertAt, 0, src);
-  ordered.forEach((t,i)=>{ t.ord = i; });
-  save();
-  if(typeof syncTaskToNotion === 'function'){ debouncedSync('task', src, true); }
-  renderSchedContent();
+  _commitDayOrder(tgt.date, ordered);   // 저장·발행(바뀐 업무 전부)·재렌더
+  debouncedSync('task', src, true);   // 날짜·카테고리 이동분은 순번이 같아도 발행
   showToast('✓ 순서 변경됨','var(--grn)',1200);
 }
 function taskDrop(e, el){
@@ -31947,13 +32016,8 @@ function taskDrop(e, el){
   const ordered = _sortedCellTasks(t.date, t.cat, newAp!==undefined?newAp:undefined)
                     .filter(x=>String(x.id)!==String(t.id));
   ordered.push(t);
-  ordered.forEach((x,i)=>{ x.ord = i; });
-  save();
-  // Notion 동기화
-  if(typeof syncTaskToNotion === 'function'){
-    debouncedSync('task', t, true);
-  }
-  renderSchedContent();
+  _commitDayOrder(t.date, ordered);   // 저장·발행(바뀐 업무 전부)·재렌더
+  if(!sameCell) debouncedSync('task', t, true);   // 날짜·카테고리 이동분은 순번이 같아도 발행
   showToast(sameCell?'✓ 맨 아래로 이동':'✓ 업무 이동됨','var(--grn)',1500);
 }
 
@@ -32195,7 +32259,7 @@ function renderMonthView(sc){
     const st=s.status||'의뢰';
     evts.push({cls:'ev-smp',t:`샘플: ${(s.name||'').substring(0,5)}`,done:isOrderShipped(st) || isOrderCanceled(st),canceled:isOrderCanceled(st)});
   });
-  tasks.filter(t=>t.date===ds&&!t.done).forEach(t=>evts.push({cls:'ev-task',t:t.cont?.substring(0,8)||''}));
+  tasks.filter(t=>t.date===ds&&!t.done).sort(_taskDayCmp).forEach(t=>evts.push({cls:'ev-task',t:t.cont?.substring(0,8)||''}));
   const hol=getHoliday(ds);
   const isRedDay=hol||dow===6;
   return`<div class="cal-cell ${isT?'today-c':''} ${dow===6?'sun':dow===5?'sat':''} ${hol?'holiday':''}" onclick="schedView='day';schedWOff=Math.round((new Date('${ds}')-TODAY)/86400000);renderSchedContent()">
@@ -32237,6 +32301,18 @@ function loadSmpNotes(s){
   return [];
 }
 
+// ── 체크박스 목록 공통 규칙 (2026-11-03): 체크(완료·달성)된 항목은 맨 아래 ──
+// 표시용 — 원본 순서는 그대로 두고 완료만 뒤로(안정 정렬)
+function _doneLast(arr){ arr=arr||[]; return arr.filter(x=>!(x&&(x.done||x.checked))).concat(arr.filter(x=>x&&(x.done||x.checked))); }
+// 배열 자체를 옮김 — 체크: 맨 끝으로 / 해제: 체크된 항목들 바로 앞(미완료의 맨 아래)으로
+function _ckMove(arr,i,checked){
+  const it=arr[i]; if(!it) return;
+  it.checked=checked;
+  arr.splice(i,1);
+  if(checked){ arr.push(it); return; }
+  let at=arr.findIndex(x=>x&&x.checked);
+  arr.splice(at<0?arr.length:at,0,it);
+}
 function renderSmpNotes(){
   const el = document.getElementById('s_notesList');
   if(!el) return;
@@ -32248,7 +32324,7 @@ function renderSmpNotes(){
     <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--bdr);${n.checked?'opacity:.55':''}" draggable="true"
          ondragstart="smpNoteDragStart(${i})" ondragover="event.preventDefault()" ondrop="smpNoteDrop(${i})">
       <span style="cursor:grab;font-size:12px;color:var(--t3);user-select:none" title="드래그하여 순서 변경">⋮⋮</span>
-      <input type="checkbox" ${n.checked?'checked':''} onchange="smpNotesBuf[${i}].checked=this.checked;_markModalDirty('mSmp');renderSmpNotes()" style="width:14px;height:14px;flex-shrink:0;cursor:pointer">
+      <input type="checkbox" ${n.checked?'checked':''} onchange="_ckMove(smpNotesBuf,${i},this.checked);_markModalDirty('mSmp');renderSmpNotes()" style="width:14px;height:14px;flex-shrink:0;cursor:pointer">
       <input class="fi" value="${(n.text||'').replace(/"/g,'&quot;')}"
              oninput="smpNotesBuf[${i}].text=this.value;_markModalDirty('mSmp')"
              style="flex:1;border:none;background:transparent;padding:2px 4px;font-size:12px;${n.checked?'text-decoration:line-through;color:var(--t3)':''}">
@@ -33791,7 +33867,7 @@ function renderOrdMemos(){
     <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--bdr);${n.checked?'opacity:.55':''}" draggable="true"
          ondragstart="ordMemoDragStart(${i})" ondragover="event.preventDefault()" ondrop="ordMemoDrop(${i})">
       <span style="cursor:grab;font-size:12px;color:var(--t3);user-select:none" title="드래그하여 순서 변경">⋮⋮</span>
-      <input type="checkbox" ${n.checked?'checked':''} onchange="ordMemoBuf[${i}].checked=this.checked;_markModalDirty('mOrd');renderOrdMemos()" style="width:14px;height:14px;flex-shrink:0;cursor:pointer">
+      <input type="checkbox" ${n.checked?'checked':''} onchange="_ckMove(ordMemoBuf,${i},this.checked);_markModalDirty('mOrd');renderOrdMemos()" style="width:14px;height:14px;flex-shrink:0;cursor:pointer">
       <input class="fi" value="${(n.text||'').replace(/"/g,'&quot;')}"
              oninput="ordMemoBuf[${i}].text=this.value;_markModalDirty('mOrd')"
              style="flex:1;border:none;background:transparent;padding:2px 4px;font-size:12px;${n.checked?'text-decoration:line-through;color:var(--t3)':''}">
@@ -36574,7 +36650,7 @@ function openChecklist(mode){
 }
 function renderChecklistBody(){
   const periodKey = _checklistMode==='month' ? getCurrentMonthKey() : getCurrentWeekKey();
-  const list = _checklistMode==='month' ? getMonthChecklistForKey(periodKey) : getWeekChecklistForKey(periodKey);
+  const list = _doneLast(_checklistMode==='month' ? getMonthChecklistForKey(periodKey) : getWeekChecklistForKey(periodKey));
   const el=document.getElementById('checklistBody');if(!el)return;
   // 주차/월 표시 추가
   const periodLabel = _checklistMode==='month' ? `${periodKey} (이번 달)` : `${periodKey} (이번 주)`;
@@ -36639,7 +36715,7 @@ function toggleChecklistInline(mode,idx){
 }
 function renderChecklistWidget(mode){
   const periodKey = mode==='month' ? getCurrentMonthKey() : getCurrentWeekKey();
-  const list = mode==='month' ? getMonthChecklistForKey(periodKey) : getWeekChecklistForKey(periodKey);
+  const list = _doneLast(mode==='month' ? getMonthChecklistForKey(periodKey) : getWeekChecklistForKey(periodKey));
   const done=list.filter(x=>x.done).length;
   const pct=list.length?Math.round(done/list.length*100):0;
   // carry-over 체크: 이 주차에 항목이 0건 + 거절 안 함 → 이전 기간 미완료 있는지 확인
