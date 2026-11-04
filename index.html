@@ -19683,6 +19683,12 @@ function _loadNotifs(){
     const raw = localStorage.getItem(LS_NOTIF_PC);
     _notifs = raw ? JSON.parse(raw) : [];
   } catch(e){ _notifs = []; }
+  // 쌓인 중복 알림 정리 — 같은 문구는 가장 최근 1건만 (2026-11-04)
+  try{
+    const seen = new Set(), out = [];
+    for(let i=_notifs.length-1;i>=0;i--){ const n=_notifs[i]; const k=(n&&n.kind)+'|'+(n&&n.msg); if(seen.has(k)) continue; seen.add(k); out.unshift(n); }
+    if(out.length !== _notifs.length){ _notifs = out; localStorage.setItem(LS_NOTIF_PC, JSON.stringify(_notifs)); }
+  }catch(e){}
 }
 function _saveNotifs(){
   try {
@@ -19690,7 +19696,19 @@ function _saveNotifs(){
     localStorage.setItem(LS_NOTIF_PC, JSON.stringify(_notifs));
   } catch(e){ console.warn('알림 저장 실패:', e); }
 }
+// 알림 중복 방지 (2026-11-04): '새 항목'은 이 브라우저에서 한 번도 본 적 없는 것만.
+//   예전엔 동기화 전후 목록 비교만 해서, 증분·부분 수신으로 목록이 잠깐 비었다 돌아오면
+//   옛 발주·샘플이 '새 발주/새 샘플'로 다시 떴다(같은 샘플 5회, 5월 발주 재알림 등).
+const LS_NOTIF_SEEN_PC = 'ek3_notif_seen';
+let _notifSeenPC = null;
+function _seenSetPC(){
+  if(_notifSeenPC) return _notifSeenPC;
+  try{ _notifSeenPC = new Set(JSON.parse(localStorage.getItem(LS_NOTIF_SEEN_PC)||'[]')); }catch(e){ _notifSeenPC = new Set(); }
+  return _notifSeenPC;
+}
+function _seenSavePC(){ try{ localStorage.setItem(LS_NOTIF_SEEN_PC, JSON.stringify([..._seenSetPC()].slice(-8000))); }catch(e){} }
 function _addNotif(notif){
+  if(notif.key){ const ss=_seenSetPC(); if(ss.has(notif.key)) return; ss.add(notif.key); }
   notif.id = genId();
   notif.ts = Date.now();
   notif.read = false;
@@ -19699,6 +19717,12 @@ function _addNotif(notif){
 
 // 동기화 전후 데이터 비교 → 알림 생성
 function _detectChanges(prev, curr){
+  // 이전에 있던 항목은 모두 '본 것'으로 기록 → 나중에 다시 나타나도 새 항목 알림 없음
+  const _ss=_seenSetPC();
+  [['o',prev&&prev.orders],['s',prev&&prev.samples]].forEach(([k,arr])=>(arr||[]).forEach(x=>{ if(x&&x._notionId) _ss.add(k+':'+x._notionId); }));
+  try{ _detectChangesPC(prev, curr); } finally { _seenSavePC(); }
+}
+function _detectChangesPC(prev, curr){
   // 첫 동기화 (prev 데이터 자체가 없는 경우) — 알림 생성 안 함
   if(!prev) return;
   const prevHasData = (prev.orders||[]).length > 0
@@ -19715,7 +19739,7 @@ function _detectChanges(prev, curr){
   (curr.orders||[]).forEach(o=>{
     if(o._notionId && !prevOrdIds.has(o._notionId)){
       _addNotif({
-        ico:'📋', kind:'order', targetId:o.id,
+        ico:'📋', kind:'order', targetId:o.id, key:'o:'+o._notionId,
         msg:`새 발주: ${o.vendor||'(이름없음)'} · ${o.no||'-'}`
       });
     }
@@ -19730,7 +19754,7 @@ function _detectChanges(prev, curr){
       if(isOrderShipped(o.status) || isOrderCanceled(o.status)){
         _addNotif({
           ico: isOrderShipped(o.status) ? '✅' : (o.status === '취소' ? '✕' : '⏸'),
-          kind:'orderStatus', targetId:o.id,
+          kind:'orderStatus', targetId:o.id, key:'os:'+o._notionId+':'+o.status,
           msg:`${o.vendor||''} 발주가 ${o.status}로 변경됨`
         });
       }
@@ -19741,7 +19765,7 @@ function _detectChanges(prev, curr){
   (curr.samples||[]).forEach(s=>{
     if(s._notionId && !prevSmpIds.has(s._notionId)){
       _addNotif({
-        ico:'💎', kind:'sample', targetId:s.id,
+        ico:'💎', kind:'sample', targetId:s.id, key:'s:'+s._notionId,
         msg:`새 샘플: ${s.name||'(이름없음)'}${s.manager?` · ${s.manager}`:''}`
       });
     }

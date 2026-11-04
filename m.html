@@ -44,6 +44,8 @@ a{color:inherit;text-decoration:none}
 .sync-btn.syncing{opacity:.6}
 .sync-dot{width:6px;height:6px;border-radius:50%;background:var(--grn)}
 .sync-btn.syncing .sync-dot{background:var(--org);animation:pulse 1s ease-in-out infinite}
+.sync-btn.off .sync-dot{background:var(--red)}
+.sync-btn.off{color:var(--red)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
 /* 알림 버튼 + 패널 */
@@ -140,6 +142,16 @@ a{color:inherit;text-decoration:none}
 .cal-ev.ship{background:var(--red-bg);color:var(--red)}
 .cal-ev.task{background:var(--grn-bg);color:var(--grn)}
 .cal-ev.done{text-decoration:line-through;opacity:.5}
+.cal-sum{display:flex;flex-wrap:wrap;gap:2px 5px;margin-top:3px}
+.cal-sum .cs{display:inline-flex;align-items:center;gap:2px;font-size:11.5px;font-weight:700;line-height:1.2}
+.cal-sum .cs::before{content:'';width:7px;height:7px;border-radius:50%;background:currentColor}
+.cal-sum .cs.ord{color:var(--org)} .cal-sum .cs.smp{color:var(--blu)} .cal-sum .cs.ship{color:var(--red)} .cal-sum .cs.task{color:var(--grn)}
+.cal-sum .cs.done{opacity:.4}
+.cal-legend{display:flex;justify-content:flex-end;gap:10px;padding:6px 2px 0;font-size:11px;color:var(--t3)}
+.cal-legend .cs{display:inline-flex;align-items:center;gap:3px}
+.cal-legend .cs::before{content:'';width:7px;height:7px;border-radius:50%;background:currentColor}
+.cal-legend .ord{color:var(--org)} .cal-legend .smp{color:var(--blu)} .cal-legend .ship{color:var(--red)} .cal-legend .task{color:var(--grn)}
+.cal-legend span span{color:var(--t3)}
 .cal-ev-more{font-size:10px;color:var(--t3);text-align:right;padding:0 2px;font-weight:600}
 
 .day-pop{position:fixed;left:0;right:0;bottom:calc(64px + var(--safe-bot));background:var(--s1);border-top:2px solid var(--gold-line);box-shadow:0 -8px 24px rgba(0,0,0,.08);max-height:70vh;overflow-y:auto;border-top-left-radius:14px;border-top-right-radius:14px;z-index:90;transform:translateY(100%);transition:transform .25s ease}
@@ -208,6 +220,10 @@ a{color:inherit;text-decoration:none}
 .modal-h .edit{min-height:38px;padding:8px 13px;background:var(--gold-lt);color:#fff;border-radius:8px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:4px}
 .modal-h .edit:active{background:var(--gold)}
 .modal-b{padding:16px 18px 100px;overflow-y:auto;flex:1}
+.modal-b .act-row{position:sticky;bottom:0;z-index:3;background:var(--s1);padding:8px 0 4px;box-shadow:0 -10px 10px -8px rgba(0,0,0,.12)}
+.link-btn{display:block;width:100%;padding:10px 4px;margin-bottom:10px;background:none;border:none;color:var(--gold-lt);font-size:12.5px;font-weight:600;text-align:left}
+.photo-item .photo-link{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;height:100%;color:var(--t2);font-size:11.5px;text-decoration:none;background:var(--s2)}
+#pgSmp,#pgIO,#moreAs{padding-bottom:76px}
 .modal-foot{padding:12px 18px calc(12px + var(--safe-bot));background:var(--s1);border-top:1px solid var(--bdr);display:flex;gap:8px;flex-shrink:0}
 
 .form-r{margin-bottom:14px}
@@ -351,7 +367,7 @@ a{color:inherit;text-decoration:none}
       <span class="notif-ico">🔔</span>
       <span class="notif-cnt" id="notifCnt" style="display:none">0</span>
     </button>
-    <button class="sync-btn" id="syncBtn" onclick="manualSync()"><span class="sync-dot"></span><span id="syncLabel">동기화</span></button>
+    <button class="sync-btn off" id="syncBtn" onclick="manualSync()"><span class="sync-dot"></span><span id="syncLabel">동기화</span></button>
   </div>
 </div>
 
@@ -369,22 +385,11 @@ a{color:inherit;text-decoration:none}
 
 <!-- 페이지: 대시보드 -->
 <div id="pgDash" class="page active">
-  <div class="kpi">
-    <div class="kpi-c kg"><div class="l">진행 발주</div><div class="v" id="kpiOrd">—<small>건</small></div></div>
-    <div class="kpi-c kb"><div class="l">진행 샘플</div><div class="v" id="kpiSmp">—<small>건</small></div></div>
-    <div class="kpi-c kr"><div class="l">D-3 임박</div><div class="v" id="kpiUrg">—<small>건</small></div></div>
-    <div class="kpi-c kn"><div class="l">오늘 일정</div><div class="v" id="kpiTod">—<small>건</small></div></div>
-  </div>
+  <!-- 2026-11-04: 숫자 카드·빠른 이동 버튼 제거 — PC 대시보드와 같이 업무가 첫 화면 -->
   <div id="lowStockBanner"></div>
 
-  <!-- 📱 오늘 업무 ↔ 월간 캘린더 빠른 이동 (업무가 많아도 캘린더까지 스크롤하지 않게) -->
-  <div class="jump-bar">
-    <button onclick="_jumpTo('taskDayList')">📋 오늘 업무</button>
-    <button onclick="_jumpTo('calGrid')">📅 월간 캘린더</button>
-  </div>
-
   <!-- 📝 업무일지 카드 -->
-  <div class="card" style="margin-top:14px;margin-bottom:12px">
+  <div class="card" style="margin-bottom:12px">
     <div class="card-h">
       <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
         <button onclick="taskDayMove(-1)" style="width:40px;height:40px;border-radius:8px;background:var(--s2);font-size:15px;color:var(--t2);font-weight:600;flex-shrink:0">‹</button>
@@ -409,6 +414,7 @@ a{color:inherit;text-decoration:none}
     </div>
   </div>
   <div class="cal-grid" id="calGrid"></div>
+  <div class="cal-legend"><span class="cs ord"><span>발주</span></span><span class="cs smp"><span>샘플</span></span><span class="cs ship"><span>입출고</span></span><span class="cs task"><span>업무</span></span></div>
 
 </div>
 
@@ -424,7 +430,7 @@ a{color:inherit;text-decoration:none}
   </div>
   <div class="cli-fbar" id="ordCliFbar"></div>
   <div class="card">
-    <div class="card-h"><div class="card-h-t">발주서 <span class="cnt" id="ordCnt">0</span></div></div>
+    <div class="card-h"><div class="card-h-t">발주서</div></div>
     <div id="ordList"></div>
   </div>
 </div>
@@ -441,7 +447,7 @@ a{color:inherit;text-decoration:none}
   </div>
   <div class="cli-fbar" id="smpCliFbar"></div>
   <div class="card">
-    <div class="card-h"><div class="card-h-t">샘플 의뢰 <span class="cnt" id="smpCnt">0</span></div></div>
+    <div class="card-h"><div class="card-h-t">샘플 의뢰</div></div>
     <div id="smpList"></div>
   </div>
   <button class="fab" onclick="openSmpAdd()" title="샘플 추가">+</button>
@@ -512,11 +518,7 @@ a{color:inherit;text-decoration:none}
     <button onclick="openMoreSub('prod')"><span class="lico">📦</span>제품 DB</button>
     <button onclick="openMoreSub('as')"><span class="lico">🔧</span>AS</button>
     <button onclick="goInvoicesTab()"><span class="lico">🧾</span>거래명세서</button>
-    <button onclick="goTaskLog()"><span class="lico">☰</span>업무일지</button>
-    <button onclick="goPCTab('commerce')"><span class="lico">🛍</span>브랜드커머스<span class="pcb">PC</span></button>
-    <button onclick="goPCTab('sales')"><span class="lico">📊</span>세일즈<span class="pcb">PC</span></button>
-    <button onclick="goPCTab('mgt')"><span class="lico">💼</span>경영지원<span class="pcb">PC</span></button>
-    <button onclick="openCommerceFull()"><span class="lico">⤢</span>새 창으로 열기</button>
+    <button onclick="openCommerceFull()"><span class="lico">🛍</span>브랜드커머스</button>
   </div>
   <div class="more-back" id="moreBack">
     <button onclick="closeMoreSub()">← 더보기</button>
@@ -793,6 +795,7 @@ function _rtOnOpen(){
   console.log(RT_LOG_PREFIX, '✓ WebSocket 연결됨');
   _rtConnected = true;
   _rtReconnectDelay = 1000;
+  try{ _updateSyncLabel(); }catch(e){}
   _rtSend({
     op: 'subscribe',
     clientId: _rtClientId,
@@ -829,6 +832,7 @@ function _rtOnMessage(ev){
 function _rtOnClose(ev){
   console.log(RT_LOG_PREFIX, `WebSocket 닫힘 (code=${ev.code})`);
   _rtConnected = false;
+  try{ _updateSyncLabel(); }catch(e){}
   if(_rtPingTimer){ clearInterval(_rtPingTimer); _rtPingTimer = null; }
   _rtScheduleReconnect();
   // 폴링 주기 복원 (Realtime 끊김)
@@ -1397,6 +1401,19 @@ function goPage(id){
 // 모달 (동적 생성)
 // ────────────────────────────────────────
 let _activeModal = null;
+// 사진 칸의 주소가 이미지가 아니면(웹페이지 링크 등) 깨진 그림 대신 링크 칸으로 바꿈 (2026-11-04)
+document.addEventListener('error', function(e){
+  const im = e.target;
+  if(!im || im.tagName !== 'IMG' || !im.closest || !im.closest('.photo-item')) return;
+  const u = im.getAttribute('src') || '';
+  if(!/^https?:/i.test(u)) return;
+  const a = document.createElement('a');
+  a.className = 'photo-link'; a.href = u; a.target = '_blank'; a.rel = 'noopener';
+  a.innerHTML = '<span style="font-size:18px">🔗</span><span>링크 열기</span>';
+  a.addEventListener('click', ev => ev.stopPropagation());
+  im.replaceWith(a);
+}, true);
+
 function openModal(title, bodyHtml, footHtml, headerActionHtml){
   closeModal();
   const root = document.getElementById('modalRoot');
@@ -1414,6 +1431,16 @@ function openModal(title, bodyHtml, footHtml, headerActionHtml){
       ${footHtml ? `<div class="modal-foot">${footHtml}</div>` : ''}
     </div>
   </div>`;
+  // 입력창의 주 버튼(저장·추가)은 화면 아래 고정 바로 옮김 — 내용이 길어도 스크롤 없이 누를 수 있게 (2026-11-04)
+  if(!footHtml){
+    const mb = root.querySelector('.modal-b');
+    const prim = mb ? [...mb.children].filter(el=>el.classList.contains('btn-primary')) : [];
+    if(prim.length === 1){
+      const foot = document.createElement('div'); foot.className = 'modal-foot';
+      prim[0].style.width = '100%'; foot.appendChild(prim[0]);
+      mb.after(foot); mb.style.paddingBottom = '24px';
+    }
+  }
   setTimeout(()=>document.getElementById(id).classList.add('open'), 10);
   _activeModal = id;
   document.body.style.overflow = 'hidden';
@@ -1831,6 +1858,11 @@ function _loadNotifs(){
     const raw = localStorage.getItem(LS_NOTIF);
     _notifs = raw ? JSON.parse(raw) : [];
   } catch(e){ _notifs = []; }
+  try{
+    const seen = new Set(), out = [];
+    for(let i=_notifs.length-1;i>=0;i--){ const n=_notifs[i]; const k=(n&&n.kind)+'|'+(n&&n.msg); if(seen.has(k)) continue; seen.add(k); out.unshift(n); }
+    if(out.length !== _notifs.length){ _notifs = out; localStorage.setItem(LS_NOTIF, JSON.stringify(_notifs)); }
+  }catch(e){}
 }
 function _saveNotifs(){
   try {
@@ -1839,7 +1871,18 @@ function _saveNotifs(){
     localStorage.setItem(LS_NOTIF, JSON.stringify(_notifs));
   } catch(e){ console.warn('알림 저장 실패:', e); }
 }
+// 알림 중복 방지 (2026-11-04): '새 항목'은 이 기기에서 한 번도 본 적 없는 것만.
+//   예전엔 동기화 전후 목록 비교만 해서, 목록이 잠깐 비었다 돌아오면 옛 발주·샘플이 '새 발주'로 다시 떴다.
+const LS_NOTIF_SEEN = 'ek3_notif_seen';
+let _notifSeen = null;
+function _seenSet(){
+  if(_notifSeen) return _notifSeen;
+  try{ _notifSeen = new Set(JSON.parse(localStorage.getItem(LS_NOTIF_SEEN)||'[]')); }catch(e){ _notifSeen = new Set(); }
+  return _notifSeen;
+}
+function _seenSave(){ try{ localStorage.setItem(LS_NOTIF_SEEN, JSON.stringify([..._seenSet()].slice(-8000))); }catch(e){} }
 function _addNotif(notif){
+  if(notif.key){ const ss=_seenSet(); if(ss.has(notif.key)) return; ss.add(notif.key); }
   notif.id = genId();
   notif.ts = Date.now();
   notif.read = false;
@@ -1849,14 +1892,24 @@ function _addNotif(notif){
 // 동기화 전후의 데이터 비교 → 알림 생성
 // prev/curr는 노션 ID(_notionId)를 키로 사용 (안정적 식별자)
 function _detectChanges(prev, curr){
-  if(!prev || !prev.length) return; // 첫 동기화는 알림 생성 안 함
+  // 이전에 있던 항목은 모두 '본 것'으로 기록 → 나중에 다시 나타나도 새 항목 알림 없음
+  const _ss=_seenSet();
+  [['o',prev&&prev.orders],['s',prev&&prev.samples],['a',prev&&prev.asItems],['i',prev&&prev.ioItems],['v',prev&&prev.invoiceHistory]]
+    .forEach(([k,arr])=>(arr||[]).forEach(x=>{ if(x&&x._notionId) _ss.add(k+':'+x._notionId); }));
+  try{ _detectChangesInner(prev, curr); } finally { _seenSave(); }
+}
+function _detectChangesInner(prev, curr){
+  // 첫 동기화(이전 데이터 없음)는 알림 생성 안 함 — PC와 같은 기준.
+  //   (예전 조건 !prev.length는 prev가 객체라 항상 참 → 모바일 알림이 한 번도 만들어지지 않았다)
+  if(!prev) return;
+  if(!['orders','samples','asItems','ioItems','invoiceHistory'].some(k=>(prev[k]||[]).length)) return;
   const newItems = [];
   // 발주서 신규
   const prevOrdIds = new Set((prev.orders||[]).map(o=>o._notionId).filter(Boolean));
   (curr.orders||[]).forEach(o=>{
     if(o._notionId && !prevOrdIds.has(o._notionId)){
       _addNotif({
-        ico:'📋', kind:'order', targetId:o.id,
+        ico:'📋', kind:'order', targetId:o.id, key:'o:'+o._notionId,
         msg:`새 발주: ${o.vendor||'(이름없음)'} · ${o.no||'-'}`
       });
     }
@@ -1872,7 +1925,7 @@ function _detectChanges(prev, curr){
       if(_ordClosed(o.status) && normalizeOrderStatus(old.status)!==normalizeOrderStatus(o.status)){
         _addNotif({
           ico: normalizeOrderStatus(o.status) === '확정' ? '✅' : '⏸',
-          kind:'orderStatus', targetId:o.id,
+          kind:'orderStatus', targetId:o.id, key:'os:'+o._notionId+':'+normalizeOrderStatus(o.status),
           msg:`${o.vendor||''} 발주가 ${o.status}로 변경됨`
         });
       }
@@ -1883,7 +1936,7 @@ function _detectChanges(prev, curr){
   (curr.samples||[]).forEach(s=>{
     if(s._notionId && !prevSmpIds.has(s._notionId)){
       _addNotif({
-        ico:'💎', kind:'sample', targetId:s.id,
+        ico:'💎', kind:'sample', targetId:s.id, key:'s:'+s._notionId,
         msg:`새 샘플: ${s.name||'(이름없음)'}${s.manager?` · ${s.manager}`:''}`
       });
     }
@@ -1893,7 +1946,7 @@ function _detectChanges(prev, curr){
   (curr.asItems||[]).forEach(a=>{
     if(a._notionId && !prevAsIds.has(a._notionId)){
       _addNotif({
-        ico:'🔧', kind:'as', targetId:a.id,
+        ico:'🔧', kind:'as', targetId:a.id, key:'a:'+a._notionId,
         msg:`새 AS: ${a.item||'(품목없음)'}${a.client?` · ${a.client}`:''}`
       });
     }
@@ -1904,7 +1957,7 @@ function _detectChanges(prev, curr){
     if(io._notionId && !prevIoIds.has(io._notionId)){
       const icon = io.kind === '출고' ? '📤' : '📥';
       _addNotif({
-        ico:icon, kind:'io', targetId:io.id,
+        ico:icon, kind:'io', targetId:io.id, key:'i:'+io._notionId,
         msg:`새 ${io.kind||'입출고'}: ${io.title||io.vendor||'-'}`
       });
     }
@@ -1914,7 +1967,7 @@ function _detectChanges(prev, curr){
   (curr.invoiceHistory||[]).forEach(v=>{
     if(v._notionId && !prevInvIds.has(v._notionId)){
       _addNotif({
-        ico:'🧾', kind:'invoice', targetId:v.id,
+        ico:'🧾', kind:'invoice', targetId:v.id, key:'v:'+v._notionId,
         msg:`새 거래명세서: ${v.vendor||'-'} · ${(+v.total||0).toLocaleString()}원`
       });
     }
@@ -2172,6 +2225,12 @@ async function manualSync(silent){
 function _updateSyncLabel(){
   const lbl = document.getElementById('syncLabel');
   if(!lbl) return;
+  // 연결 상태 표시 (2026-11-04): 서버 연결이 없으면 점을 빨강으로 — 데이터가 비어 보여도 정상처럼 보이지 않게
+  const _sb = document.getElementById('syncBtn');
+  const _on = (typeof _rtConnected!=='undefined' && _rtConnected);
+  if(_sb){ _sb.classList.toggle('off', !_on); _sb.title = _on ? '서버 연결됨' : (notionCfg ? '서버 연결 끊김 — 눌러서 다시 동기화' : '연결 설정 필요'); }
+  if(!notionCfg){ lbl.textContent = '설정 필요'; return; }
+  if(!_on){ lbl.textContent = '연결 끊김'; return; }
   if(!_lastSyncAt){ lbl.textContent = '동기화'; return; }
   const elapsed = Math.floor((Date.now() - _lastSyncAt) / 1000);
   let txt;
@@ -2342,11 +2401,8 @@ function renderDash(){
   samples.forEach(s=>{ if(s.due===today) tod++; });
   tasks.forEach(t=>{ if(t.date===today) tod++; });
   ioItems.forEach(io=>{ if(io.date===today) tod++; });
-
-  document.getElementById('kpiOrd').innerHTML = `${ordIp}<small>건</small>`;
-  document.getElementById('kpiSmp').innerHTML = `${smpIp}<small>건</small>`;
-  document.getElementById('kpiUrg').innerHTML = `${urg}<small>건</small>`;
-  document.getElementById('kpiTod').innerHTML = `${tod}<small>건</small>`;
+  // 숫자 카드는 화면에서 뺐다 — 요소가 있을 때만 채움
+  [['kpiOrd',ordIp],['kpiSmp',smpIp],['kpiUrg',urg],['kpiTod',tod]].forEach(([id,n])=>{ const el=document.getElementById(id); if(el) el.innerHTML=`${n}<small>건</small>`; });
 
   // 재고 부족 배너
   const lowBanner = document.getElementById('lowStockBanner');
@@ -2668,7 +2724,7 @@ function openTaskForm(taskId, presetDate){
       <label>내용<span class="req">*</span></label>
       <textarea id="task_cont" placeholder="할 일 내용">${escapeHtml(v('cont'))}</textarea>
     </div>
-    <div class="form-r-2">
+    <div class="${isEdit?'form-r-2':'form-r'}">
       <div class="form-r" style="margin:0"><label>시간대</label>
         <select id="task_ap">
           <option value="" ${!curAp?'selected':''}>미지정</option>
@@ -2676,19 +2732,15 @@ function openTaskForm(taskId, presetDate){
           <option value="PM" ${curAp==='PM'?'selected':''}>오후</option>
         </select>
       </div>
-      <div class="form-r" style="margin:0"><label style="font-weight:600;color:var(--t1)"><input type="checkbox" id="task_done" ${v('done')?'checked':''} style="width:auto;display:inline;margin-right:4px"> 완료</label></div>
+      ${isEdit
+        ? `<div class="form-r" style="margin:0"><label style="font-weight:600;color:var(--t1)"><input type="checkbox" id="task_done" ${v('done')?'checked':''} style="width:auto;display:inline;margin-right:4px"> 완료</label></div>`
+        : `<input type="checkbox" id="task_done" hidden>`}
     </div>
     <div class="form-r">
       <label>비고</label>
       <input type="text" id="task_note" placeholder="(선택)" value="${escapeHtml(v('note'))}">
     </div>
-    ${!isEdit ? `
-    <div style="margin-bottom:14px;padding:10px 12px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:7px">
-      <div style="font-size:11px;color:var(--gold-lt);font-weight:700;margin-bottom:6px">💡 빠른 액션</div>
-      <button onclick="openCarryOverPicker()" style="width:100%;padding:8px;background:var(--s1);border:1px solid var(--gold-line);border-radius:6px;font-size:11.5px;color:var(--gold-lt);font-weight:600">↩ 전날 미완료 업무 가져오기</button>
-    </div>
-    ` : ''}
-    <div class="spacer"></div>
+    ${!isEdit ? `<button class="link-btn" onclick="openCarryOverPicker()">↩ 전날 미완료 업무 가져오기</button>` : '<div class="spacer"></div>'}
     <button class="btn-primary" onclick="saveTask(${taskId||'null'})">${isEdit?'✓ 저장':'추가'}</button>
     ${isEdit ? `<div class="spacer"></div><button class="btn-danger" onclick="deleteTask(${taskId})">🗑 삭제</button>` : ''}
   `;
@@ -3044,16 +3096,17 @@ function renderCal(){
     if(KR_HOLIDAYS[ds]) cls.push('holiday');
     if(ds===today) cls.push('today');
     if(evs.length) cls.push('has-ev');
-    let evHtml = evs.slice(0,3).map(e=>{
-      // 발주/샘플인 경우 이니셜 배지를 앞에 붙임
-      let prefix = '';
-      if(e.init){
-        const bg = initColor(e.init||getInitial(e.vendor||''), e.vendor);   // 색은 고객사 저장색 → 이니셜 기준
-        prefix = `<span style="flex:none;display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:15px;padding:0 3px;border-radius:4px;background:${bg};color:#fff;font-size:10px;font-weight:700;margin-right:3px">${escapeHtml(e.init)}</span>`;
-      }
-      return `<div class="cal-ev ${e.cls}${e.done?' done':''}">${prefix}<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(e.t)}</span></div>`;
-    }).join('');
-    if(evs.length>3) evHtml += `<div class="cal-ev-more">+${evs.length-3}</div>`;
+    // 2026-11-04: 칸이 좁아 글자가 잘리므로 종류별 색 점 + 건수만. 자세한 내용은 날짜를 누르면 나오는 목록에서.
+    const _sum = {};
+    evs.forEach(e=>{
+      const n = (String(e.t||'').match(/×(\d+)/)||[])[1];
+      const k = e.cls; if(!_sum[k]) _sum[k] = {n:0, open:0};
+      const c = n ? +n : 1;
+      _sum[k].n += c; if(!e.done) _sum[k].open += c;
+    });
+    let evHtml = ['ord','smp','ship','task'].filter(k=>_sum[k]).map(k=>
+      `<span class="cs ${k}${_sum[k].open?'':' done'}">${_sum[k].n}</span>`).join('');
+    if(evHtml) evHtml = `<div class="cal-sum">${evHtml}</div>`;
     html += `<div class="${cls.join(' ')}" onclick="openDayPop('${ds}')"><div class="dn">${d}</div>${evHtml}</div>`;
     weekCellCount++;
   }
@@ -3237,7 +3290,7 @@ function renderOrdList(){
   });
   // 📌 PC와 같은 기본 정렬: 요청출고일 빠른 고객사부터, 같은 고객사끼리 묶음
   const groups = _groupByVendor(_sortByDateAsc(list, o=>o.ship), o=>o.vendor);
-  document.getElementById('ordCnt').textContent = list.length;
+  { const _c=document.getElementById('ordCnt'); if(_c) _c.textContent = list.length; }
   const el = document.getElementById('ordList');
   if(!list.length){
     el.innerHTML = `<div class="empty"><div class="icn">📭</div>발주서가 없습니다</div>`;
@@ -3253,13 +3306,11 @@ function renderOrdList(){
     const moreRows = (o.rows||[]).length>3 ? `<span class="item" style="background:transparent;border:none">+${(o.rows||[]).length-3}</span>` : '';
     return `<div class="list-item" onclick="showOrdDetail('${String(o.id).replace(/'/g,"\\'")}')">
       <div class="li-h">
-        ${initBadge(o.vendor)}
-        <span class="li-vendor">${escapeHtml(o.vendor||'-')}</span>
+        <span class="li-vendor">${escapeHtml(o.no||'-')}</span>
         ${ddHtml}
         <span class="li-status ${stCls}">${_ordStLabel(st)}</span>
       </div>
       <div class="li-meta">
-        <span><span class="lbl">발주</span> ${escapeHtml(o.no||'-')}</span>
         <span><span class="lbl">출고</span> ${escapeHtml(o.ship||'-')}</span>
       </div>
       ${(o.rows||[]).length ? `<div class="li-rows">${rowsHtml}${moreRows}</div>` : ''}
@@ -3336,7 +3387,7 @@ function renderSmpList(){
   if(q) list = list.filter(s=>(s.name||'').toLowerCase().includes(q) || (s.itemCode||'').toLowerCase().includes(q));
   // 📌 PC와 같은 기본 정렬: 납기 빠른 고객사부터, 같은 고객사끼리 묶음
   const groups = _groupByVendor(_sortByDateAsc(list, s=>s.due), s=>s.manager);
-  document.getElementById('smpCnt').textContent = list.length;
+  { const _c=document.getElementById('smpCnt'); if(_c) _c.textContent = list.length; }
   const el = document.getElementById('smpList');
   if(!list.length){
     el.innerHTML = `<div class="empty"><div class="icn">💎</div>샘플이 없습니다</div>`;
@@ -3350,15 +3401,13 @@ function renderSmpList(){
     const ddHtml = dd && !isDone ? `<span class="dday ${dd.cls}">${dd.t}</span>` : '';
     return `<div class="list-item" onclick="showSmpDetail('${String(s.id).replace(/'/g,"\\'")}')">
       <div class="li-h">
-        ${initBadge(s.manager)}
         <span class="li-vendor">${escapeHtml(s.name||'(이름없음)')}</span>
         ${ddHtml}
         <span class="li-status ${stCls}">${st}</span>
       </div>
       <div class="li-meta">
-        ${s.manager?`<span><span class="lbl">고객</span> ${escapeHtml(getInitial(s.manager)||'-')}</span>`:''}
-        <span><span class="lbl">유형</span> ${escapeHtml(s.type||'-')}</span>
-        <span><span class="lbl">소재</span> ${escapeHtml(s.mat||'-')}</span>
+        ${s.type?`<span><span class="lbl">유형</span> ${escapeHtml(s.type)}</span>`:''}
+        ${s.mat?`<span><span class="lbl">소재</span> ${escapeHtml(s.mat)}</span>`:''}
         ${s.itemCode?`<span style="font-family:monospace;color:var(--gold-lt);font-weight:600">${escapeHtml(s.itemCode)}</span>`:''}
       </div>
     </div>`;
@@ -7100,6 +7149,7 @@ window.onload = async ()=>{
   const verEl = document.getElementById('appVer');
   if(verEl) verEl.textContent = 'v' + APP_VERSION.slice(-2);
   try{ _loadNotifs(); _renderNotifBadge(); }catch(e){}
+  try{ _updateSyncLabel(); }catch(e){}
 
   // 마지막 페이지 복원 (없으면 캘린더)
   let lastPage = 'pgDash';
