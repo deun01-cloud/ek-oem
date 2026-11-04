@@ -6915,6 +6915,7 @@ function openProductModal(idOrNull){
   //    (정규화 누락 시 문자열 항목의 img.url이 undefined가 되어 모달에서 사진이 깨지던 버그)
   pdImgBuf = p ? (p.imgs||[]).map(f => typeof f==='string' ? {url:f, name:''} : {url:(f&&f.url)||'', name:(f&&f.name)||''}) : [];
   window._pdEditing = p || null; // 수정 중인 원본 객체 — 저장 시 id가 어긋나도 자기 자신을 정확히 찾기 위함
+  _ekBaseSet('product', p);   // [2026-11-04] 열 때 원본 기억 → 저장 시 내가 바꾼 칸만 반영
   sv('pd_id',p?p.id:'');sv('pd_code',p?p.code:'');sv('pd_name',p?p.name:'');
   // 유형: 기존 제품에 유형이 있으면 그대로, 비어있으면 품번 3번째 글자로 자동 추론
   let pdTypeVal = p ? (p.type||'') : 'EARRING';
@@ -7412,12 +7413,22 @@ function saveProduct(){
       prevPrice=+oldP.price||0;
     }
   }
+  // 🛡 [2026-11-04] 모달을 연 뒤 남이 바꾼 재고·단가를 '내가 바꾼 것'으로 오인해 되돌리고 이력을 남기던 문제
+  const _pdBase = id ? _ekBaseGet('product', id) : null;
+  if(_pdBase){
+    if((+_pdBase.stock||0) === newStock) stockDelta = 0;          // 재고 칸을 안 건드렸으면 재고 변경·이력 없음
+    if((+_pdBase.price||0) === (+obj.price||0)) prevPrice = +obj.price||0;   // 단가 칸을 안 건드렸으면 단가 이력·연동 없음
+  }
   const doSaveProduct = async (uploadedImgs) => {
     const finalObj = {...obj, imgs: uploadedImgs||obj.imgs};
     let savedProduct;
     if(id){
       const i=productDB.findIndex(x=>x.id==id);
-      if(i>=0){ productDB[i]={...productDB[i],...finalObj}; savedProduct=productDB[i]; }
+      if(i>=0){
+        if(_pdBase){ const _mine=Object.assign({}, _pdBase, finalObj); productDB[i]=_ek3Way(productDB[i], _pdBase, _mine); _ekPendSet('product', productDB[i], _pdBase, _mine); }
+        else productDB[i]={...productDB[i],...finalObj};
+        savedProduct=productDB[i];
+      }
     } else {
       // 🔒 노션-우선: 노션 동기화가 성공한 후에만 productDB에 추가
       // 일시적으로 객체 만들고 노션에 push 시도 → 성공 시 productDB에 추가, 실패 시 폐기
@@ -11394,6 +11405,7 @@ window.rtResetWatermarks = _rtResetWatermarks;
 function _rtOnOpen(){
   console.log(RT_LOG_PREFIX, '✓ WebSocket 연결됨');
   _rtConnected = true;
+  window._rtOpenAt = Date.now();
   _rtReconnectDelay = 1000; // 재연결 지연 리셋
   // 구독 메시지 보냄
   // ⚠ 타입 이름은 debouncedSync/_rtGetLocalArray와 일치시켜야 함
@@ -11522,6 +11534,7 @@ function realtimePublish(type, item, opts){
   try{ if(item._ts) _rtLocalPub[type+':'+key] = +item._ts; }catch(_){}
   // 서버에 저장될 형태: id 필드를 _notionId(또는 로컬 id)로 통일
   const payload = { ...item, id: key };
+  _ekPubChg(payload);
   const ts = Date.now();
   const sent = _rtSend({
     op: 'upsert',
@@ -11531,6 +11544,7 @@ function realtimePublish(type, item, opts){
     clientId: _rtClientId,
   });
   if(!sent){
+    try{ var _pp=_ekPend[type+':'+key]; if(_pp) _pp.offline=true; }catch(_){}
     _rtHttpFallback({ op: 'upsert', type, item: payload, ts, clientId: _rtClientId });
   }
 }
@@ -12024,6 +12038,18 @@ window.dedupIo = function(){ var n=_dedupIoItems(); if(typeof save==='function')
 //          그 외(다른 기기 변경·서버 삭제)는 기존대로 서버가 기준.
 var _rtLocalPub = {};   // 'type:key' → 이 기기가 발행한 _ts
 function _rtKeepNewerLocal(type, serverList, localArr){
+  // 재연결 등으로 전체 목록을 받을 때도, 밀린 내 수정(사진·칸)이 있으면 서버 최신본 위에 다시 얹어 재전송
+  try{
+    serverList = serverList.map(function(it){
+      var k = it && (it._notionId || (it.id!=null ? String(it.id) : null));
+      if(!k || !_ekPend[type+':'+k]) return it;
+      var c = Object.assign({}, it); delete c._chg;
+      var rb = _ekRebase(type, c, it._chg);
+      if(!rb) return it;
+      setTimeout(function(){ try{ if(typeof debouncedSync==='function') debouncedSync(type, rb, true); }catch(_){} }, 0);
+      return rb;
+    });
+  }catch(e){}
   try{
     if(!Array.isArray(localArr) || !localArr.length) return serverList;
     var now = Date.now(), mine = {}, n = 0;
@@ -12230,7 +12256,11 @@ function _ekCanon(x){
   if(x && typeof x==='object') return '{'+Object.keys(x).sort().map(function(k){ return JSON.stringify(k)+':'+_ekCanon(x[k]); }).join(',')+'}';
   return JSON.stringify(x===undefined?null:x);
 }
-function _ekFileKey(f){ return (f && (f.url||f.name)) ? String(f.url||f.name) : _ekCanon(f); }
+function _ekFileKey(f){ if(typeof f==='string') return f; return (f && (f.url||f.name)) ? String(f.url||f.name) : _ekCanon(f); }
+// 모달을 열 때의 항목 원본(입출고·제품 등) — 저장 시 '내가 바꾼 칸'을 가려내는 기준
+var _ekOpenBase={};
+function _ekBaseSet(type, item){ try{ _ekOpenBase[type] = item ? { id:String(item.id), snap:JSON.parse(JSON.stringify(item)) } : null; }catch(e){ _ekOpenBase[type]=null; } }
+function _ekBaseGet(type, id){ var b=_ekOpenBase[type]; return (b && String(b.id)===String(id)) ? b.snap : null; }
 function _ekMergeFiles(cur, base, mine){
   var bk=new Set((base||[]).map(_ekFileKey)), mk=new Set((mine||[]).map(_ekFileKey));
   var removed=new Set(); bk.forEach(function(k){ if(!mk.has(k)) removed.add(k); });
@@ -12246,27 +12276,50 @@ function _ek3Way(cur, base, mine){
     if(_EK_FILE_FIELDS.has(f) && (Array.isArray(mine[f])||Array.isArray(base[f]))) out[f]=_ekMergeFiles(cur[f], base[f], mine[f]);
     else out[f]=mine[f];
   });
+  _ekMarkChg(out, base, mine);
+  // 저장 시각은 최신본보다 뒤로 — 시계가 늦은 기기에서 저장하면 서버가 '옛 버전'으로 보고 거절해 수정·사진이 사라졌다
+  out._ts = Math.max(+cur._ts||0, +mine._ts||0);
   return out;
 }
 var _ekPend={};
 function _ekPendSet(type, item, base, mine){
-  try{ var k=_rtItemKey(item); if(!k) return; _ekPend[type+':'+k]={ base:JSON.parse(JSON.stringify(base)), mine:JSON.parse(JSON.stringify(mine)), t:Date.now() }; }catch(e){}
+  try{ var k=_rtItemKey(item); if(!k) return; _ekMarkChg(item, base, mine); _ekPend[type+':'+k]={ base:JSON.parse(JSON.stringify(base)), mine:JSON.parse(JSON.stringify(mine)), t:Date.now() }; }catch(e){}
 }
-function _ekRebase(type, merged){
+
+// 이번 저장에서 '일부러 바꾼 칸' 표시(_chg) — 받는 쪽은 이 칸에 대해선 내 예전 수정을 다시 얹지 않는다.
+//   (예전엔 두 사람이 같은 칸을 거의 동시에 바꾸면 서로 상대 값을 되돌리며 30초간 핑퐁했다)
+function _ekMarkChg(item, base, mine){
+  try{
+    var f=Object.keys(mine).filter(function(k){ return k.charAt(0)!=='_' && !_EK_FILE_FIELDS.has(k) && _ekCanon(mine[k])!==_ekCanon(base[k]); });
+    var rm=[];   // 일부러 지운 사진 — 받는 쪽이 '밀린 추가'로 오해해 되살리지 않게
+    Object.keys(mine).forEach(function(k){ if(!_EK_FILE_FIELDS.has(k)) return; var mk=new Set((mine[k]||[]).map(_ekFileKey)); (base[k]||[]).forEach(function(x){ var kk=_ekFileKey(x); if(!mk.has(kk)) rm.push(kk); }); });
+    if(f.length||rm.length) item._chg={ f:f, rm:rm, at:Date.now(), by:_rtClientId }; else delete item._chg;
+  }catch(e){}
+}
+function _ekPubChg(payload){   // 방금 내가 만든 표시만 내보낸다
+  try{ var c=payload._chg; if(c && !(c.by===_rtClientId && Date.now()-c.at<5000)) delete payload._chg; }catch(e){}
+}
+function _ekRebase(type, merged, inChg){
   try{
     var k=_rtItemKey(merged), p=k&&_ekPend[type+':'+k]; if(!p) return null;
-    if(Date.now()-p.t>30000){ delete _ekPend[type+':'+k]; return null; }
-    var ch=false, out=Object.assign({}, merged);
+    // 연결이 끊겨 못 보낸 수정은 재연결 후 30초까지 유지
+    var _t0 = p.offline ? Math.max(p.t, window._rtOpenAt||0) : p.t;
+    if(Date.now()-_t0>30000){ delete _ekPend[type+':'+k]; return null; }
+    var ch=false, out=Object.assign({}, merged), _re=[], _ic=(inChg&&inChg.f)||[];
     Object.keys(p.mine).forEach(function(f){
       var b=p.base[f], m=p.mine[f];
       if(_ekCanon(b)===_ekCanon(m)) return;
       if(_EK_FILE_FIELDS.has(f) && (Array.isArray(m)||Array.isArray(b))){
+        var _rm=new Set((inChg&&inChg.rm)||[]);
+        if(_rm.size){ m=(m||[]).filter(function(x){ return !_rm.has(_ekFileKey(x)); }); p.mine[f]=m; }
         var r=_ekMergeFiles(merged[f], b, m); if(_ekCanon(r)!==_ekCanon(merged[f])){ out[f]=r; ch=true; } return;
       }
+      if(_ic.indexOf(f)>=0){ delete p.mine[f]; return; }  // 남이 이 칸을 일부러 바꿈 → 남의 값(나중 저장)이 이긴다
       if(_ekCanon(merged[f])===_ekCanon(m)) return;      // 이미 반영됨
       if(_ekCanon(merged[f])!==_ekCanon(b)) return;      // 남도 이 칸을 바꿈 → 남의 값
-      out[f]=m; ch=true;
+      out[f]=m; ch=true; _re.push(f);
     });
+    if(ch){ if(_re.length) out._chg={ f:_re, at:Date.now(), by:_rtClientId }; else delete out._chg; }
     return ch? out : null;
   }catch(e){ return null; }
 }
@@ -12452,8 +12505,9 @@ function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
     if(local._notionId && !merged._notionId) merged._notionId = local._notionId;
     arr[idx2] = merged;
     // 🛡 내가 방금 저장한 변경이 거의 같은 순간의 남의 저장에 밀렸으면 내 변경만 다시 얹어 재발행
-    if(!isSnapshot){
-      var _rb=_ekRebase(type, merged);
+    var _inChg=item._chg; delete merged._chg;
+    {
+      var _rb=_ekRebase(type, merged, _inChg);
       if(_rb){ arr[idx2]=_rb; setTimeout(function(){ try{ if(typeof debouncedSync==='function') debouncedSync(type, _rb, true); }catch(_){} }, 0); }
     }
   } else {
@@ -17317,6 +17371,7 @@ function openIoModal(idOrNull){
   const io = idOrNull ? ioItems.find(x=>x.id==idOrNull) : null;
   const isEdit = !!io;
   _ioPhotoBuf = io ? (io.files||[]).slice() : [];
+  _ekBaseSet('io', io);   // [2026-11-04] 열 때 원본 기억 → 저장 시 내가 바꾼 칸만 반영
   const v = (k, fallback)=>io && io[k] !== undefined ? io[k] : (fallback||'');
   const html = `
     <div class="mt">🚚 ${isEdit?'입출고 수정':'입출고 등록'}</div>
@@ -17507,7 +17562,7 @@ async function saveIo(idOrNull){
       return f;
     }));
   }
-  const updated = {
+  let updated = {
     ...(old||{}),
     id: old?.id || Date.now(),
     title, date, kind, flow, vendor, items, qty, invoice, memo, user,
@@ -17516,6 +17571,9 @@ async function saveIo(idOrNull){
   };
   if(isEdit){
     const i = ioItems.findIndex(x=>x.id==idOrNull);
+    // 🛡 [2026-11-04] 사진 업로드를 기다리는 사이·모달을 열어 둔 사이 남이 바꾼 칸(사진 포함)을 덮지 않게 — 내가 바꾼 칸만
+    const _ib=_ekBaseGet('io', idOrNull);
+    if(i>=0 && _ib){ const _mine=Object.assign({}, _ib, {title, date, kind, flow, vendor, items, qty, invoice, memo, user, applyStock, files}); updated=_ek3Way(ioItems[i], _ib, _mine); _ekPendSet('io', updated, _ib, _mine); }
     if(i>=0) ioItems[i] = updated;
   } else {
     ioItems.unshift(updated);
@@ -33524,7 +33582,7 @@ async function saveSmpMulti(){
 // - 이미 존재하면 업데이트(샘플의 최신 정보로)
 // - 새로 생기면 생성
 // 호출자가 await할 수도 있고 fire-and-forget도 가능 (둘 다 안전)
-async function autoSyncSampleToProductDB(smp){
+async function autoSyncSampleToProductDB(smp, prevSmp){
   if(!smp || !smp.itemNo) return null; // 품번 없으면 스킵
   if(!Array.isArray(productDB)) return null;
   // 1) 기존 제품 찾기 (품번 기준)
@@ -33545,7 +33603,7 @@ async function autoSyncSampleToProductDB(smp){
     stdType = _codeCatToType(smp.itemNo); // 품번에서 유형 추출 (3번째 글자)
   }
   if(!stdType) stdType = smp.type || ''; // 그래도 없으면 원본 유지
-  const mapped = {
+  const _mapOf = (smp, stdType) => ({
     code: smp.itemNo,
     name: smp.name || '',
     type: stdType,
@@ -33561,7 +33619,8 @@ async function autoSyncSampleToProductDB(smp){
     // 신규 등록 시에만 등록일 세팅, 기존이면 유지
     createdDate: isNew ? toLocalDateStr(new Date()) : (prod && prod.createdDate) || '',
     lastModified: toLocalDateStr(new Date()),
-  };
+  });
+  const mapped = _mapOf(smp, stdType);
   if(isNew){
     // 신규: 제품DB에 추가
     prod = {
@@ -33571,8 +33630,26 @@ async function autoSyncSampleToProductDB(smp){
     };
     productDB.unshift(prod);
   } else {
-    // 기존: 업데이트 (재고/안전재고/_notionId는 유지)
-    Object.assign(prod, mapped);
+    // [2026-11-04] 기존 제품은 통째로 덮지 않는다 — 샘플을 저장할 때마다 제품DB의 단가·메모·사진이 샘플 값(빈 값 포함)으로
+    //  바뀌어 '제품 사진이 사라지고 단가가 0이 되는' 원인이 됐다. 제품 칸이 비어 있거나 이번 샘플 저장에서 실제로 바뀐 칸만 반영,
+    //  사진은 제품에 없는 것만 추가(삭제 안 함).
+    const _prevM = prevSmp ? _mapOf(prevSmp, stdType) : null;
+    const _cn = (typeof _ekCanon==='function') ? _ekCanon : JSON.stringify;
+    Object.keys(mapped).forEach(function(k){
+      if(k==='createdDate' || k==='lastModified') return;
+      if(k==='imgs'){   // 제품 사진은 제품DB가 정본 — 제품에 사진이 하나도 없을 때만 샘플 사진으로 채움
+        if(!(Array.isArray(prod.imgs) && prod.imgs.length) && (mapped.imgs||[]).length) prod.imgs=mapped.imgs.slice(0,12);
+        return;
+      }
+      const v=mapped[k], cur=prod[k];
+      const curEmpty = cur==null || cur==='' || cur===0;
+      const vEmpty = v==null || v==='' || v===0;
+      const changed = !!(_prevM && _cn(_prevM[k])!==_cn(v));
+      if(curEmpty ? !vEmpty : (changed && !vEmpty)) prod[k]=v;
+    });
+    prod.lastModified = mapped.lastModified;
+    // 바뀐 제품을 실시간 서버에도 반영 (예전엔 노션에만 올라가 다른 기기 화면이 달랐다)
+    if(prod._notionId){ try{ if(typeof realtimePublish==='function') realtimePublish('product', prod); }catch(e){} }
   }
   // 3) 노션 동기화 (백그라운드)
   if(notionCfg.workerUrl && notionCfg.productDb){
@@ -33649,7 +33726,7 @@ function saveSmp(){
       const i=samples.findIndex(x=>x.id==id);
       if(i>=0){
         // 납기일(due) 변경 이력 기록
-        const prev=samples[i];
+        const prev=samples[i]; window._smpPrevForProd = prev ? JSON.parse(JSON.stringify(prev)) : null;
         if(prev && prev.due && finalObj.due && prev.due !== finalObj.due){
           const dueHistory = Array.isArray(prev.dueHistory) ? [...prev.dueHistory] : [];
           dueHistory.push({from: prev.due, to: finalObj.due, changedAt: now});
@@ -33684,7 +33761,7 @@ function saveSmp(){
     // 🔗 제품DB 자동 동기화 (품번 있을 때)
     if(finalObj.itemNo){
       const smpSaved = !id ? samples[samples.length-1] : samples.find(x=>x.id==id);
-      autoSyncSampleToProductDB(smpSaved||finalObj).then(prod=>{
+      autoSyncSampleToProductDB(smpSaved||finalObj, id ? window._smpPrevForProd : null).then(prod=>{
         if(prod){
           save(); // _notionId 등이 갱신됐을 수 있음
           if(currentTab==='products') renderProducts();
@@ -33714,6 +33791,7 @@ function saveAndInvoice(){
   const name=gv('s_name');if(!name)return showToast('⚠ 샘플명을 입력해 주세요','var(--red)');
   const id=gv('s_id');if(!id)return;
   const i=samples.findIndex(x=>x.id==id);if(i<0)return;
+  const _prevSmpInv = JSON.parse(JSON.stringify(samples[i]));
   samples[i]={...samples[i],devCost:+gv('s_devCost')||0,unitPrice:+gv('s_unitPrice')||0,invNo:gv('s_invNo')};
   save();
   // 노션 동기화 (디바운스)
@@ -33722,7 +33800,7 @@ function saveAndInvoice(){
   }
   // 🔗 제품DB 자동 동기화 (가격 정보 갱신 시점에서 가장 정확)
   if(samples[i].itemNo){
-    autoSyncSampleToProductDB(samples[i]).then(prod=>{
+    autoSyncSampleToProductDB(samples[i], _prevSmpInv).then(prod=>{
       if(prod){
         save();
         if(currentTab==='products') renderProducts();
