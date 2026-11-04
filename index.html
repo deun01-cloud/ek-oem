@@ -11515,7 +11515,9 @@ function realtimePublish(type, item, opts){
   //    예전엔 저장 경로마다 _ts = Date.now()를 직접 써야 했고, 한 곳이라도 빠지면
   //    서버(SSOT)가 옛 버전을 유지 → 재접속 때 수정분이 조용히 사라졌다(거래명세서 품번 없는 행 등).
   //    예외: 노션 저장 완료 후의 '보강 재발행'은 {keepTs:true} — 그 사이 다른 기기 수정분을 덮지 않도록 원래 시각 유지.
-  if(!(opts && opts.keepTs)){ try{ item._ts = Date.now(); }catch(_){} }
+  // [2026-11-04] 시계가 늦은 PC의 저장은 서버가 '낡은 쓰기'로 거부해 조용히 버려졌다(10인 시뮬레이션) →
+  //  이 항목의 마지막 시각보다 항상 크게. (다른 PC가 고친 버전 위에 저장하면 그 버전 시각+1 이상)
+  if(!(opts && opts.keepTs)){ try{ item._ts = Math.max(Date.now(), (+item._ts||0)+1); }catch(_){} }
   // 📝 이 기기가 방금 발행한 버전 기록 — 전체 스냅샷이 이 변경을 옛 버전으로 덮지 못하게 한다(_rtKeepNewerLocal).
   try{ if(item._ts) _rtLocalPub[type+':'+key] = +item._ts; }catch(_){}
   // 서버에 저장될 형태: id 필드를 _notionId(또는 로컬 id)로 통일
@@ -12215,6 +12217,59 @@ function _rtGetLocalArray(type){
   return null;
 }
 
+// ════════════════════════════════════════════════════════════════
+// 🛡 [2026-11-04] 동시 편집 보호 (10인 가상 직원 시뮬레이션 근거)
+//   증상: 모달을 열어 둔 사이 남이 사진을 올리거나 상태를 바꿨는데, 내가 저장하면 모달을 열 때의
+//         사진·상태·메모로 통째로 덮어 남의 사진이 사라지고 지운 사진이 되살아났다(사진 26% 유실).
+//   → 저장할 때 '내가 실제로 바꾼 칸'만 최신 항목 위에 얹는다(3-way). 사진·첨부는 내가 추가/삭제한 것만 반영.
+//   → 거의 같은 순간 남의 저장에 밀리면 30초 안에 도착한 남의 버전 위에 내 변경을 다시 얹어 재발행.
+// ════════════════════════════════════════════════════════════════
+const _EK_FILE_FIELDS = new Set(['imgs','sourceDoc','cadFiles','files','images','photos']);
+function _ekCanon(x){
+  if(Array.isArray(x)) return '['+x.map(_ekCanon).join(',')+']';
+  if(x && typeof x==='object') return '{'+Object.keys(x).sort().map(function(k){ return JSON.stringify(k)+':'+_ekCanon(x[k]); }).join(',')+'}';
+  return JSON.stringify(x===undefined?null:x);
+}
+function _ekFileKey(f){ return (f && (f.url||f.name)) ? String(f.url||f.name) : _ekCanon(f); }
+function _ekMergeFiles(cur, base, mine){
+  var bk=new Set((base||[]).map(_ekFileKey)), mk=new Set((mine||[]).map(_ekFileKey));
+  var removed=new Set(); bk.forEach(function(k){ if(!mk.has(k)) removed.add(k); });
+  var out=(Array.isArray(cur)?cur:[]).filter(function(f){ return !removed.has(_ekFileKey(f)); });
+  var have=new Set(out.map(_ekFileKey));
+  (mine||[]).forEach(function(f){ var k=_ekFileKey(f); if(!bk.has(k) && !have.has(k)){ out.push(f); have.add(k); } });
+  return out;
+}
+function _ek3Way(cur, base, mine){
+  var out=Object.assign({}, cur);
+  Object.keys(mine).forEach(function(f){
+    if(_ekCanon(mine[f])===_ekCanon(base[f])) return;                       // 내가 안 바꾼 칸 → 최신 값 유지
+    if(_EK_FILE_FIELDS.has(f) && (Array.isArray(mine[f])||Array.isArray(base[f]))) out[f]=_ekMergeFiles(cur[f], base[f], mine[f]);
+    else out[f]=mine[f];
+  });
+  return out;
+}
+var _ekPend={};
+function _ekPendSet(type, item, base, mine){
+  try{ var k=_rtItemKey(item); if(!k) return; _ekPend[type+':'+k]={ base:JSON.parse(JSON.stringify(base)), mine:JSON.parse(JSON.stringify(mine)), t:Date.now() }; }catch(e){}
+}
+function _ekRebase(type, merged){
+  try{
+    var k=_rtItemKey(merged), p=k&&_ekPend[type+':'+k]; if(!p) return null;
+    if(Date.now()-p.t>30000){ delete _ekPend[type+':'+k]; return null; }
+    var ch=false, out=Object.assign({}, merged);
+    Object.keys(p.mine).forEach(function(f){
+      var b=p.base[f], m=p.mine[f];
+      if(_ekCanon(b)===_ekCanon(m)) return;
+      if(_EK_FILE_FIELDS.has(f) && (Array.isArray(m)||Array.isArray(b))){
+        var r=_ekMergeFiles(merged[f], b, m); if(_ekCanon(r)!==_ekCanon(merged[f])){ out[f]=r; ch=true; } return;
+      }
+      if(_ekCanon(merged[f])===_ekCanon(m)) return;      // 이미 반영됨
+      if(_ekCanon(merged[f])!==_ekCanon(b)) return;      // 남도 이 칸을 바꿈 → 남의 값
+      out[f]=m; ch=true;
+    });
+    return ch? out : null;
+  }catch(e){ return null; }
+}
 function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
   if(!item) return;
   // 🏢 회사정보(계좌 등) — 기기마다 따로 입력하지 않도록 실시간 서버에 1건(id='company')으로 공유. _ts 큰 쪽이 이긴다(LWW).
@@ -12396,6 +12451,11 @@ function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
     }
     if(local._notionId && !merged._notionId) merged._notionId = local._notionId;
     arr[idx2] = merged;
+    // 🛡 내가 방금 저장한 변경이 거의 같은 순간의 남의 저장에 밀렸으면 내 변경만 다시 얹어 재발행
+    if(!isSnapshot){
+      var _rb=_ekRebase(type, merged);
+      if(_rb){ arr[idx2]=_rb; setTimeout(function(){ try{ if(typeof debouncedSync==='function') debouncedSync(type, _rb, true); }catch(_){} }, 0); }
+    }
   } else {
     // 신규 — 로컬 id 새로 부여
     const newItem = { ...item, _ts: item._ts || ts };
@@ -28327,7 +28387,9 @@ function changeSmpStatus(sid, newStatus){
     const dd=document.getElementById('smpStatusDropdown');if(dd)dd.remove();
     return;
   }
+  const _oldSt=samples[i].status;
   samples[i].status=newStatus;
+  _ekPendSet('sample', samples[i], {status:_oldSt}, {status:newStatus});
   save();
   // 노션 동기화
   if(samples[i]._notionId) debouncedSync('sample', samples[i], true);
@@ -33524,6 +33586,25 @@ async function autoSyncSampleToProductDB(smp){
 }
 // 샘플 모달의 완료 토글 버튼 — 단순히 status를 '확정'으로 변경 (발주 생성 없음)
 // toggleSmpComplete는 아래(명세서 자동생성 포함 버전)에 정의됨 — 중복 제거됨
+function _smpReadForm(){
+  return {
+    name:gv('s_name'), type:gv('s_type'), manager:gv('s_manager'), factory:gv('s_factory'),
+    reqDate:gv('s_reqDate'), due:gv('s_due')||_addDays(gv('s_reqDate'),SAMPLE_DUE_LEAD_DAYS), factShip:gv('s_factShip'),
+    qty:gv('s_qty'), itemNo:gv('s_itemNo'), sz1:gv('s_sz1'), sz2:gv('s_sz2'), sz3:gv('s_sz3'), sz4:gv('s_sz4'),
+    mat:gv('s_mat'), plating:gv('s_plating'), wt:gv('s_wt'), engr:gv('s_engr'), card:gv('s_card'), remark:gv('s_remark'),
+    notes:(smpNotesBuf||[]).map(function(n){ return {text:String(n.text||'').trim(), checked:!!n.checked}; }).filter(function(n){ return n.text; }),
+    status:gv('s_status'),
+    devCost:+gv('s_devCost')||0, unitPrice:+gv('s_unitPrice')||0, costPrice:+gv('s_costPrice')||0, invNo:gv('s_invNo'), itemCode:gv('s_invNo')
+  };
+}
+(function(){   // openSmpModal 직후 '열 때의 값'을 기억 (수정 모드만)
+  var _orig=openSmpModal;
+  openSmpModal=function(idOrNull){
+    var r=_orig.apply(this, arguments);
+    try{ window._smpOpenSnap = idOrNull ? { id:idOrNull, form:_smpReadForm(), imgs:JSON.parse(JSON.stringify(smpImgBuf||[])), src:JSON.parse(JSON.stringify(smpSrcBuf||[])), cad:JSON.parse(JSON.stringify(smpCadBuf||[])) } : null; }catch(e){ window._smpOpenSnap=null; }
+    return r;
+  };
+})();
 function saveSmp(){
   if(!_validateRequired([{id:'s_name',label:'샘플명'}])) return;
   // 🔒 중복 등록 방지 — 저장(비동기 R2업로드+노션) 진행 중 재클릭/중복 호출 차단
@@ -33540,6 +33621,7 @@ function saveSmp(){
   // 🛡 [FIX] 체크리스트 입력창에 남은 미확정 텍스트도 항목으로 편입 (Enter 안 눌러도 저장)
   try{ const _ni=document.getElementById('s_notesInput'); if(_ni && _ni.value.trim()) addSmpNote(); }catch(_){}
   const isAi=document.getElementById('s_aiParsed')?.value==='1';
+  const _smpSnap = (window._smpOpenSnap && id && String(window._smpOpenSnap.id)===String(id)) ? window._smpOpenSnap : null;
   const obj={
     name, type:gv('s_type'), manager:gv('s_manager'),
     factory:gv('s_factory'),
@@ -33575,7 +33657,15 @@ function saveSmp(){
         } else if(Array.isArray(prev.dueHistory)){
           finalObj.dueHistory = prev.dueHistory; // 변경 없을 시 기존 이력 유지
         }
-        samples[i]={...samples[i],...finalObj};
+        if(_smpSnap){
+          // 🛡 내가 바꾼 칸만 최신 샘플 위에 (사진·작업지시서·CAD는 내가 추가/삭제한 것만)
+          const _base=Object.assign({}, _smpSnap.form, {imgs:_smpSnap.imgs, sourceDoc:_smpSnap.src, cadFiles:_smpSnap.cad});
+          if(!('dueHistory' in finalObj)) delete _base.dueHistory; else _base.dueHistory=prev.dueHistory;
+          samples[i]=_ek3Way(samples[i], _base, finalObj);
+          _ekPendSet('sample', samples[i], _base, finalObj);
+        } else {
+          samples[i]={...samples[i],...finalObj};
+        }
       }
     } else {
       // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
@@ -33967,7 +34057,7 @@ document.addEventListener('input', e=>{
 function openOrdModal(idOrNull){
   const o=idOrNull?orders.find(x=>x.id==idOrNull):null;
   window._transferFromSamples=null; // 샘플 일괄 이관 마커는 openBulkOrderFromSamples가 모달을 연 '뒤'에 다시 세팅
-  ordFileBuf=o?(o.files||[]):[]; // load existing files
+  ordFileBuf=o?(o.files||[]).map(f=>({...f})):[]; // load existing files — [2026-11-04] 사본(원본 발주 배열을 저장 전에 직접 바꾸던 문제)
   renderOrdFilePrev();
   document.getElementById('mOrd_t').childNodes[0].textContent=o?'발주서 수정 ':'발주서 등록 ';
   sv('o_id',o?o.id:'');sv('o_vendor',o?o.vendor:'');sv('o_date',o?o.date:todayStr);sv('o_ship',o?o.ship:'');
@@ -34019,7 +34109,8 @@ function openOrdModal(idOrNull){
     }
   }
   document.getElementById('ord_ai_badge').style.display='none';
-  if(!ordRowsBuf||!ordRowsBuf.length)ordRowsBuf=o?(o.rows||[]).map(r=>({...r})):[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];
+  // [2026-11-04] 수정 모드는 항상 이 발주의 품목으로 — 직전에 연 발주의 품목이 버퍼에 남아 다른 발주에 저장될 수 있었다
+  if(o || !ordRowsBuf || !ordRowsBuf.length) ordRowsBuf=o?(o.rows||[]).map(r=>({...r})):[{name:'',qty:'',plating:'실버',mat:'브라스 (BRASS)',size:'',note:''}];
   // 단가가 비어있는 행 자동 채우기: 상품명/품번이 제품DB와 일치하면 단가 가져옴
   // (수정 모드에서만 — 신규 등록 시는 의미 없음. 이미 단가 있는 행은 건드리지 않음)
   if(o){
@@ -35331,6 +35422,25 @@ function toggleOrdComplete(){
     items,
   });
 }
+function _ordReadForm(){
+  const memoList=(ordMemoBuf||[]).map(n=>({text:String(n.text||'').trim(), checked:!!n.checked})).filter(n=>n.text);
+  const f={vendor:gv('o_vendor'), factory:gv('o_factory'), date:gv('o_date'), ship:gv('o_ship')||_addDays(gv('o_date'),ORDER_SHIP_LEAD_DAYS),
+    factShip:gv('o_factShip'), manager:gv('o_manager'), no:gv('o_no').trim(),
+    memo:memoList.map(n=>(n.checked?'[✓] ':'[ ] ')+n.text).join('\n'), memoList,
+    rows:(ordRowsBuf||[]).map(r=>{const {_expanded,...rest}=r;return rest;}), files:JSON.parse(JSON.stringify(ordFileBuf||[])),
+    status:normalizeOrderStatus(gv('o_status')||'의뢰')};
+  const _pa=(gv('o_prepaidAmount')||'').replace(/[^0-9]/g,''); f.prepaidAmount=(isFinite(+_pa)&&+_pa>0)?+_pa:0;
+  const _pp=gv('o_prepayPct'); if(_pp!==''&&_pp!=null&&isFinite(+_pp)&&+_pp>0&&+_pp<=100) f.prepayPct=+_pp;
+  return f;
+}
+(function(){
+  var _orig=openOrdModal;
+  openOrdModal=function(idOrNull){
+    var r=_orig.apply(this, arguments);
+    try{ window._ordOpenSnap = idOrNull ? { id:idOrNull, form:_ordReadForm() } : null; }catch(e){ window._ordOpenSnap=null; }
+    return r;
+  };
+})();
 async function saveOrd(forceOverwrite){
   if(!_validateRequired([{id:'o_vendor',label:'업체명'}])) return;
   const vendor=gv('o_vendor');
@@ -35508,7 +35618,19 @@ async function saveOrd(forceOverwrite){
           }
         }
       });
-      orders[i]={...orders[i],...obj};
+      const _os=(window._ordOpenSnap && String(window._ordOpenSnap.id)===String(id)) ? window._ordOpenSnap : null;
+      if(_os){
+        // 🛡 내가 바꾼 칸만 최신 발주 위에 (첨부는 내가 추가/삭제한 것만). 상태를 안 바꿨으면 완료일도 최신 값 유지.
+        const _base=Object.assign({}, _os.form);
+        if('shipHistory' in obj) _base.shipHistory=prev.shipHistory;
+        const _cur=orders[i], _out=_ek3Way(_cur, _base, obj);
+        if(_ekCanon(obj.status)===_ekCanon(_base.status)){ _out.completedAt=_cur.completedAt; }
+        if(_ekCanon(obj.no)!==_ekCanon(_base.no) && !_base.no) _out.no=obj.no;   // 빈 발주번호 자동 생성분
+        orders[i]=_out;
+        _ekPendSet('order', orders[i], _base, obj);
+      } else {
+        orders[i]={...orders[i],...obj};
+      }
     }
     ordId=id; // ⚠ +id 금지: UUID id면 NaN이 되어 서버 발행·proc매칭이 깨짐
     // Update ship date on linked procs
@@ -35801,7 +35923,7 @@ function deleteTask(){
     if(currentTab==='dash')renderDash();
   },'업무 삭제','🗑');
 }
-function toggleTask(id){const t=tasks.find(x=>x.id==id);if(!t)return;t.done=!t.done;t.doneAt=t.done?Date.now():0;t._syncedAt=new Date().toISOString();debouncedSync('task',t,true);save();if(currentTab==='schedule')renderSchedContent();if(currentTab==='dash')renderDash();}
+function toggleTask(id){const t=tasks.find(x=>x.id==id);if(!t)return;_ekPendSet('task',t,{done:!!t.done},{done:!t.done});t.done=!t.done;t.doneAt=t.done?Date.now():0;t._syncedAt=new Date().toISOString();debouncedSync('task',t,true);save();if(currentTab==='schedule')renderSchedContent();if(currentTab==='dash')renderDash();}
 
 // ════════════════════════════════
 // PASTE SUPPORT (Ctrl+V / Cmd+V)
