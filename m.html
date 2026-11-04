@@ -873,7 +873,7 @@ function _rtItemKey(item){
 //  · 저장 시 '폼을 열 때의 원본'과 비교해 내가 바꾼 칸만 최신 항목 위에 반영, 사진은 내가 추가/삭제한 것만.
 //  · 발행 시각은 그 항목의 마지막 시각보다 항상 크게 — 예전엔 모바일 수정분에 새 시각을 안 붙여
 //    서버가 옛 버전으로 보고 무시할 수 있었다(PC는 2026-09-30에 같은 문제를 고침).
-const _EK_FILE_FIELDS = new Set(['imgs','sourceDoc','cadFiles','files','images','photos']);
+const _EK_FILE_FIELDS = new Set(['imgs','sourceDoc','cadFiles','files','images','photos','payments']);
 function _ekCanon(x){
   if(Array.isArray(x)) return '['+x.map(_ekCanon).join(',')+']';
   if(x && typeof x==='object') return '{'+Object.keys(x).sort().map(function(k){ return JSON.stringify(k)+':'+_ekCanon(x[k]); }).join(',')+'}';
@@ -957,7 +957,8 @@ function realtimePublish(type, item){
   try{ item._ts = Math.max(Date.now(), (+item._ts||0)+1); }catch(_){}
   const payload = { ...item, id: key };
   _ekPubChg(payload);
-  const ts = Date.now();
+  const ts = +item._ts || Date.now();   // 서버 판정 기준 = 항목 저장 시각
+  _ekSeen(type, key, ts);
   const sent = _rtSend({ op:'upsert', type, item:payload, ts, clientId:_rtClientId });
   if(!sent){
     try{ var _pp=_ekPend[type+':'+key]; if(_pp) _pp.offline=true; }catch(_){}
@@ -980,7 +981,7 @@ function realtimeDelete(type, idOrItem){
     key = String(idOrItem);
   }
   if(!key) return;
-  const ts = Date.now();
+  const ts = _ekDelTs(type, key, (typeof idOrItem==='object') ? idOrItem : null);
   const sent = _rtSend({ op:'delete', type, id:key, ts, clientId:_rtClientId });
   if(!sent){
     try{
@@ -1109,8 +1110,15 @@ function _rtGetLocalArray(type){
   return null;
 }
 
+// 실시간 서버는 '보낸 메시지의 ts'로 최신 여부를 판단한다(worker-realtime.js upsertItem/deleteItem).
+//   예전엔 기기 시계(Date.now())를 그대로 보내, 시계가 늦은 기기의 저장·삭제가 '옛 버전'으로 거절됐다.
+//   → 저장은 항목의 저장 시각(_ts, 항상 최신본 이후로 잡음), 삭제는 지금까지 본 그 항목의 최신 시각 이후로 보낸다.
+var _ekSeenTs={};
+function _ekSeen(type, key, ts){ try{ if(key!=null && +ts){ var k=type+':'+key; if(!(_ekSeenTs[k]>=+ts)) _ekSeenTs[k]=+ts; } }catch(e){} }
+function _ekDelTs(type, key, obj){ var t=Date.now(); try{ var s=_ekSeenTs[type+':'+key]||0, o=(obj&&+obj._ts)||0; t=Math.max(t, s+1, o+1); }catch(e){} return t; }
 function _applyRemoteItem(type, item, ts){
   if(!item) return;
+  try{ _ekSeen(type, _rtItemKey(item), +item._ts||+ts); }catch(_){}
   const arr = _rtGetLocalArray(type);
   if(!arr) return;
   const remoteKey = item._notionId || (item.id !== undefined ? String(item.id) : null);
@@ -2794,6 +2802,7 @@ function openTaskEdit(taskId){
 
 function openTaskForm(taskId, presetDate){
   const t = taskId ? tasks.find(x => x.id == taskId) : null;
+  _ekBaseSet('task', t);
   const isEdit = !!t;
   const v = (k, def='') => t ? (t[k] != null && t[k] !== '' ? t[k] : def) : def;
   const curCat = v('cat') || '업무';
@@ -2893,7 +2902,7 @@ async function saveTask(taskId){
 
   if(isEdit){
     const i = tasks.findIndex(x => x.id == taskId);
-    if(i>=0) tasks[i] = updated;
+    if(i>=0){ _mMergeInto('task', taskId, tasks[i], updated); tasks[i] = updated; }
   } else {
     tasks.unshift(updated);
   }
@@ -6999,6 +7008,7 @@ function openAsEdit(asId){ openAsForm(asId); }
 
 function openAsForm(asId){
   const a = asId ? asItems.find(x=>x.id==asId) : null;
+  _ekBaseSet('as', a);
   const isEdit = !!a;
   _photoInit('asAdd', a ? (a.files||[]) : []);
   _repairBuf = (a && a.repairs && a.repairs.length) ? JSON.parse(JSON.stringify(a.repairs)) : [{reason:'', qty:1, unitCost:0}];
@@ -7154,7 +7164,7 @@ async function saveAs(asId){
 
   if(isEdit){
     const i = asItems.findIndex(x=>x.id==asId);
-    if(i>=0) asItems[i] = updated;
+    if(i>=0){ _mMergeInto('as', asId, asItems[i], updated); asItems[i] = updated; }
   } else {
     asItems.unshift(updated);
   }
