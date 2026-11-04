@@ -11406,7 +11406,7 @@ window.rtResetWatermarks = _rtResetWatermarks;
 function _rtOnOpen(){
   console.log(RT_LOG_PREFIX, '✓ WebSocket 연결됨');
   _rtConnected = true;
-  window._rtOpenAt = Date.now();
+  window._rtOpenAt = Date.now(); _ekSentTypes = [];
   _rtReconnectDelay = 1000; // 재연결 지연 리셋
   // 구독 메시지 보냄
   // ⚠ 타입 이름은 debouncedSync/_rtGetLocalArray와 일치시켜야 함
@@ -11499,6 +11499,7 @@ function _rtSend(msg){
   }
   try{
     _rtWs.send(JSON.stringify(msg));
+    if(msg.op==='upsert'||msg.op==='delete'){ _ekSentTypes.push(msg.type); if(_ekSentTypes.length>500) _ekSentTypes.shift(); }
     return true;
   }catch(e){
     console.error(RT_LOG_PREFIX, '전송 실패:', e);
@@ -11543,6 +11544,8 @@ function realtimePublish(type, item, opts){
   // 📝 이 기기가 방금 발행한 버전 기록 — 전체 스냅샷이 이 변경을 옛 버전으로 덮지 못하게 한다(_rtKeepNewerLocal).
   try{ if(item._ts) _rtLocalPub[type+':'+key] = +item._ts; }catch(_){}
   // 서버에 저장될 형태: id 필드를 _notionId(또는 로컬 id)로 통일
+  _ekStockOnPublish(type, key, item);
+  try{ _ekSeenHash[type+':'+key]=_ekHash(item); }catch(_){}
   const payload = { ...item, id: key };
   _ekPubChg(payload);
   const ts = +item._ts || Date.now();   // 서버 판정 기준 = 항목 저장 시각
@@ -11572,6 +11575,7 @@ function realtimeDelete(type, idOrItem){
   }
   if(!key) return;
   const ts = _ekDelTs(type, key, (typeof idOrItem==='object') ? idOrItem : null);
+  _ekNoteDelete(type, key);
   const sent = _rtSend({
     op: 'delete',
     type,
@@ -11621,6 +11625,7 @@ setTimeout(function(){
       var arr=d[2](); var live=(arr||[]).find(function(x){ return x && obj && ((obj.id!=null && String(x.id)===String(obj.id)) || (obj._notionId && x._notionId===obj._notionId)); }) || null;
       if(!live || !live._notionId) return;
       var k=d[1]+':'+_rtItemKey(live); if(window._ekLastPub && Date.now()-(window._ekLastPub[k]||0) < 2000) return;   // 방금 보낸 건 생략
+      if(_ekSeenHash[k] !== undefined && _ekSeenHash[k] === _ekHash(live)) return;   // 서버와 주고받은 뒤 바뀐 게 없음 → 다시 올리지 않음(재시도 큐가 옛 값으로 덮던 문제)
       realtimePublish(d[1], live);
     }catch(_){} };
     var w=async function(obj){ pub(obj); var r=await orig.apply(this, arguments); pub(obj); return r; };
@@ -12246,7 +12251,30 @@ function _rtHandleChange(msg){
   finally{ _rtSuppressRefresh = false; }
 }
 
+
+// [2026-11-04] 서버가 '옛 저장'으로 거절하면(stale_write) 그 타입의 최신분을 바로 받아온다 — 예전엔 더 새 변경이 다시 오기 전까지
+//   이 기기 화면만 거절된 내 값으로 남아 다른 기기와 달랐다. (ack에는 항목 id가 없어, 보낸 순서대로 타입을 기억해 맞춘다)
+var _ekSentTypes=[], _ekRefT={}, _ekRefMin={};
+function _ekRefetch(type, cts){
+  try{
+    if(!type || !+cts) return;
+    _ekRefMin[type]=Math.min(_ekRefMin[type]||Infinity, (+cts)-1);
+    clearTimeout(_ekRefT[type]);
+    _ekRefT[type]=setTimeout(async function(){
+      var since=_ekRefMin[type]; delete _ekRefMin[type];
+      try{
+        var r=await fetch(realtimeHttpUrl()+'/api/snapshot/'+encodeURIComponent(type)+'?since='+since, {cache:'no-store'});
+        var j=await r.json();
+        if(j && j.ok!==false && ((j.items||[]).length || (j.deleted||[]).length)){
+          _rtHandleSnapshot({op:'snapshot', ok:true, type:type, items:j.items||[], deleted:j.deleted||[], full:false, ts:Date.now()});
+        }
+      }catch(e){}
+    }, 800);
+  }catch(e){}
+}
 function _rtHandleAck(msg){
+  var _sentType=_ekSentTypes.shift();
+  if(!msg.ok && (msg.error==='stale_write' || msg.error==='stale_delete')) _ekRefetch(_sentType, msg.conflictTs);
   if(!msg.ok && msg.error){
     if(msg.error === 'stale_write' || msg.error === 'stale_delete'){
       console.warn(RT_LOG_PREFIX, `충돌 감지 (서버 ts=${msg.conflictTs}) — 다음 변경 수신 시 자동 정정됨`);
@@ -12363,6 +12391,7 @@ function _ekRebase(type, merged, inChg){
         var r=_ekMergeFiles(merged[f], b, m); if(_ekCanon(r)!==_ekCanon(merged[f])){ out[f]=r; ch=true; } return;
       }
       if(_ic.indexOf(f)>=0){ delete p.mine[f]; return; }  // 남이 이 칸을 일부러 바꿈 → 남의 값(나중 저장)이 이긴다
+      if(type==='product' && f==='stock') return;        // 재고는 증감 기록(_sops)으로 따로 맞춘다
       if(_ekCanon(merged[f])===_ekCanon(m)) return;      // 이미 반영됨
       if(_ekCanon(merged[f])!==_ekCanon(b)) return;      // 남도 이 칸을 바꿈 → 남의 값
       out[f]=m; ch=true; _re.push(f);
@@ -12375,11 +12404,64 @@ function _ekRebase(type, merged, inChg){
 //   예전엔 기기 시계(Date.now())를 그대로 보내, 시계가 늦은 기기의 저장·삭제가 '옛 버전'으로 거절됐다.
 //   → 저장은 항목의 저장 시각(_ts, 항상 최신본 이후로 잡음), 삭제는 지금까지 본 그 항목의 최신 시각 이후로 보낸다.
 var _ekSeenTs={};
+// [2026-11-04] 재고 수량은 '증감'인데 저장은 수량 전체를 덮어써, 두 사람이 거의 동시에 출고·입고하면 한쪽 증감이 사라졌다
+//   (시뮬레이션: 134회 증감 중 4개 유실). → 내 증감마다 id를 붙여(_sops) 보내고, 받은 최신본에 내 증감 id가 없으면 그 증감만 다시 더해 재전송.
+//   _sbase = 마지막으로 서버와 맞춘 재고. 보낼 때 재고가 _sbase와 다르면 그 차이를 내 증감 1건으로 기록한다.
+
+// [2026-11-04] 삭제와 거의 같은 순간에 다른 기기가 그 항목을 고쳐 저장하면, 서버엔 '고친 항목'이 되살아나고
+//   지운 기기들 화면엔 없어 서로 달랐다. → 내가 2분 안에 지운 항목이 다시 올라오면 삭제를 한 번 더 보내 삭제가 이기게 한다(최대 2회).
+var _ekMyDel={};
+function _ekNoteDelete(type, key){ try{ var k=type+':'+key, d=_ekMyDel[k]; if(d && Date.now()-d.t<120000) return; _ekMyDel[k]={t:Date.now(), re:0}; }catch(e){} }
+function _ekReassertDelete(type, item){
+  try{
+    var key=_rtItemKey(item); if(key==null) return false;
+    var k=type+':'+key, d=_ekMyDel[k]; if(!d) return false;
+    if(Date.now()-d.t>120000){ delete _ekMyDel[k]; return false; }
+    if(d.re>=2) return true;
+    d.re++; _ekSeen(type, key, +item._ts||0);
+    setTimeout(function(){ try{ realtimeDelete(type, key); }catch(_){} }, 0);
+    return true;
+  }catch(e){ return false; }
+}
+var _ekStockMine={};
+// 마지막으로 서버와 주고받은 내용(지문) — 노션 재시도 등 자동 경로가 '바뀐 것 없는' 항목을 다시 올려 남의 최신 값을 덮지 않게
+var _ekSeenHash={};
+var _EK_HASH_SKIP={_ts:1,_sops:1,_sbase:1,_chg:1,_syncedAt:1,_nEditedAt:1,_pending:1,_pushFailed:1,_pushOk:1};
+function _ekHash(item){ try{ var o={}; Object.keys(item||{}).forEach(function(k){ if(!_EK_HASH_SKIP[k]) o[k]=item[k]; }); return _ekCanon(o); }catch(e){ return ''; } }
+function _ekStockOnPublish(type, key, item){
+  if(type!=='product' || key==null || !item) return;
+  try{
+    var cur=+item.stock||0;
+    if(item._sbase!==undefined && item._sbase!==null && cur!==+item._sbase){
+      var id=String(_rtClientId)+'.'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+      (_ekStockMine[key]=_ekStockMine[key]||[]).push({id:id, d:cur-(+item._sbase), t:Date.now()});
+      item._sops=(Array.isArray(item._sops)?item._sops:[]).concat([id]).slice(-80);
+    }
+    item._sbase=cur;
+  }catch(e){}
+}
+function _ekStockOnRemote(type, key, incoming, merged){
+  if(type!=='product' || key==null || !incoming || !merged) return false;
+  try{
+    var have=new Set(Array.isArray(incoming._sops)?incoming._sops:[]);
+    var mine=(_ekStockMine[key]||[]).filter(function(o){ return Date.now()-o.t<180000; });
+    _ekStockMine[key]=mine;
+    var add=0, ids=[];
+    mine.forEach(function(o){ if(!have.has(o.id)){ add+=o.d; ids.push(o.id); } });
+    if(!ids.length){ merged._sbase=+merged.stock||0; return false; }
+    merged.stock=(+incoming.stock||0)+add;
+    merged._sops=(Array.isArray(incoming._sops)?incoming._sops:[]).concat(ids).slice(-80);
+    merged._sbase=merged.stock;   // 다시 보낼 때 새 증감으로 세지 않게
+    console.log('[재고] 밀린 내 증감 '+ids.length+'건('+(add>0?'+':'')+add+') 다시 반영:', key);
+    return true;
+  }catch(e){ return false; }
+}
 function _ekSeen(type, key, ts){ try{ if(key!=null && +ts){ var k=type+':'+key; if(!(_ekSeenTs[k]>=+ts)) _ekSeenTs[k]=+ts; } }catch(e){} }
 function _ekDelTs(type, key, obj){ var t=Date.now(); try{ var s=_ekSeenTs[type+':'+key]||0, o=(obj&&+obj._ts)||0; t=Math.max(t, s+1, o+1); }catch(e){} return t; }
 function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
   if(!item) return;
   try{ _ekSeen(type, _rtItemKey(item), +item._ts||+ts); }catch(_){}
+  if(_ekReassertDelete(type, item)) return;   // 방금 내가 지운 항목 → 삭제 유지
   // 🏢 회사정보(계좌 등) — 기기마다 따로 입력하지 않도록 실시간 서버에 1건(id='company')으로 공유. _ts 큰 쪽이 이긴다(LWW).
   if(type === 'company'){
     try{
@@ -12561,6 +12643,8 @@ function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
     arr[idx2] = merged;
     // 🛡 내가 방금 저장한 변경이 거의 같은 순간의 남의 저장에 밀렸으면 내 변경만 다시 얹어 재발행
     var _inChg=item._chg; delete merged._chg;
+    try{ _ekSeenHash[type+':'+_rtItemKey(item)]=_ekHash(merged); }catch(_){}
+    if(_ekStockOnRemote(type, _rtItemKey(item), item, merged)){ setTimeout(function(){ try{ realtimePublish(type, arr[idx2]); if(typeof save==='function') save(); }catch(_){} }, 0); }
     {
       var _rb=_ekRebase(type, merged, _inChg);
       if(_rb){ arr[idx2]=_rb; setTimeout(function(){ try{ if(typeof debouncedSync==='function') debouncedSync(type, _rb, true); }catch(_){} }, 0); }
@@ -12568,6 +12652,7 @@ function _applyRemoteItem(type, item, ts, fromClient, isSnapshot){
   } else {
     // 신규 — 로컬 id 새로 부여
     const newItem = { ...item, _ts: item._ts || ts };
+    if(type==='product') newItem._sbase = +newItem.stock||0;
     if(typeof genId === 'function' && (!newItem.id || String(newItem.id) === String(newItem._notionId))){
       newItem.id = genId();
     }
@@ -12629,6 +12714,11 @@ function _applyRemoteDelete(type, id, ts){
       _markNotionIdDeleted(removed._notionId, type);
     }
     arr.splice(idx, 1);
+    // [2026-11-04] 합본은 두 기기가 거의 동시에 만들면 같은 합본(_consUid)이 이 기기에선 한 줄로 합쳐져 있는데,
+    //   중복 정리로 한쪽 id가 삭제되면 그 한 줄이 통째로 지워져 '합본 0건'이 됐다(서버엔 남은 쪽이 있음) → 서버에서 다시 받아 맞춘다.
+    if(type === 'invoice' && removed && removed._isConsolidated){
+      try{ _ekRefetch('invoice', Math.max(1, (+removed._ts||Date.now()) - 600000) + 1); }catch(_){}
+    }
   } else {
     // 로컬엔 없지만 묘비는 등록 (Notion ID로 보이는 경우)
     if(typeof _markNotionIdDeleted === 'function'){
