@@ -7482,6 +7482,7 @@ function saveProduct(){
     }
     // 수정 모드에서 재고 차이 발생 시 이력 기록
     if(id && stockDelta!==0 && savedProduct){
+      _ekStockOp(savedProduct, stockDelta);
       // applyStockChange가 stock을 또 한 번 변경하지 않도록 직접 이력만 push
       const _stkH = {
         id: genId(),
@@ -12350,6 +12351,7 @@ function _ek3Way(cur, base, mine){
   Object.keys(mine).forEach(function(f){
     if(_ekCanon(mine[f])===_ekCanon(base[f])) return;                       // 내가 안 바꾼 칸 → 최신 값 유지
     if(_EK_FILE_FIELDS.has(f) && (Array.isArray(mine[f])||Array.isArray(base[f]))) out[f]=_ekMergeFiles(cur[f], base[f], mine[f]);
+    else if(f==='stock' && isFinite(+mine[f]) && isFinite(+base[f]) && cur && isFinite(+cur[f])) out[f]=(+cur[f]||0)+((+mine[f]||0)-(+base[f]||0));   // 재고는 '내가 바꾼 만큼'만 최신 재고에 더한다
     else out[f]=mine[f];
   });
   _ekMarkChg(out, base, mine);
@@ -12428,16 +12430,15 @@ var _ekStockMine={};
 var _ekSeenHash={};
 var _EK_HASH_SKIP={_ts:1,_sops:1,_sbase:1,_chg:1,_syncedAt:1,_nEditedAt:1,_pending:1,_pushFailed:1,_pushOk:1};
 function _ekHash(item){ try{ var o={}; Object.keys(item||{}).forEach(function(k){ if(!_EK_HASH_SKIP[k]) o[k]=item[k]; }); return _ekCanon(o); }catch(e){ return ''; } }
-function _ekStockOnPublish(type, key, item){
-  if(type!=='product' || key==null || !item) return;
+function _ekStockOnPublish(type, key, item){ /* [2026-11-04 v2] 증감은 바뀌는 곳에서 직접 기록(_ekStockOp) — 차이로 추정하면 노션 풀 등으로 바뀐 재고를 내 증감으로 잘못 세었다 */ }
+// 재고를 실제로 바꾼 곳에서 호출: 이 기기의 증감 1건을 id와 함께 기록하고 항목에 표시(_sops)
+function _ekStockOp(item, d){
   try{
-    var cur=+item.stock||0;
-    if(item._sbase!==undefined && item._sbase!==null && cur!==+item._sbase){
-      var id=String(_rtClientId)+'.'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-      (_ekStockMine[key]=_ekStockMine[key]||[]).push({id:id, d:cur-(+item._sbase), t:Date.now()});
-      item._sops=(Array.isArray(item._sops)?item._sops:[]).concat([id]).slice(-80);
-    }
-    item._sbase=cur;
+    d=+d||0; if(!item || !d) return;
+    var key=_rtItemKey(item); if(key==null) return;
+    var id=String(_rtClientId)+'.'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    (_ekStockMine[key]=_ekStockMine[key]||[]).push({id:id, d:d, t:Date.now()});
+    item._sops=(Array.isArray(item._sops)?item._sops:[]).concat([id]).slice(-80);
   }catch(e){}
 }
 function _ekStockOnRemote(type, key, incoming, merged){
@@ -23204,6 +23205,7 @@ function applyStockChange({productId, delta, type, refId, refLabel, note}){
   const prevStock=+p.stock||0;
   const newStock=prevStock+delta;
   p.stock=newStock;
+  if(type!=='initial') _ekStockOp(p, delta);
   p.lastModified=toLocalDateStr(new Date());
   // 이력 추가
   const h={
@@ -43879,6 +43881,7 @@ function applyInvoiceStockChange(items, direction){
     const before = +p.stock || 0;
     const after = before + (direction * qty);
     p.stock = after;
+    _ekStockOp(p, after - before);
     p.lastModified = toLocalDateStr(new Date());
     result.changed.push({code, name: p.name||it.name||'', before, after});
     // 차감 후 음수면 경고

@@ -893,6 +893,7 @@ function _ek3Way(cur, base, mine){
   Object.keys(mine).forEach(function(f){
     if(_ekCanon(mine[f])===_ekCanon(base[f])) return;
     if(_EK_FILE_FIELDS.has(f) && (Array.isArray(mine[f])||Array.isArray(base[f]))) out[f]=_ekMergeFiles(cur[f], base[f], mine[f]);
+    else if(f==='stock' && isFinite(+mine[f]) && isFinite(+base[f]) && cur && isFinite(+cur[f])) out[f]=(+cur[f]||0)+((+mine[f]||0)-(+base[f]||0));   // 재고는 '내가 바꾼 만큼'만 최신 재고에 더한다
     else out[f]=mine[f];
   });
   _ekMarkChg(out, base, mine);
@@ -1162,17 +1163,16 @@ function _ekReassertDelete(type, item){
 var _ekStockMine={};
 // 재고를 바꾼 즉시 서버로 보낸다 — 노션 저장을 기다리는 사이 남의 변경이 들어오면 '남이 바꾼 것만 있음'으로 보고 전송을 건너뛰어
 //   내 증감이 사라졌다(시뮬레이션). 즉시 보내면 증감 기록(_sops)이 남아 밀려도 다시 더해진다.
-function _mStockPubNow(p){ try{ var k=_rtItemKey(p); if(k){ window._mUserTouched && window._mUserTouched.add('product:'+k); realtimePublish('product', p); } }catch(e){} }
-function _ekStockOnPublish(type, key, item){
-  if(type!=='product' || key==null || !item) return;
+function _mStockPubNow(p, d){ try{ _ekStockOp(p, d); var k=_rtItemKey(p); if(k){ window._mUserTouched && window._mUserTouched.add('product:'+k); realtimePublish('product', p); } }catch(e){} }
+function _ekStockOnPublish(type, key, item){ /* [2026-11-04 v2] 증감은 바뀌는 곳에서 직접 기록(_ekStockOp) — 차이로 추정하면 노션 풀 등으로 바뀐 재고를 내 증감으로 잘못 세었다 */ }
+// 재고를 실제로 바꾼 곳에서 호출: 이 기기의 증감 1건을 id와 함께 기록하고 항목에 표시(_sops)
+function _ekStockOp(item, d){
   try{
-    var cur=+item.stock||0;
-    if(item._sbase!==undefined && item._sbase!==null && cur!==+item._sbase){
-      var id=String(_rtClientId)+'.'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-      (_ekStockMine[key]=_ekStockMine[key]||[]).push({id:id, d:cur-(+item._sbase), t:Date.now()});
-      item._sops=(Array.isArray(item._sops)?item._sops:[]).concat([id]).slice(-80);
-    }
-    item._sbase=cur;
+    d=+d||0; if(!item || !d) return;
+    var key=_rtItemKey(item); if(key==null) return;
+    var id=String(_rtClientId)+'.'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    (_ekStockMine[key]=_ekStockMine[key]||[]).push({id:id, d:d, t:Date.now()});
+    item._sops=(Array.isArray(item._sops)?item._sops:[]).concat([id]).slice(-80);
   }catch(e){}
 }
 function _ekStockOnRemote(type, key, incoming, merged){
@@ -2341,11 +2341,16 @@ async function manualSync(silent){
       const _byNid = new Map();
       localArr.forEach(x=>{ if(x && x._notionId && !_byNid.has(String(x._notionId))) _byNid.set(String(x._notionId), x); });
       const _base = Date.now()+idBase;
+      // [2026-11-04] 실시간 서버 값을 받은 항목(_ts 보유)은 늦게 도착한 노션 값으로 되돌리지 않는다(PC와 같은 기준).
+      //   노션에서 앱 저장보다 10분 넘게 뒤 직접 고친 건 반영. 예전엔 제품 재고·메모가 노션의 옛 값으로 바뀌었다.
+      const _rtT = ({'제품DB':'product','고객사':'client'})[label];
+      const _rtOn = !!(_rtT && typeof _rtSnapshotReceived!=='undefined' && _rtSnapshotReceived.has(_rtT));
       const _out = rows.map((r,i)=>{
         const m = mapFn(r);
         const prev = (m && m._notionId) ? _byNid.get(String(m._notionId)) : null;
         if(!prev) return {id:_base+i, ...m};
         if(prev._pending) return prev;
+        if(_rtOn && +prev._ts){ const _ed = r && r.last_edited_time ? Date.parse(r.last_edited_time) : NaN; if(!(!isNaN(_ed) && _ed > (+prev._ts) + 600000)) return prev; }
         return {...prev, ...m, id:prev.id};
       });
       const _pendNew = localArr.filter(x=>x && x._pending && !x._notionId);
@@ -3904,7 +3909,7 @@ async function mConfirmReturnComplete(ioId){
     const p = productDB.find(x=>x.id==io._matchedProductId);
     if(p){
       p.stock = (+p.stock||0) + 1;
-      _mStockPubNow(p);
+      _mStockPubNow(p, 1);
       stockHistory.push({
         id: genId(),
         productId: p.id,
@@ -3946,7 +3951,7 @@ async function mUndoReturnComplete(ioId){
     const p = productDB.find(x=>x.id==io._matchedProductId);
     if(p){
       p.stock = (+p.stock||0) - 1;
-      _mStockPubNow(p);
+      _mStockPubNow(p, -1);
       stockHistory.push({
         id: genId(),
         productId: p.id,
@@ -4257,8 +4262,9 @@ async function _applyStockCount(){
     const pid = +pidStr;
     const p = productDB.find(x => x.id === pid);
     if(!p) continue;
+    const _pv = +p.stock||0;
     p.stock = c.countedQty;
-    _mStockPubNow(p);
+    _mStockPubNow(p, c.countedQty - _pv);
     // 재고 이력 기록 (stockHistory에 추가)
     if(typeof stockHistory !== 'undefined' && Array.isArray(stockHistory)){
       stockHistory.push({
@@ -5812,7 +5818,7 @@ async function adjustProdStock(prodId, delta){
   const prevStock = +p.stock||0;
   const newStock = Math.max(0, prevStock + delta);
   p.stock = newStock;
-  _mStockPubNow(p);
+  _mStockPubNow(p, newStock - prevStock);
   // 화면 즉시 업데이트
   const el = document.getElementById(`prod_stock_${prodId}`);
   if(el) el.textContent = newStock;
@@ -5971,7 +5977,9 @@ async function saveProdEdit(prodId){
     showToast('✓ 수정됨 (로컬)','success');
   }
 
-  { const _ci=productDB.findIndex(x=>x.id==prodId); if(_ci>=0){ _mMergeInto('product', prodId, productDB[_ci], updated); productDB[_ci] = updated; } else productDB[i] = updated; }
+  { const _ci=productDB.findIndex(x=>x.id==prodId); const _b=_ekOpenBase.product; const _sd=(_b && String(_b.id)===String(prodId)) ? ((+updated.stock||0)-(+_b.snap.stock||0)) : 0;
+    if(_ci>=0){ _mMergeInto('product', prodId, productDB[_ci], updated); productDB[_ci] = updated; } else productDB[i] = updated;
+    if(_sd) _ekStockOp(updated, _sd); }   // 수정창에서 재고를 바꿨으면 그 차이를 내 증감으로 기록
   saveAll();
   closeModal();
   renderProdList();
@@ -7026,7 +7034,7 @@ function _applyIoToStock(io){
     if(prod){
       const prevStock = +prod.stock||0;
       prod.stock = prevStock + (sign * qty);
-      _mStockPubNow(prod);
+      _mStockPubNow(prod, sign * qty);
       // 재고 이력 기록
       stockHistory.push({
         id: genId(),
