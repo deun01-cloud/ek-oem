@@ -890,6 +890,12 @@ function _ekMergeFiles(cur, base, mine){
   var out=(Array.isArray(cur)?cur:[]).filter(function(f){ return !removed.has(_ekFileKey(f)); });
   var have=new Set(out.map(_ekFileKey));
   (mine||[]).forEach(function(f){ var k=_ekFileKey(f); if(!bk.has(k) && !have.has(k)){ out.push(f); have.add(k); } });
+  // 순서도 내 것을 따른다(1번 = 대표 썸네일) — PC와 동일. 남이 그 사이 추가한 사진은 뒤에 둔다.
+  var mi=new Map(); (mine||[]).forEach(function(f,i){ var k=_ekFileKey(f); if(!mi.has(k)) mi.set(k,i); });
+  out=out.map(function(f,i){ return {f:f,i:i}; }).sort(function(a,b){
+    var ai=mi.has(_ekFileKey(a.f))?mi.get(_ekFileKey(a.f)):1e9+a.i, bi=mi.has(_ekFileKey(b.f))?mi.get(_ekFileKey(b.f)):1e9+b.i;
+    return ai-bi;
+  }).map(function(x){ return x.f; });
   return out;
 }
 function _ek3Way(cur, base, mine){
