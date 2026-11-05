@@ -30842,7 +30842,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
         <thead><tr>
           <th style="width:30px">#</th>
           <th style="width:54px">고객사<br><span>客户</span></th>
-          <th style="width:66px">사진</th>
+          <th class="th-photo">사진<br><span>图片</span></th>
           <th style="width:54px">구분</th>
           <th style="width:100px">품번/<br>발주번호</th>
           <th style="min-width:220px">품목명 / 品名</th>
@@ -30897,9 +30897,14 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
       td.qty .qout{background:#ffe2e2;color:#a11a1a;border:1px solid #f0b4b4}
       td.qty .qover{background:#e8e0ff;color:#4c1d95;border:1px solid #c4b5fd}
       td.qty .cn{font-weight:400;font-size:9px;opacity:.75}
-      .thumb{width:64px;height:64px;margin:0 auto;border:1px solid #d0c8b4;border-radius:6px;overflow:hidden;background:#f5f2ea;display:flex;align-items:center;justify-content:center}
-      .thumb img{width:100%;height:100%;object-fit:cover;display:block}
-      .thumb.noimg::after{content:'📷';font-size:22px;opacity:.35}
+      /* 사진: 공장 캡처용으로 최대한 크게(160px) · 도면이 잘리지 않게 전체 표시(contain). 인쇄/PDF는 A4 가로에 맞춰 110px */
+      th.th-photo{width:172px}
+      .thumb{width:160px;height:160px;margin:0 auto;border:1px solid #d0c8b4;border-radius:6px;overflow:hidden;background:#fff;display:flex;align-items:center;justify-content:center}
+      .thumb img{width:100%;height:100%;object-fit:contain;display:block}
+      .thumb.noimg{background:#f5f2ea}
+      .thumb.noimg::after{content:'📷';font-size:34px;opacity:.35}
+      td.c:has(> .thumb){padding:4px}
+      @media print{th.th-photo{width:118px}.thumb{width:110px;height:110px}}
       tr.miss-fs td{background:#fff3c4}
       tr.miss-fs > td:first-child{box-shadow:inset 4px 0 0 #e0a800}
       td.fship .miss{color:#9a6b00;font-weight:800;font-size:12px;line-height:1.25;display:inline-block}
@@ -30932,7 +30937,7 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
       (function(){
         function fit(){
           // 표 최소 폭(약 1250px)이 창에 들어가는 한도에서 최대 1.4배 — 가로 스크롤 방지
-          var z=Math.min(1.4,Math.max(1,(window.innerWidth-40)/1250));
+          var z=Math.min(1.4,Math.max(1,(window.innerWidth-40)/1360));
           document.documentElement.style.setProperty('--fz',z.toFixed(3));
         }
         fit(); window.addEventListener('resize',fit); window.addEventListener('load',fit);
