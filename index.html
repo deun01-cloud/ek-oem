@@ -30921,11 +30921,23 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
       .toolbar{position:fixed;bottom:18px;right:18px;z-index:99}
       .toolbar button{padding:12px 22px;border:none;border-radius:10px;font-size:14px;font-weight:800;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.22);background:#b8923a;color:#fff}
       @media print{.toolbar{display:none}}
+      /* 화면(캡처용)에서는 글자·사진을 키워 보여줌 — 창 너비에 맞춰 최대 1.4배. 인쇄/PDF는 원래 크기 유지 */
+      @media screen{body{zoom:var(--fz,1.35)}}
     </style></head><body>
     ${sections}
     <div class="toolbar noprint">
       <button onclick="window.print()">🖨 PDF 저장 / 인쇄</button>
     </div>
+    <script>
+      (function(){
+        function fit(){
+          // 표 최소 폭(약 1250px)이 창에 들어가는 한도에서 최대 1.4배 — 가로 스크롤 방지
+          var z=Math.min(1.4,Math.max(1,(window.innerWidth-40)/1250));
+          document.documentElement.style.setProperty('--fz',z.toFixed(3));
+        }
+        fit(); window.addEventListener('resize',fit); window.addEventListener('load',fit);
+      })();
+    <\/script>
     </body></html>`;
 
   const w = window.open('', '_blank');
