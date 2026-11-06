@@ -42066,6 +42066,44 @@ window.migrateDuplicateCodes = async function(opts){
 let _consExplicitIds = null;
 let _consOriginTab = 'draft';  // 합본을 만든 탭(draft/billing) — 합본의 시작 단계 결정
 let _consMergeFromIds = null;   // 📑 합본 합치기 — 발행 확정 시 해제 후 흡수할 기존 합본 id(Set)
+// 📑 합본에 합본 — 모달(일반 진입)에서 기존 합본도 후보로 보여주고, 고르면 발행 시 해제 후 하나로 합친다.
+//    입금 기록이 있거나 완료된 합본은 해제하면 입금 기록이 사라지므로 후보에서 제외.
+function _consIsMergeable(c){
+  return !!(c && c._isConsolidated && !((+c.totalPaid||0) > 0) && c._invStage !== 'done');
+}
+function _consMergeableList(vendor){
+  if(!vendor || (_consExplicitIds && _consExplicitIds.size)) return [];
+  const _tabStage = (typeof _consOriginTab!=='undefined') ? _consOriginTab : 'draft';
+  return invoiceHistory.filter(c => {
+    if(!_consIsMergeable(c)) return false;
+    if((c.vendor||'') !== vendor) return false;
+    if(_tabStage && _tabStage!=='all' && (c._invStage||'draft') !== _tabStage) return false;
+    return true;
+  });
+}
+// 합본의 자식(개별) 명세서 목록
+function _consChildInvoices(c){
+  const ids = new Set((c.includedInvoiceIds||[]).map(String));
+  return invoiceHistory.filter(x => x && !x._isConsolidated &&
+    (ids.has(String(x.id)) || String(x._consolidatedInvoiceId)===String(c.id)));
+}
+// 모달 후보 = 일반 명세서 + (일반 진입일 때) 합칠 수 있는 기존 합본
+function _consPreviewCandidates(vendor, month){
+  return getConsolidationCandidates(vendor, month).concat(_consMergeableList(vendor)).sort((a,b)=>{
+    const da=(a.issuedAt||''), db=(b.issuedAt||'');
+    if(da!==db) return db.localeCompare(da);
+    return (+b.id||0)-(+a.id||0);
+  });
+}
+// 선택 목록(합본 포함)을 개별 명세서로 펼침 → { invs, mergeCons }
+function _consExpandSelection(list){
+  const mergeCons = list.filter(v => v._isConsolidated);
+  const out = [], seen = new Set();
+  list.filter(v => !v._isConsolidated).concat(...mergeCons.map(_consChildInvoices)).forEach(v => {
+    const k = String(v.id); if(!seen.has(k)){ seen.add(k); out.push(v); }
+  });
+  return { invs: out, mergeCons };
+}
 
 function getConsolidationCandidates(vendor, month){
   // 직접 선택 모드 — 발행월 무관, 고객사 동일·미합본 조건만 검증
@@ -42481,7 +42519,7 @@ function openConsolidationModal(opts){
   // 합본 후보가 있는 고객사들만 옵션으로
   const eligibleVendors = [...new Set(
     invoiceHistory
-      .filter(v => !v._isConsolidated && !v._consolidatedInvoiceId)
+      .filter(v => (!v._isConsolidated && !v._consolidatedInvoiceId) || _consIsMergeable(v))
       .map(v => v.vendor)
       .filter(Boolean)
   )].sort();
@@ -42543,7 +42581,7 @@ function toggleConsSelectAll(){
   const vendor = document.getElementById('cons_vendor').value;
   const month = document.getElementById('cons_month').value;
   if(!vendor || !month) return;
-  const candidates = getConsolidationCandidates(vendor, month);
+  const candidates = _consPreviewCandidates(vendor, month);
   if(!_consSelectedIds) _consSelectedIds = new Set();
   // 모두 선택돼 있으면 해제, 아니면 모두 선택
   const allSelected = candidates.length>0 && candidates.every(v => _consSelectedIds.has(String(v.id)));
@@ -42566,7 +42604,7 @@ function _refreshConsolidationPreview(){
     btn.disabled = true;
     return;
   }
-  const candidates = getConsolidationCandidates(vendor, month);
+  const candidates = _consPreviewCandidates(vendor, month);
   if(!candidates.length){
     area.innerHTML = '<div style="padding:14px;text-align:center;color:var(--org);background:rgba(232,144,32,.08);border-radius:6px;border:1px solid rgba(232,144,32,.2);font-size:11.5px">⚠ <b>'+vendor+'</b>의 현재 탭에 합본 가능한 명세서가 없습니다 (다른 탭을 확인하세요)</div>';
     btn.disabled = true;
@@ -42583,22 +42621,23 @@ function _refreshConsolidationPreview(){
   }
   // 선택된 것만 합산
   const selected = candidates.filter(v => _consSelectedIds.has(String(v.id)));
-  const summary = calcConsolidationSummary(selected);
+  const summary = calcConsolidationSummary(_consExpandSelection(selected).invs);  // 합본은 자식 명세서 기준으로 합산
   // 후보 명세서 행 HTML (체크박스 포함)
   const allSelected = candidates.length>0 && selected.length === candidates.length;
   const selectAllLabel = allSelected ? '☑ 전체 해제' : '☐ 전체 선택';
   const rowsHtml = candidates.map(v => {
-    const prepaid = getInvoicePrepaid(v);
+    const isCons = !!v._isConsolidated;
+    const prepaid = isCons ? (+v.prepaidDeducted||0) : getInvoicePrepaid(v);
     const isSample = v._fromSample;
-    const ordLabel = isSample ? '🧪 샘플' : (v.ordNo || '—');
-    const ordColor = isSample ? '#7A4DB5' : 'var(--t3)';
+    const ordLabel = isCons ? '📑 합본 '+(v.consolidationMonth||'')+' ('+(v.includedInvoiceIds||[]).length+'건)' : (isSample ? '🧪 샘플' : (v.ordNo || '—'));
+    const ordColor = (isCons || isSample) ? '#7A4DB5' : 'var(--t3)';
     const checked = _consSelectedIds.has(String(v.id));
     const rowOpacity = checked ? '1' : '0.5';
     const rowBg = checked ? 'rgba(122,77,181,.04)' : 'transparent';
     return `<div onclick="toggleConsItem('${v.id}')" style="display:grid;grid-template-columns:36px 90px 1fr 110px 110px;gap:8px;align-items:center;padding:7px 10px;border-bottom:1px solid var(--bdr);font-size:11.5px;cursor:pointer;opacity:${rowOpacity};background:${rowBg}" onmouseover="this.style.background='var(--s2)'" onmouseout="this.style.background='${rowBg}'">
       <input type="checkbox" ${checked?'checked':''} onclick="event.stopPropagation();toggleConsItem('${v.id}')" style="width:18px;height:18px;cursor:pointer;margin:0;display:block;flex-shrink:0">
       <span style="color:var(--t3)">${v.issuedAt}</span>
-      <span style="color:${ordColor};font-family:monospace;font-size:10.5px">${ordLabel}${v.itemSummary?'<span style="margin-left:6px;color:var(--t3);font-family:inherit;font-size:10px">— '+v.itemSummary.slice(0,40)+(v.itemSummary.length>40?'...':'')+'</span>':''}</span>
+      <span style="color:${ordColor};font-family:monospace;font-size:10.5px;${isCons?'font-weight:700':''}">${ordLabel}${(v.itemSummary && !isCons)?'<span style="margin-left:6px;color:var(--t3);font-family:inherit;font-size:10px">— '+v.itemSummary.slice(0,40)+(v.itemSummary.length>40?'...':'')+'</span>':''}</span>
       <span style="text-align:right;font-weight:600">₩${(+v.total||0).toLocaleString()}</span>
       <span style="text-align:right;color:#7A4DB5;font-weight:${prepaid>0?'700':'400'}">${prepaid>0?'-₩'+prepaid.toLocaleString():'—'}</span>
     </div>`;
@@ -42620,7 +42659,7 @@ function _refreshConsolidationPreview(){
     </div>
     <div style="margin-top:10px;padding:12px 14px;background:rgba(122,77,181,.06);border:1.5px solid rgba(122,77,181,.25);border-radius:6px">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;font-size:11.5px">
-        <div><div style="color:var(--t3);font-size:10px">묶을 명세서</div><div style="font-weight:700;font-size:13px">${summary.count}건</div></div>
+        <div><div style="color:var(--t3);font-size:10px">묶을 명세서${selected.some(v=>v._isConsolidated)?' <span style="color:#7A4DB5">(합본 펼침)</span>':''}</div><div style="font-weight:700;font-size:13px">${summary.count}건</div></div>
         <div><div style="color:var(--t3);font-size:10px">합계금액</div><div style="font-weight:700;font-size:13px">₩${summary.total.toLocaleString()}</div></div>
         <div><div style="color:#7A4DB5;font-size:10px">선금 차감</div><div style="font-weight:700;font-size:13px;color:#7A4DB5">−₩${summary.prepaidDeducted.toLocaleString()}</div></div>
         <div style="text-align:right"><div style="color:var(--gold-lt);font-size:10px;font-weight:600">실제 청구액</div><div style="font-weight:700;font-size:15px;color:var(--gold-lt)">₩${summary.chargeAmount.toLocaleString()}</div></div>
@@ -42646,30 +42685,47 @@ function confirmConsolidation(){
   const month = document.getElementById('cons_month').value;
   const memo = document.getElementById('cons_memo').value;
   if(!vendor || !month) return;
-  const candidates = getConsolidationCandidates(vendor, month);
+  const candidates = _consPreviewCandidates(vendor, month);
   if(!candidates.length){
     showToast('⚠ 합본 대상 명세서가 없습니다','var(--red)');
     return;
   }
-  // 선택된 것만 묶기
-  const selectedIds = _consSelectedIds ? [..._consSelectedIds] : [];
-  const selected = candidates.filter(v => selectedIds.includes(String(v.id)));
+  // 선택된 것만 묶기 — 고른 합본은 자식 명세서로 펼침 (📑 합본에 합본)
+  const _selRaw = candidates.filter(v => _consSelectedIds && _consSelectedIds.has(String(v.id)));
+  const _exp = _consExpandSelection(_selRaw);
+  const selected = _exp.invs;
+  const selectedIds = selected.map(v => String(v.id));
   if(!selected.length){
     showToast('⚠ 묶을 명세서를 1건 이상 선택해주세요','var(--red)');
     return;
   }
+  if(_exp.mergeCons.length === 1 && _selRaw.length === 1){
+    showToast('⚠ 합본 1건만 선택됨 — 함께 합칠 합본이나 명세서를 더 선택하세요','var(--org)',4000);
+    return;
+  }
+  if(_exp.mergeCons.some(c => !_consChildInvoices(c).length)){
+    showToast('⚠ 세부 명세서를 찾을 수 없는 합본이 있습니다 — 합칠 수 없습니다','var(--red)',4000);
+    return;
+  }
+  // 이번에 합칠 합본(모달에서 고른 것 + 체크박스 선택으로 넘어온 것)
+  const _mergeIdSet = new Set([...(_consMergeFromIds||[])].map(String).concat(_exp.mergeCons.map(c=>String(c.id))));
   // 확인 (사용자에게 한 번 더 안내)
   const summary = calcConsolidationSummary(selected);
-  const skipped = candidates.length - selected.length;
+  const skipped = candidates.length - _selRaw.length;
   let msg = `${vendor}의 명세서 ${summary.count}건을 묶어 ${month} 귀속 합본 청구서를 발행하시겠습니까?\n\n합계: ₩${summary.total.toLocaleString()}\n선금 차감: −₩${summary.prepaidDeducted.toLocaleString()}\n실제 청구액: ₩${summary.chargeAmount.toLocaleString()}`;
   if(skipped > 0){
     msg += `\n\n※ 선택하지 않은 ${skipped}건은 합본에 들어가지 않습니다 (개별 상태로 남음)`;
   }
-  const _mergeCons = _consMergeFromIds ? invoiceHistory.filter(v => v._isConsolidated && _consMergeFromIds.has(String(v.id))) : [];
+  const _mergeCons = _mergeIdSet.size ? invoiceHistory.filter(v => v._isConsolidated && _mergeIdSet.has(String(v.id))) : [];
   if(_mergeCons.length){
     msg += `\n\n📑 기존 합본 ${_mergeCons.length}건(${_mergeCons.map(c=>c.consolidationMonth+' '+(c.includedInvoiceIds||[]).length+'건').join(', ')})을 해제하고 하나로 합칩니다.`;
   }
   if(!confirm(msg)) return;
+  // 합본을 펼쳐 합치는 경우 — 해제 후 자식 명세서를 직접 선택 모드로 후보에 고정 (탭 단계 필터 무관)
+  if(_mergeCons.length){
+    _consExplicitIds = new Set(selectedIds);
+    _consMergeFromIds = _mergeIdSet;
+  }
   // 가드 활성화 + 버튼 비활성화 (확인 다이얼로그 후 시점)
   _consolidationInProgress = true;
   if(btn){ btn.disabled = true; btn.style.opacity = '.5'; btn.textContent = '발행 중...'; }
