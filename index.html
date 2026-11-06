@@ -37620,9 +37620,28 @@ function ndTab(tab){
   renderNdTable(tab);
 }
 
+// 상단 월 선택을 바꾸면 월별 실적 화면도 그 달 기준으로 다시 그린다
+document.addEventListener('change', function(e){
+  if(!e.target || e.target.id!=='g-period') return;
+  try{
+    const mb=document.getElementById('mgt-monthly-body');
+    if(mb && mb.offsetParent!==null && typeof vMonthly==='function'){
+      vMonthly(mb);
+      if(typeof renderMonthlyPnlTable==='function') renderMonthlyPnlTable(mb);
+    }
+  }catch(err){ console.warn('[월별 실적 재렌더]', err); }
+});
 function vMonthly(c){
   const now=new Date();
-  const thisY=now.getFullYear(), thisM=now.getMonth();
+  // 📅 상단 월 선택(g-period)을 기준 달로 쓴다 (2026-11-06) — 10월을 고르면 10월 실적·10월까지 6개월 차트.
+  //    선택이 없거나 미래 달이면 오늘 기준.
+  let thisY=now.getFullYear(), thisM=now.getMonth();
+  try{
+    const _per=(document.getElementById('g-period')||{}).value||'';
+    const _m=/^(\d{4})-(\d{2})$/.exec(_per);
+    if(_m){ const y=+_m[1], mo=+_m[2]-1; if(y*12+mo <= thisY*12+thisM){ thisY=y; thisM=mo; } }
+  }catch(e){}
+  const _isCurMonth = (thisY===now.getFullYear() && thisM===now.getMonth());
 
   // ── 최근 6개월 레이블 동적 생성 ──
   const months=[],mLabels=[];
@@ -37662,7 +37681,7 @@ function vMonthly(c){
   //   · 진행중 발주(확정·취소·취소보류 제외)의 품목별 (발주수량 − 출고수량 shipLog 합) × 단가
   //   · 자사 브랜드(비비케이트)는 제외
   //   (예전엔 '미출고 발주 전체 + 출고됐지만 명세서 미발행' 기준이라, 부분출고분·청구 전 출고분까지 섞여 부풀려졌다)
-  const _SELF_BRANDS = ['비비케이트'];
+  const _SELF_BRANDS = ['비비케이트','루엘','RUHEL'];   // 자사 브랜드 — 청구성 지표에서 제외 (루엘 추가 2026-11-06)
   const _isSelfBrand = o => _SELF_BRANDS.includes((o.vendor||'').trim());
   function ordRemainAmt(o){
     if(_isSelfBrand(o)) return 0;
@@ -37887,7 +37906,7 @@ function vMonthly(c){
       <!-- 이번달 누적 매출 -->
       <div style="background:var(--s1);border:2px solid var(--grn);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden">
         <div style="position:absolute;top:0;left:0;right:0;height:3px;background:var(--grn)"></div>
-        <div style="font-size:10px;color:var(--grn);font-weight:700;margin-bottom:6px">이번달 누적 매출</div>
+        <div style="font-size:10px;color:var(--grn);font-weight:700;margin-bottom:6px">${thisM+1}월 ${_isCurMonth?'누적 ':''}매출</div>
         <div style="font-size:24px;font-weight:700;color:var(--t1)" title="${thisMonthRevenue.toLocaleString()}원">${fmtMoney(thisMonthRevenue)}<span style="font-size:12px;font-weight:400;color:var(--t3);margin-left:2px">${thisMonthRevenue>0?'원':''}</span></div>
         <div style="font-size:10.5px;color:var(--t3);margin-top:4px">명세서 ${thisMonthInvoices.length}건 발행</div>
       </div>
