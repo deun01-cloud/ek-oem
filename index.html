@@ -7257,8 +7257,16 @@ function renderPdImgPrev(){
   // → 따옴표·특수문자 안전, 좌우 화살표로 다음/이전 이동 가능
   window._pdImgPrev = pdImgBuf.map(im => ({url:im.url, name:im.name||''}));
   el.innerHTML=pdImgBuf.map((img,i)=>`
-    <div style="position:relative;flex-shrink:0;width:80px;height:80px">
-      <img src="${img.url||''}"
+    <div class="file-thumb" draggable="true"
+         ondragstart="_thumbDragStart(event,'pdImgBuf',${i})"
+         ondragover="_thumbDragOver(event,'pdImgBuf',${i})"
+         ondragleave="_thumbDragLeave(event)"
+         ondrop="_thumbDrop(event,'pdImgBuf',${i})"
+         ondragend="_thumbDragEnd(event)"
+         title="드래그해서 순서 변경 (1번 = 대표 썸네일) · 클릭하면 확대"
+         style="position:relative;flex-shrink:0;width:80px;height:80px;cursor:grab;border-radius:6px;overflow:visible;border:none;${i===0&&pdImgBuf.length>1?'outline:2px solid #b8923a;outline-offset:-2px;':''}">
+      ${pdImgBuf.length>1?`<div style="position:absolute;bottom:3px;left:3px;z-index:3;pointer-events:none;border-radius:7px;padding:1px 5px;font-size:8.5px;font-weight:800;line-height:1.4;${i===0?'background:#b8923a;color:#fff':'background:rgba(0,0,0,.6);color:#fff'}">${i===0?'⭐ 대표':(i+1)}</div>`:''}
+      <img src="${img.url||''}" draggable="false"
            style="width:80px;height:80px;object-fit:cover;border-radius:6px;border:1.5px solid var(--bdr);cursor:zoom-in;display:block"
            title="클릭하면 확대"
            onerror="this.onerror=null;this.style.display='none';this.insertAdjacentHTML('afterend','<span style=\\'display:flex;align-items:center;justify-content:center;width:80px;height:80px;border-radius:6px;border:1.5px dashed var(--red);color:var(--red);font-size:10px;text-align:center;line-height:1.2\\'>이미지 없음<br>재업로드 필요</span>')"
@@ -24652,6 +24660,7 @@ function _bufByName(buf){
   else if(buf === 'smpSrcBuf') return (typeof smpSrcBuf!=='undefined') ? smpSrcBuf : null;
   else if(buf === 'smpCadBuf') return (typeof smpCadBuf!=='undefined') ? smpCadBuf : null;
   else if(buf === 'smpRefBuf') return (typeof smpRefBuf!=='undefined') ? smpRefBuf : null;
+  else if(buf === 'pdImgBuf')  return (typeof pdImgBuf!=='undefined') ? pdImgBuf : null;
   return null;
 }
 function _thumbDragStart(e, buf, i){
@@ -24694,9 +24703,10 @@ function reorderBuf(buf, from, to, slotMode){
   const it = arr.splice(from,1)[0];
   arr.splice(to,0,it);
   // 사진 순서는 입력폼이 아니라서 모달 dirty 검사에 안 잡힌다 → 별도 표식
-  try{ const _ov=document.getElementById('mSmp'); if(_ov) _ov._extraDirty=true; }catch(_){}
-  if(typeof renderSmpPrev==='function') renderSmpPrev();
-  if(buf==='smpImgBuf' && to===0 && typeof showToast==='function')
+  try{ const _ov=document.getElementById(buf==='pdImgBuf'?'mProduct':'mSmp'); if(_ov) _ov._extraDirty=true; }catch(_){}
+  if(buf==='pdImgBuf'){ if(typeof renderPdImgPrev==='function') renderPdImgPrev(); }
+  else if(typeof renderSmpPrev==='function') renderSmpPrev();
+  if((buf==='smpImgBuf' || buf==='pdImgBuf') && to===0 && typeof showToast==='function')
     showToast('✓ 1번으로 이동 — 이 사진이 대표 썸네일이 됩니다','var(--grn)',2000);
 }
 
