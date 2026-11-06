@@ -22029,7 +22029,7 @@ async function deleteQuoteFromNotion(qt){
 
 // ── Sales data (declared early to avoid TDZ) ──
 let clients=[], proposals=[], projects=[], quotes=[];
-let _salesInited=false, _salesSubTab=(function(){try{const t=localStorage.getItem('ek3_salesSubTab');return ['inquiry','quotes','clients','factories','salestool'].includes(t)?t:'inquiry';}catch(e){return 'inquiry';}})(); // 신규 제안·제안서 생성기 탭 삭제(2026-11-06)
+let _salesInited=false, _salesSubTab=(function(){try{const t=localStorage.getItem('ek3_salesSubTab');return ['quotes','clients','factories','salestool'].includes(t)?t:'quotes';}catch(e){return 'quotes';}})(); // 신규 제안·제안서 생성기·고객사 문의 탭 삭제(2026-11-06)
 const SL_K={cli:'ek_v9_cli',fac:'ek_v9_fac',prop:'ek_v9_prop',prj:'ek_v9_prj',inq:'ek_inquiries',nd:'ek_newdesigns',qt:'ek_quotes'};
 // 🛡 slLoad()가 저장소를 읽기 전에는 slSave()가 쓰지 않는다 (2026-11-02).
 //   부팅 중 load() → _dedupAllTypes() → slSave()가 slLoad()보다 먼저 돌아, 아직 빈 배열인
@@ -37240,7 +37240,6 @@ function renderSalesTab(){
   const c=document.getElementById('content');
   c.innerHTML=`
   <div style="display:flex;border-bottom:1px solid var(--bdr);background:var(--s1);margin:-14px -16px 14px;padding:0 16px;overflow-x:auto">
-    <button class="sl-subtab ${_salesSubTab==='inquiry'?'on':''}" onclick="setSalesSubTab('inquiry')">📬 고객사 문의</button>
     <button class="sl-subtab ${_salesSubTab==='quotes'?'on':''}" onclick="setSalesSubTab('quotes')">📋 견적서</button>
     <button class="sl-subtab ${_salesSubTab==='clients'?'on':''}" onclick="setSalesSubTab('clients')">🏢 고객사</button>
     <button class="sl-subtab ${_salesSubTab==='factories'?'on':''}" onclick="setSalesSubTab('factories')">🏭 공장</button>
@@ -37256,7 +37255,7 @@ function setSalesSubTab(tab){
   try{ localStorage.setItem('ek3_salesSubTab', tab); }catch(e){}
   // update tab buttons
   document.querySelectorAll('.sl-subtab').forEach(b=>{
-    const label = {inquiry:'문의',quotes:'견적',clients:'고객사',factories:'공장',salestool:'영업 자료'}[tab];
+    const label = {quotes:'견적',clients:'고객사',factories:'공장',salestool:'영업 자료'}[tab];
     b.classList.toggle('on', label && b.textContent.includes(label));
   });
   renderSalesSubTab();
@@ -37266,12 +37265,11 @@ function renderSalesSubTab(){
   const c=document.getElementById('slTabContent');
   if(!c) return;
   c.innerHTML='';
-  if(_salesSubTab==='inquiry') vInquiry(c);
-  else if(_salesSubTab==='quotes') vQuotes(c);
+  if(_salesSubTab==='quotes') vQuotes(c);
   else if(_salesSubTab==='clients') vClients(c);
   else if(_salesSubTab==='factories') vFactories(c);
   else if(_salesSubTab==='salestool') vSalesTools(c);
-  else { _salesSubTab='inquiry'; vInquiry(c); } // fallback (월별 실적은 경영지원으로 이동)
+  else { _salesSubTab='quotes'; vQuotes(c); } // fallback (월별 실적은 경영지원으로 이동)
 }
 
 // Override closeDp / showClientDp / showClientPropDp to use slDp panel
@@ -45219,315 +45217,6 @@ function buildQuoteHtml(q){
 // HTML escape
 function escHtml(s){
   return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
-
-// ════════════════════════════════════════════════════════════════
-// 📬 고객사 문의 관리
-// ════════════════════════════════════════════════════════════════
-// var 사용: TDZ(Temporal Dead Zone) 회피 — switchTab이 스크립트 평가 완료 전에
-// 호출돼도 vInquiry 안에서 안전하게 접근 가능 (let은 접근 시 ReferenceError)
-var _inqFilter='all';
-var _inqImgBuf=[];
-var _inqFileBuf=[];
-function setInqFilter(v){ _inqFilter=v; renderSalesSubTab(); }
-
-function vInquiry(c){
-  // var 사용으로 TDZ는 회피했지만, 한 번 더 안전망: undefined면 'all' 폴백
-  if(typeof _inqFilter === 'undefined') _inqFilter = 'all';
-  if(typeof inquiries !== 'undefined') _ensureIds(inquiries, '문의');
-  let list=[...(typeof inquiries!=='undefined'?inquiries:[])];
-  if(_inqFilter==='open') list=list.filter(q=>q.status!=='완료'&&q.status!=='취소');
-  if(_inqFilter==='closed') list=list.filter(q=>q.status==='완료'||q.status==='취소');
-  list.sort((a,b)=>(b.receivedAt||'').localeCompare(a.receivedAt||''));
-
-  const openCnt=inquiries.filter(q=>q.status!=='완료'&&q.status!=='취소').length;
-  const closedCnt=inquiries.filter(q=>q.status==='완료'||q.status==='취소').length;
-
-  const STATUS_COLORS={'접수':'var(--red)','처리중':'var(--org)','답변대기':'var(--blu)','완료':'var(--grn)','취소':'var(--t3)'};
-
-  c.innerHTML=`
-  <div class="card">
-    <div class="ch" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-      <div>
-        <div class="ch-t">📬 고객사 문의 관리</div>
-        <div class="ch-s">고객사로부터 접수된 문의·요청 사항</div>
-      </div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <div style="display:flex;gap:2px;padding:3px;background:var(--s2);border:1px solid var(--bdr);border-radius:8px">
-          <button onclick="setInqFilter('all')" style="padding:5px 12px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${_inqFilter==='all'?'700':'500'};background:${_inqFilter==='all'?'var(--s1)':'transparent'};color:${_inqFilter==='all'?'var(--t1)':'var(--t3)'}">전체 <span style="font-size:10px;opacity:.7">${inquiries.length}</span></button>
-          <button onclick="setInqFilter('open')" style="padding:5px 12px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${_inqFilter==='open'?'700':'500'};background:${_inqFilter==='open'?'var(--s1)':'transparent'};color:${_inqFilter==='open'?'var(--org)':'var(--t3)'}">🔄 처리중 <span style="font-size:10px;opacity:.7">${openCnt}</span></button>
-          <button onclick="setInqFilter('closed')" style="padding:5px 12px;font-size:11.5px;border:none;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:${_inqFilter==='closed'?'700':'500'};background:${_inqFilter==='closed'?'var(--s1)':'transparent'};color:${_inqFilter==='closed'?'var(--grn)':'var(--t3)'}">✓ 완료 <span style="font-size:10px;opacity:.7">${closedCnt}</span></button>
-        </div>
-        <button class="btn bp bs" onclick="openInqModal()">+ 문의 등록</button>
-      </div>
-    </div>
-    ${list.length ? `
-    <div class="tbl-wrap"><table>
-      <thead><tr>
-        <th style="width:90px">접수일</th>
-        <th style="width:140px">고객사</th>
-        <th>문의 내용</th>
-        <th style="width:90px">카테고리</th>
-        <th style="width:90px">담당자</th>
-        <th style="width:80px">상태</th>
-        <th style="width:50px"></th>
-      </tr></thead>
-      <tbody>
-      ${list.map(q=>{
-        const isDone=q.status==='완료'||q.status==='취소';
-        const stColor=STATUS_COLORS[q.status]||'var(--t3)';
-        return `<tr style="cursor:pointer;${isDone?'opacity:.65':''}" onclick="openInqModal('${q.id}')">
-          <td style="font-size:11px;color:var(--t3);white-space:nowrap">${q.receivedAt||''}</td>
-          <td><span class="cl-lbl">${vendorInitHtml(q.vendor,true)}<span class="cn">${q.vendor||'-'}</span></span></td>
-          <td style="font-size:12px">${(q.content||'').slice(0,80)}${(q.content||'').length>80?'…':''}${(()=>{const n=((q.imgs||[]).length+(q.files||[]).length);return n?` <span style="font-size:10px;color:var(--gold-lt);margin-left:4px">📎${n}</span>`:''})()}</td>
-          <td><span class="chip" style="font-size:10px">${q.category||'일반'}</span></td>
-          <td style="font-size:11.5px;color:var(--t2)">${q.manager||'-'}</td>
-          <td><span class="chip" style="font-size:10.5px;background:${stColor}15;border-color:${stColor}40;color:${stColor};font-weight:600">${q.status||'접수'}</span></td>
-          <td style="text-align:center"><button onclick="event.stopPropagation();deleteInq('${q.id}')" style="padding:2px 6px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;color:var(--t3);font-family:inherit">삭제</button></td>
-        </tr>`;
-      }).join('')}
-      </tbody>
-    </table></div>
-    ` : `<div style="padding:40px;text-align:center;color:var(--t3);font-size:13px">
-      ${_inqFilter==='open'?'처리 중인 문의가 없습니다':_inqFilter==='closed'?'완료된 문의가 없습니다':'등록된 문의가 없습니다 — 오른쪽 위 <b>+ 문의 등록</b>으로 추가하세요'}
-    </div>`}
-  </div>`;
-}
-
-function openInqModal(id){
-  const q = id ? inquiries.find(x=>x.id==id) : null;
-  _ekBaseSet('inquiry', q);
-  // 기존 첨부 파일 로드
-  _inqImgBuf = q ? [...(q.imgs||[])] : [];
-  _inqFileBuf = q ? [...(q.files||[])] : [];
-  const todayS = toLocalDateStr(new Date());
-  const vendorOpts = clients.map(cl=>`<option value="${(cl.name||'').replace(/"/g,'&quot;')}">${cl.name}</option>`).join('');
-  const html = `
-    <div style="font-size:15px;font-weight:700;margin-bottom:12px">📬 ${id?'문의 수정':'고객사 문의 등록'}</div>
-    <div class="fg"><label>고객사 *</label>
-      <input class="fi" id="inq_vendor" list="inq_vendor_dl" value="${q?q.vendor||'':''}" placeholder="고객사명 (등록 또는 직접 입력)">
-      <datalist id="inq_vendor_dl">${vendorOpts}</datalist>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div class="fg"><label>접수일 *</label><input class="fi" type="date" id="inq_date" value="${q?q.receivedAt||todayS:todayS}"></div>
-      <div class="fg"><label>담당자</label><input class="fi" id="inq_manager" value="${q?q.manager||'':''}" placeholder="담당자명"></div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div class="fg"><label>카테고리</label>
-        <select class="fs" id="inq_category">
-          ${['일반','견적','납기','재고','불량/AS','샘플요청','기타'].map(opt=>`<option value="${opt}" ${q&&q.category===opt?'selected':''}>${opt}</option>`).join('')}
-        </select>
-      </div>
-      <div class="fg"><label>상태</label>
-        <select class="fs" id="inq_status">
-          ${['접수','처리중','답변대기','완료','취소'].map(opt=>`<option value="${opt}" ${q&&q.status===opt?'selected':(!q&&opt==='접수'?'selected':'')}>${opt}</option>`).join('')}
-        </select>
-      </div>
-    </div>
-    <div class="fg"><label>문의 내용 *</label>
-      <textarea class="fi" id="inq_content" rows="4" placeholder="고객사 문의 내용을 입력하세요">${q?q.content||'':''}</textarea>
-    </div>
-    <div class="fg"><label>답변/처리 메모</label>
-      <textarea class="fi" id="inq_reply" rows="3" placeholder="답변 또는 처리 내용 메모">${q?q.reply||'':''}</textarea>
-    </div>
-    <div class="fg"><label>📎 파일 첨부 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(이미지·PDF·문서 등 · 여러 개 가능)</span></label>
-      <div class="drop-zone" id="inqDropZone" style="padding:14px 16px;cursor:pointer;min-height:unset" onclick="document.getElementById('inqFileInput').click()" ondragover="dzOver(event,this)" ondragleave="dzOut(this)" ondrop="handleInqDropAll(event)">
-        <input type="file" id="inqFileInput" multiple style="display:none" onchange="handleInqFilesAll(event)">
-        <div style="display:flex;align-items:center;gap:10px">
-          <span style="font-size:22px">📎</span>
-          <div>
-            <div style="font-size:12px;color:var(--t2);font-weight:600">드래그 · 클릭 · Ctrl+V로 파일 추가</div>
-            <div style="font-size:10.5px;color:var(--t3);margin-top:2px">이미지는 썸네일로, 그 외(PDF/문서 등)는 첨부파일로 자동 분류</div>
-          </div>
-        </div>
-      </div>
-      <div id="inqImgPrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div>
-      <div id="inqFilePrev" style="display:flex;flex-direction:column;gap:4px;margin-top:6px"></div>
-    </div>
-    <input type="hidden" id="inq_id" value="${q?q.id:''}">
-    <div class="ma">
-      <button class="btn bgo" onclick="closeM('mInquiry');_inqPasteCleanup()">취소</button>
-      ${id?'<button class="btn bp-red" onclick="deleteInq('+id+')">삭제</button>':''}
-      <button class="btn bp" onclick="saveInq()">저장</button>
-    </div>`;
-  let m = document.getElementById('mInquiry');
-  if(!m){
-    m = document.createElement('div');
-    m.id = 'mInquiry';
-    m.className = 'ov';
-    m.innerHTML = '<div class="modal" style="max-width:560px"></div>';
-    document.body.appendChild(m);
-  }
-  m.querySelector('.modal').innerHTML = html;
-  openM('mInquiry');
-  setTimeout(()=>{ renderInqImgPrev(); renderInqFilePrev(); }, 50);
-  // Ctrl+V paste handler
-  _inqPasteSetup();
-  // 충돌 감지: 수정 모드면 현재 노션 last_edited_time 스냅샷 기록
-  if(q && q._notionId) recordEditStart(q._notionId);
-}
-
-// ── 문의 모달용 파일 첨부 헬퍼 ──
-let _inqPasteHandler=null;
-function _inqPasteSetup(){
-  _inqPasteCleanup();
-  _inqPasteHandler = (e)=>{
-    // 모달이 열려 있을 때만 처리
-    const m = document.getElementById('mInquiry');
-    if(!m || !m.classList.contains('open')) return;
-    const items = e.clipboardData && e.clipboardData.items;
-    if(!items) return;
-    for(let i=0;i<items.length;i++){
-      const it = items[i];
-      if(it.kind==='file'){
-        const f = it.getAsFile();
-        if(!f) continue;
-        const r = new FileReader();
-        r.onload = ev => {
-          const ext=(f.name||'').split('.').pop()||'png';
-          const name=f.name && f.name!=='image.png' ? f.name : `paste_${toLocalDateStr(new Date())}_${Date.now()}.${ext}`;
-          if((f.type||'').startsWith('image/')){
-            _inqImgBuf.push({name, type:f.type, url:ev.target.result, size:f.size});
-            renderInqImgPrev();
-          } else {
-            _inqFileBuf.push({name, type:f.type||'application/octet-stream', url:ev.target.result, size:f.size});
-            renderInqFilePrev();
-          }
-        };
-        r.readAsDataURL(f);
-      }
-    }
-  };
-  document.addEventListener('paste', _inqPasteHandler);
-}
-function _inqPasteCleanup(){
-  if(_inqPasteHandler){
-    document.removeEventListener('paste', _inqPasteHandler);
-    _inqPasteHandler=null;
-  }
-}
-function _inqClassifyFile(f){
-  const r = new FileReader();
-  r.onload = ev => {
-    const item = {name:f.name, type:f.type||'application/octet-stream', url:ev.target.result, size:f.size};
-    if((f.type||'').startsWith('image/')){
-      _inqImgBuf.push(item);
-      renderInqImgPrev();
-    } else {
-      _inqFileBuf.push(item);
-      renderInqFilePrev();
-    }
-  };
-  r.readAsDataURL(f);
-}
-function handleInqFilesAll(e){
-  Array.from(e.target.files||[]).forEach(_inqClassifyFile);
-  e.target.value='';
-}
-function handleInqDropAll(e){
-  e.preventDefault();
-  const dz=document.getElementById('inqDropZone'); if(dz) dz.classList.remove('dz-over');
-  Array.from(e.dataTransfer.files||[]).forEach(_inqClassifyFile);
-}
-function renderInqImgPrev(){
-  const el = document.getElementById('inqImgPrev');
-  if(!el) return;
-  el.innerHTML = _inqImgBuf.map((im,i)=>`
-    <div style="position:relative;width:80px;height:80px;border-radius:6px;overflow:hidden;border:1px solid var(--bdr)">
-      <img src="${im.url}" style="width:100%;height:100%;object-fit:cover;cursor:pointer" onclick="openFilePreviewList(_inqImgBuf,${i})">
-      <button onclick="_inqImgBuf.splice(${i},1);renderInqImgPrev()" style="position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;border:none;background:rgba(0,0,0,.6);color:#fff;cursor:pointer;font-size:11px;line-height:1;padding:0">×</button>
-    </div>`).join('');
-}
-function renderInqFilePrev(){
-  const el = document.getElementById('inqFilePrev');
-  if(!el) return;
-  el.innerHTML = _inqFileBuf.map((f,i)=>{
-    const icon = /pdf/i.test(f.type)?'📄':/sheet|excel|xlsx?/i.test(f.type+f.name)?'📊':/cad|dxf|step|stp|iges|igs/i.test(f.name)?'🔧':/zip|rar|7z/i.test(f.type+f.name)?'🗜':/doc|word/i.test(f.type+f.name)?'📝':'📎';
-    const sizeKB = f.size ? Math.round(f.size/1024)+'KB' : '';
-    const stored = f.url && !String(f.url).startsWith('data:') ? '<span style="font-size:9px;color:var(--grn);margin-left:4px">☁</span>' : '<span style="font-size:9px;color:var(--t3);margin-left:4px">💾</span>';
-    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--bdr);border-radius:5px;background:var(--s1)">
-      <span style="font-size:16px">${icon}</span>
-      <div style="flex:1;min-width:0">
-        <div style="font-size:11.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${f.name}${stored}</div>
-        ${sizeKB?`<div style="font-size:9.5px;color:var(--t3)">${sizeKB}</div>`:''}
-      </div>
-      <button onclick="openFilePreviewList(_inqFileBuf,${i})" style="padding:2px 7px;font-size:10px;background:var(--s2);border:1px solid var(--bdr);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--t2)">보기</button>
-      <button onclick="_inqFileBuf.splice(${i},1);renderInqFilePrev()" style="padding:2px 7px;font-size:10px;background:none;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;color:var(--red);font-family:inherit">×</button>
-    </div>`;
-  }).join('');
-}
-
-async function saveInq(forceOverwrite){
-  if(!_validateRequired([{id:'inq_vendor',label:'고객사'},{id:'inq_content',label:'문의 내용'}])) return;
-  const vendor = gv('inq_vendor').trim();
-  const content = gv('inq_content').trim();
-  const id = gv('inq_id');
-  // 다중 사용자 충돌 감지 (수정 케이스만, 강제 저장이 아닐 때)
-  if(id && !forceOverwrite){
-    const existing = inquiries.find(x=>x.id==id);
-    if(existing && existing._notionId){
-      const check = await checkStaleBeforeSave(existing._notionId);
-      if(check.stale === true){
-        showStaleWarning(`문의 — ${existing.vendor||''}`,
-          ()=>saveInq(true),
-          null);
-        return;
-      }
-    }
-  }
-  // 첨부 파일 — base64인 것은 R2 업로드 (Worker 설정된 경우)
-  let imgs = [..._inqImgBuf];
-  let files = [..._inqFileBuf];
-  if(notionCfg.workerUrl){
-    const needUpload = imgs.some(im=>im.url&&String(im.url).startsWith('data:')) || files.some(f=>f.url&&String(f.url).startsWith('data:'));
-    if(needUpload){
-      showToast('🔄 파일 업로드 중...','var(--blu)',2500);
-      try{ imgs = await uploadImagesToR2(imgs); }catch(e){ console.warn('이미지 R2 업로드 실패:',e); }
-      try{ files = await uploadImagesToR2(files); }catch(e){ console.warn('파일 R2 업로드 실패:',e); }
-    }
-  }
-  const obj = {
-    vendor, receivedAt: gv('inq_date'), manager: gv('inq_manager'),
-    category: gv('inq_category'), status: gv('inq_status'),
-    content, reply: gv('inq_reply'),
-    imgs, files
-  };
-  let target;
-  if(id){
-    const i = inquiries.findIndex(x=>x.id==id);
-    if(i>=0){ target = _ekApply3('inquiry', inquiries, i, obj); }
-  } else {
-    target = {id:Date.now(), createdAt:new Date().toISOString(), ...obj};
-    inquiries.unshift(target);
-  }
-  slSave();
-  // Notion 동기화 (백그라운드) — 신규는 즉시(ID 받기), 업데이트는 디바운싱
-  if(target && notionCfg.workerUrl && notionCfg.inqDb){
-    if(id) debouncedSync('inquiry', target, true);
-    else syncInqToNotion(target, false).catch(e=>console.warn('문의 sync 실패:',e));
-    // 충돌 감지 스냅샷 정리
-    if(target._notionId) delete window._editStartSnapshots[target._notionId];
-  }
-  _inqPasteCleanup();
-  closeM('mInquiry');
-  showToast('✓ 문의 저장됨','var(--grn)');
-  renderSalesSubTab();
-}
-
-function deleteInq(id){
-  const q = inquiries.find(x=>x.id==id);
-  showConfirm(`"${q?.vendor||'문의'}" 항목을 삭제합니다.`, ()=>{
-    // Notion에서 먼저 삭제 (백그라운드)
-    if(q && q._notionId && notionCfg.workerUrl){
-      deleteInqFromNotion(q).catch(e=>console.warn('Notion 문의 삭제 실패:',e));
-    }
-    inquiries = inquiries.filter(x=>x.id!=id);
-    slSave();
-    _inqPasteCleanup();
-    closeM('mInquiry');
-    renderSalesSubTab();
-    showToast('✓ 삭제됨','var(--grn)');
-  });
 }
 
 // ── 고객사 이니셜 표시 헬퍼 ──
