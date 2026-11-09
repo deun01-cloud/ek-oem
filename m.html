@@ -3338,8 +3338,8 @@ function openDayPop(ds){
   if(smps.length){
     html += `<div style="font-size:11.5px;font-weight:700;color:var(--blu);margin:8px 0 4px">💎 샘플 (${smps.length})</div>`;
     smps.forEach(s=>{
-      const st=s.status||'의뢰';
-      const stCls = st==='완료'||st==='확정'?'s-done':st==='취소'?'s-cancel':st==='수정중'?'s-fix':st==='제작중'?'s-make':'s-req';
+      const st=(s.status==='수정중'?'제작중':s.status)||'의뢰';  // 수정중 → 제작중 통합 (2026-11-09)
+      const stCls = st==='완료'||st==='확정'?'s-done':st==='취소'?'s-cancel':st==='제작중'?'s-make':'s-req';
       // s.manager는 "업체" 정보 — 이니셜 배지로 표시
       const smpVendor = s.manager || (s.client && s.client.name) || s.brand || '';
       const initHtml = smpVendor ? initBadge(smpVendor) : '';
@@ -3533,7 +3533,7 @@ function setSmpCliFilter(c){
 
 function _getSmpAfterStatusFilter(){
   let list = samples.slice();
-  // PC 샘플 탭과 같은 구분: 의뢰 / 진행중(제작중·수정중) / 완료(확정·완료) / 취소 (2026-10-24)
+  // PC 샘플 탭과 같은 구분: 의뢰 / 진행중(제작중, 옛 수정중 포함) / 완료(확정·완료) / 취소 (2026-10-24)
   const st = s => String(s.status||'의뢰').trim();
   if(_smpFilter==='req')         list = list.filter(s=>st(s)==='의뢰');
   else if(_smpFilter==='active') list = list.filter(s=>st(s)==='제작중'||st(s)==='수정중');
@@ -3591,8 +3591,8 @@ function renderSmpList(){
     return;
   }
   el.innerHTML = groups.map(g=> _grpHeadHtml(g[0].manager, g.length) + g.map(s=>{
-    const st = s.status||'의뢰';
-    const stCls = st==='완료'||st==='확정'?'s-done':st==='취소'?'s-cancel':st==='수정중'?'s-fix':st==='제작중'?'s-make':'s-req';
+    const st = (s.status==='수정중'?'제작중':s.status)||'의뢰';  // 수정중 → 제작중 통합 (2026-11-09)
+    const stCls = st==='완료'||st==='확정'?'s-done':st==='취소'?'s-cancel':st==='제작중'?'s-make':'s-req';
     const dd = ddayLabel(s.due);
     const isDone = st==='완료'||st==='확정'||st==='취소';
     const ddHtml = dd && !isDone ? `<span class="dday ${dd.cls}">${dd.t}</span>` : '';
@@ -5715,8 +5715,8 @@ async function changeOrdStatus(ordId, newStatus){
 function showSmpDetail(id){
   const s = samples.find(x=>x.id==id);
   if(!s) return;
-  const st = s.status||'의뢰';
-  const stCls = st==='완료'||st==='확정'?'s-done':st==='취소'?'s-cancel':st==='수정중'?'s-fix':st==='제작중'?'s-make':'s-req';
+  const st = (s.status==='수정중'?'제작중':s.status)||'의뢰';  // 수정중 → 제작중 통합 (2026-11-09)
+  const stCls = st==='완료'||st==='확정'?'s-done':st==='취소'?'s-cancel':st==='제작중'?'s-make':'s-req';
 
   // 이미지 갤러리 — 라이트박스로 전체화면 보기
   const imgs = (s.imgs||[]).filter(im=>im && (im.url||typeof im==='string'));
@@ -5728,7 +5728,6 @@ function showSmpDetail(id){
   if(st !== '완료' && st !== '확정' && st !== '취소'){
     actHtml = `<div class="act-row">
       <button class="act-btn success" onclick="changeSmpStatus('${String(s.id).replace(/'/g,"\\'")}','완료')">✓ 완료</button>
-      <button class="act-btn warn" onclick="changeSmpStatus('${String(s.id).replace(/'/g,"\\'")}','수정중')">✎ 수정중</button>
       <button class="act-btn" onclick="changeSmpStatus('${String(s.id).replace(/'/g,"\\'")}','제작중')">⚙ 제작중</button>
     </div>`;
   } else {
@@ -6205,10 +6204,10 @@ function openSmpForm(smpId){
   const selOpt = (cur, opts) => opts.map(o => `<option value="${o}" ${cur===o?'selected':''}>${o}</option>`).join('');
   const platings = ['','골드','실버','로즈골드','로듐','14k 골드','14K 골드 / 로듐','블랙','실버버니쉬','무도금'];
   const types = ['EARRING','RING','NECKLACE','BRACELET','BROOCH','기타'];
-  const statuses = ['의뢰','제작중','수정중','완료','취소'];
+  const statuses = ['의뢰','제작중','완료','취소'];
   const curType = v('type') || 'RING';
   const curPlating = v('plating') || '';
-  const curStatus = v('status') || '의뢰';
+  const curStatus = (v('status')==='수정중' ? '제작중' : v('status')) || '의뢰';  // 수정중 → 제작중 통합 (2026-11-09)
   // PC에서 쓰는 '확정' 등 목록에 없는 현재 상태도 선택지에 넣는다 — 없으면 첫 값('의뢰')이 골라져, 메모만 고쳐도 상태가 '의뢰'로 되돌아갔다
   if(curStatus && !statuses.includes(curStatus)) statuses.splice(3, 0, curStatus);
   const body = `
