@@ -3377,7 +3377,8 @@ function normalizeOrderStatus(st){
   if(s === '진행중') return '제작중';
   if(s === '확정' || s === '출고완료' || s === '완료') return '확정';
   if(s === '보류' || s === '취소') return '취소보류';
-  if(['의뢰','제작중','수정중','확정','취소보류','부분출고'].includes(s)) return s;
+  if(s==='수정중') return '제작중';  // 2026-11-09: 수정중 → 제작중 통합
+  if(['의뢰','제작중','확정','취소보류','부분출고'].includes(s)) return s;
   return '의뢰';
 }
 function _ordStLabel(s){
@@ -5239,7 +5240,7 @@ function openOrdEdit(ordId){
   const o = orders.find(x=>x.id==ordId);
   if(!o) return;
   _ekBaseSet('order', o);
-  const statuses = ['의뢰','제작중','수정중','부분출고','확정','취소보류'];
+  const statuses = ['의뢰','제작중','부분출고','확정','취소보류'];
   const selOpt = (cur, opts) => opts.map(o => `<option value="${o}" ${cur===o?'selected':''}>${o==='확정'?'확정(출고완료)':o}</option>`).join('');
 
   // 행 편집 (단가/수량)
