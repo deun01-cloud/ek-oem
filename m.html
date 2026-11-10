@@ -1024,7 +1024,8 @@ function _rtSetWatermark(type, ts){
 //    6시간에 한 번은 전체 스냅샷을 받아 로컬을 서버 목록으로 맞춘다(_rtReplaceFromServer).
 const RT_FULL_SYNC_MS = 6*60*60*1000;
 function _rtNeedFullSync(){
-  try{ return (Date.now() - (+localStorage.getItem('ek_m_lastFullSync')||0)) > RT_FULL_SYNC_MS; }catch(e){ return true; }
+  // 앱 버전이 바뀌면(수정 배포 직후) 6시간을 기다리지 않고 바로 전체를 다시 받는다
+  try{ return localStorage.getItem('ek_m_lastFullSyncVer') !== APP_VERSION || (Date.now() - (+localStorage.getItem('ek_m_lastFullSync')||0)) > RT_FULL_SYNC_MS; }catch(e){ return true; }
 }
 function _rtBuildSince(){
   const since = {};
@@ -1057,7 +1058,7 @@ function _rtHandleSnapshot(msg){
   }
   console.log(RT_LOG_PREFIX, `스냅샷 수신: ${msg.type} ${items.length}건 ${msg.full===false?'(증분)':'(전체)'}`);
   if(msg.full !== false && _rtReplaceFromServer(msg.type, items)){
-    try{ localStorage.setItem('ek_m_lastFullSync', String(Date.now())); }catch(e){}
+    try{ localStorage.setItem('ek_m_lastFullSync', String(Date.now())); localStorage.setItem('ek_m_lastFullSyncVer', APP_VERSION); }catch(e){}
     saveAll();
     if(typeof renderCurrentPage === 'function') try{ renderCurrentPage(); }catch(_){}
     return;
@@ -7319,7 +7320,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-11-10-17';
+const APP_VERSION = '2026-11-10-18';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
