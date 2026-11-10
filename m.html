@@ -1118,6 +1118,8 @@ function _rtReplaceFromServer(type, items){
   const keysOf = x => [x && x._notionId ? String(x._notionId) : null, x && x.id!=null ? String(x.id) : null].filter(Boolean);
   const byKey = new Map(); arr.forEach(x=>{ keysOf(x).forEach(k=>{ if(!byKey.has(k)) byKey.set(k, x); }); });
   const used = new Set(), seen = new Set(), out = [];
+  // 같은 노션 페이지가 서버에 2건(옛 로컬 id·노션 id)으로 남은 경우 최신(_ts 큰) 쪽을 남긴다 — 예전엔 먼저 온 옛 '작성중' 건이 남아 PC와 달랐다
+  items = items.slice().sort((a,b)=>(+(b&&b._ts)||0)-(+(a&&a._ts)||0));
   items.forEach(it=>{
     if(!it) return;
     const ks = keysOf(it); if(!ks.length) return;
@@ -7317,7 +7319,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-11-10-16';
+const APP_VERSION = '2026-11-10-17';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
