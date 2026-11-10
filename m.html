@@ -1019,8 +1019,16 @@ function _rtSetWatermark(type, ts){
   _rtWatermarksM[type] = ts;
   try{ localStorage.setItem(RT_WM_KEY_M, JSON.stringify(_rtWatermarksM)); }catch(e){}
 }
+// 🧹 [근본수정 2026-11-10] 증분 동기화만 계속 쓰면, 서버에서 이미 지워졌는데 삭제 기록(deleted)이 이 기기에 안 온 항목이
+//    (오래 꺼둔 폰·삭제 기록 만료 등) 영영 남는다 → 폰에만 옛 명세서가 보이는 원인.
+//    6시간에 한 번은 전체 스냅샷을 받아 로컬을 서버 목록으로 맞춘다(_rtReplaceFromServer).
+const RT_FULL_SYNC_MS = 6*60*60*1000;
+function _rtNeedFullSync(){
+  try{ return (Date.now() - (+localStorage.getItem('ek_m_lastFullSync')||0)) > RT_FULL_SYNC_MS; }catch(e){ return true; }
+}
 function _rtBuildSince(){
   const since = {};
+  if(_rtNeedFullSync()) return since;   // 빈 since = 전체 스냅샷
   Object.keys(_rtWatermarksM).forEach(function(type){
     const arr = (typeof _rtGetLocalArray==='function') ? _rtGetLocalArray(type) : null;
     if(Array.isArray(arr) && arr.length) since[type] = _rtWatermarksM[type];   // 로컬이 비었으면 전체를 다시 받는다
@@ -1049,6 +1057,7 @@ function _rtHandleSnapshot(msg){
   }
   console.log(RT_LOG_PREFIX, `스냅샷 수신: ${msg.type} ${items.length}건 ${msg.full===false?'(증분)':'(전체)'}`);
   if(msg.full !== false && _rtReplaceFromServer(msg.type, items)){
+    try{ localStorage.setItem('ek_m_lastFullSync', String(Date.now())); }catch(e){}
     saveAll();
     if(typeof renderCurrentPage === 'function') try{ renderCurrentPage(); }catch(_){}
     return;
@@ -7308,7 +7317,7 @@ async function deleteAs(asId){
 // ════════════════════════════════════════════
 // 새 버전 배포 시 이 숫자만 올리면 → 기존 사용자 자동 캐시 클리어 + 새로고침
 // ⚠️ 배포 시마다 반드시 이 번호를 올려야 모바일 캐시가 자동으로 비워집니다 (YYYY-MM-DD-NN)
-const APP_VERSION = '2026-10-24-15';
+const APP_VERSION = '2026-11-10-16';
 
 async function checkAppVersion(){
   const savedVer = localStorage.getItem('ek_app_version');
