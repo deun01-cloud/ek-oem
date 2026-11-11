@@ -3062,7 +3062,7 @@ window.addEventListener('message', function(ev){
       <div>
         <div style="color:var(--t3);font-size:11.5px">생산원가</div>
         <div id="pd_prodCostDisplay" style="font-size:16px;font-weight:700;font-family:monospace;color:var(--t1)">₩0</div>
-        <div id="pd_costFormula" style="font-size:11px;color:var(--t3);margin-top:2px">위안가×240 + 중량×시세</div>
+        <div id="pd_costFormula" style="font-size:11px;color:var(--t3);margin-top:2px">위안가×220 + 중량×시세</div>
       </div>
       <div>
         <div style="color:var(--t3);font-size:11.5px">예상 마진</div>
@@ -6977,8 +6977,8 @@ function handlePdImgs(e){
 // 제품 원가 분석 (제품DB 모달)
 //   ※ 두 가지 '단가' 필드를 구분합니다:
 //     - 입고단가 (원): 이카운트 ERP에서 가져온 원화 단가 — 표시/보존만, 원가 계산에 사용 안 함
-//     - 위안화 입고단가 (¥): 중국 입고가 — 원가 계산에 사용 (× 240 환산)
-//   생산원가 = 위안화 입고단가 × 240 + 중량(g) × 시세 × 함량(14K 0.585 · 10K 0.417) × 해리 1.1 (10K 1.15 · 은 1.1) (matCostFactor)
+//     - 위안화 입고단가 (¥): 중국 입고가 — 원가 계산에 사용 (× QUOTE_CN_RATE 환산, 현재 220)
+//   생산원가 = 위안화 입고단가 × 220 + 중량(g) × 시세 × 함량(14K 0.585 · 10K 0.417) × 해리 1.1 (10K 1.15 · 은 1.1) (matCostFactor)
 //   판매단가 = 생산원가 ÷ (1 - 마진/100)
 // 사용자 흐름:
 //   1. 위안화 입고단가/중량/시세/마진 입력
@@ -6993,7 +6993,7 @@ function handlePdImgs(e){
 //   기존 칸에서 못 뽑으면 예전에 저장된 값(prev)을 그대로 둔다 — 값을 0으로 지우지 않는다.
 function _pdJproDerive(prev){
   prev=prev||{};
-  const RATE=(typeof window.QUOTE_CN_RATE!=='undefined')?window.QUOTE_CN_RATE:240;
+  const RATE=(typeof window.QUOTE_CN_RATE!=='undefined')?window.QUOTE_CN_RATE:220;
   const cny=+gv('pd_cnyPrice')||0;
   const type=String((typeof _getPdType==='function'?_getPdType():gv('pd_type'))||'').toUpperCase();
   const chainType=/NECKLACE|BRACELET|ANKLET/.test(type);
@@ -7061,16 +7061,16 @@ function updatePdCostAnalysis(){
     if(_lbl && _lbl.tagName==='LABEL') _lbl.textContent = _ownLock ? '마진 (자사 브랜드 ×1.1 고정)' : '마진 (%)';
   }
 
-  // 생산원가 = 위안화 입고단가 × 240 + 중량 × 시세
-  const QUOTE_CN_RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 240;
+  // 생산원가 = 위안화 입고단가 × QUOTE_CN_RATE + 중량 × 시세
+  const QUOTE_CN_RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 220;
   const _pdMatVal = (document.getElementById('pd_mat')||{}).value;
   const _purity = matPurity(_pdMatVal);
   const _mf = matCostFactor(_pdMatVal);
   const prodCost = Math.round(cny * QUOTE_CN_RATE + wt * mr * _mf);
   const _cfEl = document.getElementById('pd_costFormula');
   if(_cfEl) _cfEl.textContent = isGoldMat(_pdMatVal)
-    ? '위안가×240 + 중량×순금시세×' + _purity + '×' + (1 + goldLossRate(_pdMatVal)).toFixed(2).replace(/0$/,'') + '(해리)' + (mr ? ' (환산 ₩' + Math.round(mr*_mf).toLocaleString() + '/g)' : '')
-    : (isSilverMat(_pdMatVal) ? '위안가×240 + 중량×은시세×' + (1 + matLossRate(_pdMatVal)).toFixed(2).replace(/0$/,'') + '(해리)' : '위안가×240 + 중량×시세');
+    ? '위안가×' + QUOTE_CN_RATE + ' + 중량×순금시세×' + _purity + '×' + (1 + goldLossRate(_pdMatVal)).toFixed(2).replace(/0$/,'') + '(해리)' + (mr ? ' (환산 ₩' + Math.round(mr*_mf).toLocaleString() + '/g)' : '')
+    : (isSilverMat(_pdMatVal) ? '위안가×' + QUOTE_CN_RATE + ' + 중량×은시세×' + (1 + matLossRate(_pdMatVal)).toFixed(2).replace(/0$/,'') + '(해리)' : '위안가×' + QUOTE_CN_RATE + ' + 중량×시세');
 
   // 입력값이 모두 0이면 분석 영역 숨김
   if(cny === 0 && wt === 0 && mr === 0){
@@ -7412,7 +7412,7 @@ function saveProduct(){
       const cny = +gv('pd_cnyPrice')||0;
       const wt = +gv('pd_weight')||0;
       const mr = +gv('pd_matRate')||0;
-      const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 240;
+      const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 220;
       return Math.round(cny * RATE + wt * mr * matCostFactor(gv('pd_mat')));
     })(),
     priceManual: !!window._pdPriceManual, // 출고단가 수동 입력 모드 여부
@@ -39142,9 +39142,9 @@ function _vClients_OLD_TABLE(c){
 // 📋 견적서 (Quotation)
 // ════════════════════════════════════════════════════════════════
 // 입고단가 → KRW 환산 계수 (중국 입고원가 → 원화)
-// 원래 공식: 생산원가 = 입고단가 × 240 + 중량 × 원자재시세
-// 240은 운송/관세/마진 포함 환산 계수. 추후 변경 시 이 한 곳만 수정.
-const QUOTE_CN_RATE = 240;
+// 공식: 생산원가 = 입고단가 × QUOTE_CN_RATE + 중량 × 원자재시세
+// 운송/관세 포함 환산 계수. 2026-11-11 DW 지시로 240 → 220 (환율 하락). 변경 시 이 한 곳만 수정.
+const QUOTE_CN_RATE = 220;
 window.QUOTE_CN_RATE = QUOTE_CN_RATE; // 견적서 모달 전용 — 중국 위안화 입고단가를 원화로 환산
 
 // ════════════════════════════════════════════════════════════════
@@ -40736,7 +40736,7 @@ function transferQuoteToSample(quoteId){
   }
   // 여러 행 → 다중 모달로 미리 채워서 열기
   closeM('mQuote');
-  const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 240;
+  const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 220;
   // 견적 spec(카테고리) → 샘플 type 매핑 함수
   const specToType = (spec)=>{
     const specMap = {
@@ -40832,9 +40832,9 @@ function _doTransferToSample(q, row){
       // 💰 단가 매핑
       // 견적서 단가(unitPrice) → 샘플 단가(s_unitPrice)
       if(row.unitPrice) setVal('s_unitPrice', row.unitPrice);
-      // 견적서 중국입고단가(cnPrice) × 240 → 샘플 입고원가(s_costPrice)
+      // 견적서 중국입고단가(cnPrice) × QUOTE_CN_RATE → 샘플 입고원가(s_costPrice)
       if(row.cnPrice){
-        const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 240;
+        const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 220;
         const costPrice = Math.round(+row.cnPrice * RATE);
         setVal('s_costPrice', costPrice);
       }
