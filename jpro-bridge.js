@@ -162,7 +162,7 @@
     var rows = (await q(ORD_DB, f)).map(function(p){ return { kind: 'o', p: p }; }).concat((await q(SMP_DB, f)).map(function(p){ return { kind: 's', p: p }; }));
     st.dates = rows.map(function(r){
       var h = js(txt(r.p, '공장출고일변경이력'), []) || [], last = h[h.length - 1];
-      if (!last || last.ek || last.to === dt(r.p, '공장출고일')) return null;
+      if (!last || last.ek || last.to === dt(r.p, '공장출고일') || dt(r.p, '공장출고일') !== (last.from || '')) return null;   // 이미 반영했거나, 그 뒤 EK가 다른 날짜로 바꿨으면 끝
       return { kind: r.kind, pid: r.p.id, no: r.kind === 's' ? txt(r.p, '샘플명') : txt(r.p, '발주번호'), fac: txt(r.p, '공장'), cur: dt(r.p, '공장출고일'), last: last, hist: h };
     }).filter(Boolean);
     paint();
