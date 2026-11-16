@@ -51979,6 +51979,31 @@ function renderMonthlyPnlTable(host){
   try{
     if(!host) return;
     var _old = host.querySelector('#mgt-monthly-pnl'); if(_old) _old.remove();   // 다시 그리기 (최신 명세서 반영)
+    // 📥 저장된 월 손익(매입원가)·고정비가 아직 안 불러와졌으면 노션에서 먼저 불러온 뒤 다시 그린다
+    //    (경영지원 부팅 전에 이 표를 열면 빈 값으로 그려져 '원가 미저장'·원가 0원으로 보였다)
+    var _needRec = !_recordsLoaded, _needFixed = !(S.fixed && S.fixed.length) && !S._fixedTried;
+    if(_needRec || _needFixed){
+      if(!renderMonthlyPnlTable._loading){
+        renderMonthlyPnlTable._loading = true;
+        try{ if(typeof notionCfg!=='undefined' && notionCfg.workerUrl && !/\/notion$/.test(NOTION_PROXY)){ NOTION_PROXY = notionCfg.workerUrl.replace(/\/$/, '')+'/notion'; } }catch(e){}
+        Promise.all([
+          _needRec ? loadAllRecordsFromNotion() : null,
+          _needFixed ? loadFixedFromNotion() : null
+        ]).catch(function(){}).then(function(){
+          renderMonthlyPnlTable._loading = false;
+          if(!_recordsLoaded) _recordsLoaded = true;   // 실패해도 무한 재시도 방지
+          if(!(S.fixed && S.fixed.length)) S._fixedTried = true;
+          if(host.isConnected) renderMonthlyPnlTable(host);
+        });
+      }
+      {
+        var _ld = document.createElement('div');
+        _ld.className='card'; _ld.id='mgt-monthly-pnl'; _ld.style.marginTop='14px';
+        _ld.innerHTML='<div class="card-h"><div class="card-t">월별 손익계산 (최근 6개월)</div></div><div style="padding:18px;color:var(--mu);font-size:12px">저장된 매입원가·고정비 불러오는 중…</div>';
+        host.appendChild(_ld);
+        return;
+      }
+    }
     var db = (typeof getRecordsDB==='function') ? getRecordsDB() : ((typeof S!=='undefined'&&S&&S.records)||{});
     // 🔗 [2026-11-16] 매출 = 거래명세서 실시간(경영지원 매출 연동과 같은 규칙), 고정비 = 현재 고정비 목록.
     //    매입원가만 저장 스냅샷(그 달 인보이스·지출 자료를 불러와야 계산되므로).
@@ -52011,7 +52036,7 @@ function renderMonthlyPnlTable(host){
       var r=db[m.key];
       var other = r ? (((+r.revAS||0)+(+r.revCm||0)) || (+r.revOther||0)) : 0;   // AS·커머스(수기 입력분)
       var rev = invOk ? (liveRev[m.key]||0)+other : (r?(+r.rev||0):0);
-      var cogs = r ? (+r.cogs||0) : (m.key===curPeriod && typeof totalCogs==='function' ? totalCogs() : null);
+      var cogs = r ? (+r.cogs||0) : null;   // 매입원가 = 저장된 월 손익 값
       if(!r && !rev){ m.has=false; return; }
       if(cogs===null){ m.has=false; m.revOnly=rev; return; }   // 원가 미저장 달 — 매출만 표시
       m.has=true; anyRec=true;
