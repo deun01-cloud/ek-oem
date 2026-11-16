@@ -30597,10 +30597,43 @@ function _fpRender(){
     body=rowBtn('📦 전체 공장', sub(tot), "'__ALL__'", true);
     body+=names.map(f=>{
       const warn=f==='(공장 미지정)'?' ⚠':'';
-      return rowBtn('🏭 '+escH(f)+warn, sub(count[f]), "'"+esc(f).replace(/'/g,"\\'")+"'", false);
+      const btn=rowBtn('🏭 '+escH(f)+warn, sub(count[f]), "'"+esc(f).replace(/'/g,"\\'")+"'", false);
+      // 🔗 공장 공유 링크 — 공장명 맨 뒤 영문 코드(GZ·SH·QD…)가 있는 공장만
+      if(!_fpFacCode(f)) return btn;
+      return `<div style="display:flex;gap:6px;align-items:stretch">${btn.replace('width:100%','flex:1;min-width:0')}<button onclick="_fpShareLink('${esc(f).replace(/'/g,"\\'")}')" title="중국 공장에 보낼 링크 복사 (로그인 없이 휴대폰으로 보기 · 사진 누르면 작업지시서)" style="margin-bottom:8px;padding:0 12px;border:1px solid var(--gold-line);border-radius:8px;background:var(--gold-bg);color:var(--gold-lt);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">🔗 링크</button></div>`;
     }).join('');
   }
   document.getElementById('factoryPickBody').innerHTML=body;
+}
+
+// 🔗 공장 공유 링크 (J-PRO 공장 화면의 로그인 없는 보기 전용 페이지) — 2026-11-16
+//   공장명 '3공장/GZ' → 코드 GZ → J-PRO 계정 DB의 공장 계정(없으면 만듦) → https://jpro-api…/factory/v/<계정 id>
+//   항상 최신 진행 건을 보여 주므로 링크는 한 번만 보내면 됨. 계정 상태를 '승인'에서 바꾸면 링크가 막힘.
+function _fpFacCode(name){
+  const c=String(name||'').split('/').pop().trim().toUpperCase();
+  return /^[A-Z0-9]{1,10}$/.test(c) ? c : '';
+}
+async function _fpShareLink(name){
+  const code=_fpFacCode(name); if(!code) return;
+  const ACCT='3bf01c81f1b542228a829b6b37dfa218';
+  try{
+    if(typeof showToast==='function') showToast('🔗 '+code+' 공장 링크 만드는 중...','var(--blu)',1500);
+    const r=await notionCall('POST','/databases/'+ACCT+'/query',{page_size:20,filter:{and:[{property:'구분',select:{equals:'공장'}},{property:'이니셜',rich_text:{equals:code}}]}},{bypassCircuit:true});
+    const rows=((r&&r.results)||[]).filter(p=>!p.archived&&!p.in_trash);
+    let pg=rows.find(p=>((p.properties['상태']||{}).select||{}).name==='승인');
+    if(!pg && rows.length){ if(typeof showToast==='function') showToast('⚠ '+code+' 공장 계정이 사용 중지 상태입니다 — 노션 J-PRO 계정에서 상태를 승인으로 바꿔 주세요','var(--red)',6000); return; }
+    if(!pg){
+      const t=v=>({rich_text:[{text:{content:v}}]});
+      pg=await notionCall('POST','/pages',{parent:{database_id:ACCT},properties:{'아이디':{title:[{text:{content:'f-'+code.toLowerCase()}}]},'담당자':t(code+' 공장'),'브랜드명':t(code+' 공장'),'구분':{select:{name:'공장'}},'이니셜':t(code),'상태':{select:{name:'승인'}}}},{bypassCircuit:true});
+    }
+    const url='https://jpro-api.deun01.workers.dev/factory/v/'+String(pg.id).replace(/-/g,'');
+    let copied=false; try{ await navigator.clipboard.writeText(url); copied=true; }catch(e){}
+    if(!copied) window.prompt(code+' 공장 링크 — 복사해서 위챗으로 보내세요', url);
+    else if(typeof showToast==='function') showToast('✓ '+code+' 공장 링크 복사됨 — 위챗에 붙여넣어 보내세요 (항상 최신 진행 건이 보입니다)','var(--grn)',5000);
+  }catch(e){
+    console.warn('[공장 링크]',e);
+    if(typeof showToast==='function') showToast('⚠ 링크를 만들지 못했습니다: '+(e&&e.message||e),'var(--red)',5000);
+  }
 }
 
 // 고객사 이니셜 2글자 + 색상 — 인쇄/외부창용 (CSS 클래스 없이 인라인 색상 반환)
