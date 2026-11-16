@@ -39085,10 +39085,13 @@ async function saveFactory(){
   };
   if(id){
     const i=factories.findIndex(f=>f.id==id);
+    const oldName = i>=0 ? String(factories[i].name||'').trim() : '';
     if(i>=0){ _ekApply3('factory', factories, i, obj); }
     slSave();
     if(typeof debouncedSync==='function') debouncedSync('factory', factories[i], true);
-    showToast('✓ 공장 수정됨','var(--grn)');
+    // 공장 이름을 바꾸면 그 이름으로 지정된 샘플·발주도 함께 바꿈 (공장명 텍스트로 연결되므로) — 2026-11-16
+    const moved = _renameFactoryRefs(oldName, String(obj.name||'').trim());
+    showToast('✓ 공장 수정됨'+(moved?` · 샘플·발주 ${moved}건 공장명 변경`:''),'var(--grn)');
     closeM('mFac');
     renderSalesSubTab();
   } else {
@@ -39100,6 +39103,21 @@ async function saveFactory(){
     closeM('mFac');
     renderSalesSubTab();
   }
+}
+
+// 샘플·발주의 공장명 일괄 변경 (공장 이름 수정 시)
+function _renameFactoryRefs(oldName, newName){
+  if(!oldName || !newName || oldName===newName) return 0;
+  let n=0; const now=Date.now();
+  [['sample',samples],['order',orders]].forEach(([type,arr])=>{
+    (arr||[]).forEach((x,i)=>{
+      if(String(x.factory||'').trim()!==oldName) return;
+      arr[i]={...x, factory:newName, _ts:now}; n++;
+      if(arr[i]._notionId && typeof debouncedSync==='function') debouncedSync(type, arr[i], true);
+    });
+  });
+  if(n && typeof save==='function') save();
+  return n;
 }
 
 function deleteFactory(){
