@@ -3092,15 +3092,16 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>최종 수정일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(마지막 생산/개발일)</span></label><input class="fi" type="date" id="pd_lastModified"></div>
   </div>
   <!-- ★ JPRO(B2C 플랫폼) AI 견적 학습용 — 기존 칸에 없는 4개만 입력받는다.
-       공임·최장 길이·최소 두께·제작 노트는 입고단가·규격/사이즈·메모에서 자동 추출 (_pdJproDerive) -->
-  <div class="fr4">
+       공임·최장 길이·최소 두께·제작 노트는 입고단가·규격/사이즈·메모에서 자동 추출 (_pdJproDerive)
+       2026-11-17 DW: 화면에서는 숨김 (값은 그대로 보존·저장) -->
+  <div class="fr4" style="display:none">
     <div class="fg"><label>난이도</label>
       <select class="fs" id="pd_difficulty"><option value="">-</option><option>하</option><option>중</option><option>상</option></select></div>
     <div class="fg"><label>스톤 개수</label><input class="fi" type="number" id="pd_stoneCount" placeholder="0" min="0"></div>
     <div class="fg"><label>스톤 종류</label><input class="fi" id="pd_stoneType" placeholder="큐빅 2mm, 진주 6mm"></div>
     <div class="fg"><label>CAD 파일 링크</label><input class="fi" id="pd_cadUrl" placeholder="https://… (STL/STEP/3DM)"></div>
   </div>
-  <div id="pd_jproHint" style="font-size:10.5px;color:var(--t3);margin:-2px 0 8px;line-height:1.5"></div>
+  <div id="pd_jproHint" style="display:none;font-size:10.5px;color:var(--t3);margin:-2px 0 8px;line-height:1.5"></div>
   <div class="fg"><label>메모 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(추가 사양 · 제작 불가 사유 · 클레임 · 주의점)</span></label><textarea class="fta" id="pd_memo" rows="2" placeholder="예) 두께 0.6mm 이하라 주조 불가 → 0.8mm로 변경 / 도금 벗겨짐 클레임 1회"></textarea></div>
   <!-- 이미지 첨부 -->
   <div class="fg">
@@ -7047,7 +7048,7 @@ function openProductModal(idOrNull){
   sv('pd_stoneCount',p?p.stoneCount||'':''); sv('pd_stoneType',p?p.stoneType||'':'');
   sv('pd_cadUrl',p?p.cadUrl||'':'');
   updatePdJproHint();
-  sv('pd_createdDate',p?p.createdDate||'':'');
+  sv('pd_createdDate',p?(p.createdDate||String(p.createdAt||p._ct||'').slice(0,10)):toLocalDateStr(new Date()));   // 최초 등록일 자동
   sv('pd_lastModified',p?p.lastModified||'':'');
   document.getElementById('mProduct_t').textContent=p?'📦 제품 수정':'📦 제품 등록';
   document.getElementById('pd_delBtn').style.display=p?'':'none';
@@ -7147,6 +7148,7 @@ function updatePdCostAnalysis(){
     const _ownLock = isOwnBrandCode((document.getElementById('pd_code')?.value || '').trim());
     marginPctEl.disabled = _ownLock;
     marginPctEl.style.opacity = _ownLock ? '.5' : '';
+    marginPctEl.style.color = _ownLock ? 'transparent' : '';   // 자사 브랜드는 마진 숫자를 보이지 않게 (헷갈림 방지, 값은 보존)
     marginPctEl.style.cursor = _ownLock ? 'not-allowed' : '';
     const _lbl = marginPctEl.previousElementSibling;
     if(_lbl && _lbl.tagName==='LABEL') _lbl.textContent = _ownLock ? '마진 (자사 브랜드 ×1.1 고정)' : '마진 (%)';
@@ -7507,7 +7509,7 @@ function saveProduct(){
       return Math.round(cny * RATE + wt * mr * matCostFactor(gv('pd_mat')));
     })(),
     priceManual: !!window._pdPriceManual, // 출고단가 수동 입력 모드 여부
-    createdDate:gv('pd_createdDate'),
+    createdDate:gv('pd_createdDate')||toLocalDateStr(new Date()),
     lastModified:gv('pd_lastModified'),
     imgs:[...pdImgBuf]
   };
