@@ -17613,6 +17613,7 @@ function openIoModal(idOrNull){
         <input type="file" id="io_photo_input" accept="image/*" multiple style="display:none" onchange="_addIoPhoto(event)">
         <input type="file" id="io_rephoto_input" accept="image/*" style="display:none" onchange="_replaceIoPhoto(event)">
         <button type="button" onclick="document.getElementById('io_photo_input').click()" style="margin-top:6px;padding:6px 12px;background:var(--s2);border:1px solid var(--bdr);border-radius:5px;font-size:11.5px;color:var(--t2);cursor:pointer;font-family:inherit">📷 사진 추가</button>
+        <span style="margin-left:8px;font-size:10.5px;color:var(--t3)">또는 캡처 후 <b>Ctrl+V</b>로 붙여넣기</span>
       </div>
       <div class="fg" style="margin-top:10px;padding:10px 12px;background:var(--gold-bg);border:1px solid var(--gold-line);border-radius:7px">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;color:var(--t1);margin:0">
@@ -17689,6 +17690,25 @@ function _openIoPhotoLightbox(idx){
 
 async function _addIoPhoto(event){
   const files = Array.from(event.target.files||[]);
+  event.target.value = '';
+  await _ioAddPhotoFiles(files);
+}
+// 📋 [2026-11-17] 입출고 모달이 열려 있을 때 Ctrl+V로 이미지 붙여넣기 (글자 붙여넣기는 그대로 동작)
+document.addEventListener('paste', function(e){
+  const ov = document.getElementById('mIo');
+  if(!ov || !ov.classList.contains('open') || !document.getElementById('io_photo_grid')) return;
+  const imgs = Array.from((e.clipboardData && e.clipboardData.items) || [])
+    .filter(it => it.kind === 'file' && /^image\//.test(it.type))
+    .map((it,i) => { const f = it.getAsFile(); if(!f) return null;
+      const ext = (f.type.split('/')[1]||'png').replace('jpeg','jpg');
+      return new File([f], `붙여넣기_${Date.now()}_${i}.${ext}`, {type:f.type}); })
+    .filter(Boolean);
+  if(!imgs.length) return;
+  e.preventDefault();
+  showToast(`📋 사진 ${imgs.length}장 붙여넣는 중…`,'var(--blu)',1500);
+  _ioAddPhotoFiles(imgs);
+});
+async function _ioAddPhotoFiles(files){
   for(const file of files){
     if(!file.type.startsWith('image/')) continue;
     // R2 업로드 가능하면 시도, 아니면 base64로 저장 (제한적)
@@ -17708,7 +17728,6 @@ async function _addIoPhoto(event){
       if(url) _ioPhotoBuf.push({name:file.name, url, type:file.type});
     } catch(e){ console.warn('사진 추가 실패:', e); }
   }
-  event.target.value = '';
   _renderIoPhotoGrid();
 }
 
@@ -20505,8 +20524,8 @@ async function uploadImagesToR2(imgBuf){
     // 📌 업로드 전 사전 축소 — 큰 사진(폰 원본 등)은 그대로 보내면 타임아웃/워커 한계로 실패한다.
     //    이미지에 한해 최대 1600px·품질 0.82로 줄여 안정적으로 업로드 (제품 카탈로그엔 충분한 해상도).
     var _up = img.url;
-    if(typeof _up==='string' && _up.startsWith('data:image/') && _up.length > 500000 && typeof _shrinkDataUrl==='function'){
-      try{ var _s = await _shrinkDataUrl(_up, 1600, 0.82); if(_s && _s.length < _up.length) _up = _s; }catch(e){}
+    if(typeof _up==='string' && _up.startsWith('data:image/') && _up.length > 4000000 && typeof _shrinkDataUrl==='function'){
+      try{ var _s = await _shrinkDataUrl(_up, 3000, 0.9); if(_s && _s.length < _up.length) _up = _s; }catch(e){}
     }
     const r=await r2Upload(_up, img.name||'file', type);
     if(r){ uploadedCount++; return {...img, url:r.url, r2Key:r.key, type:type}; }

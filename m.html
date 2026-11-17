@@ -4643,7 +4643,7 @@ async function compressImage(dataUrl, maxSize){
       cv.width=w; cv.height=h;
       const ctx = cv.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
-      res(cv.toDataURL('image/jpeg', 0.85));
+      res(cv.toDataURL('image/jpeg', 0.9));
     };
     img.onerror = rej;
     img.src = dataUrl;
@@ -4656,7 +4656,7 @@ async function uploadImageToR2(file){
   const dataUrl = await readFileAsDataURL(file);
   let processed = dataUrl;
   if(file.type.startsWith('image/')){
-    try{ processed = await compressImage(dataUrl, 1200); }catch(e){ console.warn('압축 실패:', e); }
+    try{ processed = await compressImage(dataUrl, 2800); }catch(e){ console.warn('압축 실패:', e); }  // [2026-11-17] 1200→2800: 거래명세서 글씨가 확대해도 읽히도록
   }
   // PC와 동일한 형식으로 호출 (헤더 기반 + dataURL 그대로 body로)
   const url = notionCfg.workerUrl.replace(/\/+$/,'') + '/r2/upload';
@@ -4700,7 +4700,7 @@ async function uploadImageToR2(file){
           url: r2Url,
           type: file.type||'image/jpeg',
           r2Key: r2Key,
-          _localDataUrl: processed // ⚡ R2 깨졌을 때 fallback용
+          _localDataUrl: await compressImage(processed, 1000).catch(()=>processed) // ⚡ R2 깨졌을 때 fallback용 (로컬 용량 위해 작은 사본)
         };
       }
     }
