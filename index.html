@@ -3050,7 +3050,7 @@ window.addEventListener('message', function(ev){
       <label>출고단가 (원)</label>
       <input class="fi" type="number" id="pd_price" placeholder="13000" min="0" oninput="onPdPriceManualEdit()">
     </div>
-    <div class="fg"><label>입고원가 (원) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(ERP 참고)</span></label><input class="fi" type="number" id="pd_costPrice" placeholder="0" min="0"></div>
+    <div class="fg"><label>생산원가 (원) <span style="font-size:9.5px;color:var(--t3);font-weight:400">(위안가 있으면 자동 계산)</span></label><input class="fi" type="number" id="pd_costPrice" placeholder="0" min="0"></div>
     <div class="fg"><label>개발비 (원)</label><input class="fi" type="number" id="pd_devCost" placeholder="0" min="0"></div>
     <div class="fg"><label>재고 수량</label><input class="fi" type="number" id="pd_stock" placeholder="0" min="0"></div>
     <div class="fg"><label>안전재고 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(0=알림 끔)</span></label><input class="fi" type="number" id="pd_safetyStock" placeholder="0" min="0"></div>
@@ -3114,7 +3114,7 @@ window.addEventListener('message', function(ev){
     <div id="pd_imgPrev" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
   </div>
   <div class="fg" id="pd_priceHistBox" style="display:none">
-    <label>📈 출고단가 변경 이력 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(원자재 시세·입고가 변동으로 출고가가 바뀔 때마다 자동 기록)</span></label>
+    <label>📈 단가 변경 이력 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(출고단가·생산원가가 바뀔 때마다 자동 기록)</span></label>
     <div id="pd_priceHist"></div>
   </div>
   <div class="ma">
@@ -5226,7 +5226,11 @@ function _pdCostKey(p){ return (+p.cnyPrice||0)+'|'+(+p.costPrice||0); }
 function _pdPending(p){
   if(!p) return false;
   const a = p.priceApproval;
-  if(a && a.key!=null) return a.key !== _pdCostKey(p);              // 승인된 단가에서 바뀌면 다시 대기
+  if(a && a.key!=null){                                               // 승인된 공장 단가에서 바뀌면 다시 대기
+    const cny = +p.cnyPrice||0;
+    if(cny > 0 || (+a.cny||0) > 0) return (+a.cny||0) !== cny;         // 위안가 기준 (시세 변동으로 생산원가만 바뀐 건 대기 아님)
+    return (+a.cost||0) !== (+p.costPrice||0);                          // 위안가가 없는 제품은 생산원가 기준
+  }
   // 승인 기록이 없는 신규 제품(샘플 품번으로 자동 생성된 것 포함)은 입고단가가 들어오기 전에도 승인 대기에 둔다
   if(p.importSource) return false;                                   // 이카운트 엑셀 일괄 업로드분은 기존 자료로 봄
   const made = String(p.createdDate||p.createdAt||p._ct||'').slice(0,10);
@@ -7143,6 +7147,13 @@ function syncPdMatFromMetal(){
     matEl.value=want; updatePdCostAnalysis();
   }
 }
+// 💰 생산원가 계산 가능 여부 (DW 2026-11-17) — 금·은은 중량과 원자재 시세가 있어야 계산됨
+function _pdCostCalc(cny, wt, mr, mat){
+  const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 220;
+  const metal = (typeof isGoldMat==='function' && isGoldMat(mat)) || (typeof isSilverMat==='function' && isSilverMat(mat));
+  if(metal && (!(wt>0) || !(mr>0))) return { ok:false, reason: !(wt>0) && !(mr>0) ? '중량·원자재 시세 입력 필요' : (!(wt>0) ? '중량 입력 필요' : '원자재 시세 입력 필요') };
+  return { ok:true, cost: Math.round(cny * RATE + wt * mr * matCostFactor(mat)) };
+}
 function updatePdCostAnalysis(){
   const cnyPriceEl = document.getElementById('pd_cnyPrice');
   const weightEl = document.getElementById('pd_weight');
@@ -7172,7 +7183,8 @@ function updatePdCostAnalysis(){
   const _pdMatVal = (document.getElementById('pd_mat')||{}).value;
   const _purity = matPurity(_pdMatVal);
   const _mf = matCostFactor(_pdMatVal);
-  const prodCost = Math.round(cny * QUOTE_CN_RATE + wt * mr * _mf);
+  const _calc = _pdCostCalc(cny, wt, mr, _pdMatVal);
+  const prodCost = _calc.ok ? _calc.cost : 0;
   const _cfEl = document.getElementById('pd_costFormula');
   if(_cfEl) _cfEl.textContent = isGoldMat(_pdMatVal)
     ? '위안가×' + QUOTE_CN_RATE + ' + 중량×순금시세×' + _purity + '×' + (1 + goldLossRate(_pdMatVal)).toFixed(2).replace(/0$/,'') + '(해리)' + (mr ? ' (환산 ₩' + Math.round(mr*_mf).toLocaleString() + '/g)' : '')
@@ -7185,6 +7197,21 @@ function updatePdCostAnalysis(){
   }
   analysisEl.style.display = '';
 
+  // 생산원가 칸: 위안가가 있고 계산되면 자동으로 채움(직접 수정 불가). 계산 불가면 비워 둠
+  const _costEl = document.getElementById('pd_costPrice');
+  if(_costEl){
+    if(cny>0 && _calc.ok){ _costEl.value = prodCost; _costEl.readOnly = true; _costEl.style.opacity='.75'; }
+    else if(cny>0){ _costEl.value = ''; _costEl.placeholder = '계산 불가'; _costEl.readOnly = true; _costEl.style.opacity='.75'; }
+    else { _costEl.readOnly = false; _costEl.style.opacity=''; _costEl.placeholder='0'; }
+  }
+  if(!_calc.ok){
+    document.getElementById('pd_prodCostDisplay').innerHTML = '<span style="color:var(--red);font-size:14px">계산 불가</span>';
+    const _cf2 = document.getElementById('pd_costFormula'); if(_cf2) _cf2.textContent = _calc.reason;
+    document.getElementById('pd_recommendedPrice').textContent = '–';
+    const _me = document.getElementById('pd_marginDisplay'); if(_me){ _me.style.color='var(--t3)'; _me.textContent='–'; }
+    const _mp = document.getElementById('pd_marginPctDisplay'); if(_mp) _mp.textContent = '';
+    return;
+  }
   // 권장 출고단가 — 자사 브랜드는 생산원가 × 1.1, OEM은 생산원가 ÷ (1 − 마진/100)
   const _pdCode = (document.getElementById('pd_code')?.value || '').trim();
   const _own = isOwnBrandCode(_pdCode);
@@ -7399,16 +7426,16 @@ function _renderPriceHist(p){
   body.innerHTML =
     '<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;font-size:12px">'
     + '<div style="display:grid;grid-template-columns:1.5fr 1.6fr 1fr 1fr 32px;background:var(--s2);padding:6px 10px;font-size:10.5px;color:var(--t3);font-weight:600">'
-    +   '<span>변경일시</span><span>출고단가</span><span>원자재시세</span><span>입고가</span><span></span></div>'
+    +   '<span>변경일시</span><span>변경 내용</span><span>원자재시세</span><span>생산원가</span><span></span></div>'
     + rows.map(function(h){
         const up = (+h.to||0) >= (+h.from||0);
         const arrow = up ? '▲' : '▼';
         const col = up ? '#c0392b' : '#2E7D32';
         return '<div style="display:grid;grid-template-columns:1.5fr 1.6fr 1fr 1fr 32px;padding:7px 10px;border-top:1px solid var(--bdr);align-items:center">'
           + '<span style="color:var(--t2)">'+_dt(h.ts)+'</span>'
-          + '<span><span style="color:var(--t3)">'+_won(h.from)+'</span> \u2192 <b style="color:'+col+'">'+_won(h.to)+'</b> <span style="color:'+col+';font-size:10px">'+arrow+'</span></span>'
+          + '<span><span style="font-size:10.5px;color:var(--t3)">'+(h.kind==='cost'?'생산원가 ':'출고단가 ')+'</span><span style="color:var(--t3)">'+_won(h.from)+'</span> \u2192 <b style="color:'+col+'">'+_won(h.to)+'</b> <span style="color:'+col+';font-size:10px">'+arrow+'</span></span>'
           + '<span style="color:var(--t2)">'+(h.matRate?_won(h.matRate):'\u2013')+'</span>'
-          + '<span style="color:var(--t2)">'+(h.costPrice?_won(h.costPrice):'\u2013')+'</span>'
+          + '<span style="color:var(--t2)">'+(h.kind==='cost'?_won(h.to):(h.costPrice?_won(h.costPrice):'\u2013'))+'</span>'
           + '<span style="text-align:right"><button onclick="deletePriceHist(\''+(h.id||'')+'\')" title="이 기록 삭제" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:13px;padding:2px" onmouseover="this.style.color=\'var(--red)\'" onmouseout="this.style.color=\'var(--t3)\'">🗑</button></span>'
           + '</div>';
       }).join('')
@@ -7515,11 +7542,8 @@ function saveProduct(){
     marginPct: +gv('pd_marginPct')||0,
     cnyPrice:  +gv('pd_cnyPrice')||0, // 위안화 입고단가 (원가 계산용)
     prodCost: (function(){
-      const cny = +gv('pd_cnyPrice')||0;
-      const wt = +gv('pd_weight')||0;
-      const mr = +gv('pd_matRate')||0;
-      const RATE = (typeof window.QUOTE_CN_RATE !== 'undefined') ? window.QUOTE_CN_RATE : 220;
-      return Math.round(cny * RATE + wt * mr * matCostFactor(gv('pd_mat')));
+      const c = _pdCostCalc(+gv('pd_cnyPrice')||0, +gv('pd_weight')||0, +gv('pd_matRate')||0, gv('pd_mat'));
+      return c.ok ? c.cost : 0;   // 금·은인데 중량·시세가 없으면 계산 불가 → 0
     })(),
     priceManual: !!window._pdPriceManual, // 출고단가 수동 입력 모드 여부
     factory:gv('pd_factory'),   // 🏭 생산 공장
@@ -7527,6 +7551,20 @@ function saveProduct(){
     lastModified:gv('pd_lastModified'),
     imgs:[...pdImgBuf]
   };
+  // 💰 생산원가 = 위안가가 있으면 계산값(계산 불가면 0), 없으면 직접 입력값
+  if((+obj.cnyPrice||0) > 0){
+    const _old = id ? productDB.find(x=>String(x.id)===String(id)) : null;
+    obj.costPrice = (+obj.prodCost||0) > 0 ? +obj.prodCost : ((_old && +_old.costPrice) || 0);   // 계산 불가면 기존 값 유지
+  }
+  // 📈 생산원가가 바뀌면 이력에 남김 (출고단가 이력과 같은 목록, kind:'cost' — 고객 화면에는 나가지 않음)
+  if(id){
+    const _oc = productDB.find(x=>String(x.id)===String(id));
+    if(_oc && (+_oc.costPrice||0) !== (+obj.costPrice||0) && ((+_oc.costPrice||0) > 0 || (+obj.costPrice||0) > 0)){
+      const _h = Array.isArray(_oc.priceHistory) ? _oc.priceHistory.slice() : [];
+      _h.push({ id:(typeof genId==='function'?genId():String(Date.now())), kind:'cost', ts:new Date().toISOString(), from:+_oc.costPrice||0, to:+obj.costPrice||0, matRate:+obj.matRate||0, cny:+obj.cnyPrice||0 });
+      obj.priceHistory = _h.length > 50 ? _h.slice(-50) : _h;
+    }
+  }
   // 💰 승인 기록이 없는 기존 제품의 입고단가를 바꾸면, 바꾸기 전 단가를 '승인된 단가'로 남겨 승인 대기로 올린다
   if(id){
     const _op = productDB.find(x=>String(x.id)===String(id));
