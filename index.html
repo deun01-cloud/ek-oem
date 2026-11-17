@@ -29086,6 +29086,12 @@ function generateItemCode(s){
   });
 }
 
+// 샘플 저장 시 품번이 비어 있으면 자동 생성 (DW 2026-11-17) — 업체·유형이 있어야 만듦, 취소 건 제외
+function _smpAutoItemNo(o){
+  if(!o || String(o.itemNo||'').trim() || o.status==='취소') return;
+  if(!String(o.manager||'').trim() || !String(o.type||'').trim()) return;
+  try{ o.itemNo = generateItemCode(o); }catch(e){ console.warn('[품번 자동 생성 실패]', e); }
+}
 // 핵심 헬퍼: 패턴대로 코드 빌드
 function _buildItemCode(input){
   const { vendor, type, mat, plating } = input;
@@ -29127,11 +29133,11 @@ function _buildItemCode(input){
   // 3) 소재 첫글자 (Brass=B, Silver=S, Gold=G, Titanium=T, Steel=L for steeL)
   const matStr = String(mat||'').toUpperCase();
   let matChar = '';
-  if(matStr.includes('BRASS') || matStr.includes('브라스')) matChar = 'B';
+  if(matStr.includes('BRASS') || matStr.includes('브라스') || matStr.includes('신주')) matChar = 'B';
   else if(matStr.includes('SILVER') || matStr.includes('실버') || matStr.includes('925')) matChar = 'S';
   else if(matStr.includes('GOLD') || matStr.includes('골드') || /\b(10K|14K|18K|24K)\b/.test(matStr)) matChar = 'G';
   else if(matStr.includes('TITAN') || matStr.includes('티타늄')) matChar = 'T';
-  else if(matStr.includes('STEEL') || matStr.includes('스틸') || matStr.includes('써지컬')) matChar = 'L';
+  else if(/STEEL|스틸|써지컬|서지컬|SURGICAL|스테인|STAINLESS|SUS|316/.test(matStr)) matChar = 'L';   // 써지컬·스테인리스 = L
   else if(matStr.includes('ZINC') || matStr.includes('아연')) matChar = 'Z';
   else matChar = 'X';
 
@@ -33886,6 +33892,7 @@ async function saveSmpMulti(){
       caution: '',
       itemNo: '', card: '', invNo: '', itemCode: ''
     };
+    _smpAutoItemNo(smpObj);   // 품번 자동 생성
 
     try {
       await syncSampleToNotion(smpObj, false);
@@ -34080,6 +34087,7 @@ function saveSmp(){
     devCost:+gv('s_devCost')||0, unitPrice:+gv('s_unitPrice')||0, costPrice:+gv('s_costPrice')||0,
     invNo:gv('s_invNo'), itemCode:gv('s_invNo')
   };
+  _smpAutoItemNo(obj);   // 품번 자동 생성
   const doSaveSmp = async (uploadedImgs, uploadedSrc, uploadedCad) => {
     const finalObj = {
       ...obj,
