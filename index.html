@@ -3087,7 +3087,8 @@ window.addEventListener('message', function(ev){
       </div>
     </div>
   </div>
-  <div class="fr2">
+  <div class="fr3">
+    <div class="fg"><label>🏭 생산 공장</label><select class="fs" id="pd_factory"><option value="">-</option></select></div>
     <div class="fg"><label>최초 등록일</label><input class="fi" type="date" id="pd_createdDate" placeholder="이카운트 등록일"></div>
     <div class="fg"><label>최종 수정일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(마지막 생산/개발일)</span></label><input class="fi" type="date" id="pd_lastModified"></div>
   </div>
@@ -7048,6 +7049,18 @@ function openProductModal(idOrNull){
   sv('pd_stoneCount',p?p.stoneCount||'':''); sv('pd_stoneType',p?p.stoneType||'':'');
   sv('pd_cadUrl',p?p.cadUrl||'':'');
   updatePdJproHint();
+  // 🏭 생산 공장 — 공장 DB(사용 중인 공장)에서 고름. 목록에 없는 기존 값도 보이게 넣어 둠
+  try{
+    const _fsel=document.getElementById('pd_factory');
+    if(_fsel){
+      const _cur=String((p&&p.factory)||'').trim();
+      const _names=(typeof factories!=='undefined'?factories:[]).filter(f=>f.status!=='inactive').map(f=>String(f.name||'').trim()).filter(Boolean);
+      const _uniq=[...new Set(_names)].sort((a,b)=>a.localeCompare(b,'ko'));
+      if(_cur && !_uniq.includes(_cur)) _uniq.unshift(_cur);
+      _fsel.innerHTML='<option value="">-</option>'+_uniq.map(n=>'<option value="'+_escHtml(n)+'">'+_escHtml(n)+'</option>').join('');
+      _fsel.value=_cur;
+    }
+  }catch(e){}
   sv('pd_createdDate',p?(p.createdDate||String(p.createdAt||p._ct||'').slice(0,10)):toLocalDateStr(new Date()));   // 최초 등록일 자동
   sv('pd_lastModified',p?p.lastModified||'':'');
   document.getElementById('mProduct_t').textContent=p?'📦 제품 수정':'📦 제품 등록';
@@ -7509,6 +7522,7 @@ function saveProduct(){
       return Math.round(cny * RATE + wt * mr * matCostFactor(gv('pd_mat')));
     })(),
     priceManual: !!window._pdPriceManual, // 출고단가 수동 입력 모드 여부
+    factory:gv('pd_factory'),   // 🏭 생산 공장
     createdDate:gv('pd_createdDate')||toLocalDateStr(new Date()),
     lastModified:gv('pd_lastModified'),
     imgs:[...pdImgBuf]
@@ -14882,6 +14896,7 @@ function mapNotionProduct(row){
     bcOnSale:    !!np.check(p['판매중']),        // 🛍 브랜드커머스 판매중 여부
     devCost:    np.number(p['개발비']),
     cnyPrice:   np.number(p['위안화입고단가']),
+    factory:    np.text(p['생산공장']),
     ...(function(){ try{ var o=JSON.parse(np.text(p['단가승인JSON'])||'null'); if(!o) return {}; var r={}; if(o.a) r.priceApproval=o.a; if(o.adj) r.priceAdjust=o.adj; return r; }catch(e){ return {}; } })(),
     matRate:    np.number(p['원자재시세']),
     prodCost:   np.number(p['생산원가']),
@@ -21751,6 +21766,7 @@ async function syncProductToNotion(pd, update){
     "안전재고":{"number":+pd.safetyStock||0},
     "중량":{"number":+pd.weight||0},
     "가격이력JSON":{"rich_text":chunkRichText(_priceHistJson)},
+    "생산공장":{"rich_text":[{"text":{"content":String(pd.factory||'').slice(0,200)}}]},
     "단가승인JSON":{"rich_text":chunkRichText((pd.priceApproval||pd.priceAdjust)?JSON.stringify({a:pd.priceApproval||null, adj:pd.priceAdjust||null}):'')},
     // ★ JPRO 연동 필드
     "공임":{"number":+pd.laborCost||0},
@@ -34040,6 +34056,7 @@ async function autoSyncSampleToProductDB(smp, prevSmp){
     costPrice: +(smp.costPrice||0) || 0,
     price: +(smp.unitPrice||0) || 0,
     devCost: +(smp.devCost||0) || 0,
+    factory: smp.factory || '',   // 🏭 샘플 제작 공장 → 제품 생산 공장
     imgs: Array.isArray(smp.imgs) ? smp.imgs.slice(0, 12) : [],
     memo: smp.devNote || '',
     // 신규 등록 시에만 등록일 세팅, 기존이면 유지
