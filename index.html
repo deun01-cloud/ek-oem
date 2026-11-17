@@ -2362,8 +2362,15 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>카드파일 / 원본</label><input class="fi" id="s_card"></div>
   </div>
   <div style="margin-top:7px">
-    <div class="fg"><label>비고 <span style="font-size:9.5px;color:var(--t3);font-weight:400">— 주의사항·추가 요청사항 자유 입력</span></label>
-      <textarea class="fi" id="s_remark" rows="3" placeholder="예) 도금 두께 주의 / 각인 글씨체 지정 / 납기 협의 필요 등 자유롭게 작성" style="resize:vertical;min-height:64px;font-family:inherit;line-height:1.5"></textarea>
+    <div class="fg"><label>🤝 고객사 공유 체크리스트 <span style="font-size:9.5px;color:var(--t3);font-weight:400">— J-PRO에서 고객사도 보는 내용 · 고객사가 추가한 항목은 <b style="color:#f15a24">고객</b> 표시</span></label>
+      <input type="hidden" id="s_remark">
+      <div style="border:1px solid #f3b79d;border-radius:6px;background:var(--s1)">
+        <div id="s_shareList" style="max-height:200px;overflow-y:auto"></div>
+        <div style="display:flex;gap:6px;padding:8px;border-top:1px solid var(--bdr);background:var(--s2)">
+          <input class="fi" id="s_shareInput" placeholder="고객사와 공유할 항목 입력 후 Enter" style="flex:1;border:1px solid var(--bdr);padding:6px 10px;font-size:12px" onkeydown="if(event.key==='Enter'){event.preventDefault();addSmpShare();}">
+          <button type="button" class="btn bp bs" onclick="addSmpShare()" style="padding:4px 14px;font-size:11.5px">+ 추가</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -2398,7 +2405,7 @@ window.addEventListener('message', function(ev){
     </div>
   </div>
 
-  <div class="form-sec">📝 개발·주의사항 체크리스트</div>
+  <div class="form-sec">📝 개발·주의사항 체크리스트 <span style="font-size:10px;color:var(--red);font-weight:600">🔒 내부용 · 고객사에 안 보임</span></div>
   <div class="fg">
     <div id="s_notesWrap" style="border:1px solid var(--bdr);border-radius:6px;background:var(--s1);min-height:180px;max-height:260px;overflow-y:auto">
       <div id="s_notesList"></div>
@@ -3085,16 +3092,15 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>최종 수정일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(마지막 생산/개발일)</span></label><input class="fi" type="date" id="pd_lastModified"></div>
   </div>
   <!-- ★ JPRO(B2C 플랫폼) AI 견적 학습용 — 기존 칸에 없는 4개만 입력받는다.
-       공임·최장 길이·최소 두께·제작 노트는 입고단가·규격/사이즈·메모에서 자동 추출 (_pdJproDerive)
-       2026-11-17 DW: 화면에서는 숨김 (값은 그대로 보존·저장) -->
-  <div class="fr4" style="display:none">
+       공임·최장 길이·최소 두께·제작 노트는 입고단가·규격/사이즈·메모에서 자동 추출 (_pdJproDerive) -->
+  <div class="fr4">
     <div class="fg"><label>난이도</label>
       <select class="fs" id="pd_difficulty"><option value="">-</option><option>하</option><option>중</option><option>상</option></select></div>
     <div class="fg"><label>스톤 개수</label><input class="fi" type="number" id="pd_stoneCount" placeholder="0" min="0"></div>
     <div class="fg"><label>스톤 종류</label><input class="fi" id="pd_stoneType" placeholder="큐빅 2mm, 진주 6mm"></div>
     <div class="fg"><label>CAD 파일 링크</label><input class="fi" id="pd_cadUrl" placeholder="https://… (STL/STEP/3DM)"></div>
   </div>
-  <div id="pd_jproHint" style="display:none;font-size:10.5px;color:var(--t3);margin:-2px 0 8px;line-height:1.5"></div>
+  <div id="pd_jproHint" style="font-size:10.5px;color:var(--t3);margin:-2px 0 8px;line-height:1.5"></div>
   <div class="fg"><label>메모 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(추가 사양 · 제작 불가 사유 · 클레임 · 주의점)</span></label><textarea class="fta" id="pd_memo" rows="2" placeholder="예) 두께 0.6mm 이하라 주조 불가 → 0.8mm로 변경 / 도금 벗겨짐 클레임 1회"></textarea></div>
   <!-- 이미지 첨부 -->
   <div class="fg">
@@ -7041,7 +7047,7 @@ function openProductModal(idOrNull){
   sv('pd_stoneCount',p?p.stoneCount||'':''); sv('pd_stoneType',p?p.stoneType||'':'');
   sv('pd_cadUrl',p?p.cadUrl||'':'');
   updatePdJproHint();
-  sv('pd_createdDate',p?(p.createdDate||String(p.createdAt||p._ct||'').slice(0,10)):toLocalDateStr(new Date()));   // 최초 등록일 자동
+  sv('pd_createdDate',p?p.createdDate||'':'');
   sv('pd_lastModified',p?p.lastModified||'':'');
   document.getElementById('mProduct_t').textContent=p?'📦 제품 수정':'📦 제품 등록';
   document.getElementById('pd_delBtn').style.display=p?'':'none';
@@ -7141,7 +7147,6 @@ function updatePdCostAnalysis(){
     const _ownLock = isOwnBrandCode((document.getElementById('pd_code')?.value || '').trim());
     marginPctEl.disabled = _ownLock;
     marginPctEl.style.opacity = _ownLock ? '.5' : '';
-    marginPctEl.style.color = _ownLock ? 'transparent' : '';   // 자사 브랜드는 마진 숫자를 보이지 않게 (헷갈림 방지, 값은 보존)
     marginPctEl.style.cursor = _ownLock ? 'not-allowed' : '';
     const _lbl = marginPctEl.previousElementSibling;
     if(_lbl && _lbl.tagName==='LABEL') _lbl.textContent = _ownLock ? '마진 (자사 브랜드 ×1.1 고정)' : '마진 (%)';
@@ -7502,7 +7507,7 @@ function saveProduct(){
       return Math.round(cny * RATE + wt * mr * matCostFactor(gv('pd_mat')));
     })(),
     priceManual: !!window._pdPriceManual, // 출고단가 수동 입력 모드 여부
-    createdDate:gv('pd_createdDate')||toLocalDateStr(new Date()),
+    createdDate:gv('pd_createdDate'),
     lastModified:gv('pd_lastModified'),
     imgs:[...pdImgBuf]
   };
@@ -14520,6 +14525,8 @@ function mapNotionSample(row){
   }
   // 주의사항은 항상 별도 필드로 읽음 (devNote 형식과 무관)
   const cautionVal = cautionText;
+  let shareNotes = [];
+  try{ const _sh = np.text(p['고객공유사항'])||''; if(_sh.startsWith('JSON::')){ const a=JSON.parse(_sh.slice(6)); if(Array.isArray(a)) shareNotes=a.filter(n=>n&&n.text).map(n=>({text:String(n.text), checked:!!n.checked, by:n.by==='client'?'client':'ek', at:n.at||'', isNew:!!n.isNew})); } }catch(e){}
   // 파일 필드 복원
   const parseFilesJson = (txt)=>{
     if(!txt) return [];
@@ -14551,6 +14558,7 @@ function mapNotionSample(row){
     devNote:  legacyDevNote,
     caution:  cautionVal,
     notes,
+    shareNotes,
     type:     np.select(p['유형']),
     plating:  np.select(p['도금']),
     status:   np.select(p['상태'])||'의뢰',
@@ -21104,6 +21112,7 @@ async function syncSampleToNotion(s, update){
     "발주량":{"rich_text":[{"text":{"content":s.qty||''}}]},
     "메모":{"rich_text":chunkRichText(s.desc||'')},
     "개발사항":{"rich_text":chunkRichText(notesJson)},
+    "고객공유사항":{"rich_text":chunkRichText(Array.isArray(s.shareNotes)&&s.shareNotes.length?'JSON::'+JSON.stringify(s.shareNotes):'')},
     "주의사항":{"rich_text":chunkRichText(s.caution||'')},
   };
   if(s.type)    p["유형"]={"select":{"name":s.type}};
@@ -28566,6 +28575,7 @@ function renderSample(){
                     return `<span class="cl-init cl-init-sm" style="background:${vendorColor(m)}" title="${m}">${vendorInit(m)}</span>`;
                   })()}
                   <div style="font-weight:500">${s.name}</div>
+                  ${(s.shareNotes||[]).some(n=>n&&n.isNew)?`<span title="고객사가 J-PRO에서 공유 체크리스트를 추가함 — 열어서 저장하면 표시가 사라집니다" style="font-size:9.5px;font-weight:700;color:#fff;background:#f15a24;border-radius:3px;padding:1px 6px;white-space:nowrap">🆕 고객 요청</span>`:''}
                 </div>
                 ${s.aiParsed?`<div style="font-size:9px;color:var(--grn);margin-top:2px">✦ AI</div>`:''}
               </td>
@@ -32848,6 +32858,37 @@ function renderSmpNotes(){
   `).join('');
 }
 
+// 🤝 [2026-11-17] 고객사 공유 체크리스트 (J-PRO 고객 화면에 보임) — [{text, checked, by:'ek'|'client', at, isNew}]
+let smpShareBuf = [];
+function loadSmpShare(s){ return (s && Array.isArray(s.shareNotes)) ? s.shareNotes.map(n=>({text:String(n.text||''), checked:!!n.checked, by:n.by==='client'?'client':'ek', at:n.at||'', isNew:!!n.isNew})) : []; }
+function renderSmpShare(){
+  const el = document.getElementById('s_shareList');
+  if(!el) return;
+  if(!smpShareBuf.length){ el.innerHTML = '<div style="padding:10px;text-align:center;color:var(--t3);font-size:11.5px">공유 항목이 없습니다</div>'; return; }
+  el.innerHTML = smpShareBuf.map((n,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--bdr);${n.isNew?'background:#fff3ec;':''}${n.checked?'opacity:.55':''}">
+      <input type="checkbox" ${n.checked?'checked':''} onchange="_ckMove(smpShareBuf,${i},this.checked);_markModalDirty('mSmp');renderSmpShare()" style="width:14px;height:14px;flex-shrink:0;cursor:pointer">
+      ${n.by==='client'?`<span title="고객사가 J-PRO에서 입력${n.at?' · '+n.at:''}" style="flex-shrink:0;font-size:9.5px;font-weight:700;color:#fff;background:#f15a24;border-radius:3px;padding:1px 5px">고객${n.isNew?' NEW':''}</span>`:''}
+      <input class="fi" value="${(n.text||'').replace(/"/g,'&quot;')}"
+             oninput="smpShareBuf[${i}].text=this.value;_markModalDirty('mSmp')"
+             style="flex:1;border:none;background:transparent;padding:2px 4px;font-size:12px;${n.checked?'text-decoration:line-through;color:var(--t3)':''}">
+      <button type="button" onclick="smpShareBuf.splice(${i},1);_markModalDirty('mSmp');renderSmpShare()" title="삭제"
+              style="border:none;background:none;cursor:pointer;color:var(--t3);font-size:14px;padding:0 4px;line-height:1">×</button>
+    </div>`).join('');
+}
+function addSmpShare(){
+  const inp = document.getElementById('s_shareInput');
+  if(!inp) return;
+  const val = inp.value.trim();
+  if(!val) return;
+  smpShareBuf.push({text:val, checked:false, by:'ek', at:toLocalDateStr(new Date()), isNew:false});
+  inp.value = '';
+  _markModalDirty('mSmp');
+  renderSmpShare();
+  setTimeout(()=>{ const el=document.getElementById('s_shareList'); if(el) el.scrollTop=el.scrollHeight; inp.focus(); }, 30);
+}
+function _smpShareOut(clearNew){ return (smpShareBuf||[]).map(n=>({text:String(n.text||'').trim(), checked:!!n.checked, by:n.by==='client'?'client':'ek', at:n.at||'', isNew:clearNew?false:!!n.isNew})).filter(n=>n.text); }
+
 function addSmpNote(){
   const inp = document.getElementById('s_notesInput');
   if(!inp) return;
@@ -32918,7 +32959,16 @@ function openSmpModal(idOrNull){
   sv('s_remark',s?s.remark||'':'');
   // 개발/주의 체크리스트 로드 (기존 devNote/caution은 자동으로 항목화)
   smpNotesBuf = loadSmpNotes(s);
+  // [2026-11-17] 예전 '비고' 칸 내용은 내부 체크리스트로 옮김 (고객 공유 X). 저장하면 비고는 비워짐
+  window._smpRemarkItems = [];
+  String((s&&s.remark)||'').split(/\n+/).map(t=>t.trim()).filter(Boolean).forEach(t=>{
+    const tx='[비고] '+t;
+    if(smpNotesBuf.some(n=>n.text===tx||n.text===t)) return;
+    const it={text:tx, checked:false}; smpNotesBuf.push(it); window._smpRemarkItems.push(it);
+  });
   renderSmpNotes();
+  smpShareBuf = loadSmpShare(s);
+  renderSmpShare();
   sv('s_devCost',s?s.devCost||'':'');sv('s_unitPrice',s?s.unitPrice||'':'');
   sv('s_costPrice',s?s.costPrice||'':'');
   sv('s_invNo',s?s.itemCode||'':'');
@@ -34043,7 +34093,8 @@ function _smpReadForm(){
     reqDate:gv('s_reqDate'), due:gv('s_due')||_addDays(gv('s_reqDate'),SAMPLE_DUE_LEAD_DAYS), factShip:gv('s_factShip'),
     qty:gv('s_qty'), itemNo:gv('s_itemNo'), sz1:gv('s_sz1'), sz2:gv('s_sz2'), sz3:gv('s_sz3'), sz4:gv('s_sz4'),
     mat:gv('s_mat'), plating:gv('s_plating'), wt:gv('s_wt'), engr:gv('s_engr'), card:gv('s_card'), remark:gv('s_remark'),
-    notes:(smpNotesBuf||[]).map(function(n){ return {text:String(n.text||'').trim(), checked:!!n.checked}; }).filter(function(n){ return n.text; }),
+    notes:(smpNotesBuf||[]).filter(function(n){ return (window._smpRemarkItems||[]).indexOf(n)<0; }).map(function(n){ return {text:String(n.text||'').trim(), checked:!!n.checked}; }).filter(function(n){ return n.text; }),
+    shareNotes:_smpShareOut(false),
     status:gv('s_status'),
     devCost:+gv('s_devCost')||0, unitPrice:+gv('s_unitPrice')||0, costPrice:+gv('s_costPrice')||0, invNo:gv('s_invNo'), itemCode:gv('s_invNo')
   };
@@ -34082,8 +34133,9 @@ function saveSmp(){
     sz1:gv('s_sz1'), sz2:gv('s_sz2'), sz3:gv('s_sz3'), sz4:gv('s_sz4'),
     mat:gv('s_mat'), plating:gv('s_plating'), wt:gv('s_wt'),
     engr:gv('s_engr'), card:gv('s_card'),
-    remark:gv('s_remark'),
+    remark:'',   // 비고 칸은 없앰 — 내용은 내부 체크리스트로 옮겨져 저장됨
     notes: smpNotesBuf.map(n=>({text:String(n.text||'').trim(), checked:!!n.checked})).filter(n=>n.text),
+    shareNotes: _smpShareOut(true),   // EK가 저장하면 고객 NEW 표시 해제
     status:gv('s_status'),
     imgs:[...smpImgBuf], sourceDoc:[...(smpSrcBuf||[])], cadFiles:[...smpCadBuf],
     devCost:+gv('s_devCost')||0, unitPrice:+gv('s_unitPrice')||0, costPrice:+gv('s_costPrice')||0,

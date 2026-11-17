@@ -114,9 +114,38 @@
     } finally { state.busy = false; }
   }
 
+  // 3) [2026-11-17] 고객이 J-PRO에서 추가한 '고객 공유 체크리스트'(노션 고객공유사항, isNew) → 실시간 서버 샘플에 합침
+  //    고정 키(_notionId)로 찾고, 이미 있는 글은 건너뜀(중복 방지). 고객 항목만 더하고 나머지 칸은 건드리지 않음
+  async function mergeShare(){
+    if (typeof samples === 'undefined' || !Array.isArray(samples)) return;
+    var r = await notionCall('POST', '/databases/dad8448577d74ea8bbbcb52f4419be3b/query', { page_size: 100,
+      filter: { property: '고객공유사항', rich_text: { contains: '"isNew":true' } } }, { bypassCircuit: true });
+    var n = 0, names = [];
+    ((r && r.results) || []).forEach(function(pg){
+      if (pg.archived || pg.in_trash) return;
+      var a; try { a = JSON.parse(txt(pg, '고객공유사항').replace(/^JSON::/, '')); } catch (_) { return; }
+      if (!Array.isArray(a)) return;
+      var pid = String(pg.id).replace(/-/g, '');
+      var s = samples.find(function(x){ return x && x._notionId && String(x._notionId).replace(/-/g, '') === pid; });
+      if (!s) return;
+      var cur = Array.isArray(s.shareNotes) ? s.shareNotes : [];
+      var add = a.filter(function(x){ return x && x.by === 'client' && x.isNew && x.text && !cur.some(function(c){ return c && c.text === x.text; }); });
+      if (!add.length) return;
+      s.shareNotes = cur.concat(add.map(function(x){ return { text: String(x.text), checked: false, by: 'client', at: x.at || '', isNew: true }; }));
+      try { realtimePublish('sample', s); } catch (_) {}
+      n += add.length; names.push(s.name || '샘플');
+    });
+    if (n){
+      try { save(); } catch (_) {}
+      try { renderTab(); } catch (_) {}
+      try { showToast('🆕 고객사 요청 ' + n + '개 — ' + names.slice(0, 3).join(', ') + (names.length > 3 ? ' 외' : '') + ' (샘플 공유 체크리스트)', '#f15a24', 7000); } catch (_) {}
+    }
+  }
+
   async function tick(){
     if (!ready()) return;
     try { await importOrders(); } catch (e) { console.warn('[J-PRO]', e && e.message); }
+    try { await mergeShare(); } catch (e) { console.warn('[J-PRO] 공유 체크리스트', e && e.message); }
     try { await loadInbox(); } catch (e) { console.warn('[J-PRO] 문의', e && e.message); }
   }
   setTimeout(tick, 12000);
