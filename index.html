@@ -28414,6 +28414,7 @@ function renderSample(){
           <button class="btn bs" onclick="exportSelectedSamplesExcel()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--grn)':'var(--s3)'};color:${window._smpChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📊 엑셀</button>
           <button class="btn bs" onclick="openBulkInvoice()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--gold-bg)':'var(--s3)'};color:${window._smpChecked.size?'var(--gold-lt)':'var(--t3)'};border:1px solid ${window._smpChecked.size?'var(--gold-line)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">🧾 명세서 발행</button>
           <button class="btn bs" onclick="openBulkOrderFromSamples()" ${window._smpChecked.size?'':'disabled'} title="선택한 샘플들을 품목 행으로 묶어 발주서 1건을 작성합니다 (같은 고객사만 가능)" style="font-size:11px;background:${window._smpChecked.size?'var(--blu)':'var(--s3)'};color:${window._smpChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📋 발주서 생성</button>
+          <button class="btn bs" onclick="openBulkSmpDates()" ${window._smpChecked.size?'':'disabled'} title="선택한 샘플의 납기일·공장출고일을 한 번에 변경" style="font-size:11px;background:${window._smpChecked.size?'var(--s1)':'var(--s3)'};color:${window._smpChecked.size?'var(--t1)':'var(--t3)'};border:1px solid ${window._smpChecked.size?'var(--gold)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📅 일정 변경</button>
           <button class="btn bs" onclick="deleteBulkSamples()" ${window._smpChecked.size?'':'disabled'} style="font-size:11px;background:${window._smpChecked.size?'var(--red)':'var(--s3)'};color:${window._smpChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._smpChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">🗑 선택 삭제</button>
           ${window._smpChecked.size?`<button class="btn bgo bs" onclick="window._smpChecked.clear();renderSample()" style="font-size:11px">해제</button>`:''}
         </div>
@@ -29042,6 +29043,53 @@ function deleteBulkSamples(){
     save();updateBadges();renderTab();
     showToast(`✓ ${ids.length}개 삭제됨`,'var(--grn)');
   },'샘플 삭제','🗑');
+}
+// ── 선택 샘플 납기일·공장출고일 일괄 변경 ──
+function openBulkSmpDates(){
+  if(!window._smpChecked||!window._smpChecked.size){showToast('⚠ 항목을 선택해 주세요','var(--org)');return;}
+  const n=window._smpChecked.size;
+  const old=document.getElementById('bulkSmpDates'); if(old) old.remove();
+  const ov=document.createElement('div');
+  ov.id='bulkSmpDates';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:10000;display:flex;align-items:center;justify-content:center';
+  const inp='padding:7px 9px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:13px;width:100%;box-sizing:border-box';
+  ov.innerHTML=`<div style="background:var(--s1,#fff);border-radius:10px;padding:20px 22px;width:320px;box-shadow:0 10px 30px rgba(0,0,0,.2)">
+    <div style="font-size:15px;font-weight:700;margin-bottom:4px">📅 일정 일괄 변경</div>
+    <div style="font-size:12px;color:var(--t2);margin-bottom:14px">선택한 ${n}개 샘플에 적용 · 비워 둔 칸은 그대로 유지</div>
+    <label style="font-size:12px;font-weight:600">납기일</label>
+    <input type="date" id="bsd_due" style="${inp};margin:4px 0 12px">
+    <label style="font-size:12px;font-weight:600">공장출고일</label>
+    <input type="date" id="bsd_fs" style="${inp};margin:4px 0 16px">
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="document.getElementById('bulkSmpDates').remove()" style="padding:6px 14px;border:1px solid var(--bdr);background:var(--s1,#fff);border-radius:6px;cursor:pointer;font-family:inherit">취소</button>
+      <button onclick="applyBulkSmpDates()" style="padding:6px 14px;border:none;background:var(--gold,#a07a2c);color:#fff;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600">적용</button>
+    </div></div>`;
+  ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
+  document.body.appendChild(ov);
+}
+function applyBulkSmpDates(){
+  const due=(document.getElementById('bsd_due')||{}).value||'';
+  const fs=(document.getElementById('bsd_fs')||{}).value||'';
+  if(!due&&!fs){showToast('⚠ 변경할 날짜를 입력해 주세요','var(--org)');return;}
+  const ids=[...(window._smpChecked||[])].map(String);
+  const now=new Date().toISOString();
+  let cnt=0;
+  samples.forEach(s=>{
+    if(!ids.includes(String(s.id))) return;
+    const base={}, mine={};
+    if(due && s.due!==due){
+      if(s.due){ const h=Array.isArray(s.dueHistory)?[...s.dueHistory]:[]; base.dueHistory=s.dueHistory||[]; h.push({from:s.due,to:due,changedAt:now}); s.dueHistory=h; mine.dueHistory=h; }
+      base.due=s.due||''; mine.due=due; s.due=due;
+    }
+    if(fs && s.factShip!==fs){ base.factShip=s.factShip||''; mine.factShip=fs; s.factShip=fs; }
+    if(!Object.keys(mine).length) return;
+    if(typeof _ekPendSet==='function') try{ _ekPendSet('sample', s, base, mine); }catch(_){}
+    if(s._notionId && typeof debouncedSync==='function') debouncedSync('sample', s, true);
+    cnt++;
+  });
+  const ov=document.getElementById('bulkSmpDates'); if(ov) ov.remove();
+  save(); renderTab();
+  showToast(`✓ ${cnt}개 샘플 일정 변경됨`,'var(--grn)');
 }
 // ── 샘플 의뢰 엑셀 일괄 다운로드 (의뢰일 빠른 순) ──
 function exportSelectedSamplesExcel(){
