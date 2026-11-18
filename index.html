@@ -2542,7 +2542,7 @@ window.addEventListener('message', function(ev){
       </div>
     </div>
     <div class="fg"><label>주문일자</label><input class="fi" type="date" id="o_date"></div>
-    <div class="fg"><label>요청 출고일 *</label><input class="fi" type="date" id="o_ship"></div>
+    <div class="fg"><label>납기일 *</label><input class="fi" type="date" id="o_ship"></div>
   </div>
   <div class="fr3">
     <div class="fg"><label>공장 출고일 <span style="font-size:9.5px;color:var(--t3);font-weight:400">(중국 출고 일정)</span></label><input class="fi" type="date" id="o_factShip"></div>
@@ -25422,7 +25422,7 @@ function showParseResult(parsed,imgs,resultEl){
     fieldsHtml=fields.filter(f=>f[1]).map(f=>`<div class="parse-field"><div class="parse-label">${f[0]}</div><div class="parse-val">${f[1]}</div></div>`).join('');
   }else if(doc==='발주서'&&parsed.order){
     const o=parsed.order;
-    const fields=[['업체명',o.vendor],['주문일자',o.date],['요청출고일',o.shipDate],['담당자',o.manager]];
+    const fields=[['업체명',o.vendor],['주문일자',o.date],['납기일',o.shipDate],['담당자',o.manager]];
     fieldsHtml=fields.filter(f=>f[1]).map(f=>`<div class="parse-field"><div class="parse-label">${f[0]}</div><div class="parse-val">${f[1]}</div></div>`).join('');
     if(o.rows&&o.rows.length){
       fieldsHtml+=`<div class="parse-field" style="grid-column:1/-1"><div class="parse-label">품목</div><div class="parse-val">${o.rows.map(r=>r.name).filter(Boolean).join(' / ')}</div></div>`;
@@ -28107,7 +28107,7 @@ function renderCalWidget(){
         canceled: isOrderCanceled(st),
         t:`${initBadge}<span style="margin-left:4px">발주: ${(o.vendor||'').substring(0,6)}</span>`,
         click:`calGoOrder('${o.id}')`,
-        title: `${o.vendor||''} — 발주 요청출고일 · 품목 ${(o.rows||[]).length}개 · ${st}`
+        title: `${o.vendor||''} — 발주 납기일 · 품목 ${(o.rows||[]).length}개 · ${st}`
       });
     });
 
@@ -30143,7 +30143,7 @@ function showTabParseResult(parsed,imgs,resultEl,tabType,srcLabel){
     defs.forEach(function(f){if(f[1])pairs.push(f);});
   } else if(!isSample&&parsed.order){
     var o=parsed.order;
-    var defs2=[['업체명',o.vendor],['주문일자',o.date],['요청출고일',o.shipDate],['담당자',o.manager]];
+    var defs2=[['업체명',o.vendor],['주문일자',o.date],['납기일',o.shipDate],['담당자',o.manager]];
     defs2.forEach(function(f){if(f[1])pairs.push(f);});
     if(o.rows&&o.rows.length){
       // 이미지가 있는 행 개수
@@ -30547,7 +30547,7 @@ function buildOrderExcel(orderList){
 
   const headers=[
     'No.','발주번호\nP/O No.','업체명\nVendor','담당자\nManager','발주일\nOrder Date',
-    '요청 출고일\nShip Date','진행 상태\nStatus','품번\nItem Code','품목명\nItem Name',
+    '납기일\nDue Date','진행 상태\nStatus','품번\nItem Code','품목명\nItem Name',
     '소재\nMaterial','도금\nPlating','규격\nSize','발주 수량\nOrder Qty',
     '입고 수량\nReceived','잔량\nRemaining','진행률\nProgress',
     '단가 (원)\nUnit Price','금액 (원)\nAmount','비고\nNote','발주 메모\nMemo'
@@ -31765,7 +31765,7 @@ function renderOrder(){
         <input type="file" accept="image/*,.pdf,.xlsx,.xls,.csv" multiple onchange="handleTabUploadInput(event,'order')" style="display:none">
         <div class="dz-icon" style="font-size:26px">📦</div>
         <div class="dz-title">발주서 파일을 여기에 드래그하세요</div>
-        <div class="dz-sub">AI가 업체명, 요청 출고일, 품목명·수량·도금·소재·사이즈를 자동으로 인식합니다</div>
+        <div class="dz-sub">AI가 업체명, 납기일, 품목명·수량·도금·소재·사이즈를 자동으로 인식합니다</div>
         <div class="dz-types" style="margin-top:8px">
           <span class="dz-type" style="background:#E6F1FB;color:#0C447C">🖼 드래그</span>
           <span class="dz-type" style="background:#EAF3DE;color:#27500A">🖱 클릭</span>
@@ -31967,7 +31967,7 @@ function renderOrder(){
             <th>출고완료일</th>
             ` : `
             <th>공장출고일</th>
-            <th>요청출고일</th>
+            <th>납기일</th>
             <th style="cursor:pointer;user-select:none" onclick="ordToggleSort('ship')" title="클릭하여 정렬 (처음 클릭 = 임박순)">D-day${_ordSortIndicator('ship')}</th>
             `}
             <th>상태</th>
@@ -34774,7 +34774,7 @@ function openOrdModal(idOrNull){
   // 요청 출고일 변경 이력 표시
   const shipHistEl=document.getElementById('o_shipHistArea');
   if(shipHistEl){
-    shipHistEl.innerHTML = (o && o.shipHistory && o.shipHistory.length) ? renderDueHistory(o.shipHistory, '요청 출고일') : '';
+    shipHistEl.innerHTML = (o && o.shipHistory && o.shipHistory.length) ? renderDueHistory(o.shipHistory, '납기일') : '';
   }
   // 충돌 감지: 수정 모드면 현재 노션 last_edited_time 스냅샷 기록
   if(o && o._notionId) recordEditStart(o._notionId);
