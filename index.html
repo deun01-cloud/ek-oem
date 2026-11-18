@@ -30944,7 +30944,13 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
         rows.push({ factory:_fac, kind:'발주', client:(o.vendor||'').trim(), code:o.no||'', name:'(품목없음)', vendor:o.vendor||'',
           thumb:_orderThumb(o), qty:'', ordQty:0, rcvQty:0, mat:'', plating:'', status:st, note:(o.factoryNotice||'').trim(), reqDate:o.date||'', factShip:o.factShip||'', extraItems:[] });
       } else {
+        let _firstShown = true;
         oRows.forEach((r, ri)=>{
+          // 📦 입고(납품) 완료된 품목은 공장 납기확인서에서 제외
+          const _oq = (typeof parseOrdQty==='function'?parseOrdQty(r.qty):(+r.qty||0));
+          const _rq = (Array.isArray(r.rcvHistory)?r.rcvHistory:[]).reduce(function(a,h){ return a+(+((h&&h.qty)||0)); },0);
+          if(_oq>0 && _rq>=_oq) return;
+          const _isFirst = _firstShown; _firstShown = false;
           const itemName = (r.name||r.itemName||r.code||'(품목)');
           // 품목별 썸네일: 행 자체 이미지 → 품목코드/이름으로 제품DB 매칭 → 발주 대표 이미지
           let th='';
@@ -30970,13 +30976,13 @@ function exportFactoryDelivery(scope, onlyFactory, filter){
             name: itemName,
             mat: _mat,
             plating: _plat,
-            vendor: ri===0 ? (o.vendor||'') : '',            // 벤더 태그는 발주 첫 행에만
+            vendor: _isFirst ? (o.vendor||'') : '',          // 벤더 태그는 발주 첫 행에만
             thumb: th,
             qty: (r.qty||''),
             ordQty: (typeof parseOrdQty==='function'?parseOrdQty(r.qty):(+r.qty||0)),
             rcvQty: (Array.isArray(r.rcvHistory)?r.rcvHistory:[]).reduce(function(a,h){ return a+(+((h&&h.qty)||0)); },0),
             status: st,
-            note: ri===0 ? (o.factoryNotice||'').trim() : '', // 비고는 발주 첫 행에만
+            note: _isFirst ? (o.factoryNotice||'').trim() : '', // 비고는 발주 첫 행에만
             reqDate: o.date||'',                             // 공장의뢰일 = 발주일
             factShip: o.factShip||'',
             extraItems: [],
