@@ -29045,9 +29045,11 @@ function deleteBulkSamples(){
   },'샘플 삭제','🗑');
 }
 // ── 선택 샘플 납기일·공장출고일 일괄 변경 ──
-function openBulkSmpDates(){
-  if(!window._smpChecked||!window._smpChecked.size){showToast('⚠ 항목을 선택해 주세요','var(--org)');return;}
-  const n=window._smpChecked.size;
+function openBulkSmpDates(kind){
+  kind = kind==='order' ? 'order' : 'sample';
+  const _set = kind==='order' ? window._ordChecked : window._smpChecked;
+  if(!_set||!_set.size){showToast('⚠ 항목을 선택해 주세요','var(--org)');return;}
+  const n=_set.size;
   const old=document.getElementById('bulkSmpDates'); if(old) old.remove();
   const ov=document.createElement('div');
   ov.id='bulkSmpDates';
@@ -29055,19 +29057,20 @@ function openBulkSmpDates(){
   const inp='padding:7px 9px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:13px;width:100%;box-sizing:border-box';
   ov.innerHTML=`<div style="background:var(--s1,#fff);border-radius:10px;padding:20px 22px;width:320px;box-shadow:0 10px 30px rgba(0,0,0,.2)">
     <div style="font-size:15px;font-weight:700;margin-bottom:4px">📅 일정 일괄 변경</div>
-    <div style="font-size:12px;color:var(--t2);margin-bottom:14px">선택한 ${n}개 샘플에 적용 · 비워 둔 칸은 그대로 유지</div>
+    <div style="font-size:12px;color:var(--t2);margin-bottom:14px">선택한 ${n}개 ${kind==='order'?'발주':'샘플'}에 적용 · 비워 둔 칸은 그대로 유지</div>
     <label style="font-size:12px;font-weight:600">납기일</label>
     <input type="date" id="bsd_due" style="${inp};margin:4px 0 12px">
     <label style="font-size:12px;font-weight:600">공장출고일</label>
     <input type="date" id="bsd_fs" style="${inp};margin:4px 0 16px">
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button onclick="document.getElementById('bulkSmpDates').remove()" style="padding:6px 14px;border:1px solid var(--bdr);background:var(--s1,#fff);border-radius:6px;cursor:pointer;font-family:inherit">취소</button>
-      <button onclick="applyBulkSmpDates()" style="padding:6px 14px;border:none;background:var(--gold,#a07a2c);color:#fff;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600">적용</button>
+      <button onclick="applyBulkSmpDates('${kind}')" style="padding:6px 14px;border:none;background:var(--gold,#a07a2c);color:#fff;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600">적용</button>
     </div></div>`;
   ov.addEventListener('click',e=>{ if(e.target===ov) ov.remove(); });
   document.body.appendChild(ov);
 }
-function applyBulkSmpDates(){
+function applyBulkSmpDates(kind){
+  if(kind==='order') return applyBulkOrdDates();
   const due=(document.getElementById('bsd_due')||{}).value||'';
   const fs=(document.getElementById('bsd_fs')||{}).value||'';
   if(!due&&!fs){showToast('⚠ 변경할 날짜를 입력해 주세요','var(--org)');return;}
@@ -29090,6 +29093,30 @@ function applyBulkSmpDates(){
   const ov=document.getElementById('bulkSmpDates'); if(ov) ov.remove();
   save(); renderTab();
   showToast(`✓ ${cnt}개 샘플 일정 변경됨`,'var(--grn)');
+}
+function applyBulkOrdDates(){
+  const due=(document.getElementById('bsd_due')||{}).value||'';
+  const fs=(document.getElementById('bsd_fs')||{}).value||'';
+  if(!due&&!fs){showToast('⚠ 변경할 날짜를 입력해 주세요','var(--org)');return;}
+  const ids=[...(window._ordChecked||[])].map(String);
+  const now=new Date().toISOString();
+  let cnt=0;
+  orders.forEach(o=>{
+    if(!ids.includes(String(o.id))) return;
+    const base={}, mine={};
+    if(due && o.ship!==due){
+      if(o.ship){ const h=Array.isArray(o.shipHistory)?[...o.shipHistory]:[]; base.shipHistory=o.shipHistory||[]; h.push({from:o.ship,to:due,changedAt:now}); o.shipHistory=h; mine.shipHistory=h; }
+      base.ship=o.ship||''; mine.ship=due; o.ship=due;
+    }
+    if(fs && o.factShip!==fs){ base.factShip=o.factShip||''; mine.factShip=fs; o.factShip=fs; }
+    if(!Object.keys(mine).length) return;
+    if(typeof _ekPendSet==='function') try{ _ekPendSet('order', o, base, mine); }catch(_){}
+    if(o._notionId && typeof debouncedSync==='function') debouncedSync('order', o, true);
+    cnt++;
+  });
+  const ov=document.getElementById('bulkSmpDates'); if(ov) ov.remove();
+  save(); renderTab();
+  showToast(`✓ ${cnt}개 발주 일정 변경됨`,'var(--grn)');
 }
 // ── 샘플 의뢰 엑셀 일괄 다운로드 (의뢰일 빠른 순) ──
 function exportSelectedSamplesExcel(){
@@ -31787,6 +31814,7 @@ function renderOrder(){
           <button class="btn bs" onclick="exportSelectedOrdersExcel()" ${window._ordChecked&&window._ordChecked.size?'':'disabled'} style="font-size:11px;background:${window._ordChecked&&window._ordChecked.size?'var(--grn)':'var(--s3)'};color:${window._ordChecked&&window._ordChecked.size?'#fff':'var(--t3)'};border:none;border-radius:5px;padding:4px 10px;cursor:${window._ordChecked&&window._ordChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📊 엑셀</button>
           <button class="btn bs" onclick="bulkOpenOrdDeliveryNote()" ${window._ordChecked&&window._ordChecked.size?'':'disabled'} style="font-size:11px;background:${window._ordChecked&&window._ordChecked.size?'var(--blu-bg)':'var(--s3)'};color:${window._ordChecked&&window._ordChecked.size?'var(--blu)':'var(--t3)'};border:1px solid ${window._ordChecked&&window._ordChecked.size?'rgba(26,109,181,.3)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._ordChecked&&window._ordChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📋 출하지시서</button>
           <button class="btn bs" onclick="bulkOpenOrdTaxInvoice()" ${window._ordChecked&&window._ordChecked.size?'':'disabled'} style="font-size:11px;background:${window._ordChecked&&window._ordChecked.size?'var(--gold-bg)':'var(--s3)'};color:${window._ordChecked&&window._ordChecked.size?'var(--gold-lt)':'var(--t3)'};border:1px solid ${window._ordChecked&&window._ordChecked.size?'var(--gold-line)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._ordChecked&&window._ordChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">🧾 거래명세서</button>
+          <button class="btn bs" onclick="openBulkSmpDates('order')" ${window._ordChecked&&window._ordChecked.size?'':'disabled'} title="선택한 발주의 납기일·공장출고일을 한 번에 변경" style="font-size:11px;background:${window._ordChecked&&window._ordChecked.size?'var(--s1)':'var(--s3)'};color:${window._ordChecked&&window._ordChecked.size?'var(--t1)':'var(--t3)'};border:1px solid ${window._ordChecked&&window._ordChecked.size?'var(--gold)':'var(--bdr)'};border-radius:5px;padding:4px 10px;cursor:${window._ordChecked&&window._ordChecked.size?'pointer':'not-allowed'};font-family:inherit;font-weight:600">📅 일정 변경</button>
           ${window._ordChecked&&window._ordChecked.size?`<button class="btn bgo bs" onclick="window._ordChecked.clear();renderOrder()" style="font-size:11px">해제</button>`:''}
         </div>
       </div>
