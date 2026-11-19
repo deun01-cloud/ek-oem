@@ -2304,6 +2304,7 @@ window.addEventListener('message', function(ev){
         <option value="확정">완료</option>
         <option value="취소">취소</option>
       </select>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11.5px;color:var(--t2);cursor:pointer" title="고객사 모르게 내부적으로 다시 만드는 샘플 — 체크하면 고객사 J-PRO 화면에 보이지 않음"><input type="checkbox" id="s_noJpro" style="width:auto;margin:0"> 🔒 JPRO 비공개 <span style="color:var(--t3)">(고객사에 안 보임)</span></label>
     </div>
   </div>
   <div class="fr3">
@@ -14597,6 +14598,7 @@ function mapNotionSample(row){
     name:     np.title(p['샘플명']),
     itemCode: np.text(p['품번']),
     itemNo:   np.text(p['품번']), // 호환
+    noJpro:   !!np.check(p['JPRO비공개']),
     manager:  np.text(p['담당자_고객사']),
     factory:  np.text(p['공장']),
     mat:      np.text(p['소재']),
@@ -21168,6 +21170,7 @@ async function syncSampleToNotion(s, update){
     "메모":{"rich_text":chunkRichText(s.desc||'')},
     "개발사항":{"rich_text":chunkRichText(notesJson)},
     "고객공유사항":{"rich_text":chunkRichText(Array.isArray(s.shareNotes)&&s.shareNotes.length?'JSON::'+JSON.stringify(s.shareNotes):'')},
+    "JPRO비공개":{"checkbox":!!s.noJpro},   // 🔒 체크하면 고객사 J-PRO 샘플 목록에서 빠짐
     "주의사항":{"rich_text":chunkRichText(s.caution||'')},
   };
   if(s.type)    p["유형"]={"select":{"name":s.type}};
@@ -33153,6 +33156,7 @@ function openSmpModal(idOrNull){
   }
   sv('s_aiParsed', (s&&s.aiParsed)?'1':'0');
   sv('s_status',s?(normSmpStatus(s.status)||'의뢰'):'의뢰');
+  { const _nj=document.getElementById('s_noJpro'); if(_nj) _nj.checked=!!(s&&s.noJpro); }   // JPRO 비공개 (DW 2026-11-19)
   // 납기일 변경 이력 표시
   const dueHistEl=document.getElementById('s_dueHistArea');
   if(dueHistEl){
@@ -34234,7 +34238,7 @@ function _smpReadForm(){
     mat:gv('s_mat'), plating:gv('s_plating'), wt:gv('s_wt'), engr:gv('s_engr'), card:gv('s_card'), remark:gv('s_remark'),
     notes:(smpNotesBuf||[]).filter(function(n){ return (window._smpRemarkItems||[]).indexOf(n)<0; }).map(function(n){ return {text:String(n.text||'').trim(), checked:!!n.checked}; }).filter(function(n){ return n.text; }),
     shareNotes:_smpShareOut(false),
-    status:gv('s_status'),
+    status:gv('s_status'), noJpro:!!(document.getElementById('s_noJpro')||{}).checked,
     devCost:+gv('s_devCost')||0, unitPrice:+gv('s_unitPrice')||0, costPrice:+gv('s_costPrice')||0, invNo:gv('s_invNo'), itemCode:gv('s_invNo')
   };
 }
@@ -34275,7 +34279,7 @@ function saveSmp(){
     remark:'',   // 비고 칸은 없앰 — 내용은 내부 체크리스트로 옮겨져 저장됨
     notes: smpNotesBuf.map(n=>({text:String(n.text||'').trim(), checked:!!n.checked})).filter(n=>n.text),
     shareNotes: _smpShareOut(true),   // EK가 저장하면 고객 NEW 표시 해제
-    status:gv('s_status'),
+    status:gv('s_status'), noJpro:!!(document.getElementById('s_noJpro')||{}).checked,   // 🔒 고객사 J-PRO에 안 보임
     imgs:[...smpImgBuf], sourceDoc:[...(smpSrcBuf||[])], cadFiles:[...smpCadBuf],
     devCost:+gv('s_devCost')||0, unitPrice:+gv('s_unitPrice')||0, costPrice:+gv('s_costPrice')||0,
     invNo:gv('s_invNo'), itemCode:gv('s_invNo')
