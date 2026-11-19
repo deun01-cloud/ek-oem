@@ -29332,14 +29332,18 @@ function _buildItemCode(input){
     }
   });
   samples.forEach(s=>{
-    if(s.itemCode && s.itemCode.startsWith(prefix)){
-      const tail = s.itemCode.slice(prefix.length);
+    // 샘플 품번은 itemNo에 들어 있음(itemCode는 명세서 번호) — 둘 다 봐야 번호가 겹치지 않음 (2026-11-19)
+    [s.itemNo, s.itemCode].forEach(function(code){
+    code = String(code||'').trim();
+    if(code && code.startsWith(prefix)){
+      const tail = code.slice(prefix.length);
       const m = tail.match(/^(\d{1,3})/);
       if(m){
         const n = parseInt(m[1], 10);
         if(!isNaN(n) && n>maxN) maxN = n;
       }
     }
+    });
   });
   const seq = String(maxN + 1).padStart(2,'0');
 
