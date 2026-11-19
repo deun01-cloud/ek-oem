@@ -29236,7 +29236,14 @@ function generateItemCode(s){
 function _smpAutoItemNo(o){
   if(!o || String(o.itemNo||'').trim() || o.status==='취소') return;
   if(!String(o.manager||'').trim() || !String(o.type||'').trim()) return;
-  try{ o.itemNo = generateItemCode(o); }catch(e){ console.warn('[품번 자동 생성 실패]', e); }
+  try{
+    const code = generateItemCode(o);
+    // 🔁 중복 방지 (DW 2026-11-19): 같은 고객사 이니셜 + 같은 품명 제품이 제품DB에 이미 있으면 새로 만들지 않고 그 품번을 씀
+    const ini = String(code||'').slice(0,2), nm = (typeof _normProdName==='function') ? _normProdName(o.name) : String(o.name||'').trim();
+    const ex = (nm && ini) ? (productDB||[]).find(p=>p && String(p.code||'').trim().startsWith(ini) && _normProdName(p.name)===nm) : null;
+    if(ex){ o.itemNo = String(ex.code).trim(); try{ showToast('✓ 제품DB 기존 품번 사용: '+o.itemNo,'var(--grn)',3000); }catch(_){} return; }
+    o.itemNo = code;
+  }catch(e){ console.warn('[품번 자동 생성 실패]', e); }
 }
 // 핵심 헬퍼: 패턴대로 코드 빌드
 function _buildItemCode(input){
@@ -34084,7 +34091,7 @@ async function saveSmpMulti(){
       devNote: [commonMemo, row.memo].filter(Boolean).join(' · '),
       notes: [],
       caution: '',
-      itemNo: '', card: '', invNo: '', itemCode: ''
+      itemNo: String(row.itemNo||'').trim(), card: '', invNo: '', itemCode: ''
     };
     _smpAutoItemNo(smpObj);   // 품번 자동 생성
 
@@ -41141,6 +41148,7 @@ function transferQuoteToSample(quoteId){
     unitPrice: +r.unitPrice || 0,
     devCost: 0,
     memo: '',
+    itemNo: r.itemCode || '',   // 🔁 견적에 연결된 제품DB 품번 승계 (없으면 저장 때 자동 생성 → 중복 원인, 2026-11-19)
     // 🖼 견적 행 썸네일 → 샘플 이미지로 승계 (이관 후에도 사진 유지)
     imgs: r.img ? [{url:r.img, name:(r.name||'품목')}] : [],
     // 📎 견적 첨부파일 → 각 샘플의 원본 자료로 승계 (1행 이관과 동일)
@@ -41181,6 +41189,7 @@ function _doTransferToSample(q, row){
       // 모달이 열린 후 폼 필드 채우기
       const setVal = (id, val) => { const el = document.getElementById(id); if(el && val !== undefined && val !== null && val !== '') el.value = val; };
       setVal('s_name', row.name);
+      setVal('s_itemNo', row.itemCode || '');   // 🔁 견적에 연결된 제품DB 품번 승계 (2026-11-19)
       setVal('s_qty', row.qty || '1');
       setVal('s_mat', row.mat);
       setVal('s_plating', row.plating);
