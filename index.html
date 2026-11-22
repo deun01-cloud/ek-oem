@@ -10404,15 +10404,25 @@ function _unmarkNotionIdDeleted(notionId){
   const ts = _loadTombstones();
   if(ts[notionId]){ delete ts[notionId]; _saveTombstones(ts); }
 }
+// [2026-11-20] 조회 전용 캐시 — 묘비(2천여 건·220KB)를 매 조회마다 JSON.parse 하던 탓에
+//   입출고 전체 스냅샷(2,400건) 처리 때 PC 화면이 약 3초 멈췄다. 저장 문자열이 같으면 파싱 결과 재사용.
+var _tombRoRaw = null, _tombRoObj = {};
+function _tombstonesRO(){
+  try{
+    const raw = localStorage.getItem(_TOMBSTONE_KEY);
+    if(raw !== _tombRoRaw){ _tombRoRaw = raw; _tombRoObj = _loadTombstones(); }
+    return _tombRoObj;
+  }catch(e){ return _loadTombstones(); }
+}
 function _isNotionIdDeleted(notionId){
   if(!notionId) return false;
-  const ts = _loadTombstones();
+  const ts = _tombstonesRO();
   return !!ts[notionId];
 }
 // archive(노션 삭제)가 이미 확정된 묘비인지 — 좀비 재삭제 중복 호출 방지용
 function _isNotionArchiveConfirmed(notionId){
   if(!notionId) return false;
-  const ts = _loadTombstones();
+  const ts = _tombstonesRO();
   return !!(ts[notionId] && ts[notionId].confirmed);
 }
 // 외부 디버그용
