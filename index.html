@@ -200,6 +200,12 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .gd-chip{font-size:10.5px;font-weight:600;border-radius:6px;padding:1px 7px;white-space:nowrap;flex-shrink:0;margin-top:2px}
 .gd-x{background:none;border:none;color:#80868b;cursor:pointer;font-size:16px;line-height:1;padding:2px 5px;border-radius:6px;font-family:inherit}
 .gd-x:hover{color:#b3261e;background:#fce8e6}
+.gd-dt{position:relative;flex-shrink:0;margin-top:1px;font-size:11.5px;line-height:1;padding:4px 8px;border-radius:999px;border:none;background:#f1f3f4;color:#3c4043;cursor:pointer;font-family:inherit;white-space:nowrap}
+.gd-dt:hover{background:#e8eaed}
+.gd-dt.td{background:#e8f0fe;color:#174ea6;font-weight:600}
+.gd-dt.od{background:#fce8e6;color:#a50e0e}
+.gd-dt.no{background:none;color:#9aa0a6;border:1px dashed #dadce0}
+.gd-dt input{position:absolute;left:0;bottom:0;width:100%;height:100%;opacity:0;pointer-events:none;border:0;padding:0}
 .gd-empty{padding:22px 8px;text-align:center;color:var(--gs);font-size:12.5px}
 .gd-add{display:flex;gap:8px;margin-top:auto;padding-top:4px}
 .gd-in{flex:1;min-width:0;height:34px;border:1px solid #dadce0;border-radius:999px;padding:0 14px;font-family:inherit;font-size:12.5px;outline:none;color:var(--gt);background:#fff}
@@ -27736,7 +27742,11 @@ function renderWeekGoalsPanel(){
   const sun=new Date(mon); sun.setDate(mon.getDate()+6);
   const f=x=>(x.getMonth()+1)+'월 '+x.getDate()+'일';
   const all=(typeof weekChecklist!=='undefined' && Array.isArray(weekChecklist))?weekChecklist:[];
-  const list=_doneLast(all.filter(it=>it && it.weekKey===key));   // 달성 항목은 맨 아래
+  // 미완료는 계획 날짜순(날짜 없는 목표는 뒤, 원래 순서 유지) · 달성 항목은 맨 아래
+  const list=_doneLast(all.filter(it=>it && it.weekKey===key).map((it,i)=>[it,i])
+    .sort((a,b)=>{ const da=a[0].date||'9999', db=b[0].date||'9999'; return da<db?-1:da>db?1:a[1]-b[1]; })
+    .map(x=>x[0]));
+  const _wkMin=toLocalDateStr(mon), _wkMax=toLocalDateStr(sun), _today=toLocalDateStr(new Date());
   const total=list.length, done=list.filter(x=>x.done).length;
   const pct=total?Math.round(done/total*100):0;
   const off=_dashGoalOff;
@@ -27753,6 +27763,7 @@ function renderWeekGoalsPanel(){
     return `<div class="gd-row${it.done?' dn':''}">
       <input type="checkbox" ${it.done?'checked':''} onchange="dashToggleGoal('${k}')" aria-label="달성 처리">
       <span class="tx" title="클릭: 달성 처리 · 더블클릭: 내용 수정" onclick="dashGoalClick('${k}')" ondblclick="dashEditGoal('${k}')">${_gdEsc(it.text||'')}</span>
+      ${_dashGoalDateChip(it,k,_wkMin,_wkMax,_today)}
       <button class="gd-x" onclick="dashDeleteGoal('${k}')" aria-label="목표 삭제" title="삭제">×</button>
     </div>`;
   }).join('');
@@ -27775,6 +27786,33 @@ function renderWeekGoalsPanel(){
     </div>
   </section>`;
 }
+// ── 목표 계획 날짜 (2026-11-23) — 목표마다 하는 날을 지정·표시. 필드: it.date = 'YYYY-MM-DD' ('' = 미지정)
+//   칩 클릭 → 달력(그 주 월~일만 선택). 실시간 서버로 공유되고, 노션 풀 때도 기존 날짜를 유지한다.
+function _dashGoalDateChip(it,k,min,max,today){
+  const v=it.date||'';
+  let cls='no', lbl='날짜';
+  if(v){
+    const d=new Date(v+'T12:00:00');
+    lbl=(d.getMonth()+1)+'/'+d.getDate()+' ('+['일','월','화','수','목','금','토'][d.getDay()]+')';
+    cls=it.done?'':(v===today)?'td':(v<today)?'od':'';
+  }
+  return `<button class="gd-dt ${cls}" title="${v?'계획 날짜 변경':'계획 날짜 지정'}" onclick="dashPickGoalDate(this)">${lbl}<input type="date" tabindex="-1" aria-label="계획 날짜" value="${v}" min="${min}" max="${max}" onchange="dashSetGoalDate('${k}',this.value)"></button>`;
+}
+function dashPickGoalDate(btn){
+  const inp=btn.querySelector('input'); if(!inp) return;
+  try{ if(typeof inp.showPicker==='function'){ inp.showPicker(); return; } }catch(e){}
+  inp.style.pointerEvents='auto'; inp.focus(); inp.click();
+}
+function dashSetGoalDate(k,v){
+  const i=_dashGoalIdx(k); if(i<0) return;
+  const it=weekChecklist[i];
+  v=String(v||'');
+  if((it.date||'')===v) return;
+  it.date=v;                              // 지울 때도 ''로 보내야 다른 PC의 병합(Object.assign)에서 지워진다
+  saveChecklists();
+  try{ if(typeof realtimePublish==='function') realtimePublish('checklist', it); }catch(e){}
+  if(currentTab==='dash') renderDash();
+}
 // 지난주(오늘 기준 직전 주)의 미완료 목표
 function _dashPrevWeekUndone(){
   if(typeof weekChecklist==='undefined' || !Array.isArray(weekChecklist)) return [];
@@ -27790,6 +27828,7 @@ function dashCarryOverGoals(){
   const wk=getWeekKey(new Date());
   items.forEach(it=>{
     it.weekKey=wk;
+    if(it.date) it.date='';                // 지난주 날짜는 이번 주 범위 밖 — 이관 후 다시 지정
     try{ syncChecklistItemToNotion(it,'week',true); }catch(e){}
     try{ if(typeof realtimePublish==='function') realtimePublish('checklist', it); }catch(e){}
   });
@@ -37497,6 +37536,10 @@ async function pullChecklistsFromNotion(){
         wk.push(item);
       }
     });
+    // 계획 날짜(date)는 노션 칸이 없으므로 같은 노션 페이지의 기존 로컬 값을 이어받는다
+    const _prevDate={};
+    (Array.isArray(weekChecklist)?weekChecklist:[]).forEach(x=>{ if(x && x._notionId && x.date) _prevDate[String(x._notionId)]=x.date; });
+    wk.forEach(it=>{ const d=_prevDate[String(it._notionId)]; if(d) it.date=d; });
     // 노션의 데이터를 진실의 원천으로 (다른 컴퓨터에서도 일관성 유지)
     weekChecklist = wk;
     monthChecklist = mn;
