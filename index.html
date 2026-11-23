@@ -14732,6 +14732,7 @@ function mapNotionOrder(row){
   return{
     _notionId:row.id,
     no:      np.title(p['발주번호']),
+    star:    !!np.check(p['문제표시']),   // ⭐ 문제 발주 (목록 맨 위)
     vendor:  np.text(p['업체명']),
     factory: np.text(p['공장']),
     manager: np.text(p['담당자']),
@@ -21272,6 +21273,7 @@ async function syncOrderToNotion(o, update){
     .map(f=>({name:f.name,url:f.url,type:f.type,r2Key:f.r2Key})));
   const p={
     "발주번호":{"title":[{"text":{"content":(o.no||o.id+'').slice(0,2000)}}]},
+    "문제표시":{"checkbox":!!o.star},
     "업체명":{"rich_text":[{"text":{"content":(o.vendor||'').slice(0,2000)}}]},
     "공장":{"rich_text":[{"text":{"content":(o.factory||'').slice(0,2000)}}]},
     "담당자":{"rich_text":[{"text":{"content":(o.manager||'').slice(0,2000)}}]},
@@ -28642,6 +28644,7 @@ function renderSample(){
               </td>
               <td>
                 <div style="display:flex;align-items:center;gap:6px">
+                  <span onclick="event.stopPropagation();toggleSmpStar('${s.id}')" title="${s.star?'문제 표시 해제':'문제 제품으로 표시 — 목록 맨 위로'}" style="cursor:pointer;font-size:16px;line-height:1;user-select:none;color:${s.star?'#f5b301':'#c9c4b8'};flex-shrink:0">${s.star?'★':'☆'}</span>
                   ${(()=>{
                     const m=(s.manager||'').trim();
                     if(!m) return '';
@@ -28652,7 +28655,6 @@ function renderSample(){
                     return `<span class="cl-init cl-init-sm" style="background:${vendorColor(m)}" title="${m}">${vendorInit(m)}</span>`;
                   })()}
                   <div style="font-weight:500">${s.name}</div>
-                  <span onclick="event.stopPropagation();toggleSmpStar('${s.id}')" title="${s.star?'문제 표시 해제':'문제 제품으로 표시 — 목록 맨 위로'}" style="cursor:pointer;font-size:16px;line-height:1;user-select:none;color:${s.star?'#f5b301':'#c9c4b8'};flex-shrink:0">${s.star?'★':'☆'}</span>
                   ${(s.shareNotes||[]).some(n=>n&&n.isNew)?`<span title="고객사가 J-PRO에서 공유 체크리스트를 추가함 — 열어서 저장하면 표시가 사라집니다" style="font-size:9.5px;font-weight:700;color:#fff;background:#f15a24;border-radius:3px;padding:1px 6px;white-space:nowrap">🆕 고객 요청</span>`:''}
                 </div>
                 ${s.aiParsed?`<div style="font-size:9px;color:var(--grn);margin-top:2px">✦ AI</div>`:''}
@@ -28800,10 +28802,34 @@ function _groupByVendor(sorted, getV){
   out._grouped=true;
   return out;
 }
+function _starHeadRow(n, colspan){
+  return `<tr class="grp-head" onclick="event.stopPropagation()"><td colspan="${colspan}" style="background:#fff8e1;border-top:3px solid #f5b301;border-bottom:1px solid #f5b301;box-shadow:inset 5px 0 0 #f5b301;padding:8px 10px;cursor:default"><div style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:var(--t1)"><span style="color:#f5b301;font-size:14px">★</span><span>문제 제품</span><span style="font-weight:500;color:var(--t3)">${n}건</span></div></td></tr>`;
+}
+// 별표 목록 머리줄: 맨 위 '문제 제품' + 그 아래는 원래 고객사 묶음
+function _starGrpHead(list, i, getV, colspan){
+  const n=(list&&list._starN)||0;
+  if(n){ if(i===0) return _starHeadRow(n, colspan); if(i<n) return ''; return _grpHeadRow(list._rest, i-n, getV, colspan); }
+  return _grpHeadRow(list, i, getV, colspan);
+}
+// ⭐ 별표 항목을 맨 위로 (나머지 정렬·묶음은 그대로)
+function _starFirst(rest, sortFn){
+  const st=rest.filter(x=>x&&x.star); if(!st.length) return rest;
+  const rs=rest.filter(x=>!(x&&x.star)); rs._grouped=rest._grouped;
+  const out=st.slice().sort(sortFn||(()=>0)).concat(rs); out._grouped=!!rest._grouped; out._starN=st.length; out._rest=rs;
+  return out;
+}
+function toggleOrdStar(oid){
+  const o=orders.find(x=>x.id==oid); if(!o) return;
+  const old=!!o.star; o.star=!old;
+  _ekPendSet('order', o, {star:old}, {star:!old});
+  save();
+  if(o._notionId) debouncedSync('order', o, true);
+  renderOrder();
+}
 function _smpGrpHead(list, i){
   const n=(list&&list._starN)||0;
   if(n){
-    if(i===0) return `<tr class="grp-head" onclick="event.stopPropagation()"><td colspan="14" style="background:#fff8e1;border-top:3px solid #f5b301;border-bottom:1px solid #f5b301;box-shadow:inset 5px 0 0 #f5b301;padding:8px 10px;cursor:default"><div style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:var(--t1)"><span style="color:#f5b301;font-size:14px">★</span><span>문제 제품</span><span style="font-weight:500;color:var(--t3)">${n}건</span></div></td></tr>`;
+    if(i===0) return _starHeadRow(n, 14);
     if(i<n) return '';
     return _grpHeadRow(list._rest, i-n, s=>s.manager, 14);
   }
@@ -31803,6 +31829,7 @@ function renderOrder(){
   };
   // 🏢 기본 정렬 = 업체별로 묶고, 요청출고일이 가장 빠른 업체부터 (DW 2026-10-23). 묶음 안은 출고일 빠른 순.
   list=(!af.sort || af.sort==='default') ? _groupByVendor(list.sort(sorters.ship_asc), o=>o.vendor) : list.sort(sorters[af.sort]||sorters.date_desc);
+  list=_starFirst(list, sorters.ship_asc);   // ⭐ 문제 발주는 맨 위 (DW 2026-11-23)
   // 5-A: 헤더 체크박스가 직접 참조할 수 있도록 list 노출
   window._ordRenderedList = list;
 
@@ -32143,16 +32170,17 @@ function renderOrder(){
             // 한 발주를 2행으로 표시: 1행 메타정보 + 2행 품목내역(전체 너비)
             // border-bottom 처리로 시각적으로 묶음 표현
             const openModal = `ordRowsBuf=[...(orders.find(x=>String(x.id)==='${o.id}')?.rows||[])].map(r=>({...r}));openOrdModal('${o.id}')`;
-            return _grpHeadRow(list,_gi,x=>x.vendor,ordSubTab==='done'?9:11)+`<tr class="${rowCls} ord-row-top" style="${rowStyle};cursor:pointer" onclick="${openModal}">
+            return _starGrpHead(list,_gi,x=>x.vendor,ordSubTab==='done'?9:11)+`<tr class="${rowCls} ord-row-top" style="${rowStyle};cursor:pointer" onclick="${openModal}">
               <td onclick="event.stopPropagation()" style="text-align:center;vertical-align:middle;border-bottom:none">
                 <input type="checkbox" ${isOrdChecked?'checked':''} onchange="toggleOrdChk('${o.id}',this.checked)" style="width:14px;height:14px;cursor:pointer;accent-color:var(--gold)">
               </td>
               <td style="white-space:nowrap;vertical-align:middle;border-bottom:none">
                 <div style="display:flex;align-items:center;gap:6px">
+                  <span onclick="event.stopPropagation();toggleOrdStar('${o.id}')" title="${o.star?'문제 표시 해제':'문제 발주로 표시 — 목록 맨 위로'}" style="cursor:pointer;font-size:16px;line-height:1;user-select:none;color:${o.star?'#f5b301':'#c9c4b8'};flex-shrink:0">${o.star?'★':'☆'}</span>
                   ${vendorInitHtml(o.vendor, true)}
                   <span style="font-size:12px;font-weight:600;${isOrdDone||isOrdCanceled?'text-decoration:line-through;color:var(--t3)':''}">${o.vendor||'—'}</span>
                 </div>
-                ${o.manager?`<div style="font-size:10px;color:var(--t3);margin-top:2px;margin-left:26px">${o.manager}</div>`:''}
+                ${o.manager?`<div style="font-size:10px;color:var(--t3);margin-top:2px;margin-left:48px">${o.manager}</div>`:''}
               </td>
               <td onclick="event.stopPropagation()" style="vertical-align:middle;border-bottom:none">${_factoryInlineCell(o.factory, 'o', o.id)}</td>
               <td style="font-size:12px;color:var(--t1);font-family:monospace;font-weight:700;white-space:nowrap;vertical-align:middle;border-bottom:none">${o.no||'—'}</td>
