@@ -14614,6 +14614,7 @@ function mapNotionSample(row){
     itemCode: np.text(p['품번']),
     itemNo:   np.text(p['품번']), // 호환
     noJpro:   !!np.check(p['JPRO비공개']),
+    star:     !!np.check(p['문제표시']),   // ⭐ 문제 제품 표시 (목록 맨 위)
     manager:  np.text(p['담당자_고객사']),
     factory:  np.text(p['공장']),
     mat:      np.text(p['소재']),
@@ -21186,6 +21187,7 @@ async function syncSampleToNotion(s, update){
     "개발사항":{"rich_text":chunkRichText(notesJson)},
     "고객공유사항":{"rich_text":chunkRichText(Array.isArray(s.shareNotes)&&s.shareNotes.length?'JSON::'+JSON.stringify(s.shareNotes):'')},
     "JPRO비공개":{"checkbox":!!s.noJpro},   // 🔒 체크하면 고객사 J-PRO 샘플 목록에서 빠짐
+    "문제표시":{"checkbox":!!s.star},     // ⭐ 문제 제품 (목록 맨 위)
     "주의사항":{"rich_text":chunkRichText(s.caution||'')},
   };
   if(s.type)    p["유형"]={"select":{"name":s.type}};
@@ -28650,6 +28652,7 @@ function renderSample(){
                     return `<span class="cl-init cl-init-sm" style="background:${vendorColor(m)}" title="${m}">${vendorInit(m)}</span>`;
                   })()}
                   <div style="font-weight:500">${s.name}</div>
+                  <span onclick="event.stopPropagation();toggleSmpStar('${s.id}')" title="${s.star?'문제 표시 해제':'문제 제품으로 표시 — 목록 맨 위로'}" style="cursor:pointer;font-size:16px;line-height:1;user-select:none;color:${s.star?'#f5b301':'#c9c4b8'};flex-shrink:0">${s.star?'★':'☆'}</span>
                   ${(s.shareNotes||[]).some(n=>n&&n.isNew)?`<span title="고객사가 J-PRO에서 공유 체크리스트를 추가함 — 열어서 저장하면 표시가 사라집니다" style="font-size:9.5px;font-weight:700;color:#fff;background:#f15a24;border-radius:3px;padding:1px 6px;white-space:nowrap">🆕 고객 요청</span>`:''}
                 </div>
                 ${s.aiParsed?`<div style="font-size:9px;color:var(--grn);margin-top:2px">✦ AI</div>`:''}
@@ -28761,8 +28764,12 @@ function filteredSamples(){
   };
   // 🏢 기본 정렬 = 고객사별로 묶고, 납기가 가장 빠른 고객사부터 (DW 2026-10-23). 묶음 안은 납기 빠른 순.
   //    납기 빠른 순으로 먼저 정렬한 뒤 처음 등장한 순서대로 고객사를 모으면, 고객사 순서 = 그 고객사의 가장 빠른 납기 순.
-  if(!af.sort || af.sort==='default') return _groupByVendor([...list].sort(sorters.due_asc), s=>s.manager);
-  return [...list].sort(sorters[af.sort]||sorters.req_desc);
+  // ⭐ 문제 표시한 샘플은 정렬과 관계없이 맨 위 (DW 2026-11-23)
+  const _st=list.filter(s=>s.star).sort(sorters.due_asc), _rs=list.filter(s=>!s.star);
+  const rest=(!af.sort || af.sort==='default') ? _groupByVendor([..._rs].sort(sorters.due_asc), s=>s.manager) : [..._rs].sort(sorters[af.sort]||sorters.req_desc);
+  if(!_st.length) return rest;
+  const out=_st.concat(rest); out._grouped=!!rest._grouped; out._starN=_st.length; out._rest=rest;
+  return out;
 }
 // 🏢 고객사 묶음 공용 (샘플·발주) — 키 = 고객사 이니셜 (확인 안 되면 원문, 비어 있으면 '')
 function _vendorGrpKey(v){
@@ -28793,7 +28800,24 @@ function _groupByVendor(sorted, getV){
   out._grouped=true;
   return out;
 }
-function _smpGrpHead(list, i){ return _grpHeadRow(list, i, s=>s.manager, 14); }
+function _smpGrpHead(list, i){
+  const n=(list&&list._starN)||0;
+  if(n){
+    if(i===0) return `<tr class="grp-head" onclick="event.stopPropagation()"><td colspan="14" style="background:#fff8e1;border-top:3px solid #f5b301;border-bottom:1px solid #f5b301;box-shadow:inset 5px 0 0 #f5b301;padding:8px 10px;cursor:default"><div style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:var(--t1)"><span style="color:#f5b301;font-size:14px">★</span><span>문제 제품</span><span style="font-weight:500;color:var(--t3)">${n}건</span></div></td></tr>`;
+    if(i<n) return '';
+    return _grpHeadRow(list._rest, i-n, s=>s.manager, 14);
+  }
+  return _grpHeadRow(list, i, s=>s.manager, 14);
+}
+function toggleSmpStar(sid){
+  const i=samples.findIndex(x=>x.id==sid); if(i<0) return;
+  const old=!!samples[i].star;
+  samples[i].star=!old;
+  _ekPendSet('sample', samples[i], {star:old}, {star:!old});
+  save();
+  if(samples[i]._notionId) debouncedSync('sample', samples[i], true);
+  renderSample();
+}
 
 // ── 상태 변경 드롭다운 (클릭한 상태 칩 옆에 표시) ──
 function openSmpStatusDropdown(ev, sid){
