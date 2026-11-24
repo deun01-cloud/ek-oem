@@ -332,6 +332,8 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .svb.on{color:var(--gold-lt);border-bottom-color:var(--gold-line);font-weight:500}
 .wg-cat{background:var(--s2);border-right:1px solid var(--bdr);border-bottom:1px solid var(--bdr);padding:7px 8px;font-size:9.5px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.3px;display:flex;align-items:flex-start}
 .wg-cell{border-right:1px solid var(--bdr);border-bottom:1px solid var(--bdr);padding:4px 6px;min-height:54px}
+.wg-ap{min-height:20px;border-radius:4px}.wg-ap+.wg-ap{border-top:1px dashed var(--bdr);margin-top:3px;padding-top:2px}
+.wg-ap-l{font-size:9px;color:var(--t3);line-height:1.2;margin:1px 0 1px 2px}
 .wg-cell:hover{background:#FFFBF4}
 .task-it{display:flex;align-items:flex-start;gap:4px;padding:1px 0;font-size:11px;line-height:1.4}
 .task-it input[type=checkbox]{margin-top:2px;flex-shrink:0}
@@ -27663,7 +27665,7 @@ function renderTodayTasksPanel(side){
   // [2026-11-24] 담당(카테고리)별로 나눠 보여 줌 — 업무일지 행 순서(CATS_SCHED)와 같게, 각 묶음 안은 기존 정렬 유지
   const _grp={}; list.forEach(t=>{ const k=t.cat||'업무'; (_grp[k]=_grp[k]||[]).push(t); });
   const _order=CATS_SCHED.concat(Object.keys(_grp).filter(k=>!CATS_SCHED.includes(k)));
-  const rowOf=t=>{
+  const rowOf=(t,noAp)=>{
     const cc=CAT[t.cat]||['#f1f3f4','#3c4043'];
     const id=_gdArg(t.id);
     // 미완료 업무만 드래그로 순서 변경 (완료는 항상 맨 아래)
@@ -27671,14 +27673,20 @@ function renderTodayTasksPanel(side){
     return `<div class="gd-row${t.done?' dn':''}"${dnd}>
       <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${id}')" aria-label="완료 처리">
       <span class="tx" onclick="openEditTask('${id}')">${_gdEsc(t.cont||'')}${t.note?`<span class="gd-sub" style="display:block;text-decoration:none">${_gdEsc(t.note)}</span>`:''}</span>
-      ${(t.ap||t.assignee||t.ap2)?`<span class="gd-sub" style="flex-shrink:0;margin-top:2px">${_gdEsc([t.ap,t.assignee||t.ap2].filter(Boolean).join(' · '))}</span>`:''}
+      ${((!noAp&&t.ap)||t.assignee||t.ap2)?`<span class="gd-sub" style="flex-shrink:0;margin-top:2px">${_gdEsc([noAp?'':t.ap,t.assignee||t.ap2].filter(Boolean).join(' · '))}</span>`:''}
     </div>`;
   };
+  // [2026-11-24] SCM MD·커머스 MD는 오전/오후 구역으로 나눔 — 구역에 놓으면 그 시간대·담당으로 이동
+  const apSec=(g,cat)=>['오전','오후'].map(ap=>{
+    const r=g.filter(t=>(t.ap||'오전')===ap).map(t=>rowOf(t,true)).join('');
+    return `<div class="gd-ap" ondragover="gdBoxDragOver(event,this);event.stopPropagation()" ondragleave="gdBoxDragLeave(event,this)" ondrop="gdApDrop(event,this,'${cat}','${ap}')"><div class="gd-ap-l">${ap}</div>${r||'<div class="gd-ap-e">—</div>'}</div>`;
+  }).join('');
   const _keys=_order.filter(k=>_grp[k]);
-  const rows=isCom?list.map(rowOf).join(''):_keys.map(k=>{
+  const rows=isCom?apSec(list,'커머스'):_keys.map(k=>{
     const g=_grp[k], cc=CAT[k]||['#f1f3f4','#3c4043'], gd=g.filter(t=>t.done).length;
-    if(_keys.length===1 && k==='업무') return g.map(rowOf).join('');   // SCM MD만 있으면 묶음 머리 생략
-    return `<div class="gd-grp" style="margin-top:6px"><div style="display:flex;align-items:center;gap:6px;padding:4px 8px 2px"><span class="gd-chip" style="background:${cc[0]};color:${cc[1]};margin:0">${_gdEsc(catLabel(k))}</span><span class="gd-sub">${gd}/${g.length}</span></div>${g.map(rowOf).join('')}</div>`;
+    const body=k==='업무'?apSec(g,'업무'):g.map(t=>rowOf(t)).join('');
+    if(_keys.length===1 && k==='업무') return body;   // SCM MD만 있으면 묶음 머리 생략
+    return `<div class="gd-grp" style="margin-top:6px"><div style="display:flex;align-items:center;gap:6px;padding:4px 8px 2px"><span class="gd-chip" style="background:${cc[0]};color:${cc[1]};margin:0">${_gdEsc(catLabel(k))}</span><span class="gd-sub">${gd}/${g.length}</span></div>${body}</div>`;
   }).join('');
   return `<section class="gd-card" ondragover="gdBoxDragOver(event,this)" ondragleave="gdBoxDragLeave(event,this)" ondrop="gdBoxDrop(event,this,'${isCom?'com':'scm'}')">
     <div class="gd-h">
@@ -27719,8 +27727,9 @@ function gdTaskDrop(e,el,targetId){
   const src=list.find(t=>String(t.id)===srcId);
   const tgt=list.find(t=>String(t.id)===String(targetId));
   if(!src || !tgt) return;
-  // [2026-11-24] 다른 상자·묶음의 업무 위에 놓으면 그 업무의 담당(카테고리)으로 옮김
+  // [2026-11-24] 다른 상자·묶음·시간대의 업무 위에 놓으면 그 업무의 담당(카테고리)·오전오후로 옮김
   if(src.cat!==tgt.cat) _gdSetTaskCat(src, tgt.cat||'업무');
+  if((src.ap||'오전')!==(tgt.ap||'오전')) _gdSetTaskAp(src, tgt.ap||'오전');
   const rest=list.filter(t=>t!==src);
   let at=rest.findIndex(t=>t===tgt);
   if(after) at++;
@@ -27733,6 +27742,29 @@ function _gdSetTaskCat(t,cat){
   _ekPendSet('task',t,{cat:t.cat},{cat:cat});
   t.cat=cat; t._syncedAt=new Date().toISOString();
   try{ debouncedSync('task',t,true); }catch(e){}
+}
+function _gdSetTaskAp(t,ap){
+  if(!t || t.ap===ap) return;
+  _ekPendSet('task',t,{ap:t.ap},{ap:ap});
+  t.ap=ap; t._syncedAt=new Date().toISOString();
+  try{ debouncedSync('task',t,true); }catch(e){}
+}
+// 오전/오후 구역의 빈 곳에 놓기 — 그 담당·시간대로 바꾸고 그 구역 미완료 맨 아래에 둠
+function gdApDrop(e,el,cat,ap){
+  e.preventDefault(); e.stopPropagation();
+  el.classList.remove('gd-box-over');
+  document.querySelectorAll('.gd-box-over').forEach(x=>x.classList.remove('gd-box-over'));
+  const srcId=_gdDragId; if(!srcId) return;
+  const ds=toLocalDateStr(new Date());
+  const list=tasks.filter(t=>t.date===ds).sort(_taskDayCmp);
+  const src=list.find(t=>String(t.id)===srcId); if(!src) return;
+  if(src.cat===cat && (src.ap||'오전')===ap) return;
+  _gdSetTaskCat(src,cat); _gdSetTaskAp(src,ap);
+  const rest=list.filter(t=>t!==src);
+  let at=-1; rest.forEach((t,i)=>{ if(!t.done && t.cat===cat && (t.ap||'오전')===ap) at=i; });
+  if(at<0){ at=rest.findIndex(t=>t.done); if(at<0) at=rest.length; } else at++;
+  rest.splice(at,0,src);
+  _commitDayOrder(ds,rest);
 }
 function gdBoxDragOver(e,box){
   if(!_gdDragId) return;
@@ -27768,7 +27800,9 @@ function gdTaskDragEnd(){
 if(!document.getElementById('gdTaskDragStyles')){
   const st=document.createElement('style'); st.id='gdTaskDragStyles';
   st.textContent=`.gd-row[draggable="true"]{cursor:grab}.gd-row.gd-dragging{opacity:.4}
-  .gd-card.gd-box-over{outline:2px dashed var(--gold,#1a73e8);outline-offset:-4px}
+  .gd-card.gd-box-over,.gd-ap.gd-box-over{outline:2px dashed var(--gold,#1a73e8);outline-offset:-4px}
+  .gd-ap{border-radius:8px;padding:2px 0}.gd-ap+.gd-ap{border-top:1px dashed #e3e3e3;margin-top:4px;padding-top:4px}
+  .gd-ap-l{font-size:11px;font-weight:600;color:#80868b;padding:2px 8px}.gd-ap-e{font-size:12px;color:#bdc1c6;padding:2px 8px 4px}
   .gd-row.gd-drop-b{box-shadow:inset 0 2px 0 var(--gold,#1a73e8)}.gd-row.gd-drop-a{box-shadow:inset 0 -2px 0 var(--gold,#1a73e8)}`;
   document.head.appendChild(st);
 }
@@ -33062,18 +33096,25 @@ function renderWeekView(sc){
           const manualTasks=_sortedCellTasks(ds,cat);
           const autoItems=(cat==='발주출고'||cat==='샘플출고'||cat==='중국출고')?getAutoItems(ds,cat):[];
           const hasFiles=manualTasks.some(t=>t.files&&t.files.length);
+          const _wRow=t=>`<div class="task-it" draggable="true" ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" ondragover="taskItemDragOver(event,this)" ondragleave="taskItemDragLeave(this)" ondrop="taskItemDrop(event,this,'${t.id}')" title="드래그로 순서·위치 이동">
+              <span class="drag-handle" title="드래그하여 순서 변경">⋮⋮</span>
+              <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${t.id}')">
+              <span class="tt ${t.done?'done':''}" onclick="openEditTask('${t.id}')" style="cursor:pointer;flex:1">${t.cont}</span>
+              ${t.files&&t.files.length?`<span title="${t.files.length}개 첨부" style="font-size:10px;cursor:pointer" onclick="openEditTask('${t.id}')">📎${t.files.length}</span>`:''}
+            </div>`;
           return`<div class="wg-cell" style="background:${CAT_BG[cat]||'transparent'};min-height:38px" data-date="${ds}" data-cat="${cat}" ondragover="taskDragOver(event,this)" ondragleave="taskDragLeave(this)" ondrop="taskDrop(event,this)">
             ${autoItems.map(it=>`<div class="task-it" style="cursor:${it.click?'pointer':'default'}" ${it.click?`onclick="${it.click}"`:''} title="${it.cont.replace(/"/g,'&quot;')}">
               ${it.badge||''}
               <span class="tt ${it.done?'done':''}" style="font-size:10.5px;flex:1;margin-left:${it.badge?'2px':'0'}">${it.cont}</span>
             </div>`).join('')}
-            ${manualTasks.map(t=>`<div class="task-it" draggable="true" ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" ondragover="taskItemDragOver(event,this)" ondragleave="taskItemDragLeave(this)" ondrop="taskItemDrop(event,this,'${t.id}')" title="드래그로 순서·위치 이동">
-              <span class="drag-handle" title="드래그하여 순서 변경">⋮⋮</span>
-              <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${t.id}')">
-              <span class="tt ${t.done?'done':''}" onclick="openEditTask('${t.id}')" style="cursor:pointer;flex:1">${t.cont}</span>
-              ${t.files&&t.files.length?`<span title="${t.files.length}개 첨부" style="font-size:10px;cursor:pointer" onclick="openEditTask('${t.id}')">📎${t.files.length}</span>`:''}
-            </div>`).join('')}
-            <button class="add-t" onclick="openTaskFull('${ds}','오전','${cat}')">＋</button>
+            ${(cat==='업무'||cat==='커머스')
+              // [2026-11-24] SCM MD·커머스 MD는 칸 안을 오전/오후로 나눔 — 구역에 놓으면 그 시간대로 이동
+              ? ['오전','오후'].map(ap=>`<div class="wg-ap" data-date="${ds}" data-cat="${cat}" data-ap="${ap}" ondragover="event.stopPropagation();taskDragOver(event,this)" ondragleave="taskDragLeave(this)" ondrop="event.stopPropagation();taskDrop(event,this)">
+                <div class="wg-ap-l">${ap}</div>
+                ${manualTasks.filter(t=>(t.ap||'오전')===ap).map(_wRow).join('')}
+                <button class="add-t" onclick="openTaskFull('${ds}','${ap}','${cat}')">＋</button>
+              </div>`).join('')
+              : manualTasks.map(_wRow).join('')+`<button class="add-t" onclick="openTaskFull('${ds}','오전','${cat}')">＋</button>`}
           </div>`;
         }).join('')}`;
       }).join('')}
