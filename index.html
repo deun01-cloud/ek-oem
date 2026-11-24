@@ -177,7 +177,8 @@ tr.ord-row-bottom.row-miss-fs td{border-top:none!important}
 .gd-date{font-size:22px;font-weight:500;letter-spacing:-.2px}
 .gd-sum{font-size:13px;color:var(--gs)}
 .gd-sum a{color:var(--gb);cursor:pointer;font-weight:500}
-.gd-top{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;align-items:stretch}
+.gd-top{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch}
+@media(max-width:1100px){.gd-top{grid-template-columns:1fr}}
 .gd-card{background:#fff;border:1px solid var(--gl);border-radius:16px;padding:18px 20px;display:flex;flex-direction:column;gap:10px;min-width:0}
 .gd-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-height:34px}
 .gd-t{font-size:15px;font-weight:700}
@@ -2790,7 +2791,7 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>오전/오후</label><select class="fs" id="t_ap"><option>오전</option><option>오후</option></select></div>
     <div class="fg"><label>카테고리</label>
       <select class="fs" id="t_cat">
-        <option value="업무">SCM MD</option><option value="세일즈">세일즈 업무</option><option value="커머스">커머스 MD</option>
+        <option value="업무">SCM MD</option><option value="커머스">커머스 MD</option><option value="세일즈">세일즈 업무</option>
         <option>발주출고</option><option>샘플출고</option>
         <option value="중국입고">한국→중국</option><option value="중국출고">중국→한국</option>
       </select>
@@ -3561,7 +3562,7 @@ const ORD_CATS=[
   {key:'전체',     label:'전체'},
 ];
 const SMP_CLS={의뢰:'chip',제작중:'cb',수정중:'co',확정:'cg',취소:'chip'};
-const CATS_SCHED=['업무','세일즈','커머스','발주출고','샘플출고','중국입고','중국출고'];
+const CATS_SCHED=['업무','커머스','세일즈','발주출고','샘플출고','중국입고','중국출고'];
 const CAT_BG={'업무':'rgba(26,109,181,.07)','세일즈':'rgba(122,77,181,.07)','커머스':'rgba(168,90,16,.07)','발주출고':'rgba(46,139,44,.07)','샘플출고':'rgba(26,109,181,.07)','중국입고':'rgba(192,48,48,.07)','중국출고':'rgba(192,48,48,.12)'};
 const CAT_COL={'업무':'#155A9A','세일즈':'#7A4DB5','커머스':'#7A4008','발주출고':'#256B23','샘플출고':'#155A9A','중국입고':'#A32D2D','중국출고':'#A32D2D'};
 const CAT_HAS_FILES=['발주출고','샘플출고','중국입고','중국출고'];
@@ -27610,7 +27611,8 @@ function renderDash(){
   </div>
 
   <div class="gd-top">
-    ${renderTodayTasksPanel()}
+    ${renderTodayTasksPanel('scm')}
+    ${renderTodayTasksPanel('com')}
     ${renderWeekGoalsPanel()}
   </div>
 
@@ -27645,10 +27647,12 @@ function renderDash(){
 }
 
 // ── 오늘의 업무 (대시보드 왼쪽 위) ──
-function renderTodayTasksPanel(){
+// [2026-11-24] 오늘의 업무를 두 상자로 — side 'com' = 커머스 MD, 그 외('scm') = SCM MD + 나머지 담당(세일즈·출고 등)
+function renderTodayTasksPanel(side){
   const ds=toLocalDateStr(new Date());
+  const isCom=side==='com';
   // 정렬은 업무일지와 같은 단일 기준(_taskDayCmp): 미완료 → 사용자가 정한 날짜 순서(ord) → 카테고리 기본순
-  const list=tasks.filter(t=>t.date===ds).sort(_taskDayCmp);
+  const list=tasks.filter(t=>t.date===ds && ((t.cat==='커머스')===isCom)).sort(_taskDayCmp);
   const total=list.length, done=list.filter(t=>t.done).length;
   const pct=total?Math.round(done/total*100):0;
   const CAT={
@@ -27670,17 +27674,19 @@ function renderTodayTasksPanel(){
       ${(t.ap||t.assignee||t.ap2)?`<span class="gd-sub" style="flex-shrink:0;margin-top:2px">${_gdEsc([t.ap,t.assignee||t.ap2].filter(Boolean).join(' · '))}</span>`:''}
     </div>`;
   };
-  const rows=_order.filter(k=>_grp[k]).map(k=>{
+  const _keys=_order.filter(k=>_grp[k]);
+  const rows=isCom?list.map(rowOf).join(''):_keys.map(k=>{
     const g=_grp[k], cc=CAT[k]||['#f1f3f4','#3c4043'], gd=g.filter(t=>t.done).length;
+    if(_keys.length===1 && k==='업무') return g.map(rowOf).join('');   // SCM MD만 있으면 묶음 머리 생략
     return `<div class="gd-grp" style="margin-top:6px"><div style="display:flex;align-items:center;gap:6px;padding:4px 8px 2px"><span class="gd-chip" style="background:${cc[0]};color:${cc[1]};margin:0">${_gdEsc(catLabel(k))}</span><span class="gd-sub">${gd}/${g.length}</span></div>${g.map(rowOf).join('')}</div>`;
   }).join('');
   return `<section class="gd-card">
     <div class="gd-h">
-      <span class="gd-t">오늘의 업무</span>
+      <span class="gd-t">오늘의 업무 · ${isCom?'커머스 MD':'SCM MD'}</span>
       ${total?`<span class="gd-cnt">${done}/${total}</span>`:''}
       <span class="gd-sp"></span>
-      <button class="gd-link" onclick="switchTab('schedule',getTabBtn('schedule'))">업무일지 →</button>
-      <button class="gd-btn pri" onclick="openTaskModal()">+ 업무 추가</button>
+      ${isCom?'':`<button class="gd-link" onclick="switchTab('schedule',getTabBtn('schedule'))">업무일지 →</button>`}
+      <button class="gd-btn pri" onclick="openTaskFull(toLocalDateStr(new Date()),'오전','${isCom?'커머스':'업무'}')">+ 추가</button>
     </div>
     ${total?`<div class="gd-bar"><i style="width:${pct}%"></i></div>`:''}
     ${total?`<div class="gd-list">${rows}</div>`:`<div class="gd-empty">오늘 등록된 업무가 없습니다.</div>`}
@@ -27769,6 +27775,7 @@ function renderWeekGoalsPanel(){
     return `<div class="gd-row${it.done?' dn':''}">
       <input type="checkbox" ${it.done?'checked':''} onchange="dashToggleGoal('${k}')" aria-label="달성 처리">
       <span class="tx" title="클릭: 달성 처리 · 더블클릭: 내용 수정" onclick="dashGoalClick('${k}')" ondblclick="dashEditGoal('${k}')">${_gdEsc(it.text||'')}</span>
+      ${_dashGoalOwnerChip(it,k)}
       ${_dashGoalDateChip(it,k,_wkMin,_wkMax,_today)}
       <button class="gd-x" onclick="dashDeleteGoal('${k}')" aria-label="목표 삭제" title="삭제">×</button>
     </div>`;
@@ -27791,6 +27798,22 @@ function renderWeekGoalsPanel(){
       <button class="gd-btn" onclick="dashAddGoal()">추가</button>
     </div>
   </section>`;
+}
+// ── 목표 담당 (2026-11-24) — it.owner = '업무'(SCM MD) | '커머스'(커머스 MD) | '' 미지정. 칩을 누를 때마다 미지정 → SCM MD → 커머스 MD 순으로 바뀜
+//   날짜와 같은 방식: 실시간 서버로 공유, 노션 풀 때 기존 값 유지
+function _dashGoalOwnerChip(it,k){
+  const o=it.owner||'';
+  const st=o==='업무'?'background:#f3e8fd;color:#6a1b9a;border-color:transparent':o==='커머스'?'background:#e6f4ea;color:#137333;border-color:transparent':'';
+  return `<button class="gd-dt${o?'':' no'}" style="${st}" title="담당 바꾸기" onclick="dashCycleGoalOwner('${k}')">${o?_gdEsc(catLabel(o)):'담당'}</button>`;
+}
+function dashCycleGoalOwner(k){
+  const i=_dashGoalIdx(k); if(i<0) return;
+  const it=weekChecklist[i];
+  const o=it.owner||'';
+  it.owner=o===''?'업무':o==='업무'?'커머스':'';
+  saveChecklists();
+  try{ if(typeof realtimePublish==='function') realtimePublish('checklist', it); }catch(e){}
+  if(currentTab==='dash') renderDash();
 }
 // ── 목표 계획 날짜 (2026-11-23) — 목표마다 하는 날을 지정·표시. 필드: it.date = 'YYYY-MM-DD' ('' = 미지정)
 //   칩 클릭 → 달력(그 주 월~일만 선택). 실시간 서버로 공유되고, 노션 풀 때도 기존 날짜를 유지한다.
@@ -32685,7 +32708,7 @@ let _draggingTaskId = null;
 //   · ordAt 없는 옛 ord(셀 단위 순번)는 같은 카테고리 안에서만 참고
 function _taskDayOrd(t){ return (typeof t.ord==='number' && t.ordAt===t.date) ? t.ord : null; }
 function _taskLegacyCmp(a,b){
-  const CO={'업무':1,'세일즈':2,'커머스':3,'발주출고':4,'샘플출고':5,'중국입고':6,'중국출고':7};   // 부팅 순서와 무관하게 쓰도록 함수 안에 둠
+  const CO={'업무':1,'커머스':2,'세일즈':3,'발주출고':4,'샘플출고':5,'중국입고':6,'중국출고':7};   // 부팅 순서와 무관하게 쓰도록 함수 안에 둠
   const ca=CO[a.cat]||9, cb=CO[b.cat]||9;
   if(ca!==cb) return ca-cb;
   const oa=(typeof a.ord==='number')?a.ord:1e9, ob=(typeof b.ord==='number')?b.ord:1e9;
@@ -37546,6 +37569,10 @@ async function pullChecklistsFromNotion(){
     const _prevDate={};
     (Array.isArray(weekChecklist)?weekChecklist:[]).forEach(x=>{ if(x && x._notionId && x.date) _prevDate[String(x._notionId)]=x.date; });
     wk.forEach(it=>{ const d=_prevDate[String(it._notionId)]; if(d) it.date=d; });
+    // 담당(owner)도 같은 방식으로 이어받는다 (2026-11-24)
+    const _prevOwner={};
+    (Array.isArray(weekChecklist)?weekChecklist:[]).forEach(x=>{ if(x && x._notionId && x.owner) _prevOwner[String(x._notionId)]=x.owner; });
+    wk.forEach(it=>{ const o=_prevOwner[String(it._notionId)]; if(o) it.owner=o; });
     // 노션의 데이터를 진실의 원천으로 (다른 컴퓨터에서도 일관성 유지)
     weekChecklist = wk;
     monthChecklist = mn;
