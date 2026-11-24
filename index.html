@@ -3565,8 +3565,8 @@ const ORD_CATS=[
 ];
 const SMP_CLS={의뢰:'chip',제작중:'cb',수정중:'co',확정:'cg',취소:'chip'};
 const CATS_SCHED=['세일즈','업무','커머스','발주출고','샘플출고','중국입고','중국출고'];
-const CAT_BG={'업무':'rgba(26,109,181,.07)','세일즈':'rgba(122,77,181,.07)','커머스':'rgba(168,90,16,.07)','발주출고':'rgba(46,139,44,.07)','샘플출고':'rgba(26,109,181,.07)','중국입고':'rgba(192,48,48,.07)','중국출고':'rgba(192,48,48,.12)'};
-const CAT_COL={'업무':'#155A9A','세일즈':'#7A4DB5','커머스':'#7A4008','발주출고':'#256B23','샘플출고':'#155A9A','중국입고':'#A32D2D','중국출고':'#A32D2D'};
+const CAT_BG={'업무':'rgba(26,109,181,.07)','세일즈':'rgba(197,34,31,.06)','커머스':'rgba(168,90,16,.07)','발주출고':'rgba(46,139,44,.07)','샘플출고':'rgba(26,109,181,.07)','중국입고':'rgba(192,48,48,.07)','중국출고':'rgba(192,48,48,.12)'};
+const CAT_COL={'업무':'#155A9A','세일즈':'#C5221F','커머스':'#7A4008','발주출고':'#256B23','샘플출고':'#155A9A','중국입고':'#A32D2D','중국출고':'#A32D2D'};
 const CAT_HAS_FILES=['발주출고','샘플출고','중국입고','중국출고'];
 // 사용자에게 보이는 라벨 — 식별자(중국입고/중국출고)는 데이터/노션 호환을 위해 유지하고,
 // 화면에 그릴 때만 이 매핑을 사용한다. 매핑이 없는 카테고리는 원본 이름 그대로.
@@ -27658,7 +27658,7 @@ function renderTodayTasksPanel(side){
   const total=list.length, done=list.filter(t=>t.done).length;
   const pct=total?Math.round(done/total*100):0;
   const CAT={
-    '업무':['#f3e8fd','#6a1b9a'],'세일즈':['#fff4e5','#b06000'],'커머스':['#e6f4ea','#137333'],
+    '업무':['#f3e8fd','#6a1b9a'],'세일즈':['#fce8e6','#c5221f'],'커머스':['#e6f4ea','#137333'],
     '발주출고':['#fef3e0','#7a4100'],'샘플출고':['#e8f0fe','#174ea6'],
     '중국입고':['#fce8e6','#a50e0e'],'중국출고':['#fce8e6','#a50e0e']
   };
@@ -27672,7 +27672,7 @@ function renderTodayTasksPanel(side){
     const dnd=t.done?'':` draggable="true" data-tid="${id}" ondragstart="gdTaskDragStart(event,'${id}')" ondragover="gdTaskDragOver(event,this)" ondragleave="this.classList.remove('gd-drop-b','gd-drop-a')" ondrop="gdTaskDrop(event,this,'${id}')" ondragend="gdTaskDragEnd()"`;
     return `<div class="gd-row${t.done?' dn':''}"${dnd}>
       <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${id}')" aria-label="완료 처리">
-      <span class="tx" onclick="openEditTask('${id}')">${_gdEsc(t.cont||'')}${t.note?`<span class="gd-sub" style="display:block;text-decoration:none">${_gdEsc(t.note)}</span>`:''}</span>
+      <span class="tx" onclick="openEditTask('${id}')"${t.cat==='세일즈'&&!t.done?' style="color:#c5221f;font-weight:600"':''}>${_gdEsc(t.cont||'')}${t.note?`<span class="gd-sub" style="display:block;text-decoration:none">${_gdEsc(t.note)}</span>`:''}</span>
       ${((!noAp&&t.ap)||t.assignee||t.ap2)?`<span class="gd-sub" style="flex-shrink:0;margin-top:2px">${_gdEsc([noAp?'':t.ap,t.assignee||t.ap2].filter(Boolean).join(' · '))}</span>`:''}
     </div>`;
   };
@@ -27702,14 +27702,14 @@ function renderTodayTasksPanel(side){
 }
 
 // ── 오늘의 업무 드래그 순서 변경 (2026-11-03) ──
-var _gdDragId=null, _gdDashPending=false;
+var _gdDragId=null, _gdDashPending=false, _gdDragGoal=null;
 function gdTaskDragStart(e,id){
-  _gdDragId=String(id);
+  _gdDragId=String(id); _gdDragGoal=null;
   try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain',String(id)); }catch(_){}
   if(e.currentTarget) e.currentTarget.classList.add('gd-dragging');
 }
 function gdTaskDragOver(e,el){
-  if(!_gdDragId) return;
+  if(!_gdDragId && !_gdDragGoal) return;
   e.preventDefault();
   try{ e.dataTransfer.dropEffect='move'; }catch(_){}
   const r=el.getBoundingClientRect(), after=(e.clientY>r.top+r.height/2);
@@ -27720,6 +27720,11 @@ function gdTaskDrop(e,el,targetId){
   e.preventDefault(); e.stopPropagation();   // 상자(gdBoxDrop)까지 두 번 처리되지 않게
   const after=el.classList.contains('gd-drop-a');
   el.classList.remove('gd-drop-b','gd-drop-a');
+  if(_gdDragGoal){   // 주간 목표 → 이 업무가 있는 담당·시간대로
+    const tg=tasks.find(t=>String(t.id)===String(targetId));
+    if(tg) _gdGoalToTask(_gdDragGoal, tg.cat||'업무', tg.ap||'오전');
+    return;
+  }
   const srcId=_gdDragId;
   if(!srcId || srcId===String(targetId)) return;
   const ds=toLocalDateStr(new Date());
@@ -27743,6 +27748,71 @@ function _gdSetTaskCat(t,cat){
   t.cat=cat; t._syncedAt=new Date().toISOString();
   try{ debouncedSync('task',t,true); }catch(e){}
 }
+// [2026-11-24] 주간 업무 목표 ↔ 오늘의 업무 드래그 이동
+//   목표 → 오늘: 오늘 날짜 업무로 새로 만들고(놓은 상자·구역의 담당·오전오후) 목표는 지움
+//   오늘 → 목표: 보고 있는 주의 목표로 만들고(담당·날짜 이어받음) 업무는 지움
+function gdGoalDragStart(e,k){
+  _gdDragGoal=String(k); _gdDragId=null;
+  try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain','goal:'+k); }catch(_){}
+  if(e.currentTarget) e.currentTarget.classList.add('gd-dragging');
+}
+var _gdMoving=false;
+async function _gdGoalToTask(k,cat,ap){
+  if(_gdMoving) return;
+  const i=_dashGoalIdx(k); if(i<0) return;
+  const g=weekChecklist[i];
+  _gdMoving=true;
+  try{
+    const ds=toLocalDateStr(new Date());
+    const nt={id:Date.now(),done:false,cont:String(g.text||''),date:ds,ap:ap||'오전',cat:cat||'업무',note:'',files:[]};
+    const ok=await createWithNotion(tasks, nt, syncTaskToNotion, '업무일지');
+    if(!ok) return;
+    // 그 담당·시간대 미완료 업무 맨 아래로
+    const list=tasks.filter(t=>t.date===ds).sort(_taskDayCmp);
+    const rest=list.filter(t=>t!==nt);
+    let at=-1; rest.forEach((t,j)=>{ if(!t.done && t.cat===nt.cat && (t.ap||'오전')===nt.ap) at=j; });
+    if(at<0){ at=rest.findIndex(t=>t.done); if(at<0) at=rest.length; } else at++;
+    rest.splice(at,0,nt);
+    const j=_dashGoalIdx(k);
+    if(j>=0){
+      const cur=weekChecklist[j];
+      try{ if(cur._notionId) deleteChecklistFromNotion(cur._notionId); }catch(e){}
+      try{ if(typeof realtimeDelete==='function') realtimeDelete('checklist', cur); }catch(e){}
+      weekChecklist.splice(j,1);
+      saveChecklists();
+    }
+    _commitDayOrder(ds,rest);
+    showToast('✓ 오늘의 업무로 이동','var(--grn)',1400);
+  } finally { _gdMoving=false; }
+}
+function gdGoalsDragOver(e,box){
+  if(!_gdDragId) return;   // 오늘의 업무만 받음 (목표끼리는 날짜순 정렬이라 순서 이동 없음)
+  e.preventDefault();
+  try{ e.dataTransfer.dropEffect='move'; }catch(_){}
+  box.classList.add('gd-box-over');
+}
+function gdGoalsDrop(e,box){
+  e.preventDefault();
+  box.classList.remove('gd-box-over');
+  const srcId=_gdDragId; if(!srcId) return;
+  const t=tasks.find(x=>String(x.id)===srcId); if(!t || typeof weekChecklist==='undefined') return;
+  const it={text:String(t.cont||''), done:false, id:Date.now(), weekKey:getWeekKey(_dashGoalWeekDate()),
+    owner:(t.cat==='업무'||t.cat==='커머스')?t.cat:'', date:''};
+  // 보고 있는 주 안의 날짜면 계획 날짜로 이어받음
+  const d=_dashGoalWeekDate(), mon=new Date(d); mon.setDate(d.getDate()-((d.getDay()+6)%7));
+  const sun=new Date(mon); sun.setDate(mon.getDate()+6);
+  if(t.date>=toLocalDateStr(mon) && t.date<=toLocalDateStr(sun)) it.date=t.date;
+  weekChecklist.push(it);
+  saveChecklists();
+  try{ syncChecklistItemToNotion(it,'week',false); }catch(e){}
+  try{ if(typeof realtimePublish==='function') realtimePublish('checklist', it); }catch(e){}
+  try{ deleteTaskFromNotion(t); }catch(e){}
+  tasks=tasks.filter(x=>x!==t); save();
+  _gdDragId=null;
+  showToast('✓ 주간 업무 목표로 이동','var(--grn)',1400);
+  if(currentTab==='schedule') renderSchedContent();
+  if(currentTab==='dash') renderDash();
+}
 function _gdSetTaskAp(t,ap){
   if(!t || t.ap===ap) return;
   _ekPendSet('task',t,{ap:t.ap},{ap:ap});
@@ -27754,6 +27824,7 @@ function gdApDrop(e,el,cat,ap){
   e.preventDefault(); e.stopPropagation();
   el.classList.remove('gd-box-over');
   document.querySelectorAll('.gd-box-over').forEach(x=>x.classList.remove('gd-box-over'));
+  if(_gdDragGoal){ _gdGoalToTask(_gdDragGoal, cat, ap); return; }
   const srcId=_gdDragId; if(!srcId) return;
   const ds=toLocalDateStr(new Date());
   const list=tasks.filter(t=>t.date===ds).sort(_taskDayCmp);
@@ -27767,7 +27838,7 @@ function gdApDrop(e,el,cat,ap){
   _commitDayOrder(ds,rest);
 }
 function gdBoxDragOver(e,box){
-  if(!_gdDragId) return;
+  if(!_gdDragId && !_gdDragGoal) return;
   e.preventDefault();
   try{ e.dataTransfer.dropEffect='move'; }catch(_){}
   box.classList.add('gd-box-over');
@@ -27776,6 +27847,7 @@ function gdBoxDragLeave(e,box){ if(!box.contains(e.relatedTarget)) box.classList
 function gdBoxDrop(e,box,side){
   e.preventDefault();
   box.classList.remove('gd-box-over');
+  if(_gdDragGoal){ _gdGoalToTask(_gdDragGoal, side==='com'?'커머스':'업무', '오전'); return; }
   const srcId=_gdDragId; if(!srcId) return;
   const ds=toLocalDateStr(new Date());
   const list=tasks.filter(t=>t.date===ds).sort(_taskDayCmp);
@@ -27791,7 +27863,7 @@ function gdBoxDrop(e,box,side){
   _commitDayOrder(ds,rest);
 }
 function gdTaskDragEnd(){
-  _gdDragId=null;
+  _gdDragId=null; _gdDragGoal=null;
   document.querySelectorAll('.gd-dragging').forEach(x=>x.classList.remove('gd-dragging'));
   document.querySelectorAll('.gd-drop-b,.gd-drop-a').forEach(x=>x.classList.remove('gd-drop-b','gd-drop-a'));
   _gdDashPending=false;
@@ -27840,7 +27912,7 @@ function renderWeekGoalsPanel(){
       <input class="gd-in" id="gdGoalEdit" style="height:30px;border-radius:8px;padding:0 10px;font-size:13.5px" aria-label="목표 내용 수정" value="${_gdEsc(_dashGoalEditDraft)}" oninput="_dashGoalEditDraft=this.value" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();dashSaveGoalEdit()}else if(event.key==='Escape'){dashCancelGoalEdit()}" onblur="if(!_dashRendering)dashSaveGoalEdit()">
     </div>`;
     }
-    return `<div class="gd-row${it.done?' dn':''}">
+    return `<div class="gd-row${it.done?' dn':''}"${it.done?'':` draggable="true" ondragstart="gdGoalDragStart(event,'${k}')" ondragend="gdTaskDragEnd()"`}>
       <input type="checkbox" ${it.done?'checked':''} onchange="dashToggleGoal('${k}')" aria-label="달성 처리">
       <span class="tx" title="클릭: 달성 처리 · 더블클릭: 내용 수정" onclick="dashGoalClick('${k}')" ondblclick="dashEditGoal('${k}')">${_gdEsc(it.text||'')}</span>
       ${_dashGoalOwnerChip(it,k)}
@@ -27848,7 +27920,7 @@ function renderWeekGoalsPanel(){
       <button class="gd-x" onclick="dashDeleteGoal('${k}')" aria-label="목표 삭제" title="삭제">×</button>
     </div>`;
   }).join('');
-  return `<section class="gd-card">
+  return `<section class="gd-card" ondragover="gdGoalsDragOver(event,this)" ondragleave="gdBoxDragLeave(event,this)" ondrop="gdGoalsDrop(event,this)">
     <div class="gd-h">
       <span class="gd-t">주간 업무 목표</span>
       ${total?`<span class="gd-cnt">${done}/${total} 달성</span>`:''}
@@ -33099,7 +33171,7 @@ function renderWeekView(sc){
           const _wRow=t=>`<div class="task-it" draggable="true" ondragstart="taskDragStart(event,'${t.id}')" ondragend="taskDragEnd(event)" ondragover="taskItemDragOver(event,this)" ondragleave="taskItemDragLeave(this)" ondrop="taskItemDrop(event,this,'${t.id}')" title="드래그로 순서·위치 이동">
               <span class="drag-handle" title="드래그하여 순서 변경">⋮⋮</span>
               <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${t.id}')">
-              <span class="tt ${t.done?'done':''}" onclick="openEditTask('${t.id}')" style="cursor:pointer;flex:1">${t.cont}</span>
+              <span class="tt ${t.done?'done':''}" onclick="openEditTask('${t.id}')" style="cursor:pointer;flex:1${t.cat==='세일즈'&&!t.done?';color:#C5221F;font-weight:600':''}">${t.cont}</span>
               ${t.files&&t.files.length?`<span title="${t.files.length}개 첨부" style="font-size:10px;cursor:pointer" onclick="openEditTask('${t.id}')">📎${t.files.length}</span>`:''}
             </div>`;
           return`<div class="wg-cell" style="background:${CAT_BG[cat]||'transparent'};min-height:38px" data-date="${ds}" data-cat="${cat}" ondragover="taskDragOver(event,this)" ondragleave="taskDragLeave(this)" ondrop="taskDrop(event,this)">
