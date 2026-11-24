@@ -2756,7 +2756,7 @@ function getAutoTasks(ds){
 //   완료는 맨 아래 → PC에서 드래그로 정한 날짜 순번(ord, ordAt===date일 때만) → 카테고리순·옛 ord·오전오후·id
 function _taskDayOrd(t){ return (typeof t.ord==='number' && t.ordAt===t.date) ? t.ord : null; }
 function _taskLegacyCmp(a,b){
-  const CO={'업무':1,'커머스':2,'세일즈':3,'발주출고':4,'샘플출고':5,'중국입고':6,'중국출고':7};
+  const CO={'세일즈':0,'업무':1,'커머스':2,'발주출고':4,'샘플출고':5,'중국입고':6,'중국출고':7};
   const ca=CO[a.cat]||9, cb=CO[b.cat]||9;
   if(ca!==cb) return ca-cb;
   const oa=(typeof a.ord==='number')?a.ord:1e9, ob=(typeof b.ord==='number')?b.ord:1e9;
@@ -2798,9 +2798,9 @@ function renderTaskDay(){
 
   // 카테고리 정의 — 순서 + 색상 + 아이콘 (label=화면표시, cat=저장값)
   const CAT_DEFS = [
+    {cat:'세일즈',   label:'미팅',       ico:'🤝', color:'#7A4DB5', bg:'rgba(122,77,181,.10)'},
     {cat:'업무',     label:'SCM MD',   ico:'📋', color:'var(--prp)', bg:'var(--prp-bg)'},
     {cat:'커머스',   label:'커머스 MD',  ico:'🛍', color:'var(--grn)', bg:'var(--grn-bg)'},
-    {cat:'세일즈',   label:'세일즈 업무', ico:'📈', color:'#7A4DB5', bg:'rgba(122,77,181,.10)'},
     {cat:'발주출고', label:'발주출고',   ico:'📦', color:'var(--org)', bg:'var(--org-bg)'},
     {cat:'샘플출고', label:'샘플출고',   ico:'💎', color:'var(--blu)', bg:'var(--blu-bg)'},
     {cat:'중국입고', label:'한국→중국',  ico:'🇨🇳', color:'var(--red)', bg:'var(--red-bg)'},
@@ -2921,7 +2921,7 @@ function openTaskForm(taskId, presetDate){
   const curAp = v('ap') || '';
   const date = v('date') || presetDate || _taskDay;
 
-  const cats = [['업무','SCM MD'],['커머스','커머스 MD'],['세일즈','세일즈 업무'],['발주출고','발주출고'],['샘플출고','샘플출고'],['중국입고','한국→중국'],['중국출고','중국→한국']];
+  const cats = [['세일즈','미팅'],['업무','SCM MD'],['커머스','커머스 MD'],['발주출고','발주출고'],['샘플출고','샘플출고'],['중국입고','한국→중국'],['중국출고','중국→한국']];
   const catBtns = cats.map(([c,lbl]) => `<button data-cat="${c}" class="${c===curCat?'active':''}" onclick="_pickTaskCat(this)">${lbl}</button>`).join('');
 
   const body = `
@@ -3086,7 +3086,7 @@ function openCarryOverPicker(){
       ${grouped[dt].map(t => `
         <div onclick="_toggleCarryOver('${String(t.id).replace(/'/g,"\\'")}',this)" style="display:flex;gap:10px;padding:10px;background:var(--s1);border:1px solid var(--bdr-lt);border-radius:7px;margin-bottom:5px;cursor:pointer">
           <div class="task-chk co-chk" data-tid="${t.id}" style="margin-top:2px">○</div>
-          <span class="task-cat ${catCls(t.cat)}">${({'업무':'SCM','세일즈':'세일즈'})[t.cat]||t.cat||'업무'}</span>
+          <span class="task-cat ${catCls(t.cat)}">${({'업무':'SCM','세일즈':'미팅','커머스':'커머스'})[t.cat]||t.cat||'업무'}</span>
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:500;word-break:break-word">${escapeHtml(t.cont)}</div>
             ${t.note ? `<div style="font-size:11px;color:var(--t3);margin-top:2px">${escapeHtml(t.note)}</div>` : ''}

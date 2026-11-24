@@ -2791,7 +2791,7 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>오전/오후</label><select class="fs" id="t_ap"><option>오전</option><option>오후</option></select></div>
     <div class="fg"><label>카테고리</label>
       <select class="fs" id="t_cat">
-        <option value="업무">SCM MD</option><option value="커머스">커머스 MD</option><option value="세일즈">세일즈 업무</option>
+        <option value="세일즈">미팅</option><option value="업무">SCM MD</option><option value="커머스">커머스 MD</option>
         <option>발주출고</option><option>샘플출고</option>
         <option value="중국입고">한국→중국</option><option value="중국출고">중국→한국</option>
       </select>
@@ -3562,13 +3562,13 @@ const ORD_CATS=[
   {key:'전체',     label:'전체'},
 ];
 const SMP_CLS={의뢰:'chip',제작중:'cb',수정중:'co',확정:'cg',취소:'chip'};
-const CATS_SCHED=['업무','커머스','세일즈','발주출고','샘플출고','중국입고','중국출고'];
+const CATS_SCHED=['세일즈','업무','커머스','발주출고','샘플출고','중국입고','중국출고'];
 const CAT_BG={'업무':'rgba(26,109,181,.07)','세일즈':'rgba(122,77,181,.07)','커머스':'rgba(168,90,16,.07)','발주출고':'rgba(46,139,44,.07)','샘플출고':'rgba(26,109,181,.07)','중국입고':'rgba(192,48,48,.07)','중국출고':'rgba(192,48,48,.12)'};
 const CAT_COL={'업무':'#155A9A','세일즈':'#7A4DB5','커머스':'#7A4008','발주출고':'#256B23','샘플출고':'#155A9A','중국입고':'#A32D2D','중국출고':'#A32D2D'};
 const CAT_HAS_FILES=['발주출고','샘플출고','중국입고','중국출고'];
 // 사용자에게 보이는 라벨 — 식별자(중국입고/중국출고)는 데이터/노션 호환을 위해 유지하고,
 // 화면에 그릴 때만 이 매핑을 사용한다. 매핑이 없는 카테고리는 원본 이름 그대로.
-const CAT_LABEL={'업무':'SCM MD','세일즈':'세일즈 업무','커머스':'커머스 MD','중국입고':'한국→중국','중국출고':'중국→한국'};
+const CAT_LABEL={'업무':'SCM MD','세일즈':'미팅','커머스':'커머스 MD','중국입고':'한국→중국','중국출고':'중국→한국'};
 function catLabel(c){ return CAT_LABEL[c] || c; }
 
 let currentTab='dash';
@@ -27647,7 +27647,7 @@ function renderDash(){
 }
 
 // ── 오늘의 업무 (대시보드 왼쪽 위) ──
-// [2026-11-24] 오늘의 업무를 두 상자로 — side 'com' = 커머스 MD, 그 외('scm') = SCM MD + 나머지 담당(세일즈·출고 등)
+// [2026-11-24] 오늘의 업무를 두 상자로 — side 'com' = 커머스 MD, 그 외('scm') = SCM MD + 나머지 담당(미팅(세일즈)·출고 등)
 function renderTodayTasksPanel(side){
   const ds=toLocalDateStr(new Date());
   const isCom=side==='com';
@@ -27656,7 +27656,7 @@ function renderTodayTasksPanel(side){
   const total=list.length, done=list.filter(t=>t.done).length;
   const pct=total?Math.round(done/total*100):0;
   const CAT={
-    '업무':['#f3e8fd','#6a1b9a'],'세일즈':['#f3e8fd','#6a1b9a'],'커머스':['#e6f4ea','#137333'],
+    '업무':['#f3e8fd','#6a1b9a'],'세일즈':['#fff4e5','#b06000'],'커머스':['#e6f4ea','#137333'],
     '발주출고':['#fef3e0','#7a4100'],'샘플출고':['#e8f0fe','#174ea6'],
     '중국입고':['#fce8e6','#a50e0e'],'중국출고':['#fce8e6','#a50e0e']
   };
@@ -32742,7 +32742,7 @@ let _draggingTaskId = null;
 //   · ordAt 없는 옛 ord(셀 단위 순번)는 같은 카테고리 안에서만 참고
 function _taskDayOrd(t){ return (typeof t.ord==='number' && t.ordAt===t.date) ? t.ord : null; }
 function _taskLegacyCmp(a,b){
-  const CO={'업무':1,'커머스':2,'세일즈':3,'발주출고':4,'샘플출고':5,'중국입고':6,'중국출고':7};   // 부팅 순서와 무관하게 쓰도록 함수 안에 둠
+  const CO={'세일즈':0,'업무':1,'커머스':2,'발주출고':4,'샘플출고':5,'중국입고':6,'중국출고':7};   // 부팅 순서와 무관하게 쓰도록 함수 안에 둠
   const ca=CO[a.cat]||9, cb=CO[b.cat]||9;
   if(ca!==cb) return ca-cb;
   const oa=(typeof a.ord==='number')?a.ord:1e9, ob=(typeof b.ord==='number')?b.ord:1e9;
