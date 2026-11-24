@@ -27680,7 +27680,7 @@ function renderTodayTasksPanel(side){
     if(_keys.length===1 && k==='업무') return g.map(rowOf).join('');   // SCM MD만 있으면 묶음 머리 생략
     return `<div class="gd-grp" style="margin-top:6px"><div style="display:flex;align-items:center;gap:6px;padding:4px 8px 2px"><span class="gd-chip" style="background:${cc[0]};color:${cc[1]};margin:0">${_gdEsc(catLabel(k))}</span><span class="gd-sub">${gd}/${g.length}</span></div>${g.map(rowOf).join('')}</div>`;
   }).join('');
-  return `<section class="gd-card">
+  return `<section class="gd-card" ondragover="gdBoxDragOver(event,this)" ondragleave="gdBoxDragLeave(event,this)" ondrop="gdBoxDrop(event,this,'${isCom?'com':'scm'}')">
     <div class="gd-h">
       <span class="gd-t">오늘의 업무 · ${isCom?'커머스 MD':'SCM MD'}</span>
       ${total?`<span class="gd-cnt">${done}/${total}</span>`:''}
@@ -27709,7 +27709,7 @@ function gdTaskDragOver(e,el){
   el.classList.toggle('gd-drop-a',after); el.classList.toggle('gd-drop-b',!after);
 }
 function gdTaskDrop(e,el,targetId){
-  e.preventDefault();
+  e.preventDefault(); e.stopPropagation();   // 상자(gdBoxDrop)까지 두 번 처리되지 않게
   const after=el.classList.contains('gd-drop-a');
   el.classList.remove('gd-drop-b','gd-drop-a');
   const srcId=_gdDragId;
@@ -27717,11 +27717,44 @@ function gdTaskDrop(e,el,targetId){
   const ds=toLocalDateStr(new Date());
   const list=tasks.filter(t=>t.date===ds).sort(_taskDayCmp);
   const src=list.find(t=>String(t.id)===srcId);
-  if(!src) return;
+  const tgt=list.find(t=>String(t.id)===String(targetId));
+  if(!src || !tgt) return;
+  // [2026-11-24] 다른 상자·묶음의 업무 위에 놓으면 그 업무의 담당(카테고리)으로 옮김
+  if(src.cat!==tgt.cat) _gdSetTaskCat(src, tgt.cat||'업무');
   const rest=list.filter(t=>t!==src);
-  let at=rest.findIndex(t=>String(t.id)===String(targetId));
-  if(at<0) return;
+  let at=rest.findIndex(t=>t===tgt);
   if(after) at++;
+  rest.splice(at,0,src);
+  _commitDayOrder(ds,rest);
+}
+// [2026-11-24] 오늘의 업무 SCM MD ↔ 커머스 MD 상자끼리 드래그 — 상자 빈 곳(또는 빈 상자)에 놓으면 그 상자 담당으로 바꾸고 미완료 맨 아래에 둠
+function _gdSetTaskCat(t,cat){
+  if(!t || t.cat===cat) return;
+  _ekPendSet('task',t,{cat:t.cat},{cat:cat});
+  t.cat=cat; t._syncedAt=new Date().toISOString();
+  try{ debouncedSync('task',t,true); }catch(e){}
+}
+function gdBoxDragOver(e,box){
+  if(!_gdDragId) return;
+  e.preventDefault();
+  try{ e.dataTransfer.dropEffect='move'; }catch(_){}
+  box.classList.add('gd-box-over');
+}
+function gdBoxDragLeave(e,box){ if(!box.contains(e.relatedTarget)) box.classList.remove('gd-box-over'); }
+function gdBoxDrop(e,box,side){
+  e.preventDefault();
+  box.classList.remove('gd-box-over');
+  const srcId=_gdDragId; if(!srcId) return;
+  const ds=toLocalDateStr(new Date());
+  const list=tasks.filter(t=>t.date===ds).sort(_taskDayCmp);
+  const src=list.find(t=>String(t.id)===srcId); if(!src) return;
+  const isCom=side==='com';
+  if((src.cat==='커머스')===isCom){ return; }   // 같은 상자 빈 곳 — 순서 변경 없음
+  _gdSetTaskCat(src, isCom?'커머스':'업무');
+  const rest=list.filter(t=>t!==src);
+  // 그 상자 미완료 업무의 마지막 뒤에 끼움
+  let at=-1; rest.forEach((t,i)=>{ if(!t.done && (t.cat==='커머스')===isCom) at=i; });
+  if(at<0){ at=rest.findIndex(t=>t.done); if(at<0) at=rest.length; } else at++;
   rest.splice(at,0,src);
   _commitDayOrder(ds,rest);
 }
@@ -27735,6 +27768,7 @@ function gdTaskDragEnd(){
 if(!document.getElementById('gdTaskDragStyles')){
   const st=document.createElement('style'); st.id='gdTaskDragStyles';
   st.textContent=`.gd-row[draggable="true"]{cursor:grab}.gd-row.gd-dragging{opacity:.4}
+  .gd-card.gd-box-over{outline:2px dashed var(--gold,#1a73e8);outline-offset:-4px}
   .gd-row.gd-drop-b{box-shadow:inset 0 2px 0 var(--gold,#1a73e8)}.gd-row.gd-drop-a{box-shadow:inset 0 -2px 0 var(--gold,#1a73e8)}`;
   document.head.appendChild(st);
 }
