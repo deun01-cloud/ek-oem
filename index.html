@@ -2790,7 +2790,7 @@ window.addEventListener('message', function(ev){
     <div class="fg"><label>오전/오후</label><select class="fs" id="t_ap"><option>오전</option><option>오후</option></select></div>
     <div class="fg"><label>카테고리</label>
       <select class="fs" id="t_cat">
-        <option value="업무">SCM 업무</option><option value="세일즈">세일즈 업무</option><option>커머스</option>
+        <option value="업무">SCM MD</option><option value="세일즈">세일즈 업무</option><option value="커머스">커머스 MD</option>
         <option>발주출고</option><option>샘플출고</option>
         <option value="중국입고">한국→중국</option><option value="중국출고">중국→한국</option>
       </select>
@@ -3567,7 +3567,7 @@ const CAT_COL={'업무':'#155A9A','세일즈':'#7A4DB5','커머스':'#7A4008','�
 const CAT_HAS_FILES=['발주출고','샘플출고','중국입고','중국출고'];
 // 사용자에게 보이는 라벨 — 식별자(중국입고/중국출고)는 데이터/노션 호환을 위해 유지하고,
 // 화면에 그릴 때만 이 매핑을 사용한다. 매핑이 없는 카테고리는 원본 이름 그대로.
-const CAT_LABEL={'업무':'SCM 업무','세일즈':'세일즈 업무','중국입고':'한국→중국','중국출고':'중국→한국'};
+const CAT_LABEL={'업무':'SCM MD','세일즈':'세일즈 업무','커머스':'커머스 MD','중국입고':'한국→중국','중국출고':'중국→한국'};
 function catLabel(c){ return CAT_LABEL[c] || c; }
 
 let currentTab='dash';
@@ -27656,17 +27656,23 @@ function renderTodayTasksPanel(){
     '발주출고':['#fef3e0','#7a4100'],'샘플출고':['#e8f0fe','#174ea6'],
     '중국입고':['#fce8e6','#a50e0e'],'중국출고':['#fce8e6','#a50e0e']
   };
-  const rows=list.map(t=>{
+  // [2026-11-24] 담당(카테고리)별로 나눠 보여 줌 — 업무일지 행 순서(CATS_SCHED)와 같게, 각 묶음 안은 기존 정렬 유지
+  const _grp={}; list.forEach(t=>{ const k=t.cat||'업무'; (_grp[k]=_grp[k]||[]).push(t); });
+  const _order=CATS_SCHED.concat(Object.keys(_grp).filter(k=>!CATS_SCHED.includes(k)));
+  const rowOf=t=>{
     const cc=CAT[t.cat]||['#f1f3f4','#3c4043'];
     const id=_gdArg(t.id);
     // 미완료 업무만 드래그로 순서 변경 (완료는 항상 맨 아래)
     const dnd=t.done?'':` draggable="true" data-tid="${id}" ondragstart="gdTaskDragStart(event,'${id}')" ondragover="gdTaskDragOver(event,this)" ondragleave="this.classList.remove('gd-drop-b','gd-drop-a')" ondrop="gdTaskDrop(event,this,'${id}')" ondragend="gdTaskDragEnd()"`;
     return `<div class="gd-row${t.done?' dn':''}"${dnd}>
       <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask('${id}')" aria-label="완료 처리">
-      <span class="gd-chip" style="background:${cc[0]};color:${cc[1]}">${_gdEsc(t.cat||'업무')}</span>
       <span class="tx" onclick="openEditTask('${id}')">${_gdEsc(t.cont||'')}${t.note?`<span class="gd-sub" style="display:block;text-decoration:none">${_gdEsc(t.note)}</span>`:''}</span>
       ${(t.ap||t.assignee||t.ap2)?`<span class="gd-sub" style="flex-shrink:0;margin-top:2px">${_gdEsc([t.ap,t.assignee||t.ap2].filter(Boolean).join(' · '))}</span>`:''}
     </div>`;
+  };
+  const rows=_order.filter(k=>_grp[k]).map(k=>{
+    const g=_grp[k], cc=CAT[k]||['#f1f3f4','#3c4043'], gd=g.filter(t=>t.done).length;
+    return `<div class="gd-grp" style="margin-top:6px"><div style="display:flex;align-items:center;gap:6px;padding:4px 8px 2px"><span class="gd-chip" style="background:${cc[0]};color:${cc[1]};margin:0">${_gdEsc(catLabel(k))}</span><span class="gd-sub">${gd}/${g.length}</span></div>${g.map(rowOf).join('')}</div>`;
   }).join('');
   return `<section class="gd-card">
     <div class="gd-h">
