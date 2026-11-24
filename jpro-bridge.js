@@ -76,6 +76,7 @@
       return '<div data-id="' + m.id + '" style="border-top:1px solid var(--bd,#eee);padding:10px 0;display:flex;flex-direction:column;gap:6px">'
         + '<div><b>' + esc(txt(m, '이니셜')) + '</b> · ' + esc(sel(m, '대상')) + ' <span style="font-family:monospace">' + esc(txt(m, '대상번호')) + '</span> <span style="color:#888">' + esc(d) + ' · ' + esc(txt(m, '작성자')) + '</span></div>'
         + '<div style="white-space:pre-wrap">' + esc(txt(m, '내용')) + '</div>'
+        + jpThumbs(m)
         + photoLinks(txt(m, '사진JSON'))
         + '<textarea rows="2" placeholder="답변 (고객 화면 소통 기록에 바로 보입니다)" style="width:100%;box-sizing:border-box;border:1px solid var(--bd,#ccc);border-radius:8px;padding:6px 8px;font:inherit;background:transparent;color:inherit"></textarea>'
         + '<div style="display:flex;gap:6px;justify-content:flex-end"><button type="button" data-act="ok" style="' + btnCss(false) + '">확인만</button><button type="button" data-act="reply" style="' + btnCss(true) + '">답변 보내기</button></div></div>';
@@ -88,7 +89,49 @@
   function photoLinks(s){
     try { var a = JSON.parse(s || '[]'); if (!a.length) return ''; return '<div>' + a.map(function(f){ return '<a href="' + esc(f.url) + '" target="_blank" rel="noopener">📎 ' + esc(f.name || '사진') + '</a>'; }).join(' ') + '</div>'; } catch (_) { return ''; }
   }
+  // [2026-11-24] 문의 대상 제품 썸네일 — 대상번호(S-/O- + 노션 페이지 ID 끝 6자리)로 샘플·발주·A/S를 찾아 사진을 보여 주고, 누르면 크게 본다
+  function jpFindTarget(m){
+    var code = String(txt(m, '대상번호') || '').split('-').pop().replace(/[^0-9a-z]/gi, '').toUpperCase();
+    if (code.length < 4) return null;
+    var tail = function(x){ return String(x || '').replace(/-/g, '').toUpperCase(); };
+    var hit = function(x){ return x && (tail(x._notionId).slice(-code.length) === code || tail(x.id).slice(-code.length) === code); };
+    var kind = sel(m, '대상'), lists = [];
+    try { if (kind !== '발주' && typeof samples !== 'undefined') lists.push(samples); } catch (_) {}
+    try { if (kind !== '샘플' && typeof orders !== 'undefined') lists.push(orders); } catch (_) {}
+    try { if (typeof asItems !== 'undefined') lists.push(asItems); } catch (_) {}
+    for (var i = 0; i < lists.length; i++){ var f = (lists[i] || []).find(hit); if (f) return f; }
+    return null;
+  }
+  function jpIsImg(f){ var u = (f && (f.url || f)) || ''; return typeof u === 'string' && u && (/^image\//.test((f && f.type) || '') || /\.(png|jpe?g|gif|webp|bmp)(\?|$)/i.test(decodeURIComponent(u)) || /^data:image\//.test(u)); }
+  function jpTargetImgs(t){
+    var out = [], add = function(u, label){ if (u && out.length < 6 && !out.some(function(x){ return x.url === u; })) out.push({ url: u, label: label || '' }); };
+    (t.imgs || []).forEach(function(f){ if (jpIsImg(f)) add(f.url || f, t.name); });
+    (t.rows || []).forEach(function(r){
+      var u = r && r.img;
+      if (!u && r && r.itemCode){ try { var p = (productDB || []).find(function(x){ return x && x.code === r.itemCode; }); var pi = p && (p.imgs || [])[0]; u = pi && (pi.url || pi); } catch (_) {} }
+      add(u, r && (r.name || r.itemCode));
+    });
+    if (!out.length) (t.files || []).forEach(function(f){ if (jpIsImg(f)) add(f.url, t.name || t.no); });
+    return out;
+  }
+  function jpThumbs(m){
+    var t = jpFindTarget(m); if (!t) return '';
+    var imgs = jpTargetImgs(t), name = t.name || t.no || t.vendor || '';
+    if (!imgs.length) return name ? '<div style="color:#888;font-size:12px">' + esc(name) + ' · 사진 없음</div>' : '';
+    return '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+      + imgs.map(function(x){ return '<img src="' + esc(x.url) + '" data-zoom="' + esc(x.url) + '" data-cap="' + esc(x.label || name) + '" loading="lazy" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:8px;border:1px solid var(--bd,#ddd);cursor:zoom-in;background:#fff">'; }).join('')
+      + (name ? '<span style="font-size:12px;color:#666;flex:1;min-width:80px">' + esc(name) + '</span>' : '') + '</div>';
+  }
+  function jpZoom(url, cap){
+    var o = document.createElement('div');
+    o.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;cursor:zoom-out;padding:16px;box-sizing:border-box';
+    o.innerHTML = '<img src="' + esc(url) + '" alt="" style="max-width:100%;max-height:calc(100% - 40px);object-fit:contain;border-radius:8px;background:#fff">' + (cap ? '<div style="color:#fff;font-size:14px;text-align:center">' + esc(cap) + '</div>' : '');
+    var off = function(e){ if (!e || e.type === 'click' || e.key === 'Escape'){ o.remove(); document.removeEventListener('keydown', off); } };
+    o.addEventListener('click', off); document.addEventListener('keydown', off);
+    document.body.appendChild(o);
+  }
   async function onPanelClick(e){
+    var z = e.target.closest('img[data-zoom]'); if (z){ jpZoom(z.getAttribute('data-zoom'), z.getAttribute('data-cap')); return; }
     var b = e.target.closest('button'); if (!b) return;
     var act = b.getAttribute('data-act');
     if (act === 'close'){ closePanel(); return; }
