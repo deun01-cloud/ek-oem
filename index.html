@@ -32826,15 +32826,154 @@ function renderSchedule(){
   const c=document.getElementById('content');
   c.innerHTML=`<div class="card" style="overflow:visible">
     <div style="display:flex;border-bottom:1px solid var(--bdr);background:var(--s2)">
-      ${['week','day','month'].map(v=>`<button class="svb ${schedView===v?'on':''}" onclick="schedView='${v}';renderSchedContent()">${{week:'주간',day:'일간',month:'월간'}[v]}</button>`).join('')}
+      ${['week','goals'].map(v=>`<button class="svb ${schedView===v?'on':''}" onclick="schedView='${v}';renderSchedule()">${{week:'주간',goals:'목표·KPI'}[v]}</button>`).join('')}
     </div>
     <div id="schedContent"></div>
   </div>`;
   renderSchedContent();
 }
+// ════════════════════════════════
+// 목표·KPI 탭 (2026-11-25) — 연간 목표 · 월간 목표 · KPI(사업별 연 목표 대비 월별 실적)
+//   저장: 체크리스트(monthChecklist)를 그대로 씀 → 노션 체크리스트 DB·실시간 서버·로컬 저장을 공유
+//   monthKey: 월간 'YYYY-MM'(기존 월간 목표와 같음) · 연간 'Y-YYYY' · KPI 'K-YYYY'
+//   KPI 숫자(사업·단위·목표·월별 실적)는 실시간 서버로 공유되고, 노션에서 다시 불러와도 기존 값을 이어받는다
+// ════════════════════════════════
+let _gkYear=new Date().getFullYear(), _gkMonth=new Date().getMonth()+1;
+function _gkMode(mk){ mk=String(mk||''); return mk.startsWith('Y-')?'year':mk.startsWith('K-')?'kpi':'month'; }
+function _gkIdx(k){ k=String(k); return monthChecklist.findIndex(x=>x && String(x._notionId||x.id)===k); }
+function _gkCommit(it,isUpdate){
+  saveChecklists();
+  try{ syncChecklistItemToNotion(it,_gkMode(it.monthKey),isUpdate); }catch(e){}
+  try{ if(typeof realtimePublish==='function') realtimePublish('checklist', it); }catch(e){}
+  if(currentTab==='schedule' && schedView==='goals') renderSchedContent();
+}
+function gkAdd(mk,inpId){
+  const inp=document.getElementById(inpId); const text=((inp&&inp.value)||'').trim(); if(!text) return;
+  const it={text, done:false, id:Date.now(), monthKey:mk};
+  if(_gkMode(mk)==='kpi'){
+    const g=id=>((document.getElementById(id)||{}).value||'').trim();
+    it.biz=g('gkKpiBiz'); it.unit=g('gkKpiUnit'); it.target=+String(g('gkKpiTarget')).replace(/,/g,'')||0; it.act={};
+  }
+  monthChecklist.push(it);
+  _gkCommit(it,false);
+  const n=document.getElementById(inpId); if(n) n.focus();
+}
+function gkToggle(k){ const i=_gkIdx(k); if(i<0) return; const it=monthChecklist[i]; it.done=!it.done; _gkCommit(it,true); }
+function gkDelete(k){
+  const i=_gkIdx(k); if(i<0) return;
+  showConfirm('삭제합니다.\n"'+String(monthChecklist[i].text||'').slice(0,60)+'"',()=>{
+    const j=_gkIdx(k); if(j<0) return; const cur=monthChecklist[j];
+    try{ if(cur._notionId) deleteChecklistFromNotion(cur._notionId); }catch(e){}
+    try{ if(typeof realtimeDelete==='function') realtimeDelete('checklist', cur); }catch(e){}
+    monthChecklist.splice(j,1); saveChecklists();
+    if(currentTab==='schedule') renderSchedContent();
+  },'삭제','🗑');
+}
+function gkSet(k,field,v){
+  const i=_gkIdx(k); if(i<0) return; const it=monthChecklist[i];
+  if(field==='text'){ v=String(v||'').trim(); if(!v || v===it.text) return; it.text=v; _gkCommit(it,true); return; }
+  if(field==='target') v=+String(v).replace(/,/g,'')||0; else v=String(v||'').trim();
+  if(it[field]===v) return; it[field]=v;
+  saveChecklists();
+  try{ if(typeof realtimePublish==='function') realtimePublish('checklist', it); }catch(e){}
+  if(currentTab==='schedule' && schedView==='goals') renderSchedContent();
+}
+function gkSetAct(k,m,v){
+  const i=_gkIdx(k); if(i<0) return; const it=monthChecklist[i];
+  it.act=Object.assign({}, it.act||{}); v=String(v).replace(/,/g,'').trim();
+  if(v===''){ delete it.act[m]; } else it.act[m]=+v||0;
+  saveChecklists();
+  try{ if(typeof realtimePublish==='function') realtimePublish('checklist', it); }catch(e){}
+  if(currentTab==='schedule' && schedView==='goals') renderSchedContent();
+}
+function _gkNum(n){ return (+n||0).toLocaleString('ko-KR',{maximumFractionDigits:2}); }
+function _gkList(mk,title,inpId,ph,nav){
+  const items=_doneLast(monthChecklist.filter(x=>x && x.monthKey===mk));
+  const done=items.filter(x=>x.done).length;
+  return `<div class="gk-card">
+    <div class="gk-h"><b>${title}</b>${items.length?`<span class="gk-cnt">${done}/${items.length}</span>`:''}<span style="flex:1"></span>${nav||''}</div>
+    <div class="gk-list">${items.map(it=>{ const k=_gdArg(String(it._notionId||it.id)); return `<div class="gk-row${it.done?' dn':''}">
+      <input type="checkbox" ${it.done?'checked':''} onchange="gkToggle('${k}')">
+      <input class="gk-tx" value="${_gdEsc(it.text||'')}" onchange="gkSet('${k}','text',this.value)" onkeydown="if(event.key==='Enter')this.blur()">
+      <button class="gk-x" onclick="gkDelete('${k}')" title="삭제">×</button></div>`; }).join('')||'<div class="gk-empty">아직 없습니다.</div>'}</div>
+    <div class="gk-add"><input id="${inpId}" placeholder="${ph}" onkeydown="if(event.key==='Enter'&&!event.isComposing)gkAdd('${mk}','${inpId}')"><button class="btn bgo bs" onclick="gkAdd('${mk}','${inpId}')">추가</button></div>
+  </div>`;
+}
+function renderGoalsView(sc){
+  const y=_gkYear, m=_gkMonth, mk=y+'-'+String(m).padStart(2,'0');
+  const nowY=new Date().getFullYear(), nowM=new Date().getMonth()+1;
+  const kpis=monthChecklist.filter(x=>x && x.monthKey==='K-'+y)
+    .map((x,i)=>[x,i]).sort((a,b)=>String(a[0].biz||'').localeCompare(String(b[0].biz||''),'ko')||a[1]-b[1]).map(x=>x[0]);
+  const mNav=`<button class="cal-nb" onclick="if(--_gkMonth<1){_gkMonth=12;_gkYear--;}renderSchedContent()">&#8249;</button>
+    <span style="font-size:12px;min-width:44px;text-align:center">${m}월</span>
+    <button class="cal-nb" onclick="if(++_gkMonth>12){_gkMonth=1;_gkYear++;}renderSchedContent()">&#8250;</button>`;
+  const months=[1,2,3,4,5,6,7,8,9,10,11,12];
+  const kRows=kpis.map(it=>{
+    const k=_gdArg(String(it._notionId||it.id)); const act=it.act||{};
+    const sum=months.reduce((a,mm)=>a+(+act[mm]||0),0); const tg=+it.target||0;
+    const pct=tg?Math.round(sum/tg*100):null;
+    const col=pct===null?'var(--t3)':pct>=100?'#137333':pct>=70?'#b06000':'#c5221f';
+    return `<tr>
+      <td><input class="gk-in" style="width:90px" value="${_gdEsc(it.biz||'')}" placeholder="사업" onchange="gkSet('${k}','biz',this.value)"></td>
+      <td><input class="gk-in" style="width:170px;font-weight:600" value="${_gdEsc(it.text||'')}" onchange="gkSet('${k}','text',this.value)"></td>
+      <td><input class="gk-in" style="width:46px" value="${_gdEsc(it.unit||'')}" placeholder="단위" onchange="gkSet('${k}','unit',this.value)"></td>
+      <td><input class="gk-in gk-n" style="width:84px" value="${tg?_gkNum(tg):''}" onchange="gkSet('${k}','target',this.value)"></td>
+      ${months.map(mm=>`<td${y===nowY&&mm===nowM?' class="gk-now"':''}><input class="gk-in gk-n" style="width:58px" value="${act[mm]!=null?_gkNum(act[mm]):''}" onchange="gkSetAct('${k}',${mm},this.value)"></td>`).join('')}
+      <td class="gk-n" style="font-weight:600">${_gkNum(sum)}</td>
+      <td style="min-width:90px"><div class="gk-bar"><i style="width:${Math.min(100,pct||0)}%;background:${col}"></i></div><span style="font-size:11px;color:${col};font-weight:600">${pct===null?'—':pct+'%'}</span></td>
+      <td><button class="gk-x" onclick="gkDelete('${k}')" title="삭제">×</button></td>
+    </tr>`;
+  }).join('');
+  sc.innerHTML=`
+  <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--bdr)">
+    <button class="cal-nb" onclick="_gkYear--;renderSchedContent()">&#8249;</button>
+    <div style="font-size:12px;font-weight:600">${y}년</div>
+    <button class="cal-nb" onclick="_gkYear++;renderSchedContent()">&#8250;</button>
+    ${(y!==nowY||m!==nowM)?`<button class="btn bgo bs" onclick="_gkYear=${nowY};_gkMonth=${nowM};renderSchedContent()">올해</button>`:''}
+  </div>
+  <div class="gk-wrap">
+    <div class="gk-two">
+      ${_gkList('Y-'+y, y+'년 연간 목표','gkYearIn','연간 목표 추가')}
+      ${_gkList(mk, m+'월 월간 목표','gkMonthIn','월간 목표 추가',mNav)}
+    </div>
+    <div class="gk-card">
+      <div class="gk-h"><b>${y}년 KPI</b><span class="gk-cnt">${kpis.length}개</span><span style="flex:1"></span><span style="font-size:11px;color:var(--t3)">달성률 = 월별 실적 누계 ÷ 연 목표</span></div>
+      <div style="overflow-x:auto"><table class="gk-tbl">
+        <thead><tr><th>사업</th><th>KPI</th><th>단위</th><th>연 목표</th>${months.map(mm=>`<th${y===nowY&&mm===nowM?' class="gk-now"':''}>${mm}월</th>`).join('')}<th>누계</th><th>달성률</th><th></th></tr></thead>
+        <tbody>${kRows||`<tr><td colspan="19" class="gk-empty">KPI를 아래에서 추가하세요. 예) OEM · 신규 고객사 수 · 곳 · 10</td></tr>`}</tbody>
+      </table></div>
+      <div class="gk-add">
+        <input id="gkKpiBiz" placeholder="사업 (OEM·비비케이트·루엘·J-PRO…)" style="max-width:200px">
+        <input id="gkKpiIn" placeholder="KPI (예: 매출, 신규 고객사 수)" onkeydown="if(event.key==='Enter'&&!event.isComposing)gkAdd('K-${y}','gkKpiIn')">
+        <input id="gkKpiUnit" placeholder="단위" style="max-width:70px">
+        <input id="gkKpiTarget" placeholder="연 목표" style="max-width:110px" onkeydown="if(event.key==='Enter'&&!event.isComposing)gkAdd('K-${y}','gkKpiIn')">
+        <button class="btn bgo bs" onclick="gkAdd('K-${y}','gkKpiIn')">추가</button>
+      </div>
+    </div>
+  </div>`;
+}
+if(!document.getElementById('gkStyles')){
+  const st=document.createElement('style'); st.id='gkStyles';
+  st.textContent=`.gk-wrap{padding:12px;display:flex;flex-direction:column;gap:12px}
+  .gk-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}@media(max-width:900px){.gk-two{grid-template-columns:1fr}}
+  .gk-card{border:1px solid var(--bdr);border-radius:10px;background:var(--s1,#fff);padding:10px 12px;min-width:0}
+  .gk-h{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:6px}.gk-cnt{font-size:11px;color:var(--t3)}
+  .gk-row{display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--bdr)}.gk-row:last-child{border-bottom:none}
+  .gk-tx{flex:1;border:none;background:transparent;font-size:12.5px;padding:3px 2px;color:var(--t1)}.gk-tx:focus{outline:1px solid var(--gold);border-radius:4px;background:#fff}
+  .gk-row.dn .gk-tx{text-decoration:line-through;color:var(--t3)}
+  .gk-x{border:none;background:none;color:var(--t3);cursor:pointer;font-size:14px}.gk-x:hover{color:var(--red)}
+  .gk-empty{font-size:12px;color:var(--t3);padding:8px 2px;text-align:center}
+  .gk-add{display:flex;gap:6px;margin-top:8px}.gk-add input{flex:1;min-width:0;border:1px solid var(--bdr);border-radius:6px;padding:5px 8px;font-size:12px}
+  .gk-tbl{border-collapse:collapse;font-size:12px;width:100%}.gk-tbl th{font-weight:600;color:var(--t2);background:var(--s2);padding:5px 4px;border-bottom:1px solid var(--bdr);white-space:nowrap}
+  .gk-tbl td{padding:3px 4px;border-bottom:1px solid var(--bdr);white-space:nowrap}.gk-tbl .gk-now{background:var(--gold-bg)}
+  .gk-in{border:1px solid transparent;border-radius:4px;padding:3px 4px;font-size:12px;background:transparent}.gk-in:hover{border-color:var(--bdr)}.gk-in:focus{border-color:var(--gold);background:#fff;outline:none}
+  .gk-n{text-align:right}.gk-bar{height:5px;background:var(--s3,#eee);border-radius:3px;overflow:hidden;margin-bottom:2px}.gk-bar i{display:block;height:100%}`;
+  document.head.appendChild(st);
+}
 function renderSchedContent(){
   const sc=document.getElementById('schedContent');if(!sc)return;
   if(schedView==='week')renderWeekView(sc);
+  else if(schedView==='goals')renderGoalsView(sc);
   else if(schedView==='day')renderDayView(sc);
   else renderMonthView(sc);
 }
@@ -37648,11 +37787,11 @@ async function syncChecklistItemToNotion(item, mode, isUpdate){
   try{
     const props = {
       "할일": {"title":[{"text":{"content":(item.text||'').slice(0,2000)}}]},
-      "종류": {"select":{"name": mode==='month'?'월간':'주간'}},
+      "종류": {"select":{"name": mode==='month'?'월간':mode==='year'?'연간':mode==='kpi'?'KPI':'주간'}},
       "완료": {"checkbox": !!item.done},
     };
     // 주차/월 정보 — 노션 DB에 "주차" 컬럼이 있으면 저장 (없으면 노션이 무시)
-    const periodKey = mode==='month' ? (item.monthKey || getCurrentMonthKey()) : (item.weekKey || getCurrentWeekKey());
+    const periodKey = (mode==='year'||mode==='kpi') ? String(item.monthKey||'').slice(2) : mode==='month' ? (item.monthKey || getCurrentMonthKey()) : (item.weekKey || getCurrentWeekKey());
     props["주차"] = {"rich_text":[{"text":{"content":periodKey}}]};
     if(isUpdate && item._notionId){
       await _nUpdateChecked(item._notionId, props, item, '', '체크리스트');
@@ -37704,7 +37843,10 @@ async function pullChecklistsFromNotion(){
       //    "주차 이동해도 같은 항목이 보이는" 버그가 났음. created_time이면 페이지 생성 시점에
       //    고정되어 있어 안전.
       const createdAt = row.created_time ? new Date(row.created_time) : null;
-      if(kind === '월간'){
+      if(kind === '연간' || kind === 'KPI'){   // 목표·KPI 탭 (2026-11-25)
+        item.monthKey = (kind==='연간'?'Y-':'K-') + (periodKey || String((createdAt||new Date()).getFullYear()));
+        mn.push(item);
+      } else if(kind === '월간'){
         item.monthKey = periodKey || (createdAt ? getMonthKey(createdAt) : getCurrentMonthKey());
         mn.push(item);
       } else {
@@ -37720,6 +37862,10 @@ async function pullChecklistsFromNotion(){
     const _prevOwner={};
     (Array.isArray(weekChecklist)?weekChecklist:[]).forEach(x=>{ if(x && x._notionId && x.owner) _prevOwner[String(x._notionId)]=x.owner; });
     wk.forEach(it=>{ const o=_prevOwner[String(it._notionId)]; if(o) it.owner=o; });
+    // KPI 숫자(사업·단위·목표·월별 실적)도 노션 칸이 없으므로 기존 로컬 값을 이어받는다 (2026-11-25)
+    const _prevKpi={};
+    (Array.isArray(monthChecklist)?monthChecklist:[]).forEach(x=>{ if(x && x._notionId && String(x.monthKey||'').startsWith('K-')) _prevKpi[String(x._notionId)]=x; });
+    mn.forEach(it=>{ const p=_prevKpi[String(it._notionId)]; if(p){ ['biz','unit','target','act'].forEach(f=>{ if(p[f]!==undefined) it[f]=p[f]; }); } });
     // 노션의 데이터를 진실의 원천으로 (다른 컴퓨터에서도 일관성 유지)
     weekChecklist = wk;
     monthChecklist = mn;
