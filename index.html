@@ -32855,7 +32855,7 @@ function gkAdd(mk,inpId){
   const it={text, done:false, id:Date.now(), monthKey:mk, div:(inp&&inp.dataset&&inp.dataset.div)||''};
   if(_gkMode(mk)==='kpi'){
     const g=id=>((document.getElementById(id)||{}).value||'').trim();
-    it.div=g('gkKpiDiv')||'OEM'; it.unit=g('gkKpiUnit'); it.target=+String(g('gkKpiTarget')).replace(/,/g,'')||0; it.act={};
+    it.div=g('gkKpiDiv')||'OEM'; it.owner=g('gkKpiOwner'); it.calc=g('gkKpiCalc')||'sum'; it.unit=g('gkKpiUnit'); it.target=+String(g('gkKpiTarget')).replace(/,/g,'')||0; it.act={};
   }
   monthChecklist.push(it);
   _gkCommit(it,false);
@@ -32908,23 +32908,31 @@ function renderGoalsView(sc){
   const nowY=new Date().getFullYear(), nowM=new Date().getMonth()+1;
   const _dv=x=>{ const i=GK_DIVS.indexOf(x.div||''); return i<0?9:i; };
   const kpis=monthChecklist.filter(x=>x && x.monthKey==='K-'+y)
-    .map((x,i)=>[x,i]).sort((a,b)=>_dv(a[0])-_dv(b[0])||a[1]-b[1]).map(x=>x[0]);
+    .map((x,i)=>[x,i]).sort((a,b)=>_dv(a[0])-_dv(b[0])||String(a[0].owner||'').localeCompare(String(b[0].owner||''),'ko')||a[1]-b[1]).map(x=>x[0]);
   const mNav=`<button class="cal-nb" onclick="if(--_gkMonth<1){_gkMonth=12;_gkYear--;}renderSchedContent()">&#8249;</button>
     <span style="font-size:12px;min-width:44px;text-align:center">${m}월</span>
     <button class="cal-nb" onclick="if(++_gkMonth>12){_gkMonth=1;_gkYear++;}renderSchedContent()">&#8250;</button>`;
   const months=[1,2,3,4,5,6,7,8,9,10,11,12];
+  // [2026-11-25] KPI 방식: sum = 월별 실적 누계 ÷ 연 목표 · ge = 매월 기준 이상이면 충족 · le = 매월 기준 이하(이내)면 충족
+  //   ge/le 달성률 = 기준을 충족한 달 ÷ 실적을 입력한 달
   const kRows=kpis.map(it=>{
     const k=_gdArg(String(it._notionId||it.id)); const act=it.act||{};
-    const sum=months.reduce((a,mm)=>a+(+act[mm]||0),0); const tg=+it.target||0;
-    const pct=tg?Math.round(sum/tg*100):null;
+    const calc=it.calc||'sum', tg=+it.target||0;
+    const filled=months.filter(mm=>act[mm]!=null && act[mm]!=='');
+    const ok=mm=>calc==='ge'?(+act[mm])>=tg:(+act[mm])<=tg;
+    const sum=months.reduce((a,mm)=>a+(+act[mm]||0),0);
+    const okN=filled.filter(ok).length;
+    const pct=calc==='sum'?(tg?Math.round(sum/tg*100):null):(filled.length?Math.round(okN/filled.length*100):null);
     const col=pct===null?'var(--t3)':pct>=100?'#137333':pct>=70?'#b06000':'#c5221f';
+    const cellBg=mm=>(calc==='sum'||act[mm]==null||act[mm]==='')?'':(ok(mm)?'background:#e6f4ea;':'background:#fce8e6;');
     return `<tr>
       <td><select class="gk-in" style="width:74px;font-weight:600;color:${(GK_DIV_COL[it.div||'']||GK_DIV_COL[''])[1]}" onchange="gkSet('${k}','div',this.value)">${(GK_DIVS.includes(it.div)?GK_DIVS:['',...GK_DIVS]).map(d=>`<option value="${d}"${(it.div||'')===d?' selected':''}>${d||'미지정'}</option>`).join('')}</select></td>
-      <td><input class="gk-in" style="width:170px;font-weight:600" value="${_gdEsc(it.text||'')}" onchange="gkSet('${k}','text',this.value)"></td>
-      <td><input class="gk-in" style="width:46px" value="${_gdEsc(it.unit||'')}" placeholder="단위" onchange="gkSet('${k}','unit',this.value)"></td>
-      <td><input class="gk-in gk-n" style="width:84px" value="${tg?_gkNum(tg):''}" onchange="gkSet('${k}','target',this.value)"></td>
-      ${months.map(mm=>`<td${y===nowY&&mm===nowM?' class="gk-now"':''}><input class="gk-in gk-n" style="width:58px" value="${act[mm]!=null?_gkNum(act[mm]):''}" onchange="gkSetAct('${k}',${mm},this.value)"></td>`).join('')}
-      <td class="gk-n" style="font-weight:600">${_gkNum(sum)}</td>
+      <td><input class="gk-in" style="width:64px" value="${_gdEsc(it.owner||'')}" placeholder="담당" onchange="gkSet('${k}','owner',this.value)"></td>
+      <td><input class="gk-in" style="width:150px;font-weight:600" value="${_gdEsc(it.text||'')}" onchange="gkSet('${k}','text',this.value)"></td>
+      <td><select class="gk-in" onchange="gkSet('${k}','calc',this.value)">${[['sum','연 누계'],['ge','매월 이상'],['le','매월 이하']].map(([v,l])=>`<option value="${v}"${calc===v?' selected':''}>${l}</option>`).join('')}</select></td>
+      <td style="white-space:nowrap"><input class="gk-in gk-n" style="width:64px" value="${tg||tg===0&&calc!=='sum'?_gkNum(tg):''}" onchange="gkSet('${k}','target',this.value)"><input class="gk-in" style="width:40px" value="${_gdEsc(it.unit||'')}" placeholder="단위" onchange="gkSet('${k}','unit',this.value)"></td>
+      ${months.map(mm=>`<td${y===nowY&&mm===nowM?' class="gk-now"':''}><input class="gk-in gk-n" style="width:52px;${cellBg(mm)}" value="${act[mm]!=null&&act[mm]!==''?_gkNum(act[mm]):''}" onchange="gkSetAct('${k}',${mm},this.value)"></td>`).join('')}
+      <td class="gk-n" style="font-weight:600">${calc==='sum'?_gkNum(sum):(filled.length?okN+'/'+filled.length+'개월':'—')}</td>
       <td style="min-width:90px"><div class="gk-bar"><i style="width:${Math.min(100,pct||0)}%;background:${col}"></i></div><span style="font-size:11px;color:${col};font-weight:600">${pct===null?'—':pct+'%'}</span></td>
       <td><button class="gk-x" onclick="gkDelete('${k}')" title="삭제">×</button></td>
     </tr>`;
@@ -32949,16 +32957,18 @@ function renderGoalsView(sc){
       }).join('')}
     </div>
     <div class="gk-card">
-      <div class="gk-h"><b>${y}년 KPI</b><span class="gk-cnt">${kpis.length}개</span><span style="flex:1"></span><span style="font-size:11px;color:var(--t3)">달성률 = 월별 실적 누계 ÷ 연 목표</span></div>
+      <div class="gk-h"><b>${y}년 KPI</b><span class="gk-cnt">${kpis.length}개</span><span style="flex:1"></span><span style="font-size:11px;color:var(--t3)">연 누계: 실적 합계 ÷ 연 목표 · 매월 이상/이하: 기준을 지킨 달 ÷ 입력한 달</span></div>
       <div style="overflow-x:auto"><table class="gk-tbl">
-        <thead><tr><th>사업부</th><th>KPI</th><th>단위</th><th>연 목표</th>${months.map(mm=>`<th${y===nowY&&mm===nowM?' class="gk-now"':''}>${mm}월</th>`).join('')}<th>누계</th><th>달성률</th><th></th></tr></thead>
-        <tbody>${kRows||`<tr><td colspan="19" class="gk-empty">KPI를 아래에서 추가하세요. 예) OEM · 신규 고객사 수 · 곳 · 10</td></tr>`}</tbody>
+        <thead><tr><th>사업부</th><th>담당</th><th>KPI</th><th>방식</th><th>목표·기준</th>${months.map(mm=>`<th${y===nowY&&mm===nowM?' class="gk-now"':''}>${mm}월</th>`).join('')}<th>누계·충족</th><th>달성률</th><th></th></tr></thead>
+        <tbody>${kRows||`<tr><td colspan="21" class="gk-empty">KPI를 아래에서 추가하세요. 예) OEM · 신규 고객사 수 · 곳 · 10</td></tr>`}</tbody>
       </table></div>
       <div class="gk-add">
         <select id="gkKpiDiv" style="max-width:90px;border:1px solid var(--bdr);border-radius:6px;font-size:12px">${GK_DIVS.map(d=>`<option>${d}</option>`).join('')}</select>
-        <input id="gkKpiIn" placeholder="KPI (예: 매출, 신규 고객사 수)" onkeydown="if(event.key==='Enter'&&!event.isComposing)gkAdd('K-${y}','gkKpiIn')">
-        <input id="gkKpiUnit" placeholder="단위" style="max-width:70px">
-        <input id="gkKpiTarget" placeholder="연 목표" style="max-width:110px" onkeydown="if(event.key==='Enter'&&!event.isComposing)gkAdd('K-${y}','gkKpiIn')">
+        <input id="gkKpiOwner" placeholder="담당" style="max-width:80px">
+        <input id="gkKpiIn" placeholder="KPI (예: 매출, 납기 준수율)" onkeydown="if(event.key==='Enter'&&!event.isComposing)gkAdd('K-${y}','gkKpiIn')">
+        <select id="gkKpiCalc" style="max-width:96px;border:1px solid var(--bdr);border-radius:6px;font-size:12px"><option value="sum">연 누계</option><option value="ge">매월 이상</option><option value="le">매월 이하</option></select>
+        <input id="gkKpiTarget" placeholder="목표·기준" style="max-width:90px" onkeydown="if(event.key==='Enter'&&!event.isComposing)gkAdd('K-${y}','gkKpiIn')">
+        <input id="gkKpiUnit" placeholder="단위" style="max-width:60px">
         <button class="btn bgo bs" onclick="gkAdd('K-${y}','gkKpiIn')">추가</button>
       </div>
     </div>
@@ -37880,7 +37890,7 @@ async function pullChecklistsFromNotion(){
     // KPI 숫자(사업·단위·목표·월별 실적)도 노션 칸이 없으므로 기존 로컬 값을 이어받는다 (2026-11-25)
     const _prevKpi={};
     (Array.isArray(monthChecklist)?monthChecklist:[]).forEach(x=>{ if(x && x._notionId) _prevKpi[String(x._notionId)]=x; });
-    mn.forEach(it=>{ const p=_prevKpi[String(it._notionId)]; if(p){ ['div','biz','unit','target','act'].forEach(f=>{ if(p[f]!==undefined) it[f]=p[f]; }); } });   // 사업부(div)도 이어받음
+    mn.forEach(it=>{ const p=_prevKpi[String(it._notionId)]; if(p){ ['div','biz','owner','calc','unit','target','act'].forEach(f=>{ if(p[f]!==undefined) it[f]=p[f]; }); } });   // 사업부(div)도 이어받음
     // 노션의 데이터를 진실의 원천으로 (다른 컴퓨터에서도 일관성 유지)
     weekChecklist = wk;
     monthChecklist = mn;
