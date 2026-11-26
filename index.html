@@ -3547,6 +3547,7 @@ const SMP_CATS=[
   {key:'의뢰',   label:'의뢰'},
   {key:'제작중',  label:'제작중'},
   {key:'확정',   label:'완료'},  // '확정' 데이터값 = 완료. 표시 통일
+  {key:'미발주', label:'미발주'},  // 완료됐는데 아직 발주 안 된 샘플 — 고객사 발주 재촉용 (2026-11-26)
   {key:'취소',   label:'취소'},
   {key:'전체',   label:'전체'},
 ];
@@ -28596,7 +28597,8 @@ function renderSample(){
   const list=filteredSamples();
   // status 정규화: '완료'는 '확정'과 동일 취급 (옛 데이터 호환)
   const _normSmpSt=normSmpStatus;
-  const counts={};SMP_CATS.forEach(cat=>{counts[cat.key]=cat.key==='전체'?samples.length:samples.filter(s=>_normSmpSt(s.status)===cat.key).length;});
+  const _unordered=_smpUnorderedList(), _unorderedIds=new Set(_unordered.map(s=>String(s.id)));
+  const counts={};SMP_CATS.forEach(cat=>{counts[cat.key]=cat.key==='전체'?samples.length:cat.key==='미발주'?_unordered.length:samples.filter(s=>_normSmpSt(s.status)===cat.key).length;});
 
   // checked sample ids (persisted in window for re-render)
   if(!window._smpChecked)window._smpChecked=new Set();
@@ -28678,7 +28680,8 @@ function renderSample(){
         const m=(s.manager||'').trim();
         const ini=m?vendorInit(m):'';
         const key=(ini && ini!=='?')?ini:(m||'');
-        if(smpFilter && smpFilter!=='전체' && st!==smpFilter) return;
+        if(smpFilter==='미발주'){ if(!_unorderedIds.has(String(s.id))) return; }
+        else if(smpFilter && smpFilter!=='전체' && st!==smpFilter) return;
         if(!m) return;
         if(!tally[key]){
           const cl=findClientByVendor(m);
@@ -28884,7 +28887,7 @@ function renderSample(){
                 if(diff<0)return '';
                 return `<br><span style="font-size:9.5px;color:var(--gold-lt);background:var(--gold-bg);border:1px solid var(--gold-line);padding:1px 5px;border-radius:3px;font-weight:600;display:inline-block;margin-top:2px" title="의뢰일부터 납기일까지 소요 기간">⏱ ${diff}일</span>`;
               })()}</td>
-              <td>${ddTag(s.due)}</td>
+              <td>${smpFilter==='미발주'?(()=>{ const d=_smpDoneDate(s); const n=d?Math.max(0,Math.round((new Date(toLocalDateStr(new Date()))-new Date(d))/86400000)):0; return `<span title="완료일 ${d}" style="font-size:10px;font-weight:700;white-space:nowrap;padding:2px 6px;border-radius:4px;${n>=7?'background:rgba(200,40,40,.12);color:var(--red)':'background:var(--s2);color:var(--t2)'}">완료 +${n}일</span>`; })():ddTag(s.due)}</td>
               <td style="font-size:11px;color:var(--t2)">${s.mat||'—'} / ${s.plating||'—'}</td>
               <td style="font-size:11px;color:var(--t2)">${s.sz1||'—'}${s.sz2?` (${s.sz2})`:''}</td>
               <td onclick="event.stopPropagation()">
@@ -28902,10 +28905,50 @@ function renderSample(){
   // 헤더 체크박스의 indeterminate 상태 적용
   applySmpIndeterminate();
 }
+// ════════════════════════════════
+// 📦 미발주 — 완료된 샘플 중 아직 발주로 이어지지 않은 것 (고객사에 발주 재촉용, DW 2026-11-26)
+//   · 2026-11-26 이후 완료된 샘플부터 추적 (완료일 doneAt, 없으면 공장출고일)
+//   · 자사 브랜드(VV·VC·RH) 제외 · 취소한 샘플 제외(고객사가 발주 안 하기로 하면 '취소'로 바꾸면 빠짐)
+//   · 발주 연결 판정: 발주서의 출처 샘플(smpIds) / 품목 품번 일치 / 같은 고객사·같은 품목명
+// ════════════════════════════════
+const SMP_UNORDERED_FROM='2026-11-26';
+function _smpStampDone(s, oldSt){
+  if(!s) return;
+  const was=normSmpStatus(oldSt), cur=normSmpStatus(s.status);
+  if(cur==='확정' && was!=='확정') s.doneAt=toLocalDateStr(new Date());
+  else if(cur!=='확정' && s.doneAt) s.doneAt='';
+}
+function _smpOrderedIndex(){
+  const ids=new Set(), codes=new Set(), names=new Set();
+  (orders||[]).forEach(o=>{
+    if(!o || String(o.status||'').indexOf('취소')>=0) return;
+    (o.smpIds||[]).forEach(id=>ids.add(String(id)));
+    const vk=_vendorGrpKey(o.vendor);
+    (o.rows||[]).forEach(r=>{
+      if(!r) return;
+      const c=String(r.itemCode||'').trim().toUpperCase(); if(c) codes.add(c);
+      const n=String(r.name||'').trim(); if(n) names.add(vk+'|'+n);
+    });
+  });
+  return {ids, codes, names};
+}
+function _smpDoneDate(s){ return String(s.doneAt||s.factShip||'').slice(0,10); }
+function isSmpUnordered(s, idx){
+  if(!s || normSmpStatus(s.status)!=='확정') return false;
+  const d=_smpDoneDate(s);
+  if(!d || d<SMP_UNORDERED_FROM) return false;
+  if(OWN_BRAND_PREFIXES.includes(vendorInit(s.manager||''))) return false;
+  idx=idx||_smpOrderedIndex();
+  if(idx.ids.has(String(s.id))) return false;
+  if([s.itemNo,s.itemCode].some(x=>{ const c=String(x||'').trim().toUpperCase(); return c && idx.codes.has(c); })) return false;
+  if(idx.names.has(_vendorGrpKey(s.manager)+'|'+String(s.name||'').trim())) return false;
+  return true;
+}
+function _smpUnorderedList(){ const idx=_smpOrderedIndex(); return samples.filter(s=>isSmpUnordered(s, idx)); }
 function filteredSamples(){
   // status 정규화: '완료'는 '확정'과 동일 취급 (옛 데이터 호환)
   const _ns=normSmpStatus;
-  let list=smpFilter==='전체'?samples:samples.filter(s=>_ns(s.status)===smpFilter);
+  let list=smpFilter==='전체'?samples:smpFilter==='미발주'?_smpUnorderedList():samples.filter(s=>_ns(s.status)===smpFilter);
   if(smpSearch)list=list.filter(s=>(s.name+s.manager+s.mat+(s.itemCode||'')).toLowerCase().includes(smpSearch.toLowerCase()));
 
   // 고급 필터 적용
@@ -29108,7 +29151,9 @@ function changeSmpStatus(sid, newStatus){
   }
   const _oldSt=samples[i].status;
   samples[i].status=newStatus;
-  _ekPendSet('sample', samples[i], {status:_oldSt}, {status:newStatus});
+  const _oldDone=samples[i].doneAt||'';
+  _smpStampDone(samples[i], _oldSt);
+  _ekPendSet('sample', samples[i], {status:_oldSt, doneAt:_oldDone}, {status:newStatus, doneAt:samples[i].doneAt||''});
   save();
   // 노션 동기화
   if(samples[i]._notionId) debouncedSync('sample', samples[i], true);
@@ -34770,6 +34815,7 @@ function saveSmp(){
         } else {
           samples[i]={...samples[i],...finalObj};
         }
+        _smpStampDone(samples[i], window._smpPrevForProd ? window._smpPrevForProd.status : '');
       }
     } else {
       // 🔒 노션-우선: 노션 push 성공해야만 로컬에 추가
@@ -34952,7 +34998,7 @@ function toggleSmpComplete(){
     showConfirm(
       `이 샘플을 "제작중"으로 되돌립니다.\n\n• 발주서/공정은 자동 삭제되지 않습니다\n  (이미 생성된 게 있으면 수동 정리 필요)\n\n계속할까요?`,
       ()=>{
-        s.status = '제작중';
+        s.status = '제작중'; s.doneAt = '';
         if(s._notionId && typeof debouncedSync === 'function'){
           debouncedSync('sample', s, true);
         }
@@ -45728,7 +45774,9 @@ async function saveStandaloneInvoice(){
       const sid = isNaN(+_completeSampleId) ? _completeSampleId : +_completeSampleId;
       const smp = samples.find(x=>String(x.id)===String(sid));
       if(smp){
+        const _o = smp.status;
         smp.status = '확정';
+        _smpStampDone(smp, _o);
         smp.invNo = invRec.invNo || smp.invNo;
         if(smp._notionId && typeof debouncedSync === 'function') debouncedSync('sample', smp, true);
       }
