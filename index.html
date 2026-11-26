@@ -7714,6 +7714,7 @@ function saveProduct(){
           if(v.status === '입금완료') return;
           if(v._shipped === true) return;
           if(!Array.isArray(v.items)) return;
+          if(_invIsUsd(v)) return;   // 💵 USD 명세서는 원화 제품 단가로 덮지 않음
           let touched = false;
           v.items.forEach(it=>{
             if((it.code||'').trim() === code && (+it.unit||0) !== newPrice){
@@ -9576,7 +9577,8 @@ function renderInvoiceHistory(){
           var prepaidChip = prepaid > 0
             ? '<div style="margin-top:2px;font-size:9.5px;color:#7A4DB5;font-weight:600" title="원자재 선금 — 월말 합본 청구서 작성 시 청구액에서 자동 차감됩니다">💰 선금 ₩'+prepaid.toLocaleString()+'</div>'
             : '';
-          h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:var(--gold-lt)">'+(v.total?v.total.toLocaleString():'-')+'</div>'+prepaidChip+'</td>';
+          var _usdChip = _invIsUsd(v) ? '<div style="margin-top:2px;font-size:10.5px;font-weight:700;color:var(--blu)" title="해외 인보이스 (USD) — 원화는 환율 '+_invRateOf(v).toLocaleString()+' 환산">'+_usdFmt(_invTotalUsd(v))+'</div>' : '';
+          h+='<td onclick="'+clickFn+'" style="padding:8px 10px;text-align:right"><div style="font-weight:700;color:var(--gold-lt)">'+(v.total?v.total.toLocaleString():'-')+'</div>'+_usdChip+prepaidChip+'</td>';
         }
       }
       // 탭별 액션 셀
@@ -9744,6 +9746,7 @@ function renderInvoiceHistory(){
 // 발주서가 살아있으면(o) 거기서 mat/plating/size/manager/memo를 보강
 function renderInvoiceCopyHtml(v){
   if(!v) return '';
+  if(_invIsUsd(v)) return renderCommercialInvoiceHtml(v);   // 💵 해외 = 커머셜 인보이스
   // 회사 정보 (현재 설정값)
   var co = (typeof company!=='undefined' && company) || {name:'이케이아이엔티'};
   // 원본 발주서 매칭 (소재/도금/규격/담당자/메모 보강용)
@@ -9875,11 +9878,83 @@ function renderInvoiceCopyHtml(v){
   '</div>';
 }
 
+// 💵 EK INT 커머셜 인보이스 — DW 확정 고정 서식(2026-10-19, ek-invoice 스킬과 동일 값). 서식·은행정보 바꾸지 말 것
+function _usdWords(n){
+  const ones="ZERO ONE TWO THREE FOUR FIVE SIX SEVEN EIGHT NINE TEN ELEVEN TWELVE THIRTEEN FOURTEEN FIFTEEN SIXTEEN SEVENTEEN EIGHTEEN NINETEEN".split(' ');
+  const tens="_ _ TWENTY THIRTY FORTY FIFTY SIXTY SEVENTY EIGHTY NINETY".split(' ');
+  const sub=k=>{ if(k<20) return ones[k]; if(k<100) return tens[Math.floor(k/10)]+(k%10?'-'+ones[k%10]:'');
+    if(k<1000) return ones[Math.floor(k/100)]+' HUNDRED'+(k%100?' '+sub(k%100):'');
+    for(const [d,nm] of [[1e9,'BILLION'],[1e6,'MILLION'],[1e3,'THOUSAND']]) if(k>=d) return sub(Math.floor(k/d))+' '+nm+(k%d?' '+sub(k%d):''); };
+  const w=Math.floor(n), c=Math.round((n-w)*100);
+  return sub(w)+(c?' AND CENTS '+sub(c):'')+' ONLY';
+}
+function renderCommercialInvoiceHtml(v){
+  const NAVY='#0B1F3A', GOLD='#B8923A', GREY='#6B7280', LIGHT='#F3F4F6', LINE='#D1D5DB';
+  const esc=x=>String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  const rate=_invRateOf(v);
+  const items=(v.items||[]).filter(r=>r && (r.name||r.code));
+  const rows=items.map(r=>({desc:(r.name||'')+(r.code?'  ('+r.code+')':''), qty:+r.qty||0, price:r.unitUsd!=null?+r.unitUsd:_r2((+r.unit||0)/rate)}));
+  const total=_r2(rows.reduce((s,r)=>s+r.qty*r.price,0));
+  const paid=_invPaidUsd(v);
+  const cl=(typeof findClientByVendor==='function')?findClientByVendor(v.vendor||''):null;
+  const d=new Date((v.issuedAt||toLocalDateStr(new Date()))+'T00:00:00');
+  const dateStr=isNaN(d)?(v.issuedAt||''):d.getDate()+' '+['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()]+' '+d.getFullYear();
+  const ciNo=v.ciNo||('EK-CI-'+String(v.issuedAt||'').replace(/-/g,'')+'-001');
+  // 결제조건: 발주 건 = 50/50, 발주 없는 건(개발비·샘플비) = 100% 선결제
+  const isOrder=!!(v.ordId||(v.ordNo&&!String(v.ordNo).startsWith('STOCK-')));
+  const pays=isOrder
+    ? [['1st Payment','50% advance deposit upon order confirmation (T/T)',_r2(total*0.5)],['2nd Payment','50% balance within 7 days after receipt of goods (T/T)',_r2(total-_r2(total*0.5))]]
+    : [['Payment','100% T/T in advance',total]];
+  const th='padding:6px 8px;background:'+NAVY+';color:#fff;font-size:8.5pt;font-weight:700;text-align:center';
+  const sec=t=>'<div style="background:'+NAVY+';color:#fff;font-size:8.5pt;font-weight:700;padding:4px 10px;margin-top:10px">'+t+'</div>';
+  const kv=(k,val)=>'<tr><td style="background:'+LIGHT+';color:'+GREY+';font-weight:700;font-size:8.5pt;padding:4px 10px;width:130px">'+k+'</td><td style="background:'+LIGHT+';padding:4px 10px">'+val+'</td></tr>';
+  const nRows=Math.max(6, rows.length+1);
+  let body='';
+  for(let i=0;i<nRows;i++){ const r=rows[i];
+    body+='<tr style="background:'+(i%2?'#FAFAFA':'#fff')+'"><td style="text-align:center;padding:5px;border-bottom:1px solid '+LINE+'">'+(i+1)+'</td>'
+      +'<td style="padding:5px 8px;border-bottom:1px solid '+LINE+'">'+(r?esc(r.desc):'')+'</td>'
+      +'<td style="text-align:center;padding:5px;border-bottom:1px solid '+LINE+'">'+(r?'PCS':'')+'</td>'
+      +'<td style="text-align:right;padding:5px 8px;border-bottom:1px solid '+LINE+'">'+(r?r.qty.toLocaleString():'')+'</td>'
+      +'<td style="text-align:right;padding:5px 8px;border-bottom:1px solid '+LINE+'">'+(r?r.price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'')+'</td>'
+      +'<td style="text-align:right;padding:5px 8px;border-bottom:1px solid '+LINE+'">'+(r?_r2(r.qty*r.price).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'')+'</td></tr>'; }
+  const f2=n=>(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const totRow=(lab,val,bold)=>'<tr><td colspan="5" style="text-align:right;padding:'+(bold?'7px':'5px')+' 10px;'+(bold?'background:'+NAVY+';color:#fff;font-weight:700;font-size:10.5pt':'border-bottom:1px solid '+LINE+';font-weight:700')+'">'+lab+'</td><td style="text-align:right;padding:5px 8px;'+(bold?'background:'+NAVY+';color:#fff;font-weight:700;font-size:11pt':'border-bottom:1px solid '+LINE)+'">'+val+'</td></tr>';
+  const logo='<div style="font-family:Arial,sans-serif;font-size:26pt;font-weight:500;color:#1E1E22;letter-spacing:2px;display:flex;align-items:center;gap:8px">EK<span style="display:inline-block;width:14px;height:14px;background:#3B6EE6;transform:rotate(45deg) scaleX(.75)"></span>INT</div>';
+  return '<div style="font-family:Arial,\'Noto Sans KR\',sans-serif;max-width:820px;margin:0 auto;padding:18px;color:#111827;font-size:9.5pt">'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-start">'+logo
+    +'<div style="text-align:right"><div style="font-size:19pt;font-weight:700;color:'+NAVY+'">COMMERCIAL INVOICE</div>'
+    +'<div style="font-weight:700;margin-top:4px">Invoice No.&nbsp; '+esc(ciNo)+'</div>'
+    +'<div style="color:'+GREY+'">Invoice Date&nbsp; '+esc(dateStr)+'</div>'
+    +'<div style="color:'+GREY+'">Order No.&nbsp; '+esc(isOrder?v.ordNo:'—')+'</div></div></div>'
+    +'<div style="height:3px;background:'+GOLD+';margin:8px 0 6px"></div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+    +'<div>'+sec('SELLER / EXPORTER')+'<div style="background:'+LIGHT+';padding:6px 10px;line-height:1.7"><b style="color:'+NAVY+'">EK INT (이케이 아이엔티)</b><br>EK Building, 24-8, Nonhyeon-ro 26-gil, Gangnam-gu, Seoul, Republic of Korea<br>Tel +82-70-4141-0097 · sales@ek-jewelry.com<br>Attn. Dongwon Eun, Director</div></div>'
+    +'<div>'+sec('BUYER / CONSIGNEE')+'<div style="background:'+LIGHT+';padding:6px 10px;line-height:1.7"><b>'+esc(cl&&cl.name||v.vendor)+'</b><br>Address:&nbsp; ______________________<br>Tel / Email:&nbsp; '+esc([cl&&cl.phone,cl&&cl.email].filter(Boolean).join(' / ')||'______________________')+'<br>Attn.:&nbsp; '+esc(cl&&cl.contact||'______________________')+'</div></div></div>'
+    +sec('SHIPPING DETAILS')+'<table style="width:100%;border-collapse:collapse;font-size:9.5pt">'
+    +'<tr>'+['Port of Loading','Incheon, Korea','Port of Destination','______________'].map((x,i)=>'<td style="background:'+LIGHT+';padding:4px 10px;'+(i%2?'':'color:'+GREY+';font-weight:700;font-size:8.5pt')+'">'+x+'</td>').join('')+'</tr>'
+    +'<tr>'+['Transport Method','Air','Incoterms','FOB'].map((x,i)=>'<td style="background:'+LIGHT+';padding:4px 10px;'+(i%2?'':'color:'+GREY+';font-weight:700;font-size:8.5pt')+'">'+x+'</td>').join('')+'</tr>'
+    +'<tr>'+['Country of Origin','Republic of Korea','Currency','USD'].map((x,i)=>'<td style="background:'+LIGHT+';padding:4px 10px;'+(i%2?'':'color:'+GREY+';font-weight:700;font-size:8.5pt')+'">'+x+'</td>').join('')+'</tr></table>'
+    +'<table style="width:100%;border-collapse:collapse;font-size:9.5pt;margin-top:10px"><thead><tr><th style="'+th+';width:36px">No.</th><th style="'+th+'">Description of Goods</th><th style="'+th+';width:50px">Unit</th><th style="'+th+';width:60px">Qty</th><th style="'+th+';width:100px">Unit Price (USD)</th><th style="'+th+';width:110px">Amount (USD)</th></tr></thead><tbody>'
+    +body+totRow('Subtotal',f2(total))+totRow('Freight','')+totRow('Insurance','')+totRow('TOTAL AMOUNT (USD)',f2(total),true)
+    +(paid>0?totRow('Less: Payment received',' −'+f2(paid))+totRow('BALANCE DUE (USD)',f2(_r2(total-paid)),true):'')
+    +'</tbody></table>'
+    +'<div style="color:'+GREY+';font-style:italic;font-weight:700;font-size:8.5pt;padding:5px 10px">SAY TOTAL US DOLLARS '+_usdWords(total)+'</div>'
+    +sec('PAYMENT TERMS')+'<table style="width:100%;border-collapse:collapse;font-size:9.5pt">'+pays.map(p=>'<tr><td style="background:'+LIGHT+';color:'+GREY+';font-weight:700;font-size:8.5pt;padding:4px 10px;width:130px">'+p[0]+'</td><td style="background:'+LIGHT+';padding:4px 10px">'+p[1]+'</td><td style="background:'+LIGHT+';padding:4px 10px;text-align:right;font-weight:700;color:'+NAVY+';width:130px">USD '+f2(p[2])+'</td></tr>').join('')+'</table>'
+    +'<div style="color:'+GREY+';font-style:italic;font-size:8.5pt;padding:5px 10px">All bank charges outside Korea are for the Buyer\'s account. Production starts upon receipt of the 1st payment.</div>'
+    +sec('BENEFICIARY BANK DETAILS')+'<table style="width:100%;border-collapse:collapse;font-size:9.5pt">'
+    +kv('Beneficiary','EK INT')+kv('Bank Name','Shinhan Bank, Yangjae-dong Branch')+kv('Account No.','180-008-749877')+kv('SWIFT / BIC','SHBKKRSE')+kv('Bank Address','87, Nonhyeon-ro, Seocho-gu, Seoul 06775, Korea · T +82-2-589-0773')+'</table>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:22px;color:'+GREY+';font-size:8.5pt"><div>Authorized Signature<br><br><br>______________________________<br>EK INT · Dongwon Eun, Director</div><div>Company Stamp<br><br><br>______________________________</div></div>'
+    +'<div style="height:4px;background:'+NAVY+';margin-top:10px"></div>'
+    +'<div style="text-align:center;color:'+GREY+';font-size:7.5pt;padding-top:4px">EK INT · 24-8, Nonhyeon-ro 26-gil, Gangnam-gu, Seoul, Korea · sales@ek-jewelry.com · www.ek-jewelry.com</div>'
+    +'</div>';
+}
+
 // 명세서 카피 보기 — 인쇄 미리보기 모달로 띄움
 function showInvoiceCopy(id){
   var v = invoiceHistory.find(function(x){return x.id==id;});
   if(!v){ showToast('명세서를 찾을 수 없습니다','var(--red)'); return; }
   var html = renderInvoiceCopyHtml(v);
+  if(_invIsUsd(v)){ showPrintPreview('💵 Commercial Invoice — '+v.vendor+' / '+v.issuedAt, html, 'EK_INT_Commercial_Invoice_'+(v.ciNo||v.issuedAt||'')); return; }
   showPrintPreview('🧾 거래명세서 카피 — '+v.vendor+' / '+v.issuedAt, html, (v.ordNo||('거래명세서_'+(v.vendor||'')+'_'+(v.issuedAt||''))));
 }
 
@@ -9954,7 +10029,7 @@ function _saveInvItemChanges(invId){
   if(!v) return;
   // 합계 재계산 — 모든 행의 amt 합
   const supplyAmt = (v.items||[]).reduce((s,it)=>s + (+it.amt || 0), 0);
-  const tax = Math.round(supplyAmt * 0.1);
+  const tax = _invIsUsd(v) ? 0 : Math.round(supplyAmt * 0.1);
   const total = supplyAmt + tax;
   v.supplyAmt = supplyAmt;
   v.tax = tax;
@@ -9989,6 +10064,7 @@ function _saveInvItemChanges(invId){
 function openInvDetail(id){
   var v=invoiceHistory.find(function(x){return x.id==id;});
   if(!v) return;
+  if(_invIsUsd(v) && !v._isConsolidated && !(isInvoiceLocked(v)||{}).locked){ openStandaloneInvoiceModal(v.id); return; }   // 💵 달러로 보고 고침
   var SC={'발행완료':'var(--grn)','청구완료':'var(--blu)','미수':'var(--red)','입금완료':'#7A4DB5'};
   var sc=SC[v.status]||'var(--t2)';
   document.getElementById('mInvDetail_t').textContent='🧾 '+v.vendor+' — '+v.issuedAt;
@@ -23241,7 +23317,7 @@ window.recalcInvoiceTotal = function(invId){
     console.warn('items의 단가가 모두 0원이라 재계산해도 0원입니다. 명세서를 수정하여 단가 입력 필요.');
     return;
   }
-  const tax = Math.round(supply * 0.1);
+  const tax = _invIsUsd(v) ? 0 : Math.round(supply * 0.1);
   const total = supply + tax;
   console.log(`이전: 공급 ${(+v.supplyAmt||0).toLocaleString()} / 부가 ${(+v.tax||0).toLocaleString()} / 합계 ${(+v.total||0).toLocaleString()}`);
   v.supplyAmt = supply;
@@ -32567,6 +32643,7 @@ function completeOrd(ordId){
             _shipped: false,        // 아직 청구 안 함 → 미청구 탭
             _invStage: 'draft',     // 미청구 탭에 표시
           };
+          if(_invLastCurFor(newInv.vendor)==='USD') _invMakeUsd(newInv, _invDefaultRate());   // 💵 해외 고객사 — 발주 단가 = USD
           invoiceHistory.unshift(newInv);
           if(typeof markInvoiceDirty === 'function') markInvoiceDirty();
           _autoInvCreated = true;
@@ -44972,6 +45049,13 @@ function openStandaloneInvoiceModal(idOrNull, prefill){
     _invRowsBuf = [{name:'', code:'', qty:1, unit:0}];
     _invPaymentsBuf = [];
   }
+  // 💵 통화 — 기존 명세서는 그 통화, 새 명세서는 고객사 직전 명세서 통화 (해외 발주 단가는 USD로 봄)
+  _invCur = inv ? (_invIsUsd(inv)?'USD':'KRW') : _invLastCurFor(prefill?.vendor||'');
+  _invRate = (inv && _invIsUsd(inv)) ? _r2(_invRateOf(inv)) : _invDefaultRate();
+  if(inv && _invCur==='USD'){
+    _invRowsBuf.forEach(r=>{ r.unit = r.unitUsd!=null ? +r.unitUsd : _r2((+r.unit||0)/_invRate); });
+    _invPaymentsBuf.forEach(p=>{ p.amount = p.usd!=null ? +p.usd : _r2((+p.amount||0)/_invRate); });
+  }
 
   const today = toLocalDateStr(new Date());
   const issuedAt = inv ? (inv.issuedAt||today) : today;
@@ -45055,11 +45139,12 @@ function openStandaloneInvoiceModal(idOrNull, prefill){
 
     <div class="fg" style="margin-bottom:10px"><label>고객사 *</label>
       <div style="display:flex;gap:4px">
-        <input class="fi" id="siv_vendor" list="siv_vendor_dl" value="${vendor.replace(/"/g,'&quot;')}" placeholder="고객사명 (직접 입력 또는 🔍)" style="flex:1;min-width:0">
+        <input class="fi" id="siv_vendor" list="siv_vendor_dl" onchange="_invOnVendorChange(this.value)" value="${vendor.replace(/"/g,'&quot;')}" placeholder="고객사명 (직접 입력 또는 🔍)" style="flex:1;min-width:0">
         <button type="button" onclick="openClientPickerForInv()" title="고객사DB에서 검색" style="padding:0 10px;background:var(--blu-bg);border:1px solid rgba(60,108,170,.3);border-radius:4px;cursor:pointer;font-family:inherit;color:var(--blu);font-size:13px;flex-shrink:0">🔍</button>
       </div>
       <datalist id="siv_vendor_dl">${clients.map(cl=>`<option value="${(cl.name||'').replace(/"/g,'&quot;')}">${cl.name}</option>`).join('')}</datalist>
     </div>
+    <div id="siv_curBox" style="margin-bottom:10px">${_invCurBoxHtml()}</div>
 
     <hr style="border:none;border-top:1px solid var(--bdr);margin:12px 0 8px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -45112,7 +45197,7 @@ function openStandaloneInvoiceModal(idOrNull, prefill){
 function _renderInvRows(){
   return `
     <div style="display:grid;grid-template-columns:30px 2fr 1.2fr 0.8fr 1fr 1.2fr 30px;gap:4px;align-items:center;font-size:10.5px;color:var(--t3);font-weight:600;padding:4px;background:var(--s1);border-radius:4px;margin-bottom:4px">
-      <div style="text-align:center">NO</div><div>품명</div><div>품번</div><div style="text-align:center">수량</div><div style="text-align:right">단가</div><div style="text-align:right">금액</div><div></div>
+      <div style="text-align:center">NO</div><div>품명</div><div>품번</div><div style="text-align:center">수량</div><div style="text-align:right">단가${_invCur==='USD'?' (USD)':''}</div><div style="text-align:right">금액</div><div></div>
     </div>
     ${_invRowsBuf.map((r,i)=>{
       const amt = (+r.qty||0) * (+r.unit||0);
@@ -45140,8 +45225,8 @@ function _renderInvRows(){
         <input class="fi" id="sivName_${i}" value="${(r.name||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].name=this.value" placeholder="품명" style="font-size:11.5px;padding:4px 6px">
         <input class="fi" id="sivCode_${i}" value="${(r.code||'').replace(/"/g,'&quot;')}" oninput="_invRowsBuf[${i}].code=this.value;_updateInvRowCalc(${i})" placeholder="품번 (재고 연동)" style="font-size:11px;padding:4px 6px;font-family:monospace">
         <input class="fi" id="sivQty_${i}" type="number" value="${r.qty||1}" oninput="_invRowsBuf[${i}].qty=+this.value;_updateInvRowCalc(${i})" style="font-size:11.5px;padding:4px 6px;text-align:center">
-        <input class="fi" id="sivUnit_${i}" type="number" value="${r.unit||0}" oninput="_invRowsBuf[${i}].unit=+this.value;_updateInvRowCalc(${i})" placeholder="0" style="font-size:11.5px;padding:4px 6px;text-align:right">
-        <div id="sivAmt_${i}" style="font-size:11.5px;font-weight:700;text-align:right;padding:4px 6px;color:var(--gold-lt);font-family:monospace">${amt?'₩'+amt.toLocaleString():'-'}</div>
+        <input class="fi" id="sivUnit_${i}" type="number" step="any" value="${r.unit||0}" oninput="_invRowsBuf[${i}].unit=+this.value;_updateInvRowCalc(${i})" placeholder="0" style="font-size:11.5px;padding:4px 6px;text-align:right">
+        <div id="sivAmt_${i}" style="font-size:11.5px;font-weight:700;text-align:right;padding:4px 6px;color:var(--gold-lt);font-family:monospace">${amt?_invMoney(amt):'-'}</div>
         <button onclick="removeInvRow(${i})" style="padding:2px 6px;background:none;border:1px solid var(--bdr);border-radius:3px;cursor:pointer;color:var(--t3);font-size:12px">×</button>
         <div id="sivHint_${i}" style="grid-column:2/7">${stockHint}</div>
       </div>`;
@@ -45203,10 +45288,102 @@ function _invRowDragEnd(e){
   });
 }
 
+// ════════════════════════════════════════════════
+// 💵 해외(USD) 거래명세서 = 커머셜 인보이스 (DW 2026-11-26)
+//   · 화면 입력은 달러. 저장은 원화(공급가·합계·입금)로 환산해 두어 손익·잔여금액 집계는 그대로 동작
+//   · 부가세 0 (수출) · 품목 unitUsd / 입금 usd / 명세서 cur·rate·totalUsd 에 달러 원값 보관
+//     (품목JSON·입금이력JSON으로 노션 백업에도 남음)
+//   · 통화 기본값 = 그 고객사의 직전 명세서 통화. 해외 고객사 발주 단가는 USD로 본다
+//   · 출력은 EK 고정 커머셜 인보이스 서식 (renderCommercialInvoiceHtml)
+// ════════════════════════════════════════════════
+let _invCur='KRW', _invRate=0;
+function _invIsUsd(v){ return !!v && (v.cur==='USD' || (v.cur!=='KRW' && Array.isArray(v.items) && v.items.some(r=>r && r.unitUsd!=null))); }
+function _invDefaultRate(){ let n=0; try{ n=parseFloat(localStorage.getItem('ek_mgt_usd_rate'))||0; }catch(_){} return n>0?n:1400; }
+function _invRateOf(v){
+  if(v && +v.rate>0) return +v.rate;
+  const r=((v&&v.items)||[]).find(x=>x && +x.unitUsd>0 && +x.unit>0);
+  return r ? (+r.unit/+r.unitUsd) : _invDefaultRate();
+}
+function _usdFmt(n){ return '$'+(+n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function _r2(n){ return Math.round((+n||0)*100)/100; }
+function _invTotalUsd(v){
+  if(v && +v.totalUsd>0) return +v.totalUsd;
+  const rate=_invRateOf(v);
+  return _r2(((v&&v.items)||[]).reduce((s,r)=>s+(+r.qty||0)*(r.unitUsd!=null?+r.unitUsd:(+r.unit||0)/rate),0));
+}
+function _invPaidUsd(v){
+  const rate=_invRateOf(v);
+  return _r2(((v&&v.payments)||[]).reduce((s,p)=>s+(p.usd!=null?+p.usd:(+p.amount||0)/rate),0));
+}
+// 고객사의 직전 명세서 통화 (없으면 원화)
+function _invLastCurFor(vendor){
+  const k=_vendorGrpKey(vendor); if(!k) return 'KRW';
+  let last=null;
+  invoiceHistory.forEach(v=>{ if(!v || v._isConsolidated || _vendorGrpKey(v.vendor)!==k) return;
+    if(!last || String(v.issuedAt||'')>String(last.issuedAt||'') || (String(v.issuedAt||'')===String(last.issuedAt||'') && String(v.id)>String(last.id))) last=v; });
+  return last && _invIsUsd(last) ? 'USD' : 'KRW';
+}
+// 원화로 만들어진 명세서(단가 숫자=발주 단가)를 USD 명세서로 바꿔 저장 — 발주 단가를 USD로 본다
+function _invMakeUsd(v, rate){
+  rate=+rate>0?+rate:_invDefaultRate();
+  (v.items||[]).forEach(it=>{ const u=_r2(it.unit); it.unitUsd=u; it.unit=Math.round(u*rate); it.amt=(+it.qty||0)*it.unit; });
+  v.supplyAmt=(v.items||[]).reduce((s,it)=>s+(+it.amt||0),0); v.tax=0; v.total=v.supplyAmt;
+  v.cur='USD'; v.rate=rate; v.totalUsd=_r2((v.items||[]).reduce((s,it)=>s+(+it.qty||0)*(+it.unitUsd||0),0));
+  if(!v.ciNo) v.ciNo=_invNextCiNo(v.issuedAt);
+  return v;
+}
+// 인보이스 번호 EK-CI-YYYYMMDD-NNN
+function _invNextCiNo(dateStr){
+  const d=String(dateStr||toLocalDateStr(new Date())).slice(0,10).replace(/-/g,'');
+  const pre='EK-CI-'+d+'-'; let mx=0;
+  invoiceHistory.forEach(v=>{ const c=String((v&&v.ciNo)||''); if(c.startsWith(pre)){ const n=parseInt(c.slice(pre.length),10); if(n>mx) mx=n; } });
+  return pre+String(mx+1).padStart(3,'0');
+}
+function _invMoney(n){ return _invCur==='USD' ? _usdFmt(n) : '₩'+(+n||0).toLocaleString(); }
+// 모달 버퍼 합계 (버퍼 통화 기준)
+function _invBufTotals(){
+  const supply=_invRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.unit||0),0);
+  if(_invCur==='USD'){ const t=_r2(supply); return {supply:t, tax:0, total:t}; }
+  const tax=Math.round(supply*0.1); return {supply, tax, total:supply+tax};
+}
+function _invCurBoxHtml(){
+  const on=(c)=>_invCur===c;
+  const chip=(c,lab)=>`<span onclick="_invSetCur('${c}')" style="cursor:pointer;padding:4px 12px;border-radius:14px;font-size:11.5px;font-weight:700;border:1.5px solid ${on(c)?'var(--gold)':'var(--bdr)'};background:${on(c)?'var(--gold-bg)':'var(--s1)'};color:${on(c)?'var(--gold-lt)':'var(--t3)'}">${lab}</span>`;
+  return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <span style="font-size:11px;color:var(--t3);font-weight:600">통화</span>${chip('KRW','₩ 원화')}${chip('USD','$ USD (해외)')}
+    ${_invCur==='USD'?`<span style="font-size:11px;color:var(--t3);margin-left:6px">환율</span><input class="fi" id="siv_rate" type="number" step="any" value="${_invRate}" oninput="_invRate=+this.value||_invRate;_invRefreshTotals()" style="width:90px;font-size:11.5px;padding:4px 6px;text-align:right"><span style="font-size:11px;color:var(--t3)">원/USD · 부가세 없음 · 커머셜 인보이스로 출력</span>`:''}
+  </div>`;
+}
+function _invRefreshTotals(){
+  const t=document.getElementById('siv_totalsBox'); if(t) t.innerHTML=_renderInvTotalsBox();
+  if(typeof _updateInvPaymentSummary==='function') _updateInvPaymentSummary();
+}
+// 통화 전환 — 숫자는 그대로 두고 통화만 바꾼다 (입력한 단가를 그 통화로 봄)
+function _invSetCur(cur){
+  if(cur===_invCur) return;
+  _invCur=cur; if(!(_invRate>0)) _invRate=_invDefaultRate();
+  const box=document.getElementById('siv_curBox'); if(box) box.innerHTML=_invCurBoxHtml();
+  const a=document.getElementById('siv_rowsArea'); if(a) a.innerHTML=_renderInvRows();
+  const pa=document.getElementById('siv_paymentsArea'); if(pa) pa.innerHTML=_renderInvPayments();
+  _invRefreshTotals();
+}
+// 새 명세서에서 고객사를 바꾸면 그 고객사의 직전 통화로 맞춤
+function _invOnVendorChange(v){
+  if(gv('siv_id')) return;
+  const c=_invLastCurFor(v); if(c!==_invCur) _invSetCur(c);
+}
+
 function _renderInvTotalsBox(){
-  const supplyAmt = _invRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.unit||0),0);
-  const tax = Math.round(supplyAmt*0.1);
-  const total = supplyAmt + tax;
+  const { supply:supplyAmt, tax, total } = _invBufTotals();
+  if(_invCur==='USD'){
+    const krw=Math.round(total*(_invRate||_invDefaultRate()));
+    return `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+      <div><div style="font-size:10.5px;color:var(--t3)">Subtotal</div><div style="font-size:14px;font-weight:600">${_usdFmt(supplyAmt)}</div></div>
+      <div><div style="font-size:10.5px;color:var(--t3)">부가세</div><div style="font-size:14px;font-weight:600">없음 (수출)</div></div>
+      <div><div style="font-size:10.5px;color:var(--gold-lt);font-weight:600">TOTAL (USD)</div><div style="font-size:18px;font-weight:700;color:var(--gold-lt)">${_usdFmt(total)}</div><div style="font-size:10px;color:var(--t3)">≈ ₩${krw.toLocaleString()} (환율 ${(+_invRate||0).toLocaleString()})</div></div>
+    </div>`;
+  }
   return `
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
       <div><div style="font-size:10.5px;color:var(--t3)">공급가액</div><div style="font-size:14px;font-weight:600">₩${supplyAmt.toLocaleString()}</div></div>
@@ -45232,7 +45409,7 @@ function _renderInvPayments(){
       <div style="display:grid;grid-template-columns:30px 1fr 1.4fr 1fr 1.5fr 30px;gap:4px;align-items:center;margin-bottom:3px">
         <div style="text-align:center;font-size:11px;color:var(--t3);font-weight:600">${i+1}</div>
         <input class="fi" id="sivPmDate_${i}" type="date" value="${pm.date||''}" oninput="_invPaymentsBuf[${i}].date=this.value;_updateInvPaymentSummary()" style="font-size:11.5px;padding:4px 6px">
-        <input class="fi" id="sivPmAmt_${i}" type="number" min="0" value="${amt||''}" oninput="_onInvPaymentAmtChange(${i}, this.value)" placeholder="0" style="font-size:11.5px;padding:4px 6px;text-align:right;font-weight:600;color:var(--grn)">
+        <input class="fi" id="sivPmAmt_${i}" type="number" min="0" step="any" value="${amt||''}" oninput="_onInvPaymentAmtChange(${i}, this.value)" placeholder="0" style="font-size:11.5px;padding:4px 6px;text-align:right;font-weight:600;color:var(--grn)">
         <select class="fi" id="sivPmType_${i}" onchange="_invPaymentsBuf[${i}].type=this.value" style="font-size:11px;padding:4px 6px">
           <option value="선금" ${pm.type==='선금'?'selected':''}>선금</option>
           <option value="중도금" ${pm.type==='중도금'?'selected':''}>중도금</option>
@@ -45247,9 +45424,7 @@ function _renderInvPayments(){
 }
 
 function _renderInvPaymentSummary(){
-  const supplyAmt = _invRowsBuf.reduce((s,r)=>s+(+r.qty||0)*(+r.unit||0),0);
-  const tax = Math.round(supplyAmt*0.1);
-  const total = supplyAmt + tax;
+  const { total } = _invBufTotals();
   const { totalPaid, ratio } = calcPaymentSummary(_invPaymentsBuf, total);
   const { prepaid } = calcPaymentByType(_invPaymentsBuf);
   const remaining = total - totalPaid;
@@ -45257,19 +45432,19 @@ function _renderInvPaymentSummary(){
   const isOver = ratio > 100;
   const barColor = isOver ? 'var(--red)' : isFull ? 'var(--grn)' : ratio>=50 ? 'var(--gold-lt)' : 'var(--blu)';
   const barWidth = Math.min(100, ratio);
-  const statusText = isOver ? `🔴 초과 입금됨 (+₩${(totalPaid-total).toLocaleString()})`
+  const statusText = isOver ? `🔴 초과 입금됨 (+${_invMoney((totalPaid-total))})`
     : isFull ? '✓ 100% 입금완료 — 청구완료 + 재고 자동 차감 처리됩니다'
-    : ratio>0 ? `진행중 — 잔금 ₩${remaining.toLocaleString()}` 
+    : ratio>0 ? `진행중 — 잔금 ${_invMoney(remaining)}` 
     : '입금 대기 중';
   // 선금 알림 — 월말 합본 청구서에서 자동 차감됨을 안내
   const prepaidNote = prepaid > 0
-    ? `<div style="margin-top:6px;padding:6px 10px;background:rgba(122,77,181,.08);border:1px solid rgba(122,77,181,.25);border-radius:4px;font-size:10.5px;color:#7A4DB5"><b>💰 받은 선금: ₩${prepaid.toLocaleString()}</b> — 월말 합본 청구서 작성 시 청구액에서 자동 차감됩니다</div>`
+    ? `<div style="margin-top:6px;padding:6px 10px;background:rgba(122,77,181,.08);border:1px solid rgba(122,77,181,.25);border-radius:4px;font-size:10.5px;color:#7A4DB5"><b>💰 받은 선금: ${_invMoney(prepaid)}</b> — 월말 합본 청구서 작성 시 청구액에서 자동 차감됩니다</div>`
     : '';
   return `
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:8px">
-      <div><div style="font-size:10px;color:var(--t3)">총 청구액</div><div style="font-size:13px;font-weight:600">₩${total.toLocaleString()}</div></div>
-      <div><div style="font-size:10px;color:var(--t3)">입금 합계</div><div style="font-size:13px;font-weight:700;color:var(--grn)">₩${totalPaid.toLocaleString()}</div></div>
-      <div><div style="font-size:10px;color:var(--t3)">잔금</div><div style="font-size:13px;font-weight:600;color:${remaining<=0?'var(--grn)':'var(--org)'}">${remaining<=0?'₩0':'₩'+remaining.toLocaleString()}</div></div>
+      <div><div style="font-size:10px;color:var(--t3)">총 청구액</div><div style="font-size:13px;font-weight:600">${_invMoney(total)}</div></div>
+      <div><div style="font-size:10px;color:var(--t3)">입금 합계</div><div style="font-size:13px;font-weight:700;color:var(--grn)">${_invMoney(totalPaid)}</div></div>
+      <div><div style="font-size:10px;color:var(--t3)">잔금</div><div style="font-size:13px;font-weight:600;color:${remaining<=0?'var(--grn)':'var(--org)'}">${remaining<=0?_invMoney(0):_invMoney(remaining)}</div></div>
       <div><div style="font-size:10px;color:var(--t3)">입금률</div><div style="font-size:14px;font-weight:700;color:${barColor};font-family:monospace">${ratio.toFixed(1)}%</div></div>
     </div>
     <div style="background:var(--s2);border-radius:8px;height:8px;overflow:hidden;margin-bottom:6px">
@@ -45333,7 +45508,7 @@ function _updateInvRowCalc(i){
   // 1) 그 행의 금액만 갱신
   const amt = (+r.qty||0) * (+r.unit||0);
   const amtEl = document.getElementById('sivAmt_'+i);
-  if(amtEl) amtEl.textContent = amt ? '₩'+amt.toLocaleString() : '-';
+  if(amtEl) amtEl.textContent = amt ? _invMoney(amt) : '-';
   // 2) 합계 박스 갱신
   const totalsEl = document.getElementById('siv_totalsBox');
   if(totalsEl) totalsEl.innerHTML = _renderInvTotalsBox();
@@ -45590,17 +45765,24 @@ async function saveStandaloneInvoice(){
   const status = gv('siv_status') || '발행완료';
   const memo = gv('siv_memo') || '';
 
-  const supplyAmt = validRows.reduce((s,r)=>s+(+r.qty||0)*(+r.unit||0), 0);
-  const tax = Math.round(supplyAmt*0.1);
+  // 💵 USD면 입력값(달러)을 원화로 환산해 저장 — 원값은 unitUsd / usd / totalUsd 로 함께 보관
+  const _isUsd = _invCur==='USD';
+  const _rate = _isUsd ? (+gv('siv_rate')||_invRate||_invDefaultRate()) : 0;
+  const _k = v => _isUsd ? Math.round((+v||0)*_rate) : (+v||0);
+  const supplyAmt = validRows.reduce((s,r)=>s+(+r.qty||0)*_k(r.unit), 0);
+  const tax = _isUsd ? 0 : Math.round(supplyAmt*0.1);
   const total = supplyAmt + tax;
+  const _totalUsd = _isUsd ? _r2(validRows.reduce((s,r)=>s+(+r.qty||0)*(+r.unit||0),0)) : 0;
 
-  const items = validRows.map(r=>({
+  const items = validRows.map(r=>Object.assign(_isUsd?{...r}:{}, {
     name: r.name||'',
     code: r.code||'',
     qty: +r.qty||0,
-    unit: +r.unit||0,
-    amt: (+r.qty||0)*(+r.unit||0),
-  }));
+    unit: _k(r.unit),
+    amt: (+r.qty||0)*_k(r.unit),
+  }, _isUsd?{unitUsd:_r2(r.unit)}:{}));
+  if(!_isUsd) items.forEach(it=>{ delete it.unitUsd; });
+  const _curFields = _isUsd ? {cur:'USD', rate:_rate, totalUsd:_totalUsd} : {cur:'KRW', rate:0, totalUsd:0};
   const itemSummary = items.map(r=>r.name+' ×'+r.qty).join(', ');
 
   // 거래명세서 번호 자동 생성 (재고 판매: STOCK-YYMMDD-NNN)
@@ -45633,7 +45815,8 @@ async function saveStandaloneInvoice(){
     const payments = _invPaymentsBuf.map(pm=>({
       id: pm.id || (genId()),
       date: pm.date || toLocalDateStr(new Date()),
-      amount: +pm.amount||0,
+      amount: _k(pm.amount),
+      ...(_isUsd ? {usd:_r2(pm.amount)} : {}),
       type: pm.type || '선금',
       memo: pm.memo || '',
     })).filter(pm=>pm.amount>0);
@@ -45660,6 +45843,8 @@ async function saveStandaloneInvoice(){
       payments,
       totalPaid,
       paymentRatio: ratio,
+      ..._curFields,
+      ...(_isUsd ? {ciNo:_invNextCiNo(issuedAt)} : {}),
       _isStandalone: !isFromOrder && !_isFromSampleComplete, // 발주/샘플 기반이면 false
       _stockApplied: false,
       _ts: Date.now(), // ⏱ LWW: 신규 발행분도 명시적 타임스탬프 (서버 스냅샷에 밀리지 않도록)
@@ -45839,7 +46024,8 @@ async function saveStandaloneInvoice(){
     const payments = _invPaymentsBuf.map(pm=>({
       id: pm.id || (genId()),
       date: pm.date || toLocalDateStr(new Date()),
-      amount: +pm.amount||0,
+      amount: _k(pm.amount),
+      ...(_isUsd ? {usd:_r2(pm.amount)} : {}),
       type: pm.type || '선금',
       memo: pm.memo || '',
     })).filter(pm=>pm.amount>0);
@@ -45894,6 +46080,8 @@ async function saveStandaloneInvoice(){
       items: items2, itemSummary: itemSummary2,
       supplyAmt: supplyAmt2, tax: tax2, total: total2, status: finalStatus, memo: _keep('memo', memo),
       payments, totalPaid, paymentRatio: ratio,
+      ...(_itemsMine ? _curFields : {}),
+      ...((_itemsMine && _isUsd && !target.ciNo) ? {ciNo:_invNextCiNo(issuedAt)} : {}),
       _stockApplied: willStockApply,
       _ts: Date.now(), // ⏱ LWW: 수정본이 최신이 되도록 — 없으면 실시간 스냅샷의 옛 버전이 덮어씀
     });
